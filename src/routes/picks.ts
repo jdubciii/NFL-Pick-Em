@@ -1,14 +1,9 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db/client';
 import { requireAuth } from '../middleware/auth';
+import { PoolSettings } from '../types/pool';
 
 export const picksRouter = Router();
-
-interface PoolSettings {
-  lock_offset?: number;
-  lockOffset?: number;
-  [key: string]: any;
-}
 
 /**
  * POST /api/picks

@@ -1,12 +1,7 @@
 import prisma from '../db/client';
+import type { PoolSettings, PenaltySettings } from '../types/pool';
 
-export interface PoolSettings {
-  points_per_win?: number;
-  win_value?: number;
-  winValue?: number;
-  pointsPerWin?: number;
-  [key: string]: any;
-}
+export type { PoolSettings, PenaltySettings };
 
 export interface GradedPickResult {
   pickId: string;

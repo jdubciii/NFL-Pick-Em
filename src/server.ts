@@ -6,7 +6,7 @@ import cors from 'cors';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import prisma from './db/client';
-import { JWT_SECRET, requireAuth } from './middleware/auth';
+import { JWT_SECRET, requireAuth, requireAdmin } from './middleware/auth';
 import { picksRouter } from './routes/picks';
 import { adminRouter } from './routes/admin';
 
@@ -285,6 +285,281 @@ app.get('/api/pools/:pool_id/leaderboard', requireAuth, async (req: Request, res
   } catch (error) {
     console.error('Leaderboard calculation error:', error);
     res.status(500).json({ error: 'Failed to generate leaderboard.' });
+  }
+});
+
+// Alias db as any to allow accessing newly generated models without IDE cache conflicts
+const db = prisma as any;
+
+export interface CumulativeLeaderboardEntry {
+  user_id: string;
+  email: string;
+  total_shots_drank: number;
+  first_place_finishes: number;
+  dead_place_finishes: number;
+  total_picks: number;
+  correct_picks: number;
+  accuracy_percentage: number;
+  updated_at: Date;
+}
+
+/**
+ * GET /api/pools/:pool_id/leaderboard/cumulative
+ * Protected route returning joined PoolMembership and PoolMemberStat data,
+ * including cumulative shot counts, 1st place finishes, dead place finishes, and pick accuracy.
+ * Supports sorting by 'shots', 'wins', 'dead_place', or 'accuracy'.
+ */
+app.get('/api/pools/:pool_id/leaderboard/cumulative', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const poolId = String(req.params.pool_id);
+  const sortBy = String(req.query.sort_by || 'shots').toLowerCase();
+  const order = String(req.query.order || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
+
+  if (!poolId) {
+    res.status(400).json({ error: 'pool_id is required.' });
+    return;
+  }
+
+  try {
+    const pool = await db.pool.findUnique({
+      where: { id: poolId },
+      include: {
+        memberships: {
+          where: { status: 'ACTIVE' },
+          include: {
+            user: {
+              select: {
+                id: true,
+                email: true,
+              },
+            },
+            stat: true,
+          },
+        },
+        picks: {
+          include: {
+            result: true,
+          },
+        },
+      },
+    });
+
+    if (!pool) {
+      res.status(404).json({ error: 'Pool not found.' });
+      return;
+    }
+
+    // Map pick accuracy per user
+    const userPicksStats = new Map<string, { totalPicks: number; correctPicks: number }>();
+    for (const pick of (pool.picks || [])) {
+      const userStat = userPicksStats.get(pick.userId) || { totalPicks: 0, correctPicks: 0 };
+      userStat.totalPicks += 1;
+      if (pick.result?.isCorrect) {
+        userStat.correctPicks += 1;
+      }
+      userPicksStats.set(pick.userId, userStat);
+    }
+
+    const memberships: any[] = pool.memberships || [];
+    const leaderboard: CumulativeLeaderboardEntry[] = memberships.map((membership: any) => {
+      const userStats = userPicksStats.get(membership.userId) || { totalPicks: 0, correctPicks: 0 };
+      const accuracy = userStats.totalPicks > 0
+        ? Math.round((userStats.correctPicks / userStats.totalPicks) * 1000) / 10
+        : 0;
+
+      return {
+        user_id: membership.user.id,
+        email: membership.user.email,
+        total_shots_drank: membership.stat?.totalShotsDrank ?? 0,
+        first_place_finishes: membership.stat?.firstPlaceFinishes ?? 0,
+        dead_place_finishes: membership.stat?.deadPlaceFinishes ?? 0,
+        total_picks: userStats.totalPicks,
+        correct_picks: userStats.correctPicks,
+        accuracy_percentage: accuracy,
+        updated_at: membership.stat?.updatedAt ?? new Date(),
+      };
+    });
+
+    // Sort by requested parameter
+    leaderboard.sort((a, b) => {
+      let comparison = 0;
+      if (sortBy === 'wins' || sortBy === 'first_place') {
+        comparison = b.first_place_finishes - a.first_place_finishes;
+      } else if (sortBy === 'dead_place' || sortBy === 'dead_place_finishes') {
+        comparison = b.dead_place_finishes - a.dead_place_finishes;
+      } else if (sortBy === 'accuracy') {
+        comparison = b.accuracy_percentage - a.accuracy_percentage;
+      } else {
+        // Default to total shots drank
+        comparison = b.total_shots_drank - a.total_shots_drank;
+      }
+
+      if (comparison === 0) {
+        // Secondary sort by accuracy then email
+        comparison = b.accuracy_percentage - a.accuracy_percentage;
+      }
+
+      return order === 'asc' ? -comparison : comparison;
+    });
+
+    const totalPoolShots = leaderboard.reduce((acc, curr) => acc + curr.total_shots_drank, 0);
+
+    res.json({
+      pool_id: pool.id,
+      pool_name: pool.name,
+      total_pool_shots: totalPoolShots,
+      leaderboard,
+    });
+  } catch (error) {
+    console.error('Cumulative leaderboard calculation error:', error);
+    res.status(500).json({ error: 'Failed to generate cumulative leaderboard.' });
+  }
+});
+
+/**
+ * POST /api/pools/:pool_id/penalties/adjust
+ * Protected by requireAdmin.
+ * Accepts member_id, delta (integer), and reason.
+ * Inserts a new record into PenaltyLedger and triggers recalculation of total_shots_drank in PoolMemberStat.
+ */
+app.post('/api/pools/:pool_id/penalties/adjust', requireAuth, requireAdmin, async (req: Request, res: Response): Promise<void> => {
+  const poolId = String(req.params.pool_id);
+  const memberId = req.body.member_id || req.body.memberId || req.body.user_id || req.body.userId;
+  const rawDelta = req.body.delta;
+  const reason = req.body.reason;
+  const weekNumber = req.body.week_number !== undefined ? Number(req.body.week_number) : null;
+
+  if (!poolId || !memberId || rawDelta === undefined || !reason || String(reason).trim().length === 0) {
+    res.status(400).json({
+      error: 'Missing required fields: member_id, delta (integer), and reason are required.',
+    });
+    return;
+  }
+
+  const delta = parseInt(String(rawDelta), 10);
+  if (isNaN(delta)) {
+    res.status(400).json({ error: 'delta must be a valid integer.' });
+    return;
+  }
+
+  try {
+    // 1. Verify pool and member existence
+    const membership = await db.poolMembership.findUnique({
+      where: {
+        poolId_userId: {
+          poolId,
+          userId: memberId,
+        },
+      },
+    });
+
+    if (!membership) {
+      res.status(404).json({ error: 'User is not a member of this pool.' });
+      return;
+    }
+
+    // 2. Insert record into PenaltyLedger
+    const penaltyEntry = await db.penaltyLedger.create({
+      data: {
+        poolId,
+        userId: memberId,
+        delta,
+        reason: String(reason).trim(),
+        weekNumber: weekNumber && !isNaN(weekNumber) ? weekNumber : null,
+        createdById: req.user!.id,
+      },
+    });
+
+    // 3. Recalculate total_shots_drank by summing PenaltyLedger records
+    const ledgerSum = await db.penaltyLedger.aggregate({
+      where: {
+        poolId,
+        userId: memberId,
+      },
+      _sum: {
+        delta: true,
+      },
+    });
+
+    const totalShotsDrank = ledgerSum._sum.delta ?? 0;
+
+    // 4. Update or create PoolMemberStat cache
+    const updatedStat = await db.poolMemberStat.upsert({
+      where: {
+        poolId_userId: {
+          poolId,
+          userId: memberId,
+        },
+      },
+      update: {
+        totalShotsDrank,
+      },
+      create: {
+        poolId,
+        userId: memberId,
+        totalShotsDrank,
+        firstPlaceFinishes: 0,
+        deadPlaceFinishes: 0,
+      },
+    });
+
+    // 5. Create audit log for admin adjustment
+    await db.auditLog.create({
+      data: {
+        actorId: req.user!.id,
+        action: 'ADMIN_ADJUST_PENALTY',
+        targetEntityId: penaltyEntry.id,
+        newValue: {
+          poolId,
+          userId: memberId,
+          delta,
+          reason,
+          newTotalShots: totalShotsDrank,
+        },
+      },
+    });
+
+    res.status(201).json({
+      message: 'Penalty adjusted successfully.',
+      penalty: penaltyEntry,
+      stat: updatedStat,
+    });
+  } catch (error) {
+    console.error('Penalty adjustment error:', error);
+    res.status(500).json({ error: 'Failed to adjust penalty.' });
+  }
+});
+
+/**
+ * GET /api/pools/:pool_id/penalties/member/:member_id
+ * Returns the penalty ledger history for a specific member in the pool.
+ */
+app.get('/api/pools/:pool_id/penalties/member/:member_id', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const poolId = String(req.params.pool_id);
+  const memberId = String(req.params.member_id);
+
+  try {
+    const history = await db.penaltyLedger.findMany({
+      where: {
+        poolId,
+        userId: memberId,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+      include: {
+        createdBy: {
+          select: {
+            id: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    res.json(history);
+  } catch (error) {
+    console.error('Error fetching member penalty history:', error);
+    res.status(500).json({ error: 'Failed to fetch penalty history.' });
   }
 });
 

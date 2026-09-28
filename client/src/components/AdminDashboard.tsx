@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Shield, User as UserIcon, RefreshCw, CheckCircle2, AlertCircle, History, Clock, FileText, Check } from 'lucide-react';
+import { Shield, User as UserIcon, RefreshCw, CheckCircle2, AlertCircle, History, Clock, FileText, Check, Wine } from 'lucide-react';
+import { AdminPenaltyModal } from './AdminPenaltyModal';
 
 export interface UserItem {
   id: string;
@@ -47,6 +48,7 @@ export const AdminDashboard: React.FC = () => {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
   const [showAuditLogs, setShowAuditLogs] = useState(false);
+  const [penaltyModalOpen, setPenaltyModalOpen] = useState(false);
 
   // 1. Fetch Users on load
   const fetchUsers = useCallback(async () => {
@@ -306,12 +308,36 @@ export const AdminDashboard: React.FC = () => {
         </div>
 
         {selectedUser && (
-          <div className="flex items-center space-x-2 text-xs text-slate-400 bg-slate-950/60 px-4 py-2 rounded-xl border border-slate-800">
-            <span>Target User ID:</span>
-            <code className="text-cyan-400 font-mono text-[11px]">{selectedUser.id}</code>
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => setPenaltyModalOpen(true)}
+              className="flex items-center space-x-2 px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold transition-all shadow-sm shadow-amber-500/10"
+            >
+              <Wine className="w-4 h-4 text-amber-400" />
+              <span>Adjust Penalties</span>
+            </button>
+
+            <div className="hidden sm:flex items-center space-x-2 text-xs text-slate-400 bg-slate-950/60 px-4 py-2 rounded-xl border border-slate-800">
+              <span>Target User ID:</span>
+              <code className="text-cyan-400 font-mono text-[11px]">{selectedUser.id}</code>
+            </div>
           </div>
         )}
       </div>
+
+      {/* Admin Penalty Adjustment Modal */}
+      {selectedUser && (
+        <AdminPenaltyModal
+          isOpen={penaltyModalOpen}
+          onClose={() => setPenaltyModalOpen(false)}
+          memberId={selectedUser.id}
+          memberEmail={selectedUser.email}
+          poolId={poolId}
+          onPenaltyAdjusted={() => {
+            fetchAuditLogs();
+          }}
+        />
+      )}
 
       {/* User Matchup Slate */}
       {loadingPicks ? (

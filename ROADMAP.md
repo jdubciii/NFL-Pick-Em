@@ -42,10 +42,10 @@
 - [✅] **6.3 Randomized Pick Distribution:** Programmatically generate mock picks for all users across the seeded games.
 - [✅] **6.4 Leaderboard Population:** Execute the scoring engine against the seeded data to finalize results and generate the standings.
 
-## Phase 7: Cumulative Stats & Penalty Engine [🏃]
+## Phase 7: Cumulative Stats & Penalty Engine [✅]
 *Objective: Introduce persistent season-long mechanics, weekly finalization pipelines, and Wall of Shame UI.*
-- [ ] **7.1 Schema Migrations:** Extend the database with `pool_member_stats`, `penalty_ledger`, and update `pool.settings`.
-- [ ] **7.2 Finalization Pipeline:** Build the cron-triggered logic to identify 1st place and Dead Place when a week concludes.
-- [ ] **7.3 API Expansion:** Implement endpoints for cumulative leaderboards and the manual admin penalty adjustment.
-- [ ] **7.4 Wall of Shame UI:** Build the frontend `CumulativeLeaderboardTable` and the `DeadPlaceWallOfShame` showcase.
-- [ ] **7.5 Admin Controls UI:** Create the `AdminPenaltyModal` allowing manual ledger overrides.
+- [✅] **7.1 Schema Migrations:** Extend the database with `pool_member_stats`, `penalty_ledger`, and update `pool.settings`.
+- [✅] **7.2 Finalization Pipeline:** Build the cron-triggered logic to identify 1st place and Dead Place when a week concludes.
+- [✅] **7.3 API Expansion:** Implement endpoints for cumulative leaderboards and the manual admin penalty adjustment.
+- [✅] **7.4 Wall of Shame UI:** Build the frontend `CumulativeLeaderboardTable` and the `DeadPlaceWallOfShame` showcase.
+- [✅] **7.5 Admin Controls UI:** Create the `AdminPenaltyModal` allowing manual ledger overrides.

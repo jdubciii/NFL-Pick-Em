@@ -6,6 +6,7 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './pages/Login';
 import { PicksPage } from './pages/PicksPage';
 import { LeaderboardPage } from './pages/LeaderboardPage';
+import { WallOfShamePage } from './pages/WallOfShamePage';
 import { AdminPage } from './pages/AdminPage';
 
 export const App: React.FC = () => {
@@ -24,6 +25,8 @@ export const App: React.FC = () => {
                 <Route path="/" element={<Navigate to="/picks" replace />} />
                 <Route path="/picks" element={<PicksPage />} />
                 <Route path="/leaderboard" element={<LeaderboardPage />} />
+                <Route path="/shame" element={<WallOfShamePage />} />
+                <Route path="/wall-of-shame" element={<WallOfShamePage />} />
               </Route>
 
               {/* Protected admin-only routes */}

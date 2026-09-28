@@ -24,29 +24,32 @@ enum GameStatus {
 }
 
 model User {
-  id             String           @id @default(uuid()) @db.Uuid
-  email          String           @unique
-  passwordHash   String           @map("password_hash")
-  role           Role             @default(USER)
-  createdAt      DateTime         @default(now()) @map("created_at")
-  pools          Pool[]           @relation("AdministeredPools")
-  memberships    PoolMembership[]
-  picks          Pick[]           @relation("UserPicks")
-  submittedPicks Pick[]           @relation("SubmittedPicks")
-  auditLogs      AuditLog[]       @relation("UserAuditLogs")
+  id               String           @id @default(uuid()) @db.Uuid
+  email            String           @unique
+  passwordHash     String           @map("password_hash")
+  role             Role             @default(USER)
+  createdAt        DateTime         @default(now()) @map("created_at")
+  pools            Pool[]           @relation("AdministeredPools")
+  memberships      PoolMembership[]
+  picks            Pick[]           @relation("UserPicks")
+  submittedPicks   Pick[]           @relation("SubmittedPicks")
+  auditLogs        AuditLog[]       @relation("UserAuditLogs")
+  createdPenalties PenaltyLedger[]  @relation("CreatedPenalties")
 
   @@map("users")
 }
 
 model Pool {
-  id          String           @id @default(uuid()) @db.Uuid
-  name        String
-  adminId     String           @map("admin_id") @db.Uuid
-  admin       User             @relation("AdministeredPools", fields: [adminId], references: [id])
-  settings    Json
-  status      Status           @default(ACTIVE)
-  memberships PoolMembership[]
-  picks       Pick[]
+  id            String           @id @default(uuid()) @db.Uuid
+  name          String
+  adminId       String           @map("admin_id") @db.Uuid
+  admin         User             @relation("AdministeredPools", fields: [adminId], references: [id])
+  settings      Json
+  status        Status           @default(ACTIVE)
+  memberships   PoolMembership[]
+  picks         Pick[]
+  memberStats   PoolMemberStat[]
+  penaltyLedger PenaltyLedger[]
 
   @@map("pools")
 }
@@ -58,6 +61,9 @@ model PoolMembership {
 
   pool Pool @relation(fields: [poolId], references: [id])
   user User @relation(fields: [userId], references: [id])
+
+  stat          PoolMemberStat?
+  penaltyLedger PenaltyLedger[]
 
   @@id([poolId, userId])
   @@map("pool_memberships")
@@ -119,4 +125,37 @@ model AuditLog {
   actor User @relation("UserAuditLogs", fields: [actorId], references: [id])
 
   @@map("audit_logs")
+}
+
+model PoolMemberStat {
+  poolId             String   @map("pool_id") @db.Uuid
+  userId             String   @map("user_id") @db.Uuid
+  totalShotsDrank    Int      @default(0) @map("total_shots_drank")
+  firstPlaceFinishes Int      @default(0) @map("first_place_finishes")
+  deadPlaceFinishes  Int      @default(0) @map("dead_place_finishes")
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at")
+
+  pool       Pool           @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  membership PoolMembership @relation(fields: [poolId, userId], references: [poolId, userId], onDelete: Cascade)
+
+  @@id([poolId, userId])
+  @@map("pool_member_stats")
+}
+
+model PenaltyLedger {
+  id          String   @id @default(uuid()) @db.Uuid
+  poolId      String   @map("pool_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  weekNumber  Int?     @map("week_number")
+  delta       Int
+  reason      String
+  createdById String   @map("created_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  pool       Pool           @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  membership PoolMembership @relation(fields: [poolId, userId], references: [poolId, userId], onDelete: Cascade)
+  createdBy  User           @relation("CreatedPenalties", fields: [createdById], references: [id])
+
+  @@index([poolId, userId])
+  @@map("penalty_ledger")
 }
