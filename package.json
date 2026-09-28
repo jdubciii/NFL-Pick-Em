@@ -14,9 +14,14 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "db:test": "tsx src/db/test.ts",
+    "db:seed": "tsx prisma/seed.ts",
+    "seed": "tsx prisma/seed.ts",
     "worker:sync": "tsx src/workers/syncWorker.ts",
     "client:dev": "npm --prefix client run dev",
     "client:build": "npm --prefix client run build"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   },
   "keywords": [
     "nfl",

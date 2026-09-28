@@ -1,16 +1,16 @@
 # tasks.md
 
-## Phase 5: Client UI Integration (Frontend)
+## Phase 6: League Simulation & Seed Data
 *Instructions: Copy and paste the blocks below one by one into your Antigravity IDE. Do not proceed to the next prompt until the IDE successfully completes the current one.*
 
-### Prompt 5.1: Auth & Navigation UI
-> "Initialize a new frontend application in a `client` directory using Vite with React and TypeScript. Install Tailwind CSS and set it up. Install `react-router-dom`. Create a global React Context for Authentication that stores the JWT and user role. Build a `Login` component that hits our `POST /api/auth/login` endpoint, and a responsive Navbar that only shows navigation links if the user is logged in. Route all unauthenticated users to the Login page."
+### Prompt 6.1: Mock User Generation
+> "Create a `prisma/seed.ts` file. Write a script that first clears out existing data (ignoring the primary admin user if possible, or recreating them). Then, generate 9 dummy users with mock emails and hashed passwords. Create a single 'Main League' Pool assigned to the admin, and insert `PoolMembership` records attaching all 9 dummy users and the admin to this pool."
 
-### Prompt 5.2: Weekly Slate & Picks UI
-> "Create a `WeeklyPicks` React component. Fetch the upcoming NFL games from our backend and render them as a list of visually distinct matchup cards using Tailwind CSS. For each card, display the Home and Away teams, and the kickoff time. Add interactive buttons for the user to select their predicted winner, which triggers a `POST` to `/api/picks`. Implement visual logic: if the current time is past the kickoff time minus the pool lock offset, disable the buttons and display a 'Locked' badge."
+### Prompt 6.2: Historical Game Seeding
+> "Update `prisma/seed.ts`. Create an array of 16 mock NFL games representing a past completed week. Hardcode their `status` to 'FINAL', set their `kickoff_time` to a date in the past, and assign random integers for `home_score` and `away_score`. Use a Prisma transaction or `createMany` to insert these games into the database. Save the returned game IDs in an array for the next step."
 
-### Prompt 5.3: Live Leaderboard & Penalty Tracker
-> "Create a `Leaderboard` React component. Fetch data from `GET /api/pools/:pool_id/leaderboard`. Render the results in a clean, modern data table sorted by total points descending. Check the `is_weekly_loser` boolean flag returned by the API; if it is true, apply a distinct red background to that user's row and add a 🚨 emoji or 'PENALTY' badge next to their name so the group's weekly loser is prominently shamed."
+### Prompt 6.3: Randomized Pick Distribution
+> "Extend the `prisma/seed.ts` script to simulate the weekly picks. Loop through every user in the pool (the 9 mock users + the admin). For each user, loop through the array of inserted game IDs. Randomly select either the `home_team_id` or `away_team_id` (or occasionally null to simulate an omitted pick) and create a `Pick` record. Ensure `submitted_by` matches the `user_id`."
 
-### Prompt 5.4: Admin Dashboard
-> "Create an `AdminDashboard` React component that is protected by a route checking if `user.role === 'ADMIN'`. Build a UI that fetches all users' picks for the current week. Provide a dropdown to select a user, and a set of override buttons to change their pick. When submitted, this should call our `PUT /api/admin/picks` endpoint. Add a toast notification indicating that the override was successful and the action was written to the audit log."
+### Prompt 6.4: Leaderboard Population
+> "Finally, update `prisma/seed.ts` to grade these picks so our leaderboard populates. Import the `gradeFinalizedGames(gameIds)` function from `src/services/scoringEngine.ts`. Pass the array of our seeded game IDs into this function at the very end of the seed script so it calculates points and writes the immutable `PickResult` records. Update `package.json` with a `\"seed\": \"ts-node prisma/seed.ts\"` script (or the exact tsx/vite-node equivalent you are using) and tell me the terminal command to run it."
