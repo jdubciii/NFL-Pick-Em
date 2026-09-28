@@ -1,16 +1,28 @@
 # tasks.md
 
-## Phase 6: League Simulation & Seed Data
-*Instructions: Copy and paste the blocks below one by one into your Antigravity IDE. Do not proceed to the next prompt until the IDE successfully completes the current one.*
+## Phase 7: Cumulative Stats & Penalty Engine
 
-### Prompt 6.1: Mock User Generation
-> "Create a `prisma/seed.ts` file. Write a script that first clears out existing data (ignoring the primary admin user if possible, or recreating them). Then, generate 9 dummy users with mock emails and hashed passwords. Create a single 'Main League' Pool assigned to the admin, and insert `PoolMembership` records attaching all 9 dummy users and the admin to this pool."
+### Prompt 7.1: Schema Migrations
+> "Update the `schema.prisma` file to add two new models: `PoolMemberStat` and `PenaltyLedger`. 
+> 1. `PoolMemberStat` must have `pool_id` and `member_id` as a composite primary key, linking to `Pool` and `PoolMembership`. Include integer fields `total_shots_drank`, `first_place_finishes`, and `dead_place_finishes` (default 0), and an `updated_at` timestamp.
+> 2. `PenaltyLedger` needs an `id` (UUID), relations to `Pool` and `PoolMembership`, `week_number` (Int, optional), `delta` (Int), `reason` (String), `created_by` (relation to User), and `created_at`.
+> Generate and run the Prisma migration. Finally, update our TypeScript interface for `PoolSettings` to include the new `penalties` configuration object."
 
-### Prompt 6.2: Historical Game Seeding
-> "Update `prisma/seed.ts`. Create an array of 16 mock NFL games representing a past completed week. Hardcode their `status` to 'FINAL', set their `kickoff_time` to a date in the past, and assign random integers for `home_score` and `away_score`. Use a Prisma transaction or `createMany` to insert these games into the database. Save the returned game IDs in an array for the next step."
+### Prompt 7.2: Finalization Pipeline
+> "Create a new service function `executeWeeklyWrapUp(poolId: string, weekNo: number)` in `src/services/weeklyWrapUp.ts`. It should use a Prisma transaction to: 
+> 1. Query all finalized `pick_results` for the given pool and week to calculate total scores.
+> 2. Identify the top scorer and increment their `first_place_finishes` in `PoolMemberStat`.
+> 3. Identify the lowest scorer (the 'Dead Place'). Create a `PenaltyLedger` record for them with a delta based on `pool.settings.penalties.dead_place_penalty` and reason 'WEEKLY_DEAD_PLACE'. 
+> 4. Increment their `dead_place_finishes`.
+> 5. Recalculate their `total_shots_drank` by summing their records in `PenaltyLedger`. Ensure ties are handled by assigning the penalty to all tied lowest scorers."
 
-### Prompt 6.3: Randomized Pick Distribution
-> "Extend the `prisma/seed.ts` script to simulate the weekly picks. Loop through every user in the pool (the 9 mock users + the admin). For each user, loop through the array of inserted game IDs. Randomly select either the `home_team_id` or `away_team_id` (or occasionally null to simulate an omitted pick) and create a `Pick` record. Ensure `submitted_by` matches the `user_id`."
+### Prompt 7.3: API Expansion
+> "Add two new API endpoints in `src/server.ts`:
+> 1. `GET /api/pools/:pool_id/leaderboard/cumulative`: Returns the joined `PoolMembership` and `PoolMemberStat` data, allowing sorting by shots, wins, or dead place finishes.
+> 2. `POST /api/pools/:pool_id/penalties/adjust`: Protected by `requireAdmin`. Accepts `member_id`, `delta` (integer), and `reason`. It must insert a new record into `PenaltyLedger` and then automatically trigger a recalculation of that user's `total_shots_drank` in `PoolMemberStat`."
 
-### Prompt 6.4: Leaderboard Population
-> "Finally, update `prisma/seed.ts` to grade these picks so our leaderboard populates. Import the `gradeFinalizedGames(gameIds)` function from `src/services/scoringEngine.ts`. Pass the array of our seeded game IDs into this function at the very end of the seed script so it calculates points and writes the immutable `PickResult` records. Update `package.json` with a `\"seed\": \"ts-node prisma/seed.ts\"` script (or the exact tsx/vite-node equivalent you are using) and tell me the terminal command to run it."
+### Prompt 7.4: Wall of Shame UI
+> "In the React frontend, create a new route and component `WallOfShame`. It should fetch the cumulative leaderboard data. Build a highly visual 'Dead Place Crown' banner pinning the user with the most `dead_place_finishes`. Below it, build a 'Shot Odometer' displaying the sum of all `total_shots_drank` in the pool. Finally, build a data table showing the season-long cumulative stats (Correct Picks %, 1st Place Finishes, Dead Place Finishes, Cumulative Shots)."
+
+### Prompt 7.5: Admin Controls UI
+> "Create a new React component `AdminPenaltyModal`. It should take a `member_id` as a prop and display a stepper/number input for the `delta` (allowing positive or negative integers) and a text input for the `reason`. On submit, call the `POST /api/pools/:pool_id/penalties/adjust` endpoint. Below the form, display a read-only list of that user's past `PenaltyLedger` entries so the admin can audit the history."
