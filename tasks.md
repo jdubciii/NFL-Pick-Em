@@ -1,16 +1,16 @@
 # tasks.md
 
-## Phase 2: External Data Ingestion (Sync Worker)
+## Phase 4: Scoring Engine & Leaderboard
 *Instructions: Copy and paste the blocks below one by one into your Antigravity IDE. Do not proceed to the next prompt until the IDE successfully completes the current one.*
 
-### Prompt 2.1: API Client Setup
-> "Create a `src/services/nflApiClient.ts` file. Define a TypeScript interface for our expected NFL Game Data (including external ID, home team, away team, kickoff time, status, and scores). Then, write a function that fetches the current week's NFL schedule and live scores. To keep things simple and free for our MVP, use the public ESPN NFL API endpoint (`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard`) and map its JSON response to our custom interface."
+### Prompt 4.1: Finalization Trigger
+> "Update the `src/workers/syncWorker.ts` file. When you are upserting games into the database, check if the incoming ESPN game status is 'FINAL' and the existing database status was NOT 'FINAL'. If a game just finished, collect its `game_id` into an array. After the upsert loop is complete, if there are newly finalized games, log 'Triggering scoring engine for games: [ids]' and pass them to a new, empty placeholder function called `gradeFinalizedGames(gameIds)` which we will build in the next step."
 
-### Prompt 2.2: The Sync Worker
-> "Install the `node-cron` package and its TypeScript types. Create a new file `src/workers/syncWorker.ts`. Set up a cron job that runs every 5 minutes. Inside this job, call the `nflApiClient` function we just created to fetch the latest NFL data. For this step, just log the fetched games to the console so we can verify the data is flowing properly before writing to the database."
+### Prompt 4.2: Scoring Execution
+> "Create a new file `src/services/scoringEngine.ts` and define the `gradeFinalizedGames(gameIds: string[])` function. For each `game_id`, query the `Game` to determine the winning team based on `home_score` and `away_score` (handle ties if applicable). Then, query all `Pick` records associated with this game. Iterate through them: if `selected_team_id` matches the winner, calculate `points_awarded` by extracting the win value from the related `Pool.settings` JSON (default to 1 point if undefined). If `selected_team_id` is null or incorrect, `points_awarded` is 0."
 
-### Prompt 2.3: Upsert Logic
-> "Update `src/workers/syncWorker.ts` to save the fetched ESPN data into our PostgreSQL database using Prisma. Iterate over the fetched games and use Prisma's `upsert` method on the `Game` model, matching on the `external_game_id`. If the game doesn't exist, `create` it. If it does exist, `update` the `status`, `home_score`, `away_score`, and `kickoff_time`. Ensure this logic accurately translates the ESPN game status into our database Enums (SCHEDULED, IN_PROGRESS, FINAL)."
+### Prompt 4.3: Immutability Enforcement
+> "Update the `gradeFinalizedGames` function in `src/services/scoringEngine.ts` to commit the graded results to the database. For each graded pick, use Prisma to create a record in the `PickResult` table with `is_correct`, `points_awarded`, and `finalized_at = new Date()`. To ensure strict immutability and prevent double-scoring, write a Prisma query at the top of the loop that skips any `pick_id` that already has an existing record in the `PickResult` table."
 
-### Prompt 2.4: Fallback Handling
-> "Wrap the main logic inside `src/workers/syncWorker.ts` in a robust `try/catch` block. If the ESPN API fails, times out, or returns invalid data, catch the error, log a clear warning to the console ('NFL API Sync Failed, skipping cycle to preserve local state'), and exit the current worker cycle gracefully without crashing the Node process. Finally, add a script in `package.json` to start this worker, and provide me with the terminal command to run it."
+### Prompt 4.4: Leaderboard Aggregation
+> "In `src/server.ts`, create a new endpoint `GET /api/pools/:pool_id/leaderboard` protected by the `requireAuth` middleware. Write a query that fetches all users in the pool and sums up their `points_awarded` from the `PickResult` table. Sort the response array descending by total points to create the leaderboard. Finally, calculate the user with the absolute lowest score and append a boolean flag `is_weekly_loser: true` to their object so the frontend can easily highlight them for the penalty. Return this leaderboard as JSON."

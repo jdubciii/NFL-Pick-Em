@@ -1,6 +1,8 @@
 import cron, { ScheduledTask } from 'node-cron';
+import { GameStatus } from '@prisma/client';
 import prisma from '../db/client';
 import { fetchCurrentWeekNFLGames, NFLGameData } from '../services/nflApiClient';
+import { gradeFinalizedGames } from '../services/scoringEngine';
 
 /**
  * Upserts a single NFL game into PostgreSQL using Prisma.
@@ -32,6 +34,7 @@ export async function upsertGame(game: NFLGameData) {
  * Executes a sync cycle to fetch NFL game data and upsert into the database.
  * Wrapped in a robust try/catch block to handle API timeouts, network failures,
  * or invalid data gracefully without terminating the worker process.
+ * Tracks game finalization transitions to trigger the scoring engine.
  */
 export async function runSync(): Promise<void> {
   const timestamp = new Date().toISOString();
@@ -47,13 +50,33 @@ export async function runSync(): Promise<void> {
 
     console.log(`[${timestamp}] Fetched ${games.length} games from ESPN. Upserting into database...`);
 
+    const newlyFinalizedGameIds: string[] = [];
     let upsertedCount = 0;
+
     for (const game of games) {
-      await upsertGame(game);
+      // Check existing database state to detect status transitions to FINAL
+      const existingGame = await prisma.game.findUnique({
+        where: { externalGameId: game.externalGameId },
+      });
+
+      const wasAlreadyFinal = existingGame?.status === GameStatus.FINAL;
+      const isNowFinal = game.status === GameStatus.FINAL;
+
+      const savedGame = await upsertGame(game);
       upsertedCount++;
+
+      if (isNowFinal && !wasAlreadyFinal) {
+        newlyFinalizedGameIds.push(savedGame.id);
+      }
     }
 
     console.log(`[${timestamp}] Successfully upserted ${upsertedCount} games into database.`);
+
+    // Trigger scoring engine for newly completed games
+    if (newlyFinalizedGameIds.length > 0) {
+      console.log(`Triggering scoring engine for games: [${newlyFinalizedGameIds.join(', ')}]`);
+      await gradeFinalizedGames(newlyFinalizedGameIds);
+    }
   } catch (error) {
     console.warn(
       `[${new Date().toISOString()}] NFL API Sync Failed, skipping cycle to preserve local state:`,
