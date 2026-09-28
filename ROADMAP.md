@@ -52,7 +52,7 @@
 
 ## Phase 8: Square Sheet Matrix & Precision Tiebreaker Engine
 *Objective: Implement the interactive square sheet matrix, Decimal(5,2) precision penalty splitting, tiebreaker engine, and anti-peeking security.*
-- [ ] **8.1 Precision Schema Migrations:** Update `schema.prisma` with `Decimal(5,2)` for `total_shots_drank`, `delta`, and add `WeeklySubmission` model.
+- [✅] **8.1 Precision Schema Migrations:** Update `schema.prisma` with `Decimal(5,2)` for `total_shots_drank`, `delta`, and add `WeeklySubmission` model.
 - [ ] **8.2 Precision Tiebreaker Pipeline:** Integrate tiebreaker predictions, absolute distance scoring, and split decimal penalty calculations in `executeWeeklyWrapUp`.
 - [ ] **8.3 Matrix API Endpoint:** Build `GET /api/pools/:pool_id/matrix` returning nested 2D game/member grid and summary metadata.
 - [ ] **8.4 Anti-Peeking Security Layer:** Mask competitor picks prior to kickoff unless the user is an admin or the game has started.

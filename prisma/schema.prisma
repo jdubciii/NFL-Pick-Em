@@ -34,22 +34,24 @@ model User {
   picks            Pick[]           @relation("UserPicks")
   submittedPicks   Pick[]           @relation("SubmittedPicks")
   auditLogs        AuditLog[]       @relation("UserAuditLogs")
-  createdPenalties PenaltyLedger[]  @relation("CreatedPenalties")
+  createdPenalties   PenaltyLedger[]    @relation("CreatedPenalties")
+  weeklySubmissions  WeeklySubmission[]
 
   @@map("users")
 }
 
 model Pool {
-  id            String           @id @default(uuid()) @db.Uuid
-  name          String
-  adminId       String           @map("admin_id") @db.Uuid
-  admin         User             @relation("AdministeredPools", fields: [adminId], references: [id])
-  settings      Json
-  status        Status           @default(ACTIVE)
-  memberships   PoolMembership[]
-  picks         Pick[]
-  memberStats   PoolMemberStat[]
-  penaltyLedger PenaltyLedger[]
+  id                String             @id @default(uuid()) @db.Uuid
+  name              String
+  adminId           String             @map("admin_id") @db.Uuid
+  admin             User               @relation("AdministeredPools", fields: [adminId], references: [id])
+  settings          Json
+  status            Status             @default(ACTIVE)
+  memberships       PoolMembership[]
+  picks             Pick[]
+  memberStats       PoolMemberStat[]
+  penaltyLedger     PenaltyLedger[]
+  weeklySubmissions WeeklySubmission[]
 
   @@map("pools")
 }
@@ -62,8 +64,9 @@ model PoolMembership {
   pool Pool @relation(fields: [poolId], references: [id])
   user User @relation(fields: [userId], references: [id])
 
-  stat          PoolMemberStat?
-  penaltyLedger PenaltyLedger[]
+  stat              PoolMemberStat?
+  penaltyLedger     PenaltyLedger[]
+  weeklySubmissions WeeklySubmission[]
 
   @@id([poolId, userId])
   @@map("pool_memberships")
@@ -130,7 +133,7 @@ model AuditLog {
 model PoolMemberStat {
   poolId             String   @map("pool_id") @db.Uuid
   userId             String   @map("user_id") @db.Uuid
-  totalShotsDrank    Int      @default(0) @map("total_shots_drank")
+  totalShotsDrank    Decimal  @default(0.00) @map("total_shots_drank") @db.Decimal(5, 2)
   firstPlaceFinishes Int      @default(0) @map("first_place_finishes")
   deadPlaceFinishes  Int      @default(0) @map("dead_place_finishes")
   updatedAt          DateTime @default(now()) @updatedAt @map("updated_at")
@@ -147,7 +150,7 @@ model PenaltyLedger {
   poolId      String   @map("pool_id") @db.Uuid
   userId      String   @map("user_id") @db.Uuid
   weekNumber  Int?     @map("week_number")
-  delta       Int
+  delta       Decimal  @map("delta") @db.Decimal(5, 2)
   reason      String
   createdById String   @map("created_by") @db.Uuid
   createdAt   DateTime @default(now()) @map("created_at")
@@ -159,3 +162,20 @@ model PenaltyLedger {
   @@index([poolId, userId])
   @@map("penalty_ledger")
 }
+
+model WeeklySubmission {
+  id                   String   @id @default(uuid()) @db.Uuid
+  poolId               String   @map("pool_id") @db.Uuid
+  userId               String   @map("user_id") @db.Uuid
+  weekNumber           Int      @map("week_number")
+  tieBreakerPrediction Decimal? @map("tie_breaker_prediction") @db.Decimal(5, 2)
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  pool       Pool           @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  membership PoolMembership @relation(fields: [poolId, userId], references: [poolId, userId], onDelete: Cascade)
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([poolId, userId, weekNumber])
+  @@map("weekly_submissions")
+}
+
