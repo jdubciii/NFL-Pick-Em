@@ -13,7 +13,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "db:test": "tsx src/db/test.ts"
+    "db:test": "tsx src/db/test.ts",
+    "worker:sync": "tsx src/workers/syncWorker.ts"
   },
   "keywords": [
     "nfl",
@@ -26,10 +27,12 @@
   "license": "ISC",
   "dependencies": {
     "@prisma/client": "^5.22.0",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "node-cron": "^4.6.0"
   },
   "devDependencies": {
     "@types/node": "^20.17.10",
+    "@types/node-cron": "^3.0.11",
     "prisma": "^5.22.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
