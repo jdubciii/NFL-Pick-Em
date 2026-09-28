@@ -57,3 +57,22 @@
 - [✅] **8.3 Matrix API Endpoint:** Build `GET /api/pools/:pool_id/matrix` returning nested 2D game/member grid and summary metadata.
 - [✅] **8.4 Anti-Peeking Security Layer:** Mask competitor picks prior to kickoff unless the user is an admin or the game has started.
 - [✅] **8.5 LeagueMatrixView UI:** Build the spreadsheet-style responsive matrix component with sticky headers, masked locks, and summary footers.
+
+## Phase 9: Rule Engine Expansions & Dispatch (Data & Visibility Layer) [🏃]
+*Objective: Implement dual-mode slate visibility with draft/final lifecycle states and excluded game logic.*
+- [ ] **9.1 Schema & Settings Migrations:** Update `WeeklySubmission`, `Game`, and `pool.settings` schemas.
+- [ ] **9.2 Dual-Mode API Middleware:** Upgrade the Matrix API to handle Draft vs. Final visibility modes.
+- [ ] **9.3 Scoring Exclusion Pipeline:** Update the grading engine to skip `excludedGameWindows`.
+- [ ] **9.4 Matrix Dispatch:** Add `@media print` CSS targets and plaintext clipboard generation to the Matrix UI.
+
+## Phase 10: Shot-Cam Penalty Portal (Storage Infrastructure) [ ]
+*Objective: Provision secure media storage for penalty evidence with RLS policies and admin confirmation workflows.*
+- [ ] **10.1 Supabase Storage & RLS:** Configure the `penalty-media` bucket and row-level security.
+- [ ] **10.2 Media CRUD API:** Build endpoints for upload registration and status confirmation.
+- [ ] **10.3 PenaltyLedgerView UI:** Implement client-side compression and upload UI with "Shot Confirmed" status chips.
+
+## Phase 11: UX Accelerators & Social Presets (Presentation Layer) [ ]
+*Objective: Ship client-side snapshot auto-fill presets under strict immutable persistence constraints.*
+- [ ] **11.1 Gamified Viewport Selector:** Build toggles for Cards, Slate, and Matrix views.
+- [ ] **11.2 Standard Presets:** Build Home, Away, and Favorites deterministic auto-fills.
+- [ ] **11.3 Social Presets (Contrarian & Mirror):** Build conditional logic relying on Open Slate mode to analyze and clone competitor picks.

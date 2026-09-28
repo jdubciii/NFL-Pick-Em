@@ -48,7 +48,7 @@ The database serves as the absolute source of truth. All relations enforce stric
 - **id** (UUID, Primary Key)
 - **name** (String)
 - **admin_id** (UUID, Foreign Key -> `users.id`)
-- **settings** (JSONB) - Stores point weights, dynamic lock offsets, penalty configs, tiebreaker rules, and anti-peeking privacy settings.
+- **settings** (JSONB) - Stores point weights, dynamic lock offsets, penalty configs, tiebreaker rules, and anti-peeking/visibility configs.
 - **status** (Enum: `ACTIVE`, `INACTIVE`)
 
 #### `pool_memberships`
@@ -66,6 +66,7 @@ The database serves as the absolute source of truth. All relations enforce stric
 - **status** (Enum: `SCHEDULED`, `IN_PROGRESS`, `FINAL`)
 - **home_score** (Int, Nullable)
 - **away_score** (Int, Nullable)
+- **commissioner_notes** (String, Nullable) - Admin-curated matchup notes/context.
 
 #### `picks`
 - **id** (UUID, Primary Key)
@@ -114,19 +115,35 @@ The database serves as the absolute source of truth. All relations enforce stric
 - **created_at** (Timestamp)
 - *Index*: `(pool_id, user_id)`
 
-#### `weekly_submissions` (Tiebreaker & Matrix Submissions)
+#### `weekly_submissions` (Draft & Tiebreaker Tracker)
 - **id** (UUID, Primary Key)
 - **pool_id** (UUID, Foreign Key -> `pools.id`)
 - **user_id** (UUID, Foreign Key -> `users.id`)
 - **week_number** (Int)
 - **tie_breaker_prediction** (Decimal(5,2), Nullable) - User's predicted total points for the designated tiebreaker game.
+- **is_finalized** (Boolean, Default: `false`) - Tracks draft vs. locked pick state for visibility.
+- **created_at** (Timestamp)
+- **updated_at** (Timestamp)
 - *Constraint*: `UNIQUE(pool_id, user_id, week_number)`
+- *Index*: `(pool_id, week_number, is_finalized)`
+
+#### `penalty_media` (Shot-Cam Storage)
+- **id** (UUID, Primary Key)
+- **penalty_id** (UUID, Unique Foreign Key -> `penalty_ledger.id`)
+- **pool_id** (UUID, Foreign Key -> `pools.id`)
+- **user_id** (UUID, Foreign Key -> `users.id`)
+- **storage_path** (String) - Supabase bucket path.
+- **media_type** (String) - e.g., `'image/jpeg'`, `'video/mp4'`
+- **status** (Enum: `PENDING`, `CONFIRMED`, `REJECTED`)
+- **confirmed_by** (UUID, Nullable)
+- **created_at** (Timestamp)
+- *Index*: `(pool_id, user_id)`
 
 ### `pools.settings` JSON Schema Extension
 
 ```json
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "[http://json-schema.org/draft-07/schema#](http://json-schema.org/draft-07/schema#)",
   "type": "object",
   "properties": {
     "lock_offset": {
@@ -134,6 +151,15 @@ The database serves as the absolute source of truth. All relations enforce stric
       "minimum": 0,
       "default": 0,
       "description": "Lock offset threshold in minutes prior to kickoff"
+    },
+    "lockMode": {
+      "enum": ["ROLLING", "GLOBAL_FIRST_GAME"],
+      "default": "ROLLING"
+    },
+    "excludedGameWindows": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
     },
     "points_per_win": {
       "type": "number",
@@ -204,16 +230,19 @@ The database serves as the absolute source of truth. All relations enforce stric
 
 ### 3.1 Game Lock Lifecycle
 - **Pre-Game (`SCHEDULED`):** Picks can be created, updated, or deleted. The UI evaluates `games.kickoff_time` minus the pool's `lock_offset` (from `pools.settings`) to determine if the submission window is open.
-- **Lock Execution:** The backend API rejects any `POST` / `PUT` requests to the `picks` table where the current server time is greater than or equal to the calculated lock time. Granular locking is enforced per-game, never batched by week.
+- **Lock Execution:** The backend API rejects any `POST` / `PUT` requests to the `picks` table where the current server time is greater than or equal to the calculated lock time. 
+  - If `lockMode === 'ROLLING'`, granular locking is enforced per-game.
+  - If `lockMode === 'GLOBAL_FIRST_GAME'`, submittals across all weekly games are rejected after the week's first kickoff.
 - **In-Progress (`IN_PROGRESS`):** External API sync worker updates live scores periodically. UI can display live projections, but official scores are not written.
 
 ### 3.2 Scoring Finalization Lifecycle
 1. The External API reports a game as complete.
 2. The Sync Worker updates the `games` table: `status = 'FINAL'`, setting final `home_score` and `away_score`.
 3. The Backend Scoring Engine is triggered.
-4. The Engine evaluates all picks for that `game_id` (unsubmitted or `NULL` picks resolve gracefully to 0 points).
-5. The Engine calculates points based on `pools.settings` and writes records with `Decimal(5,2)` precision to the `pick_results` table.
-6. **Immutability:** Once a `pick_result` is written, it is static. Historical scores are read directly from `pick_results`.
+4. **Scoring Exclusion Pipeline:** The engine checks `pools.settings.excludedGameWindows`. Any game falling within an excluded window (e.g., `THURSDAY_NIGHT`) is skipped and zero points are allocated.
+5. The Engine evaluates all picks for that `game_id` (unsubmitted or `NULL` picks resolve gracefully to 0 points).
+6. The Engine calculates points based on `pools.settings` and writes records with `Decimal(5,2)` precision to the `pick_results` table.
+7. **Immutability:** Once a `pick_result` is written, it is static. Historical scores are read directly from `pick_results`.
 
 ### 3.3 Weekly Finalization Pipeline & Tiebreaker Engine
 - **Trigger Condition:** Executes when all scheduled games for `week_no` have `status = 'FINAL'`.
@@ -238,18 +267,26 @@ If the External NFL API goes offline, the Sync Worker logs a failure but the app
 ## 4. API Specification & Data Masking
 
 ### Matrix Grid Endpoint (`GET /api/pools/:pool_id/matrix?week_no=X`)
-Generates a structured 2D array representation of the week for spreadsheet-style UI rendering.
+Generates a structured 2D array representation of the week for UI rendering. Payload maps directly to rows (games), columns (users), and cells (the intersection pick). 
 
-#### Server-Side Anti-Peeking Enforcement
-Before payload serialization, the engine evaluates every pick cell:
-- **Condition:** If `hide_picks_until_kickoff == true` AND `game.kickoff_time > NOW()` AND `pick.member_id != requesting_user_member_id` AND `requesting_user.role != 'ADMIN'`:
-  - The pick's `selected_team_id` is mutated to `null`.
-  - A boolean flag `is_masked: true` is appended to the pick cell.
-- **Revealed Pick:** Otherwise, `selected_team_id` is retained and `is_masked: false` is returned.
+#### Dual-Mode Visibility & Anti-Peeking Rules
+The Matrix API enforces strict data masking based on `pools.settings`:
+
+- **Mode A (Strict/Hidden):** If `hide_picks_until_kickoff == true`, any pick where `game.kickoff_time > NOW()` belonging to another user (`requesting_user_id != target_user_id` and `role != 'ADMIN'`) is redacted. The pick's `selected_team_id` is mutated to `null` and a flag `is_masked: true` is appended.
+- **Mode B (Open Slate):** If `hide_picks_until_kickoff == false`, picks are redacted ONLY if the opponent's `WeeklySubmission.is_finalized == false` (still a draft). Once a user finalizes their sheet (`is_finalized == true`), their picks become instantly exposed via `selected_team_id` to all pool members regardless of kickoff time.
 
 ---
 
-## 5. Audit & Compliance Implementation Details
+## 5. Client-Side Determinism (The Snapshot Rule)
+
+All UI Presets (`Contrarian`, `Mirror Rival`, `Favorites`, `Home/Away`) operate strictly in the browser.
+- **Execution:** They compute purely as point-in-time form auto-fills in the browser.
+- **No Binding:** Zero late-binding server synchronizations or relational bindings. User A mirroring User B on Tuesday creates static pick records. Subsequent mutations by User B prior to lock do not auto-propagate to User A.
+- **Conditional Rules:** `Contrarian` and `Mirror Rival` presets are only enabled on the frontend when `hide_picks_until_kickoff === false`.
+
+---
+
+## 6. Audit & Compliance Implementation Details
 
 - **Server-Side Enforcement:** Client-side validation is strictly advisory. The backend re-verifies all timestamps, roles, and ownership before committing transactions.
 - **Admin Mutation Tracking:** If a pick is created or modified by an Admin overriding on behalf of a user, the `submitted_by` column on the `picks` table permanently records the Admin's ID.
