@@ -1,0 +1,122 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum Status {
+  ACTIVE
+  INACTIVE
+}
+
+enum GameStatus {
+  SCHEDULED
+  IN_PROGRESS
+  FINAL
+}
+
+model User {
+  id             String           @id @default(uuid()) @db.Uuid
+  email          String           @unique
+  passwordHash   String           @map("password_hash")
+  role           Role             @default(USER)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  pools          Pool[]           @relation("AdministeredPools")
+  memberships    PoolMembership[]
+  picks          Pick[]           @relation("UserPicks")
+  submittedPicks Pick[]           @relation("SubmittedPicks")
+  auditLogs      AuditLog[]       @relation("UserAuditLogs")
+
+  @@map("users")
+}
+
+model Pool {
+  id          String           @id @default(uuid()) @db.Uuid
+  name        String
+  adminId     String           @map("admin_id") @db.Uuid
+  admin       User             @relation("AdministeredPools", fields: [adminId], references: [id])
+  settings    Json
+  status      Status           @default(ACTIVE)
+  memberships PoolMembership[]
+  picks       Pick[]
+
+  @@map("pools")
+}
+
+model PoolMembership {
+  poolId String @map("pool_id") @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  status Status @default(ACTIVE)
+
+  pool Pool @relation(fields: [poolId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@id([poolId, userId])
+  @@map("pool_memberships")
+}
+
+model Game {
+  id             String     @id @default(uuid()) @db.Uuid
+  externalGameId String     @unique @map("external_game_id")
+  homeTeamId     String     @map("home_team_id")
+  awayTeamId     String     @map("away_team_id")
+  kickoffTime    DateTime   @map("kickoff_time")
+  status         GameStatus @default(SCHEDULED)
+  homeScore      Int?       @map("home_score")
+  awayScore      Int?       @map("away_score")
+  picks          Pick[]
+
+  @@map("games")
+}
+
+model Pick {
+  id             String      @id @default(uuid()) @db.Uuid
+  poolId         String      @map("pool_id") @db.Uuid
+  userId         String      @map("user_id") @db.Uuid
+  gameId         String      @map("game_id") @db.Uuid
+  selectedTeamId String?     @map("selected_team_id")
+  submittedById  String      @map("submitted_by") @db.Uuid
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  pool        Pool        @relation(fields: [poolId], references: [id])
+  user        User        @relation("UserPicks", fields: [userId], references: [id])
+  game        Game        @relation(fields: [gameId], references: [id])
+  submittedBy User        @relation("SubmittedPicks", fields: [submittedById], references: [id])
+  result      PickResult?
+
+  @@unique([poolId, userId, gameId])
+  @@map("picks")
+}
+
+model PickResult {
+  pickId        String   @id @map("pick_id") @db.Uuid
+  isCorrect     Boolean  @map("is_correct")
+  pointsAwarded Decimal  @map("points_awarded") @db.Decimal(10, 2)
+  finalizedAt   DateTime @default(now()) @map("finalized_at")
+
+  pick Pick @relation(fields: [pickId], references: [id], onDelete: Cascade)
+
+  @@map("pick_results")
+}
+
+model AuditLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  actorId        String   @map("actor_id") @db.Uuid
+  action         String
+  targetEntityId String   @map("target_entity_id")
+  oldValue       Json?    @map("old_value")
+  newValue       Json?    @map("new_value")
+  timestamp      DateTime @default(now())
+
+  actor User @relation("UserAuditLogs", fields: [actorId], references: [id])
+
+  @@map("audit_logs")
+}
