@@ -105,7 +105,7 @@ model Pick {
 model PickResult {
   pickId        String   @id @map("pick_id") @db.Uuid
   isCorrect     Boolean  @map("is_correct")
-  pointsAwarded Decimal  @map("points_awarded") @db.Decimal(10, 2)
+  pointsAwarded Decimal  @map("points_awarded") @db.Decimal(5, 2)
   finalizedAt   DateTime @default(now()) @map("finalized_at")
 
   pick Pick @relation(fields: [pickId], references: [id], onDelete: Cascade)

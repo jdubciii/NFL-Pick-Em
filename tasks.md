@@ -1,28 +1,19 @@
 # tasks.md
 
-## Phase 7: Cumulative Stats & Penalty Engine
+## Phase 8: Square Sheet Matrix & Precision Tiebreaker Engine
+*Instructions: Copy and paste the blocks below one by one into your Antigravity IDE. Do not proceed to the next prompt until the IDE successfully completes the current one.*
 
-### Prompt 7.1: Schema Migrations
-> "Update the `schema.prisma` file to add two new models: `PoolMemberStat` and `PenaltyLedger`. 
-> 1. `PoolMemberStat` must have `pool_id` and `member_id` as a composite primary key, linking to `Pool` and `PoolMembership`. Include integer fields `total_shots_drank`, `first_place_finishes`, and `dead_place_finishes` (default 0), and an `updated_at` timestamp.
-> 2. `PenaltyLedger` needs an `id` (UUID), relations to `Pool` and `PoolMembership`, `week_number` (Int, optional), `delta` (Int), `reason` (String), `created_by` (relation to User), and `created_at`.
-> Generate and run the Prisma migration. Finally, update our TypeScript interface for `PoolSettings` to include the new `penalties` configuration object."
+### Prompt 8.1: Precision Schema Migrations
+> "Update the `schema.prisma` file. Change `total_shots_drank` in `PoolMemberStat` and `delta` in `PenaltyLedger` from `Int` to `Decimal` with a scale of 2. Add a new model called `WeeklySubmission` with `id`, `pool_id`, `member_id`, `week_number`, and `tie_breaker_prediction` (Decimal, nullable). Enforce a unique constraint on `[pool_id, member_id, week_number]`. Update the TypeScript interfaces for `PoolSettings` to include the new `tiebreaker`, `picking_mode`, and `hide_picks_until_kickoff` properties as defined in our spec. Generate and apply the Prisma migration."
 
-### Prompt 7.2: Finalization Pipeline
-> "Create a new service function `executeWeeklyWrapUp(poolId: string, weekNo: number)` in `src/services/weeklyWrapUp.ts`. It should use a Prisma transaction to: 
-> 1. Query all finalized `pick_results` for the given pool and week to calculate total scores.
-> 2. Identify the top scorer and increment their `first_place_finishes` in `PoolMemberStat`.
-> 3. Identify the lowest scorer (the 'Dead Place'). Create a `PenaltyLedger` record for them with a delta based on `pool.settings.penalties.dead_place_penalty` and reason 'WEEKLY_DEAD_PLACE'. 
-> 4. Increment their `dead_place_finishes`.
-> 5. Recalculate their `total_shots_drank` by summing their records in `PenaltyLedger`. Ensure ties are handled by assigning the penalty to all tied lowest scorers."
+### Prompt 8.2: Precision Tiebreaker Pipeline
+> "Update the `executeWeeklyWrapUp` function in `src/services/weeklyWrapUp.ts`. After calculating weekly scores, find the target tiebreaker game based on `settings.tiebreaker.game_target` and calculate its actual total score. Query `WeeklySubmission` to get everyone's `tie_breaker_prediction`. Sort the users first by points (DESC) and then by absolute distance to the tiebreaker total (ASC). If there is a tie for dead place, divide the `settings.penalties.dead_place_penalty` by the number of tied users to get a `split_penalty` decimal, and write that exact decimal to the `PenaltyLedger`."
 
-### Prompt 7.3: API Expansion
-> "Add two new API endpoints in `src/server.ts`:
-> 1. `GET /api/pools/:pool_id/leaderboard/cumulative`: Returns the joined `PoolMembership` and `PoolMemberStat` data, allowing sorting by shots, wins, or dead place finishes.
-> 2. `POST /api/pools/:pool_id/penalties/adjust`: Protected by `requireAdmin`. Accepts `member_id`, `delta` (integer), and `reason`. It must insert a new record into `PenaltyLedger` and then automatically trigger a recalculation of that user's `total_shots_drank` in `PoolMemberStat`."
+### Prompt 8.3: Matrix API Endpoint
+> "Create a new route `GET /api/pools/:pool_id/matrix` protected by `requireAuth`. Build a response payload that structured exactly like our spec: an object containing `metadata` (week, picking_mode), `columns` (array of members), `rows` (array of games with spread and kickoff times), a 2D map `cells` nested by `game_id` and then `member_id`, and a `summary` object containing each member's weekly wins, tiebreaker guess, and cumulative shots. Do not return flat arrays; format it specifically as this nested map for O(1) frontend rendering."
 
-### Prompt 7.4: Wall of Shame UI
-> "In the React frontend, create a new route and component `WallOfShame`. It should fetch the cumulative leaderboard data. Build a highly visual 'Dead Place Crown' banner pinning the user with the most `dead_place_finishes`. Below it, build a 'Shot Odometer' displaying the sum of all `total_shots_drank` in the pool. Finally, build a data table showing the season-long cumulative stats (Correct Picks %, 1st Place Finishes, Dead Place Finishes, Cumulative Shots)."
+### Prompt 8.4: Anti-Peeking Middleware
+> "Inside the new `GET /api/pools/:pool_id/matrix` endpoint, implement the anti-peeking security layer before sending the response. Iterate through every pick in the `cells` map. Check the pool's `hide_picks_until_kickoff` setting. If true, evaluate `game.kickoff_time`. If the game hasn't started yet, AND the pick belongs to a member other than the requesting user, AND the user is not an ADMIN: overwrite `selected_team_id` to `null` and set `is_masked: true`. Otherwise, set `is_masked: false`."
 
-### Prompt 7.5: Admin Controls UI
-> "Create a new React component `AdminPenaltyModal`. It should take a `member_id` as a prop and display a stepper/number input for the `delta` (allowing positive or negative integers) and a text input for the `reason`. On submit, call the `POST /api/pools/:pool_id/penalties/adjust` endpoint. Below the form, display a read-only list of that user's past `PenaltyLedger` entries so the admin can audit the history."
+### Prompt 8.5: LeagueMatrixView UI
+> "In the React frontend, create `LeagueMatrixView.tsx`. Use standard HTML `<table>` or CSS Grid to build a spreadsheet layout. The Y-axis (rows) should be the NFL games. The X-axis (columns) should be the members. Implement sticky positioning so the member names and game matchups stay visible when scrolling. For the cells: if `is_masked` is true, render a lock icon. If the game is 'FINAL', apply a light green background if `is_correct` is true, or light red if false. At the bottom, render summary footer rows displaying the Tiebreaker Guess, Weekly Wins, and Cumulative Shots (formatted to 2 decimals)."
