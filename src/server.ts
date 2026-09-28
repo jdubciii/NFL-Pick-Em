@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import express, { Request, Response } from 'express';
+import cors from 'cors';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import prisma from './db/client';
@@ -12,6 +13,7 @@ import { adminRouter } from './routes/admin';
 export const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.use(cors());
 app.use(express.json());
 
 // Routes
@@ -72,6 +74,88 @@ app.post('/api/auth/login', async (req: Request, res: Response): Promise<void> =
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'An unexpected error occurred during login.' });
+  }
+});
+
+/**
+ * GET /api/pools
+ * Returns all active pools.
+ */
+app.get('/api/pools', requireAuth, async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const pools = await prisma.pool.findMany({
+      where: { status: 'ACTIVE' },
+      orderBy: { name: 'asc' },
+    });
+    res.json(pools);
+  } catch (error) {
+    console.error('Error fetching pools:', error);
+    res.status(500).json({ error: 'Failed to fetch pools.' });
+  }
+});
+
+/**
+ * GET /api/games
+ * Returns upcoming and current week NFL games with the requesting user's pick status.
+ */
+app.get('/api/games', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const userId = req.user!.id;
+  const poolId = req.query.pool_id ? String(req.query.pool_id) : undefined;
+
+  try {
+    let pool = poolId
+      ? await prisma.pool.findUnique({ where: { id: poolId } })
+      : await prisma.pool.findFirst({ where: { status: 'ACTIVE' } });
+
+    if (!pool) {
+      pool = await prisma.pool.create({
+        data: {
+          name: 'Main NFL Pick \'Em Pool',
+          adminId: userId,
+          settings: { lock_offset: 0, points_per_win: 1 },
+          status: 'ACTIVE',
+        },
+      });
+    }
+
+    const games = await prisma.game.findMany({
+      orderBy: { kickoffTime: 'asc' },
+      include: {
+        picks: {
+          where: {
+            userId: userId,
+            poolId: pool.id,
+          },
+        },
+      },
+    });
+
+    const settings = (pool.settings as any) || {};
+    const lockOffset = Number(settings.lock_offset ?? settings.lockOffset ?? 0);
+
+    res.json({
+      pool: {
+        id: pool.id,
+        name: pool.name,
+        lock_offset: lockOffset,
+        settings: pool.settings,
+      },
+      games: games.map((game) => ({
+        id: game.id,
+        externalGameId: game.externalGameId,
+        homeTeamId: game.homeTeamId,
+        awayTeamId: game.awayTeamId,
+        kickoffTime: game.kickoffTime,
+        status: game.status,
+        homeScore: game.homeScore,
+        awayScore: game.awayScore,
+        userPick: game.picks[0]?.selectedTeamId ?? null,
+        pickId: game.picks[0]?.id ?? null,
+      })),
+    });
+  } catch (error) {
+    console.error('Error fetching games:', error);
+    res.status(500).json({ error: 'Failed to fetch NFL games.' });
   }
 });
 

@@ -1,16 +1,16 @@
 # tasks.md
 
-## Phase 4: Scoring Engine & Leaderboard
+## Phase 5: Client UI Integration (Frontend)
 *Instructions: Copy and paste the blocks below one by one into your Antigravity IDE. Do not proceed to the next prompt until the IDE successfully completes the current one.*
 
-### Prompt 4.1: Finalization Trigger
-> "Update the `src/workers/syncWorker.ts` file. When you are upserting games into the database, check if the incoming ESPN game status is 'FINAL' and the existing database status was NOT 'FINAL'. If a game just finished, collect its `game_id` into an array. After the upsert loop is complete, if there are newly finalized games, log 'Triggering scoring engine for games: [ids]' and pass them to a new, empty placeholder function called `gradeFinalizedGames(gameIds)` which we will build in the next step."
+### Prompt 5.1: Auth & Navigation UI
+> "Initialize a new frontend application in a `client` directory using Vite with React and TypeScript. Install Tailwind CSS and set it up. Install `react-router-dom`. Create a global React Context for Authentication that stores the JWT and user role. Build a `Login` component that hits our `POST /api/auth/login` endpoint, and a responsive Navbar that only shows navigation links if the user is logged in. Route all unauthenticated users to the Login page."
 
-### Prompt 4.2: Scoring Execution
-> "Create a new file `src/services/scoringEngine.ts` and define the `gradeFinalizedGames(gameIds: string[])` function. For each `game_id`, query the `Game` to determine the winning team based on `home_score` and `away_score` (handle ties if applicable). Then, query all `Pick` records associated with this game. Iterate through them: if `selected_team_id` matches the winner, calculate `points_awarded` by extracting the win value from the related `Pool.settings` JSON (default to 1 point if undefined). If `selected_team_id` is null or incorrect, `points_awarded` is 0."
+### Prompt 5.2: Weekly Slate & Picks UI
+> "Create a `WeeklyPicks` React component. Fetch the upcoming NFL games from our backend and render them as a list of visually distinct matchup cards using Tailwind CSS. For each card, display the Home and Away teams, and the kickoff time. Add interactive buttons for the user to select their predicted winner, which triggers a `POST` to `/api/picks`. Implement visual logic: if the current time is past the kickoff time minus the pool lock offset, disable the buttons and display a 'Locked' badge."
 
-### Prompt 4.3: Immutability Enforcement
-> "Update the `gradeFinalizedGames` function in `src/services/scoringEngine.ts` to commit the graded results to the database. For each graded pick, use Prisma to create a record in the `PickResult` table with `is_correct`, `points_awarded`, and `finalized_at = new Date()`. To ensure strict immutability and prevent double-scoring, write a Prisma query at the top of the loop that skips any `pick_id` that already has an existing record in the `PickResult` table."
+### Prompt 5.3: Live Leaderboard & Penalty Tracker
+> "Create a `Leaderboard` React component. Fetch data from `GET /api/pools/:pool_id/leaderboard`. Render the results in a clean, modern data table sorted by total points descending. Check the `is_weekly_loser` boolean flag returned by the API; if it is true, apply a distinct red background to that user's row and add a 🚨 emoji or 'PENALTY' badge next to their name so the group's weekly loser is prominently shamed."
 
-### Prompt 4.4: Leaderboard Aggregation
-> "In `src/server.ts`, create a new endpoint `GET /api/pools/:pool_id/leaderboard` protected by the `requireAuth` middleware. Write a query that fetches all users in the pool and sums up their `points_awarded` from the `PickResult` table. Sort the response array descending by total points to create the leaderboard. Finally, calculate the user with the absolute lowest score and append a boolean flag `is_weekly_loser: true` to their object so the frontend can easily highlight them for the penalty. Return this leaderboard as JSON."
+### Prompt 5.4: Admin Dashboard
+> "Create an `AdminDashboard` React component that is protected by a route checking if `user.role === 'ADMIN'`. Build a UI that fetches all users' picks for the current week. Provide a dropdown to select a user, and a set of override buttons to change their pick. When submitted, this should call our `PUT /api/admin/picks` endpoint. Add a toast notification indicating that the override was successful and the action was written to the audit log."

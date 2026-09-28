@@ -21,14 +21,14 @@
 - [✅] **3.3 Granular Locking Engine:** Implement the middleware/validation logic to reject pick mutations if `server_time >= (games.kickoff_time - pools.lock_offset)`.
 - [✅] **3.4 Admin Override & Audit Logging:** Enable Admin mutation of user picks and force append-only writes to `audit_logs` for these actions.
 
-## Phase 4: Scoring Engine & Leaderboard [🏃]
+## Phase 4: Scoring Engine & Leaderboard [✅]
 *Objective: Automate the resolution of completed games and calculate immutable standings.*
-- [ ] **4.1 Finalization Trigger:** Detect when a game's status changes to `FINAL` via the Sync Worker.
-- [ ] **4.2 Scoring Execution:** Write the logic to grade all `picks` for a finalized game against `pool.settings` (handling `NULL` as 0 points).
-- [ ] **4.3 Immutability Enforcement:** Commit results to the `pick_results` table permanently.
-- [ ] **4.4 Leaderboard Aggregation:** Create the optimized SQL queries/endpoints to sum `pick_results` for the live leaderboard and identify the weekly loser.
+- [✅] **4.1 Finalization Trigger:** Detect when a game's status changes to `FINAL` via the Sync Worker.
+- [✅] **4.2 Scoring Execution:** Write the logic to grade all `picks` for a finalized game against `pool.settings` (handling `NULL` as 0 points).
+- [✅] **4.3 Immutability Enforcement:** Commit results to the `pick_results` table permanently.
+- [✅] **4.4 Leaderboard Aggregation:** Create the optimized SQL queries/endpoints to sum `pick_results` for the live leaderboard and identify the weekly loser.
 
-## Phase 5: Client UI Integration (Frontend) [ ]
+## Phase 5: Client UI Integration (Frontend) [🏃]
 *Objective: Build the responsive web/mobile interface for users and admins.*
 - [ ] **5.1 Auth & Navigation UI:** Build login screens and secure routing.
 - [ ] **5.2 Weekly Slate & Picks UI:** Create the interface for users to browse upcoming games and submit picks before the visual lock countdown expires.

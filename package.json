@@ -14,7 +14,9 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "db:test": "tsx src/db/test.ts",
-    "worker:sync": "tsx src/workers/syncWorker.ts"
+    "worker:sync": "tsx src/workers/syncWorker.ts",
+    "client:dev": "npm --prefix client run dev",
+    "client:build": "npm --prefix client run build"
   },
   "keywords": [
     "nfl",
@@ -28,6 +30,7 @@
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
     "dotenv": "^16.4.7",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
@@ -35,6 +38,7 @@
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.17.10",
