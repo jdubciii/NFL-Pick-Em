@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Trophy, Shield, LogOut, Menu, X, CheckSquare, User as UserIcon, Skull } from 'lucide-react';
+import { Trophy, Shield, LogOut, Menu, X, CheckSquare, User as UserIcon, Skull, Grid } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
   const { user, logout, isAuthenticated, isAdmin } = useAuth();
@@ -16,6 +16,7 @@ export const Navbar: React.FC = () => {
 
   const navLinks = [
     { name: 'Weekly Picks', path: '/picks', icon: CheckSquare },
+    { name: 'Square Sheet', path: '/matrix', icon: Grid },
     { name: 'Leaderboard', path: '/leaderboard', icon: Trophy },
     { name: 'Wall of Shame', path: '/shame', icon: Skull },
     ...(isAdmin ? [{ name: 'Admin Console', path: '/admin', icon: Shield }] : []),

@@ -9,6 +9,15 @@ import prisma from './db/client';
 import { JWT_SECRET, requireAuth, requireAdmin } from './middleware/auth';
 import { picksRouter } from './routes/picks';
 import { adminRouter } from './routes/admin';
+import type {
+  PoolSettings,
+  MatrixResponsePayload,
+  MatrixMemberColumn,
+  MatrixGameRow,
+  MatrixPickCell,
+  MatrixMemberSummary,
+  PickingMode,
+} from './types/pool';
 
 export const app = express();
 const PORT = process.env.PORT || 3000;
@@ -560,6 +569,219 @@ app.get('/api/pools/:pool_id/penalties/member/:member_id', requireAuth, async (r
   } catch (error) {
     console.error('Error fetching member penalty history:', error);
     res.status(500).json({ error: 'Failed to fetch penalty history.' });
+  }
+});
+
+/**
+ * GET /api/pools/:pool_id/matrix
+ * Protected route returning a structured square sheet matrix for the pool week.
+ * Payload includes:
+ * - metadata: pool_id, week_number, picking_mode, hide_picks_until_kickoff
+ * - columns: array of active members ({ user_id, email, displayName })
+ * - rows: array of games ({ game_id, external_game_id, home_team_id, away_team_id, kickoff_time, status, home_score, away_score, spread })
+ * - cells: 2D map nested by game_id -> user_id -> { pick_id, selected_team_id, is_masked, is_correct, points_awarded }
+ * - summary: object map keyed by user_id -> { user_id, weekly_wins, tiebreaker_guess, cumulative_shots }
+ */
+app.get('/api/pools/:pool_id/matrix', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const poolId = String(req.params.pool_id);
+  const rawWeekNo = req.query.week_no || req.query.weekNumber || req.query.week || '1';
+  const weekNumber = parseInt(String(rawWeekNo), 10) || 1;
+
+  if (!poolId) {
+    res.status(400).json({ error: 'pool_id is required.' });
+    return;
+  }
+
+  try {
+    // 1. Fetch pool, settings, active memberships, and user stats
+    const pool = await db.pool.findUnique({
+      where: { id: poolId },
+      include: {
+        memberships: {
+          where: { status: 'ACTIVE' },
+          include: {
+            user: {
+              select: {
+                id: true,
+                email: true,
+              },
+            },
+            stat: true,
+          },
+          orderBy: {
+            user: {
+              email: 'asc',
+            },
+          },
+        },
+      },
+    });
+
+    if (!pool) {
+      res.status(404).json({ error: 'Pool not found.' });
+      return;
+    }
+
+    const settings = (pool.settings as PoolSettings) || {};
+    const pickingMode: PickingMode = settings.picking_mode ?? settings.pickingMode ?? 'STRAIGHT_UP';
+    const hidePicksUntilKickoff = Boolean(
+      settings.hide_picks_until_kickoff ?? settings.hidePicksUntilKickoff ?? true
+    );
+
+    // 2. Fetch all games ordered chronologically by kickoffTime
+    const games = await db.game.findMany({
+      orderBy: { kickoffTime: 'asc' },
+    });
+
+    const gameIds = games.map((g: any) => g.id);
+
+    // 3. Fetch all picks for this pool and these games, including finalized results
+    const picks = await db.pick.findMany({
+      where: {
+        poolId: pool.id,
+        gameId: { in: gameIds },
+      },
+      include: {
+        result: true,
+      },
+    });
+
+    // 4. Fetch weekly submissions for tiebreaker predictions for this week
+    const weeklySubmissions = await db.weeklySubmission.findMany({
+      where: {
+        poolId: pool.id,
+        weekNumber,
+      },
+    });
+
+    const tiebreakerMap = new Map<string, number | null>();
+    for (const sub of weeklySubmissions) {
+      if (sub.tieBreakerPrediction !== null && sub.tieBreakerPrediction !== undefined) {
+        tiebreakerMap.set(sub.userId, Number(sub.tieBreakerPrediction));
+      } else {
+        tiebreakerMap.set(sub.userId, null);
+      }
+    }
+
+    // 5. Build columns (members)
+    const columns: MatrixMemberColumn[] = pool.memberships.map((m: any) => ({
+      user_id: m.userId,
+      email: m.user.email,
+      displayName: m.user.email.split('@')[0],
+    }));
+
+    // 6. Build rows (games)
+    const rows: MatrixGameRow[] = games.map((g: any) => ({
+      game_id: g.id,
+      external_game_id: g.externalGameId,
+      home_team_id: g.homeTeamId,
+      away_team_id: g.awayTeamId,
+      kickoff_time: g.kickoffTime.toISOString(),
+      status: g.status,
+      home_score: g.homeScore,
+      away_score: g.awayScore,
+      spread: null,
+    }));
+
+    // 7. Build 2D cells map: game_id -> user_id -> MatrixPickCell
+    const pickLookup = new Map<string, any>();
+    for (const pick of picks) {
+      pickLookup.set(`${pick.gameId}_${pick.userId}`, pick);
+    }
+
+    const cells: Record<string, Record<string, MatrixPickCell>> = {};
+    for (const game of games) {
+      cells[game.id] = {};
+      for (const membership of pool.memberships) {
+        const userId = membership.userId;
+        const pick = pickLookup.get(`${game.id}_${userId}`);
+
+        if (pick) {
+          cells[game.id][userId] = {
+            pick_id: pick.id,
+            selected_team_id: pick.selectedTeamId,
+            is_masked: false,
+            is_correct: pick.result ? pick.result.isCorrect : null,
+            points_awarded: pick.result ? Number(pick.result.pointsAwarded) : null,
+          };
+        } else {
+          cells[game.id][userId] = {
+            pick_id: null,
+            selected_team_id: null,
+            is_masked: false,
+            is_correct: null,
+            points_awarded: null,
+          };
+        }
+      }
+    }
+
+    // 8. Anti-Peeking Security Layer
+    // Evaluate hide_picks_until_kickoff and game.kickoff_time against current server time
+    const now = new Date();
+    const requestingUserId = req.user?.id;
+    const isUserAdmin = req.user?.role === 'ADMIN';
+
+    for (const game of games) {
+      const isGameNotStarted = now.getTime() < new Date(game.kickoffTime).getTime();
+
+      for (const membership of pool.memberships) {
+        const userId = membership.userId;
+        const cell = cells[game.id]?.[userId];
+
+        if (cell) {
+          const isOtherMember = userId !== requestingUserId;
+
+          if (hidePicksUntilKickoff && isGameNotStarted && isOtherMember && !isUserAdmin) {
+            cell.selected_team_id = null;
+            cell.is_masked = true;
+          } else {
+            cell.is_masked = false;
+          }
+        }
+      }
+    }
+
+    // 9. Build summary: user_id -> MatrixMemberSummary
+    const weeklyWinsMap = new Map<string, number>();
+    for (const pick of picks) {
+      if (pick.result?.isCorrect) {
+        weeklyWinsMap.set(pick.userId, (weeklyWinsMap.get(pick.userId) || 0) + 1);
+      }
+    }
+
+    const summary: Record<string, MatrixMemberSummary> = {};
+    for (const membership of pool.memberships) {
+      const userId = membership.userId;
+      const weeklyWins = weeklyWinsMap.get(userId) || 0;
+      const tiebreakerGuess = tiebreakerMap.has(userId) ? tiebreakerMap.get(userId)! : null;
+      const cumulativeShots = Number(membership.stat?.totalShotsDrank ?? 0);
+
+      summary[userId] = {
+        user_id: userId,
+        weekly_wins: weeklyWins,
+        tiebreaker_guess: tiebreakerGuess,
+        cumulative_shots: cumulativeShots,
+      };
+    }
+
+    const responsePayload: MatrixResponsePayload = {
+      metadata: {
+        pool_id: pool.id,
+        week_number: weekNumber,
+        picking_mode: pickingMode,
+        hide_picks_until_kickoff: hidePicksUntilKickoff,
+      },
+      columns,
+      rows,
+      cells,
+      summary,
+    };
+
+    res.json(responsePayload);
+  } catch (error) {
+    console.error('Matrix calculation error:', error);
+    res.status(500).json({ error: 'Failed to generate matrix.' });
   }
 });
 
