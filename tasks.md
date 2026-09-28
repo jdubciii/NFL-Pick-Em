@@ -1,26 +1,16 @@
 # tasks.md
 
-## Phase 1: Foundation & Persistence (Database)
+## Phase 2: External Data Ingestion (Sync Worker)
 *Instructions: Copy and paste the blocks below one by one into your Antigravity IDE. Do not proceed to the next prompt until the IDE successfully completes the current one.*
 
-### Prompt 1.1: Database Initialization
-> "Initialize a new Node.js and TypeScript project. I want to use PostgreSQL as my database and Prisma as my ORM. Please generate the `package.json` with the necessary dependencies, set up a basic `tsconfig.json`, and create a `docker-compose.yml` file that spins up a local PostgreSQL 16 instance. Include a `.env.example` file with the default database connection string."
+### Prompt 2.1: API Client Setup
+> "Create a `src/services/nflApiClient.ts` file. Define a TypeScript interface for our expected NFL Game Data (including external ID, home team, away team, kickoff time, status, and scores). Then, write a function that fetches the current week's NFL schedule and live scores. To keep things simple and free for our MVP, use the public ESPN NFL API endpoint (`https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard`) and map its JSON response to our custom interface."
 
-### Prompt 1.2: Core Schema Execution
-> "Initialize Prisma and update the `schema.prisma` file to include the core tables for our NFL Pick'em app. Use UUIDs for all primary keys. 
-> Create the following models:
-> 1. `User`: id, email (unique), password_hash, role (Enum: ADMIN, USER), created_at.
-> 2. `Pool`: id, name, admin_id (relation to User), settings (JSON for point weights/tiebreakers), status (Enum: ACTIVE, INACTIVE).
-> 3. `PoolMembership`: pool_id, user_id, status (Enum: ACTIVE, INACTIVE). Make the primary key a composite of (pool_id, user_id).
-> 4. `Game`: id, external_game_id (String, unique index), home_team_id, away_team_id, kickoff_time (DateTime), status (Enum: SCHEDULED, IN_PROGRESS, FINAL), home_score (Int, optional), away_score (Int, optional)."
+### Prompt 2.2: The Sync Worker
+> "Install the `node-cron` package and its TypeScript types. Create a new file `src/workers/syncWorker.ts`. Set up a cron job that runs every 5 minutes. Inside this job, call the `nflApiClient` function we just created to fetch the latest NFL data. For this step, just log the fetched games to the console so we can verify the data is flowing properly before writing to the database."
 
-### Prompt 1.3: Transactional Schema Execution
-> "Extend the `schema.prisma` file with our transactional tables, ensuring strict relational integrity.
-> Add the following models:
-> 1. `Pick`: id, pool_id, user_id, game_id, selected_team_id (String, optional to handle omitted picks), submitted_by (relation to User, tracks admin vs user entry), created_at. Add a unique constraint on `[pool_id, user_id, game_id]`.
-> 2. `PickResult`: pick_id (Primary Key and relation to Pick), is_correct (Boolean), points_awarded (Decimal), finalized_at (DateTime).
-> 3. `AuditLog`: id, actor_id (relation to User), action (String), target_entity_id (String), old_value (JSON), new_value (JSON), timestamp (DateTime).
-> Once generated, run the command to create and apply the initial database migration."
+### Prompt 2.3: Upsert Logic
+> "Update `src/workers/syncWorker.ts` to save the fetched ESPN data into our PostgreSQL database using Prisma. Iterate over the fetched games and use Prisma's `upsert` method on the `Game` model, matching on the `external_game_id`. If the game doesn't exist, `create` it. If it does exist, `update` the `status`, `home_score`, `away_score`, and `kickoff_time`. Ensure this logic accurately translates the ESPN game status into our database Enums (SCHEDULED, IN_PROGRESS, FINAL)."
 
-### Prompt 1.4: ORM/Database Client Setup
-> "Create a `src/db/client.ts` file that instantiates and exports a singleton Prisma Client. Then, write a simple `src/db/test.ts` script that connects to the database, creates a dummy Admin user, and queries it back to verify the database connection and schema are working correctly. Provide the terminal command I need to run this test script."
+### Prompt 2.4: Fallback Handling
+> "Wrap the main logic inside `src/workers/syncWorker.ts` in a robust `try/catch` block. If the ESPN API fails, times out, or returns invalid data, catch the error, log a clear warning to the console ('NFL API Sync Failed, skipping cycle to preserve local state'), and exit the current worker cycle gracefully without crashing the Node process. Finally, add a script in `package.json` to start this worker, and provide me with the terminal command to run it."
