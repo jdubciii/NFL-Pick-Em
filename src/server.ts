@@ -378,7 +378,7 @@ app.get('/api/pools/:pool_id/leaderboard/cumulative', requireAuth, async (req: R
       return {
         user_id: membership.user.id,
         email: membership.user.email,
-        total_shots_drank: membership.stat?.totalShotsDrank ?? 0,
+        total_shots_drank: Number(membership.stat?.totalShotsDrank ?? 0),
         first_place_finishes: membership.stat?.firstPlaceFinishes ?? 0,
         dead_place_finishes: membership.stat?.deadPlaceFinishes ?? 0,
         total_picks: userStats.totalPicks,
@@ -399,7 +399,7 @@ app.get('/api/pools/:pool_id/leaderboard/cumulative', requireAuth, async (req: R
         comparison = b.accuracy_percentage - a.accuracy_percentage;
       } else {
         // Default to total shots drank
-        comparison = b.total_shots_drank - a.total_shots_drank;
+        comparison = Number(b.total_shots_drank) - Number(a.total_shots_drank);
       }
 
       if (comparison === 0) {
@@ -410,7 +410,7 @@ app.get('/api/pools/:pool_id/leaderboard/cumulative', requireAuth, async (req: R
       return order === 'asc' ? -comparison : comparison;
     });
 
-    const totalPoolShots = leaderboard.reduce((acc, curr) => acc + curr.total_shots_drank, 0);
+    const totalPoolShots = leaderboard.reduce((acc, curr) => acc + Number(curr.total_shots_drank || 0), 0);
 
     res.json({
       pool_id: pool.id,

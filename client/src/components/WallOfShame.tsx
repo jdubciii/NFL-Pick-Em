@@ -37,6 +37,32 @@ interface PoolOption {
   name: string;
 }
 
+/**
+ * Formats incoming cumulative shots value into an odometer readout with padded whole number portion and exact 2-decimal precision.
+ * Example: 1 -> { wholeDigits: ['0','0','0','1'], decimalDigits: ['0','0'], formatted: '0001.00', numericValue: 1.0 }
+ * Example: 0.5 -> { wholeDigits: ['0','0','0','0'], decimalDigits: ['5','0'], formatted: '0000.50', numericValue: 0.5 }
+ */
+export const parseAndFormatOdometer = (
+  rawVal: number | string | null | undefined,
+  padDigits = 4
+): { wholeDigits: string[]; decimalDigits: string[]; formatted: string; numericValue: number } => {
+  const numericValue = typeof rawVal === 'number'
+    ? (isNaN(rawVal) ? 0 : rawVal)
+    : parseFloat(String(rawVal || 0)) || 0;
+  const fixedStr = numericValue.toFixed(2);
+  const [wholePart, decimalPart] = fixedStr.split('.');
+  const paddedWhole = wholePart.padStart(padDigits, '0');
+  const wholeDigits = paddedWhole.split('');
+  const decimalDigits = (decimalPart || '00').split('');
+
+  return {
+    wholeDigits,
+    decimalDigits,
+    formatted: `${paddedWhole}.${decimalPart || '00'}`,
+    numericValue,
+  };
+};
+
 export const WallOfShame: React.FC = () => {
   const { token } = useAuth();
   const [pools, setPools] = useState<PoolOption[]>([]);
@@ -124,6 +150,8 @@ export const WallOfShame: React.FC = () => {
     }
     return prev;
   }, null);
+
+  const odometerData = parseAndFormatOdometer(cumulativeData?.total_pool_shots);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
@@ -227,7 +255,7 @@ export const WallOfShame: React.FC = () => {
                 <div className="w-px h-10 bg-slate-800" />
                 <div className="text-center">
                   <div className="text-3xl sm:text-4xl font-black text-amber-400 font-mono">
-                    {deadPlaceLeader.total_shots_drank}
+                    {(parseFloat(String(deadPlaceLeader.total_shots_drank ?? 0)) || 0).toFixed(2)}
                   </div>
                   <div className="text-[10px] uppercase font-bold text-slate-400 mt-0.5">
                     Shots Drank
@@ -251,15 +279,47 @@ export const WallOfShame: React.FC = () => {
           </div>
 
           <div className="my-6">
-            <div className="text-4xl sm:text-5xl font-black tracking-tight text-white font-mono flex items-baseline gap-2">
-              <span className="text-amber-400 drop-shadow-[0_0_15px_rgba(251,191,36,0.4)]">
-                {cumulativeData?.total_pool_shots ?? 0}
-              </span>
+            {/* Mechanical Odometer Wheels Readout */}
+            <div className="inline-flex items-center bg-slate-950 p-2 sm:p-2.5 rounded-2xl border-2 border-amber-500/50 shadow-[0_0_20px_rgba(245,158,11,0.2)]">
+              {/* Whole Digits */}
+              <div className="flex space-x-1">
+                {odometerData.wholeDigits.map((digit, idx) => (
+                  <div
+                    key={`whole-${idx}`}
+                    className="w-8 h-11 sm:w-10 sm:h-14 bg-gradient-to-b from-slate-900 via-black to-slate-900 rounded-lg border border-slate-700/80 shadow-inner flex items-center justify-center font-mono font-black text-xl sm:text-3xl text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.6)]"
+                  >
+                    {digit}
+                  </div>
+                ))}
+              </div>
+
+              {/* Decimal Point */}
+              <div className="px-1 text-xl sm:text-3xl font-mono font-black text-amber-500 animate-pulse flex items-end pb-1.5 sm:pb-2">
+                .
+              </div>
+
+              {/* Fractional Digits (Split Penalty Precision) */}
+              <div className="flex space-x-1">
+                {odometerData.decimalDigits.map((digit, idx) => (
+                  <div
+                    key={`dec-${idx}`}
+                    className="w-8 h-11 sm:w-10 sm:h-14 bg-gradient-to-b from-amber-950/80 via-black to-amber-950/80 rounded-lg border border-amber-600/60 shadow-inner flex items-center justify-center font-mono font-black text-xl sm:text-3xl text-rose-400 drop-shadow-[0_0_8px_rgba(244,63,94,0.6)]"
+                  >
+                    {digit}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-3 flex items-center justify-between">
               <span className="text-xs uppercase font-extrabold text-slate-400 tracking-wider">
                 Pool Shots Total
               </span>
+              <span className="font-mono text-xs font-bold text-amber-400/90">
+                {odometerData.formatted}
+              </span>
             </div>
-            <p className="text-xs text-slate-400 mt-2">
+            <p className="text-xs text-slate-400 mt-1">
               Total cumulative shots consumed across all members in {cumulativeData?.pool_name || 'League'}.
             </p>
           </div>
@@ -267,7 +327,7 @@ export const WallOfShame: React.FC = () => {
           <div className="w-full bg-slate-900/90 rounded-full h-2.5 border border-slate-800 overflow-hidden">
             <div 
               className="bg-gradient-to-r from-amber-500 to-rose-500 h-full rounded-full transition-all duration-500" 
-              style={{ width: `${Math.min(100, Math.max(10, (cumulativeData?.total_pool_shots ?? 0) * 5))}%` }}
+              style={{ width: `${Math.min(100, Math.max(10, odometerData.numericValue * 5))}%` }}
             />
           </div>
         </div>
@@ -344,7 +404,10 @@ export const WallOfShame: React.FC = () => {
               ) : (
                 cumulativeData?.leaderboard.map((member, idx) => {
                   const isDeadLeader = deadPlaceLeader?.user_id === member.user_id && member.dead_place_finishes > 0;
-                  const isTopShooter = member.total_shots_drank > 0 && idx === 0 && sortBy === 'shots';
+                  const shotsNum = typeof member.total_shots_drank === 'number'
+                    ? (isNaN(member.total_shots_drank) ? 0 : member.total_shots_drank)
+                    : (parseFloat(String(member.total_shots_drank ?? 0)) || 0);
+                  const isTopShooter = shotsNum > 0 && idx === 0 && sortBy === 'shots';
 
                   return (
                     <tr
@@ -418,12 +481,12 @@ export const WallOfShame: React.FC = () => {
                         <div className="flex items-center justify-end space-x-2">
                           <span
                             className={`text-base font-black ${
-                              member.total_shots_drank > 0
+                              shotsNum > 0
                                 ? 'text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.3)]'
                                 : 'text-slate-500'
                             }`}
                           >
-                            {member.total_shots_drank}
+                            {shotsNum.toFixed(2)}
                           </span>
                           <span className="text-xs text-slate-500">shots</span>
                         </div>
