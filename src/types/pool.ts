@@ -105,3 +105,18 @@ export interface MatrixResponsePayload {
   cells: Record<string, Record<string, MatrixPickCell>>; // game_id -> user_id -> MatrixPickCell
   summary: Record<string, MatrixMemberSummary>; // user_id -> MatrixMemberSummary
 }
+
+export type PenaltyMediaStatus = 'PENDING' | 'CONFIRMED' | 'REJECTED';
+
+export interface PenaltyMediaResponse {
+  id: string;
+  penalty_id: string;
+  pool_id: string;
+  user_id: string;
+  storage_path: string;
+  media_type: string;
+  status: PenaltyMediaStatus;
+  confirmed_by?: string | null;
+  created_at: string;
+}
+

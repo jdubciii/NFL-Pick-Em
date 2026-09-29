@@ -23,6 +23,12 @@ enum GameStatus {
   FINAL
 }
 
+enum PenaltyMediaStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+}
+
 model User {
   id               String           @id @default(uuid()) @db.Uuid
   email            String           @unique
@@ -36,6 +42,8 @@ model User {
   auditLogs        AuditLog[]       @relation("UserAuditLogs")
   createdPenalties   PenaltyLedger[]    @relation("CreatedPenalties")
   weeklySubmissions  WeeklySubmission[]
+  penaltyMedia       PenaltyMedia[]     @relation("UserPenaltyMedia")
+  confirmedMedia     PenaltyMedia[]     @relation("ConfirmedPenaltyMedia")
 
   @@map("users")
 }
@@ -52,6 +60,7 @@ model Pool {
   memberStats       PoolMemberStat[]
   penaltyLedger     PenaltyLedger[]
   weeklySubmissions WeeklySubmission[]
+  penaltyMedia      PenaltyMedia[]
 
   @@map("pools")
 }
@@ -147,18 +156,19 @@ model PoolMemberStat {
 }
 
 model PenaltyLedger {
-  id          String   @id @default(uuid()) @db.Uuid
-  poolId      String   @map("pool_id") @db.Uuid
-  userId      String   @map("user_id") @db.Uuid
-  weekNumber  Int?     @map("week_number")
-  delta       Decimal  @map("delta") @db.Decimal(5, 2)
+  id          String        @id @default(uuid()) @db.Uuid
+  poolId      String        @map("pool_id") @db.Uuid
+  userId      String        @map("user_id") @db.Uuid
+  weekNumber  Int?          @map("week_number")
+  delta       Decimal       @map("delta") @db.Decimal(5, 2)
   reason      String
-  createdById String   @map("created_by") @db.Uuid
-  createdAt   DateTime @default(now()) @map("created_at")
+  createdById String        @map("created_by") @db.Uuid
+  createdAt   DateTime      @default(now()) @map("created_at")
 
   pool       Pool           @relation(fields: [poolId], references: [id], onDelete: Cascade)
   membership PoolMembership @relation(fields: [poolId, userId], references: [poolId, userId], onDelete: Cascade)
   createdBy  User           @relation("CreatedPenalties", fields: [createdById], references: [id])
+  media      PenaltyMedia?
 
   @@index([poolId, userId])
   @@map("penalty_ledger")
@@ -182,4 +192,25 @@ model WeeklySubmission {
   @@index([poolId, weekNumber, isFinalized])
   @@map("weekly_submissions")
 }
+
+model PenaltyMedia {
+  id          String             @id @default(uuid()) @db.Uuid
+  penaltyId   String             @unique @map("penalty_id") @db.Uuid
+  poolId      String             @map("pool_id") @db.Uuid
+  userId      String             @map("user_id") @db.Uuid
+  storagePath String             @map("storage_path")
+  mediaType   String             @map("media_type")
+  status      PenaltyMediaStatus @default(PENDING)
+  confirmedBy String?            @map("confirmed_by") @db.Uuid
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  penalty   PenaltyLedger @relation(fields: [penaltyId], references: [id], onDelete: Cascade)
+  pool      Pool          @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  user      User          @relation("UserPenaltyMedia", fields: [userId], references: [id], onDelete: Cascade)
+  confirmer User?         @relation("ConfirmedPenaltyMedia", fields: [confirmedBy], references: [id])
+
+  @@index([poolId, userId])
+  @@map("penalty_media")
+}
+
 

@@ -65,14 +65,14 @@
 - [✅] **9.3 Scoring Exclusion Pipeline:** Update the grading engine to skip `excludedGameWindows`.
 - [✅] **9.4 Matrix Dispatch:** Add `@media print` CSS targets and plaintext clipboard generation to the Matrix UI.
 
-## Phase 10: Shot-Cam Penalty Portal (Storage Infrastructure) [ ]
+## Phase 10: Shot-Cam Penalty Portal (Storage Infrastructure) [✅]
 *Objective: Provision secure media storage for penalty evidence with RLS policies and admin confirmation workflows.*
-- [ ] **10.1 Supabase Storage & RLS:** Configure the `penalty-media` bucket and row-level security.
-- [ ] **10.2 Media CRUD API:** Build endpoints for upload registration and status confirmation.
-- [ ] **10.3 PenaltyLedgerView UI:** Implement client-side compression and upload UI with "Shot Confirmed" status chips.
+- [✅] **10.1 Supabase Storage & RLS:** Configure the `penalty-media` bucket and row-level security.
+- [✅] **10.2 Media CRUD API:** Build endpoints for upload registration and status confirmation.
+- [✅] **10.3 PenaltyLedgerView UI:** Implement client-side compression and upload UI with "Shot Confirmed" status chips.
 
-## Phase 11: UX Accelerators & Social Presets (Presentation Layer) [ ]
+## Phase 11: UX Accelerators & Social Presets (Presentation Layer) [✅]
 *Objective: Ship client-side snapshot auto-fill presets under strict immutable persistence constraints.*
-- [ ] **11.1 Gamified Viewport Selector:** Build toggles for Cards, Slate, and Matrix views.
-- [ ] **11.2 Standard Presets:** Build Home, Away, and Favorites deterministic auto-fills.
-- [ ] **11.3 Social Presets (Contrarian & Mirror):** Build conditional logic relying on Open Slate mode to analyze and clone competitor picks.
+- [✅] **11.1 Gamified Viewport Selector:** Build toggles for Cards, Slate, and Matrix views.
+- [✅] **11.2 Standard Presets:** Build Home, Away, and Favorites deterministic auto-fills.
+- [✅] **11.3 Social Presets (Contrarian & Mirror):** Build conditional logic relying on Open Slate mode to analyze and clone competitor picks.

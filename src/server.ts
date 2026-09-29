@@ -562,6 +562,7 @@ app.get('/api/pools/:pool_id/penalties/member/:member_id', requireAuth, async (r
             email: true,
           },
         },
+        media: true,
       },
     });
 
@@ -569,6 +570,221 @@ app.get('/api/pools/:pool_id/penalties/member/:member_id', requireAuth, async (r
   } catch (error) {
     console.error('Error fetching member penalty history:', error);
     res.status(500).json({ error: 'Failed to fetch penalty history.' });
+  }
+});
+
+/**
+ * POST /api/pools/:pool_id/penalties/:id/media
+ * Registers Supabase storage path to the PenaltyMedia table.
+ * Restricted to the penalty owner, pool commissioner, or global admin.
+ */
+app.post('/api/pools/:pool_id/penalties/:id/media', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const poolId = String(req.params.pool_id);
+  const penaltyId = String(req.params.id);
+  const storagePath = req.body.storage_path || req.body.storagePath;
+  const mediaType = req.body.media_type || req.body.mediaType || 'video/mp4';
+
+  if (!storagePath || typeof storagePath !== 'string' || storagePath.trim().length === 0) {
+    res.status(400).json({ error: 'storage_path is required.' });
+    return;
+  }
+
+  try {
+    // 1. Fetch pool and penalty ledger record
+    const pool = await prisma.pool.findUnique({
+      where: { id: poolId },
+    });
+
+    if (!pool) {
+      res.status(404).json({ error: 'Pool not found.' });
+      return;
+    }
+
+    const penalty = await db.penaltyLedger.findUnique({
+      where: { id: penaltyId },
+    });
+
+    if (!penalty || penalty.poolId !== poolId) {
+      res.status(404).json({ error: 'Penalty record not found in this pool.' });
+      return;
+    }
+
+    // 2. Authorization check: penalty owner, pool commissioner, or global admin
+    const requestingUserId = req.user!.id;
+    const isOwner = penalty.userId === requestingUserId;
+    const isCommissioner = pool.adminId === requestingUserId;
+    const isAdmin = req.user!.role === 'ADMIN';
+
+    if (!isOwner && !isCommissioner && !isAdmin) {
+      res.status(403).json({ error: 'Forbidden: You do not have permission to upload media for this penalty.' });
+      return;
+    }
+
+    // 3. Upsert PenaltyMedia record
+    const penaltyMedia = await db.penaltyMedia.upsert({
+      where: {
+        penaltyId,
+      },
+      update: {
+        storagePath: String(storagePath).trim(),
+        mediaType: String(mediaType).trim(),
+        status: 'PENDING',
+        confirmedBy: null,
+      },
+      create: {
+        penaltyId,
+        poolId,
+        userId: penalty.userId,
+        storagePath: String(storagePath).trim(),
+        mediaType: String(mediaType).trim(),
+        status: 'PENDING',
+      },
+    });
+
+    // 4. Record audit log
+    await db.auditLog.create({
+      data: {
+        actorId: requestingUserId,
+        action: 'UPLOAD_PENALTY_MEDIA',
+        targetEntityId: penaltyId,
+        newValue: {
+          penaltyId,
+          poolId,
+          userId: penalty.userId,
+          storagePath: String(storagePath).trim(),
+          mediaType: String(mediaType).trim(),
+          status: 'PENDING',
+        },
+      },
+    });
+
+    res.status(201).json({
+      message: 'Penalty media registered successfully.',
+      media: penaltyMedia,
+    });
+  } catch (error) {
+    console.error('Error registering penalty media:', error);
+    res.status(500).json({ error: 'Failed to register penalty media.' });
+  }
+});
+
+/**
+ * PATCH /api/pools/:pool_id/penalties/:id/media/confirm
+ * Commissioner action to flip penalty media status to CONFIRMED (or REJECTED/PENDING).
+ * Restricted to the pool commissioner or global admin.
+ */
+app.patch('/api/pools/:pool_id/penalties/:id/media/confirm', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const poolId = String(req.params.pool_id);
+  const penaltyId = String(req.params.id);
+  const targetStatus = String(req.body.status || 'CONFIRMED').toUpperCase();
+
+  if (!['CONFIRMED', 'REJECTED', 'PENDING'].includes(targetStatus)) {
+    res.status(400).json({ error: 'Invalid status. Allowed values: CONFIRMED, REJECTED, PENDING.' });
+    return;
+  }
+
+  try {
+    // 1. Fetch pool and verify commissioner / admin permissions
+    const pool = await prisma.pool.findUnique({
+      where: { id: poolId },
+    });
+
+    if (!pool) {
+      res.status(404).json({ error: 'Pool not found.' });
+      return;
+    }
+
+    const requestingUserId = req.user!.id;
+    const isCommissioner = pool.adminId === requestingUserId;
+    const isAdmin = req.user!.role === 'ADMIN';
+
+    if (!isCommissioner && !isAdmin) {
+      res.status(403).json({ error: 'Forbidden: Only the pool commissioner or admin can confirm penalty media.' });
+      return;
+    }
+
+    // 2. Fetch penalty media
+    const existingMedia = await db.penaltyMedia.findUnique({
+      where: { penaltyId },
+    });
+
+    if (!existingMedia || existingMedia.poolId !== poolId) {
+      res.status(404).json({ error: 'Penalty media not found for this penalty in this pool.' });
+      return;
+    }
+
+    // 3. Update status
+    const updatedMedia = await db.penaltyMedia.update({
+      where: { penaltyId },
+      data: {
+        status: targetStatus,
+        confirmedBy: targetStatus === 'CONFIRMED' ? requestingUserId : (targetStatus === 'PENDING' ? null : requestingUserId),
+      },
+    });
+
+    // 4. Record audit log
+    await db.auditLog.create({
+      data: {
+        actorId: requestingUserId,
+        action: 'CONFIRM_PENALTY_MEDIA',
+        targetEntityId: penaltyId,
+        oldValue: {
+          status: existingMedia.status,
+          confirmedBy: existingMedia.confirmedBy,
+        },
+        newValue: {
+          status: targetStatus,
+          confirmedBy: updatedMedia.confirmedBy,
+        },
+      },
+    });
+
+    res.json({
+      message: `Penalty media status updated to ${targetStatus}.`,
+      media: updatedMedia,
+    });
+  } catch (error) {
+    console.error('Error confirming penalty media:', error);
+    res.status(500).json({ error: 'Failed to update penalty media status.' });
+  }
+});
+
+/**
+ * GET /api/pools/:pool_id/penalties/:id/media
+ * Returns penalty media details for a specific penalty entry.
+ */
+app.get('/api/pools/:pool_id/penalties/:id/media', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const poolId = String(req.params.pool_id);
+  const penaltyId = String(req.params.id);
+
+  try {
+    const media = await db.penaltyMedia.findUnique({
+      where: { penaltyId },
+      include: {
+        confirmer: {
+          select: {
+            id: true,
+            email: true,
+          },
+        },
+        user: {
+          select: {
+            id: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    if (!media || media.poolId !== poolId) {
+      res.status(404).json({ error: 'Penalty media not found.' });
+      return;
+    }
+
+    res.json(media);
+  } catch (error) {
+    console.error('Error fetching penalty media:', error);
+    res.status(500).json({ error: 'Failed to fetch penalty media.' });
   }
 });
 
