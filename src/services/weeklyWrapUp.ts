@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import prisma from '../db/client';
 import type { PoolSettings, TiebreakerSettings, PenaltySettings } from '../types/pool';
+import { isGameInExcludedWindow } from './scoringEngine';
 
 export interface ScoredMember {
   userId: string;
@@ -148,7 +149,8 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
       }
     }
 
-    // 5. Calculate scores per user
+    // 5. Calculate scores per user (respecting excludedGameWindows)
+    const excludedWindows = settings.excludedGameWindows ?? settings.excluded_game_windows;
     const memberScoresMap = new Map<string, number>();
     for (const membership of pool.memberships) {
       memberScoresMap.set(membership.userId, 0);
@@ -156,8 +158,11 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
 
     for (const pick of picks) {
       if (memberScoresMap.has(pick.userId) && pick.result) {
-        const currentScore = memberScoresMap.get(pick.userId) || 0;
-        memberScoresMap.set(pick.userId, currentScore + Number(pick.result.pointsAwarded));
+        const isExcluded = pick.game ? isGameInExcludedWindow(pick.game.kickoffTime, excludedWindows) : false;
+        if (!isExcluded) {
+          const currentScore = memberScoresMap.get(pick.userId) || 0;
+          memberScoresMap.set(pick.userId, currentScore + Number(pick.result.pointsAwarded));
+        }
       }
     }
 

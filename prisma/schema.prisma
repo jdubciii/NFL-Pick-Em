@@ -73,15 +73,16 @@ model PoolMembership {
 }
 
 model Game {
-  id             String     @id @default(uuid()) @db.Uuid
-  externalGameId String     @unique @map("external_game_id")
-  homeTeamId     String     @map("home_team_id")
-  awayTeamId     String     @map("away_team_id")
-  kickoffTime    DateTime   @map("kickoff_time")
-  status         GameStatus @default(SCHEDULED)
-  homeScore      Int?       @map("home_score")
-  awayScore      Int?       @map("away_score")
-  picks          Pick[]
+  id                String     @id @default(uuid()) @db.Uuid
+  externalGameId    String     @unique @map("external_game_id")
+  homeTeamId        String     @map("home_team_id")
+  awayTeamId        String     @map("away_team_id")
+  kickoffTime       DateTime   @map("kickoff_time")
+  status            GameStatus @default(SCHEDULED)
+  homeScore         Int?       @map("home_score")
+  awayScore         Int?       @map("away_score")
+  commissionerNotes String?    @map("commissioner_notes")
+  picks             Pick[]
 
   @@map("games")
 }
@@ -169,13 +170,16 @@ model WeeklySubmission {
   userId               String   @map("user_id") @db.Uuid
   weekNumber           Int      @map("week_number")
   tieBreakerPrediction Decimal? @map("tie_breaker_prediction") @db.Decimal(5, 2)
+  isFinalized          Boolean  @default(false) @map("is_finalized")
   createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at")
 
   pool       Pool           @relation(fields: [poolId], references: [id], onDelete: Cascade)
   membership PoolMembership @relation(fields: [poolId, userId], references: [poolId, userId], onDelete: Cascade)
   user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([poolId, userId, weekNumber])
+  @@index([poolId, weekNumber, isFinalized])
   @@map("weekly_submissions")
 }
 

@@ -55,9 +55,108 @@ export function getPointsForWin(settingsJson: any): number {
 }
 
 /**
+ * Evaluates whether a game's kickoff time falls into any excluded game windows specified by pool settings.
+ * Supported windows include:
+ * - 'THURSDAY_NIGHT' / 'THURSDAY' / 'TNF'
+ * - 'MONDAY_NIGHT' / 'MONDAY' / 'MNF'
+ * - 'SATURDAY'
+ * - 'FRIDAY'
+ * - 'SUNDAY_NIGHT' / 'SNF'
+ * - 'SUNDAY_EARLY' / 'EARLY_SUNDAY'
+ * - 'SUNDAY_LATE' / 'LATE_SUNDAY'
+ * - 'SUNDAY'
+ * - 'INTERNATIONAL'
+ */
+export function isGameInExcludedWindow(kickoffTime: Date | string, excludedWindows?: string[]): boolean {
+  if (!excludedWindows || !Array.isArray(excludedWindows) || excludedWindows.length === 0) {
+    return false;
+  }
+
+  const kTime = typeof kickoffTime === 'string' ? new Date(kickoffTime) : kickoffTime;
+  if (isNaN(kTime.getTime())) {
+    return false;
+  }
+
+  const dayUtc = kTime.getUTCDay();
+  const hoursUtc = kTime.getUTCHours();
+  const localDay = kTime.getDay();
+
+  // Normalized list of uppercase excluded window keys
+  const normalizedWindows = excludedWindows.map((w) => String(w).toUpperCase().trim());
+
+  for (const windowKey of normalizedWindows) {
+    // Thursday Night
+    if (windowKey === 'THURSDAY_NIGHT' || windowKey === 'THURSDAY' || windowKey === 'TNF') {
+      if (dayUtc === 4 || (dayUtc === 5 && hoursUtc < 6) || localDay === 4) {
+        return true;
+      }
+    }
+
+    // Monday Night
+    if (windowKey === 'MONDAY_NIGHT' || windowKey === 'MONDAY' || windowKey === 'MNF') {
+      if (dayUtc === 1 || (dayUtc === 2 && hoursUtc < 6) || localDay === 1) {
+        return true;
+      }
+    }
+
+    // Saturday
+    if (windowKey === 'SATURDAY') {
+      if (dayUtc === 6 || (dayUtc === 0 && hoursUtc < 4) || localDay === 6) {
+        return true;
+      }
+    }
+
+    // Friday
+    if (windowKey === 'FRIDAY') {
+      if (dayUtc === 5 || (dayUtc === 6 && hoursUtc < 4) || localDay === 5) {
+        return true;
+      }
+    }
+
+    // Sunday Night Football
+    if (windowKey === 'SUNDAY_NIGHT' || windowKey === 'SNF') {
+      if ((dayUtc === 0 && hoursUtc >= 23) || (dayUtc === 1 && hoursUtc < 6)) {
+        return true;
+      }
+    }
+
+    // Early Sunday
+    if (windowKey === 'SUNDAY_EARLY' || windowKey === 'EARLY_SUNDAY') {
+      if (dayUtc === 0 && hoursUtc >= 16 && hoursUtc < 20) {
+        return true;
+      }
+    }
+
+    // Late Sunday
+    if (windowKey === 'SUNDAY_LATE' || windowKey === 'LATE_SUNDAY') {
+      if (dayUtc === 0 && hoursUtc >= 20 && hoursUtc < 24) {
+        return true;
+      }
+    }
+
+    // Sunday (entire day)
+    if (windowKey === 'SUNDAY') {
+      if (dayUtc === 0 || (dayUtc === 1 && hoursUtc < 6) || localDay === 0) {
+        return true;
+      }
+    }
+
+    // International (morning Sunday)
+    if (windowKey === 'INTERNATIONAL') {
+      if (dayUtc === 0 && hoursUtc < 16) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
  * Grades all picks for a list of finalized games against their respective pool settings.
  * Commits graded results immutably to the PickResult table.
  * Strictly skips any pick that has already been finalized to prevent double-scoring.
+ * Respects excludedGameWindows setting by allocating 0 points if game matches an excluded window.
  */
 export async function gradeFinalizedGames(gameIds: string[]): Promise<GradedPickResult[]> {
   if (!gameIds || gameIds.length === 0) {
@@ -103,18 +202,23 @@ export async function gradeFinalizedGames(gameIds: string[]): Promise<GradedPick
         continue;
       }
 
-      // 2. Grade the pick against the winning team
+      // 2. Check excludedGameWindows in pool settings
+      const poolSettings = (pick.pool?.settings as PoolSettings) || {};
+      const excludedWindows = poolSettings.excludedGameWindows ?? poolSettings.excluded_game_windows;
+      const isExcluded = isGameInExcludedWindow(game.kickoffTime, excludedWindows);
+
+      // 3. Grade the pick against the winning team
       const isPickSelected = pick.selectedTeamId !== null && pick.selectedTeamId.trim().length > 0;
       const isWinnerMatch = winningTeam !== null && pick.selectedTeamId === winningTeam;
 
       const isCorrect = isPickSelected && isWinnerMatch;
       let pointsAwarded = 0;
 
-      if (isCorrect) {
+      if (isCorrect && !isExcluded) {
         pointsAwarded = getPointsForWin(pick.pool?.settings);
       }
 
-      // 3. Commit the graded result to the PickResult table
+      // 4. Commit the graded result to the PickResult table
       const finalizedAt = new Date();
       const pickResult = await prisma.pickResult.create({
         data: {

@@ -58,12 +58,12 @@
 - [✅] **8.4 Anti-Peeking Security Layer:** Mask competitor picks prior to kickoff unless the user is an admin or the game has started.
 - [✅] **8.5 LeagueMatrixView UI:** Build the spreadsheet-style responsive matrix component with sticky headers, masked locks, and summary footers.
 
-## Phase 9: Rule Engine Expansions & Dispatch (Data & Visibility Layer) [🏃]
+## Phase 9: Rule Engine Expansions & Dispatch (Data & Visibility Layer) [✅]
 *Objective: Implement dual-mode slate visibility with draft/final lifecycle states and excluded game logic.*
-- [ ] **9.1 Schema & Settings Migrations:** Update `WeeklySubmission`, `Game`, and `pool.settings` schemas.
-- [ ] **9.2 Dual-Mode API Middleware:** Upgrade the Matrix API to handle Draft vs. Final visibility modes.
-- [ ] **9.3 Scoring Exclusion Pipeline:** Update the grading engine to skip `excludedGameWindows`.
-- [ ] **9.4 Matrix Dispatch:** Add `@media print` CSS targets and plaintext clipboard generation to the Matrix UI.
+- [✅] **9.1 Schema & Settings Migrations:** Update `WeeklySubmission`, `Game`, and `pool.settings` schemas.
+- [✅] **9.2 Dual-Mode API Middleware:** Upgrade the Matrix API to handle Draft vs. Final visibility modes.
+- [✅] **9.3 Scoring Exclusion Pipeline:** Update the grading engine to skip `excludedGameWindows`.
+- [✅] **9.4 Matrix Dispatch:** Add `@media print` CSS targets and plaintext clipboard generation to the Matrix UI.
 
 ## Phase 10: Shot-Cam Penalty Portal (Storage Infrastructure) [ ]
 *Objective: Provision secure media storage for penalty evidence with RLS policies and admin confirmation workflows.*

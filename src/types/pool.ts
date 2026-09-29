@@ -2,6 +2,13 @@ export type TieHandlingStrategy = 'ALL_TIED' | 'TIEBREAKER_ONLY' | 'SPLIT_PENALT
 export type AntiPeekingRevealAt = 'LOCK_TIME' | 'GAME_FINAL';
 export type PickingMode = 'STRAIGHT_UP' | 'AGAINST_SPREAD';
 export type TiebreakerGameTarget = 'MONDAY_NIGHT' | 'LAST_GAME_OF_WEEK';
+export type LockMode = 'ROLLING' | 'GLOBAL_FIRST_GAME';
+export type TieBreakerType =
+  | 'TOTAL_POINTS_MONDAY'
+  | 'TOTAL_POINTS_LAST_GAME'
+  | 'CLOSEST_ABSOLUTE'
+  | 'CLOSEST_WITHOUT_GOING_OVER'
+  | string;
 
 export interface AntiPeekingSettings {
   enabled?: boolean;
@@ -32,6 +39,12 @@ export interface PenaltySettings {
 export interface PoolSettings {
   lock_offset?: number;
   lockOffset?: number;
+  lock_mode?: LockMode;
+  lockMode?: LockMode;
+  excluded_game_windows?: string[];
+  excludedGameWindows?: string[];
+  tiebreaker_type?: TieBreakerType;
+  tieBreakerType?: TieBreakerType;
   points_per_win?: number;
   pointsPerWin?: number;
   win_value?: number;

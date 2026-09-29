@@ -646,7 +646,7 @@ app.get('/api/pools/:pool_id/matrix', requireAuth, async (req: Request, res: Res
       },
     });
 
-    // 4. Fetch weekly submissions for tiebreaker predictions for this week
+    // 4. Fetch weekly submissions for tiebreaker predictions and finalization status for this week
     const weeklySubmissions = await db.weeklySubmission.findMany({
       where: {
         poolId: pool.id,
@@ -655,12 +655,14 @@ app.get('/api/pools/:pool_id/matrix', requireAuth, async (req: Request, res: Res
     });
 
     const tiebreakerMap = new Map<string, number | null>();
+    const finalizedMap = new Map<string, boolean>();
     for (const sub of weeklySubmissions) {
       if (sub.tieBreakerPrediction !== null && sub.tieBreakerPrediction !== undefined) {
         tiebreakerMap.set(sub.userId, Number(sub.tieBreakerPrediction));
       } else {
         tiebreakerMap.set(sub.userId, null);
       }
+      finalizedMap.set(sub.userId, Boolean(sub.isFinalized));
     }
 
     // 5. Build columns (members)
@@ -716,8 +718,9 @@ app.get('/api/pools/:pool_id/matrix', requireAuth, async (req: Request, res: Res
       }
     }
 
-    // 8. Anti-Peeking Security Layer
-    // Evaluate hide_picks_until_kickoff and game.kickoff_time against current server time
+    // 8. Dual-Mode Visibility & Anti-Peeking Security Layer
+    // Mode A: hide_picks_until_kickoff === true -> redact unstarted games for other users
+    // Mode B: hide_picks_until_kickoff === false -> redact unstarted games ONLY if opponent's WeeklySubmission.is_finalized is false
     const now = new Date();
     const requestingUserId = req.user?.id;
     const isUserAdmin = req.user?.role === 'ADMIN';
@@ -732,9 +735,21 @@ app.get('/api/pools/:pool_id/matrix', requireAuth, async (req: Request, res: Res
         if (cell) {
           const isOtherMember = userId !== requestingUserId;
 
-          if (hidePicksUntilKickoff && isGameNotStarted && isOtherMember && !isUserAdmin) {
-            cell.selected_team_id = null;
-            cell.is_masked = true;
+          if (isGameNotStarted && isOtherMember && !isUserAdmin) {
+            if (hidePicksUntilKickoff) {
+              // Mode A (Strict/Hidden): Mask all competitor picks prior to kickoff
+              cell.selected_team_id = null;
+              cell.is_masked = true;
+            } else {
+              // Mode B (Open Slate): Expose picks only if opponent has finalized their weekly submission
+              const isOpponentFinalized = finalizedMap.get(userId) === true;
+              if (!isOpponentFinalized) {
+                cell.selected_team_id = null;
+                cell.is_masked = true;
+              } else {
+                cell.is_masked = false;
+              }
+            }
           } else {
             cell.is_masked = false;
           }

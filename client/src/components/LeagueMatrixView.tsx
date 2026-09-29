@@ -13,6 +13,9 @@ import {
   ShieldCheck,
   AlertCircle,
   ChevronDown,
+  FileText,
+  Check,
+  Printer,
 } from 'lucide-react';
 
 export interface MatrixMemberColumn {
@@ -74,6 +77,7 @@ export const LeagueMatrixView: React.FC = () => {
   const [matrixData, setMatrixData] = useState<MatrixResponsePayload | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [copiedDispatch, setCopiedDispatch] = useState<boolean>(false);
 
   // Fetch available pools
   useEffect(() => {
@@ -147,10 +151,131 @@ export const LeagueMatrixView: React.FC = () => {
     });
   };
 
+  // Generate plaintext clipboard dispatch summary block
+  const handleGenerateDispatch = async () => {
+    if (!matrixData) return;
+
+    const currentPool = pools.find((p) => p.id === selectedPoolId);
+    const poolName = currentPool ? currentPool.name : 'NFL Pick \'Em Pool';
+    const timestamp = new Date().toLocaleString();
+
+    let text = `====================================================\n`;
+    text += `🏈 NFL PICK 'EM MATRIX DISPATCH — WEEK ${matrixData.metadata.week_number}\n`;
+    text += `====================================================\n`;
+    text += `Pool: ${poolName}\n`;
+    text += `Mode: ${matrixData.metadata.picking_mode}\n`;
+    text += `Generated: ${timestamp}\n`;
+    text += `----------------------------------------------------\n\n`;
+
+    // Columns Header
+    const colHeaders = matrixData.columns.map((col) => {
+      const name = col.displayName || col.email.split('@')[0];
+      return name.padEnd(12).slice(0, 12);
+    });
+    text += `${'MATCHUP'.padEnd(24)} | ${colHeaders.join(' | ')}\n`;
+    text += `${'-'.repeat(24)}-+-${colHeaders.map(() => '-'.repeat(12)).join('-+-')}\n`;
+
+    // Game Rows
+    for (const game of matrixData.rows) {
+      let matchupStr = `${game.away_team_id} @ ${game.home_team_id}`;
+      if (game.status === 'FINAL') {
+        matchupStr += ` (${game.away_score}-${game.home_score} F)`;
+      } else if (game.status === 'IN_PROGRESS') {
+        matchupStr += ` (${game.away_score ?? 0}-${game.home_score ?? 0} Live)`;
+      }
+      matchupStr = matchupStr.padEnd(24).slice(0, 24);
+
+      const cellVals = matrixData.columns.map((col) => {
+        const cell = matrixData.cells[game.game_id]?.[col.user_id];
+        if (cell?.is_masked) {
+          return '[LOCKED]'.padEnd(12);
+        }
+        if (!cell?.selected_team_id) {
+          return '—'.padEnd(12);
+        }
+        let val = cell.selected_team_id;
+        if (game.status === 'FINAL') {
+          val += cell.is_correct ? ' [✓]' : ' [✗]';
+        }
+        return val.padEnd(12).slice(0, 12);
+      });
+
+      text += `${matchupStr} | ${cellVals.join(' | ')}\n`;
+    }
+
+    // Summary Section
+    text += `${'-'.repeat(24)}-+-${colHeaders.map(() => '-'.repeat(12)).join('-+-')}\n`;
+
+    // Tiebreaker Guesses
+    const tiebreakerVals = matrixData.columns.map((col) => {
+      const guess = matrixData.summary[col.user_id]?.tiebreaker_guess;
+      return (guess !== null && guess !== undefined ? `${guess} pts` : '—').padEnd(12).slice(0, 12);
+    });
+    text += `${'🎯 TIEBREAKER GUESS'.padEnd(24)} | ${tiebreakerVals.join(' | ')}\n`;
+
+    // Weekly Wins
+    const winVals = matrixData.columns.map((col) => {
+      const wins = matrixData.summary[col.user_id]?.weekly_wins ?? 0;
+      return `${wins} wins`.padEnd(12).slice(0, 12);
+    });
+    text += `${'🏆 WEEKLY WINS'.padEnd(24)} | ${winVals.join(' | ')}\n`;
+
+    // Cumulative Shots
+    const shotVals = matrixData.columns.map((col) => {
+      const shots = matrixData.summary[col.user_id]?.cumulative_shots ?? 0;
+      return `${Number(shots).toFixed(2)} shots`.padEnd(12).slice(0, 12);
+    });
+    text += `${'🍺 CUMULATIVE SHOTS'.padEnd(24)} | ${shotVals.join(' | ')}\n`;
+    text += `====================================================\n`;
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedDispatch(true);
+      setTimeout(() => setCopiedDispatch(false), 3000);
+    } catch (err) {
+      console.error('Failed to copy dispatch to clipboard:', err);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      {/* Header & Controls Toolbar */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-6 rounded-2xl bg-slate-900/80 border border-slate-800 backdrop-blur-xl shadow-xl shadow-black/40">
+      {/* Print Styles for Landscape Letter formatting */}
+      <style>{`
+        @media print {
+          @page {
+            size: letter landscape;
+            margin: 0.4in;
+          }
+          body {
+            background-color: #ffffff !important;
+            color: #000000 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+        }
+      `}</style>
+
+      {/* Print-Only Sheet Title Block */}
+      {matrixData && (
+        <div className="hidden print:block mb-4 border-b pb-2 border-black">
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-xl font-extrabold text-black">
+                NFL PICK 'EM MATRIX — WEEK {selectedWeek} ({matrixData.metadata.picking_mode})
+              </h1>
+              <p className="text-xs text-gray-700">
+                Pool: {pools.find((p) => p.id === selectedPoolId)?.name || 'Main League'} | Generated: {new Date().toLocaleString()}
+              </p>
+            </div>
+            <div className="text-right text-xs text-gray-700">
+              <span>Anti-Peeking: {matrixData.metadata.hide_picks_until_kickoff ? 'Active' : 'Open Slate'}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Header & Controls Toolbar (Hidden in Print) */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-6 rounded-2xl bg-slate-900/80 border border-slate-800 backdrop-blur-xl shadow-xl shadow-black/40 print:hidden">
         <div className="space-y-1">
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-indigo-500 flex items-center justify-center shadow-lg shadow-cyan-500/20">
@@ -205,6 +330,37 @@ export const LeagueMatrixView: React.FC = () => {
             <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
 
+          {/* Generate Dispatch Button */}
+          <button
+            onClick={handleGenerateDispatch}
+            disabled={loading || !matrixData}
+            className="flex items-center space-x-1.5 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-bold transition-all shadow-md shadow-cyan-500/20 disabled:opacity-50"
+            title="Copy plaintext summary block to clipboard"
+          >
+            {copiedDispatch ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-300" />
+                <span>Copied Dispatch!</span>
+              </>
+            ) : (
+              <>
+                <FileText className="w-3.5 h-3.5" />
+                <span>Generate Dispatch</span>
+              </>
+            )}
+          </button>
+
+          {/* Print Button */}
+          <button
+            onClick={() => window.print()}
+            disabled={loading || !matrixData}
+            className="flex items-center space-x-1.5 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 hover:text-white transition-all shadow-sm disabled:opacity-50"
+            title="Print or Export PDF in landscape letter format"
+          >
+            <Printer className="w-3.5 h-3.5 text-slate-400" />
+            <span>Print</span>
+          </button>
+
           {/* Refresh Button */}
           <button
             onClick={fetchMatrix}
@@ -217,19 +373,26 @@ export const LeagueMatrixView: React.FC = () => {
         </div>
       </div>
 
-      {/* Anti-Peeking / Rules Banner */}
-      {matrixData?.metadata?.hide_picks_until_kickoff && (
-        <div className="flex items-center space-x-3 px-4 py-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-medium">
+      {/* Anti-Peeking / Rules Banner (Hidden in Print) */}
+      {matrixData?.metadata?.hide_picks_until_kickoff ? (
+        <div className="flex items-center space-x-3 px-4 py-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-medium print:hidden">
           <ShieldCheck className="w-4 h-4 text-indigo-400 shrink-0" />
           <span>
-            <strong>Anti-Peeking Active:</strong> Opponents' picks remain masked with a lock icon until their respective game kicks off.
+            <strong>Anti-Peeking Active (Strict Mode):</strong> Competitor picks remain masked with a lock icon until their respective game kicks off.
+          </span>
+        </div>
+      ) : (
+        <div className="flex items-center space-x-3 px-4 py-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs font-medium print:hidden">
+          <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0" />
+          <span>
+            <strong>Open Slate Mode:</strong> Competitor picks become exposed as soon as their weekly submission is finalized.
           </span>
         </div>
       )}
 
       {/* Error state */}
       {error && (
-        <div className="flex items-center space-x-3 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm">
+        <div className="flex items-center space-x-3 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm print:hidden">
           <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
           <span>{error}</span>
         </div>
@@ -237,7 +400,7 @@ export const LeagueMatrixView: React.FC = () => {
 
       {/* Loading Skeleton */}
       {loading && !matrixData && (
-        <div className="p-12 rounded-2xl bg-slate-900/60 border border-slate-800 flex flex-col items-center justify-center space-y-4">
+        <div className="p-12 rounded-2xl bg-slate-900/60 border border-slate-800 flex flex-col items-center justify-center space-y-4 print:hidden">
           <RefreshCw className="w-8 h-8 text-cyan-400 animate-spin" />
           <p className="text-sm font-semibold text-slate-400">Loading square sheet matrix...</p>
         </div>
@@ -245,20 +408,20 @@ export const LeagueMatrixView: React.FC = () => {
 
       {/* Spreadsheet Matrix Table */}
       {matrixData && (
-        <div className="relative rounded-2xl bg-slate-900/90 border border-slate-800 shadow-2xl shadow-black/60 overflow-hidden">
-          <div className="overflow-x-auto max-h-[75vh] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900">
-            <table className="w-full text-left border-collapse min-w-[700px]">
+        <div className="relative rounded-2xl bg-slate-900/90 border border-slate-800 shadow-2xl shadow-black/60 overflow-hidden print:border-black print:shadow-none print:bg-white print:rounded-none">
+          <div className="overflow-x-auto max-h-[75vh] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900 print:max-h-none print:overflow-visible">
+            <table className="w-full text-left border-collapse min-w-[700px] print:min-w-0 print:text-black">
               {/* Table Header: Members (Columns) */}
               <thead>
-                <tr className="border-b border-slate-800 bg-slate-950">
+                <tr className="border-b border-slate-800 bg-slate-950 print:bg-gray-100 print:border-black">
                   {/* Top-Left Sticky Corner */}
                   <th
                     scope="col"
-                    className="sticky top-0 left-0 z-40 bg-slate-950/95 backdrop-blur-md px-4 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-400 border-r border-slate-800 min-w-[220px] max-w-[240px] shadow-sm"
+                    className="sticky top-0 left-0 z-40 bg-slate-950/95 backdrop-blur-md px-4 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-400 border-r border-slate-800 min-w-[220px] max-w-[240px] shadow-sm print:static print:bg-gray-100 print:text-black print:border-black"
                   >
                     <div className="flex items-center justify-between">
                       <span>Game Matchup</span>
-                      <Clock className="w-3.5 h-3.5 text-slate-500" />
+                      <Clock className="w-3.5 h-3.5 text-slate-500 print:hidden" />
                     </div>
                   </th>
 
@@ -271,13 +434,13 @@ export const LeagueMatrixView: React.FC = () => {
                       <th
                         key={col.user_id}
                         scope="col"
-                        className={`sticky top-0 z-30 bg-slate-950/95 backdrop-blur-md px-3 py-3 text-center min-w-[120px] max-w-[150px] border-r border-slate-800/80 transition-colors ${
+                        className={`sticky top-0 z-30 bg-slate-950/95 backdrop-blur-md px-3 py-3 text-center min-w-[120px] max-w-[150px] border-r border-slate-800/80 transition-colors print:static print:bg-gray-100 print:text-black print:border-black ${
                           isSelf ? 'bg-cyan-950/40 text-cyan-300' : 'text-slate-200'
                         }`}
                       >
                         <div className="flex flex-col items-center space-y-1">
                           <div
-                            className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black uppercase ${
+                            className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black uppercase print:hidden ${
                               isSelf
                                 ? 'bg-gradient-to-tr from-cyan-500 to-emerald-400 text-slate-950 shadow-md shadow-cyan-500/20'
                                 : 'bg-slate-800 text-slate-300 border border-slate-700'
@@ -285,11 +448,11 @@ export const LeagueMatrixView: React.FC = () => {
                           >
                             {displayName.charAt(0)}
                           </div>
-                          <span className="text-xs font-bold truncate max-w-[110px]" title={col.email}>
+                          <span className="text-xs font-bold truncate max-w-[110px] print:max-w-none print:text-black" title={col.email}>
                             {displayName}
                           </span>
                           {isSelf && (
-                            <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                            <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 print:hidden">
                               You
                             </span>
                           )}
@@ -301,7 +464,7 @@ export const LeagueMatrixView: React.FC = () => {
               </thead>
 
               {/* Table Body: Games (Rows) */}
-              <tbody className="divide-y divide-slate-800/60 font-medium">
+              <tbody className="divide-y divide-slate-800/60 font-medium print:divide-black">
                 {matrixData.rows.map((game, rowIdx) => {
                   const isFinal = game.status === 'FINAL';
                   const isInProgress = game.status === 'IN_PROGRESS';
@@ -309,36 +472,36 @@ export const LeagueMatrixView: React.FC = () => {
                   return (
                     <tr
                       key={game.game_id}
-                      className={`hover:bg-slate-800/40 transition-colors ${
+                      className={`hover:bg-slate-800/40 transition-colors print:bg-white ${
                         rowIdx % 2 === 0 ? 'bg-slate-900/30' : 'bg-slate-900/70'
                       }`}
                     >
                       {/* Sticky Left Column: Game Info */}
-                      <td className="sticky left-0 z-20 bg-slate-950/95 backdrop-blur-md px-4 py-3.5 border-r border-slate-800 min-w-[220px] max-w-[240px] shadow-sm">
+                      <td className="sticky left-0 z-20 bg-slate-950/95 backdrop-blur-md px-4 py-3.5 border-r border-slate-800 min-w-[220px] max-w-[240px] shadow-sm print:static print:bg-white print:text-black print:border-black">
                         <div className="flex flex-col space-y-1">
                           <div className="flex items-center justify-between">
-                            <span className="font-extrabold text-sm text-white tracking-wide">
-                              {game.away_team_id} <span className="text-slate-500 font-normal text-xs">@</span> {game.home_team_id}
+                            <span className="font-extrabold text-sm text-white tracking-wide print:text-black">
+                              {game.away_team_id} <span className="text-slate-500 font-normal text-xs print:text-gray-600">@</span> {game.home_team_id}
                             </span>
                             {isFinal ? (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 print:border-black print:text-black print:bg-transparent">
                                 Final
                               </span>
                             ) : isInProgress ? (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/30 animate-pulse">
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/30 animate-pulse print:border-black print:text-black print:bg-transparent">
                                 Live
                               </span>
                             ) : (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-slate-400 bg-slate-800/60">
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold text-slate-400 bg-slate-800/60 print:bg-transparent print:text-black">
                                 {formatKickoff(game.kickoff_time)}
                               </span>
                             )}
                           </div>
 
                           {(isFinal || isInProgress) && (
-                            <div className="flex items-center justify-between text-xs text-slate-400 font-mono">
+                            <div className="flex items-center justify-between text-xs text-slate-400 font-mono print:text-gray-800">
                               <span>Score:</span>
-                              <span className="font-bold text-slate-200">
+                              <span className="font-bold text-slate-200 print:text-black">
                                 {game.away_score ?? 0} - {game.home_score ?? 0}
                               </span>
                             </div>
@@ -359,33 +522,33 @@ export const LeagueMatrixView: React.FC = () => {
                         let textColor = 'text-slate-200';
 
                         if (isMasked) {
-                          cellBackground = 'bg-slate-950/60';
+                          cellBackground = 'bg-slate-950/60 print:bg-gray-100 print:text-gray-600';
                         } else if (isFinal) {
                           if (isCorrect === true) {
-                            cellBackground = 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300';
-                            textColor = 'text-emerald-300 font-black';
+                            cellBackground = 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 print:bg-green-100 print:text-green-900';
+                            textColor = 'text-emerald-300 font-black print:text-green-900';
                           } else if (isCorrect === false) {
-                            cellBackground = 'bg-rose-500/15 hover:bg-rose-500/25 text-rose-300';
-                            textColor = 'text-rose-300 font-semibold';
+                            cellBackground = 'bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 print:bg-red-100 print:text-red-900';
+                            textColor = 'text-rose-300 font-semibold print:text-red-900';
                           } else {
-                            cellBackground = 'bg-slate-900/40 text-slate-400';
+                            cellBackground = 'bg-slate-900/40 text-slate-400 print:bg-white print:text-black';
                           }
                         } else if (isSelf) {
-                          cellBackground = 'bg-cyan-950/15';
+                          cellBackground = 'bg-cyan-950/15 print:bg-white';
                         }
 
                         return (
                           <td
                             key={col.user_id}
-                            className={`px-3 py-3 text-center border-r border-slate-800/60 transition-all ${cellBackground}`}
+                            className={`px-3 py-3 text-center border-r border-slate-800/60 transition-all print:border-black print:text-black ${cellBackground}`}
                           >
                             {isMasked ? (
                               <div
-                                className="flex items-center justify-center space-x-1 py-1 px-2 rounded-lg bg-slate-800/80 border border-slate-700/80 text-slate-400"
+                                className="flex items-center justify-center space-x-1 py-1 px-2 rounded-lg bg-slate-800/80 border border-slate-700/80 text-slate-400 print:border-none print:bg-transparent print:text-gray-600"
                                 title="Pick hidden until kickoff (Anti-Peeking)"
                               >
-                                <Lock className="w-3.5 h-3.5 text-amber-400" />
-                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                <Lock className="w-3.5 h-3.5 text-amber-400 print:hidden" />
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 print:text-gray-600">
                                   Lock
                                 </span>
                               </div>
@@ -395,14 +558,14 @@ export const LeagueMatrixView: React.FC = () => {
                                   {pick}
                                 </span>
                                 {isFinal && isCorrect === true && (
-                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 print:hidden" />
                                 )}
                                 {isFinal && isCorrect === false && (
-                                  <XCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                                  <XCircle className="w-3.5 h-3.5 text-rose-400 shrink-0 print:hidden" />
                                 )}
                               </div>
                             ) : (
-                              <span className="text-xs text-slate-600 select-none">—</span>
+                              <span className="text-xs text-slate-600 select-none print:text-gray-400">—</span>
                             )}
                           </td>
                         );
@@ -413,11 +576,11 @@ export const LeagueMatrixView: React.FC = () => {
               </tbody>
 
               {/* Table Footer: Summary Rows (Sticky Bottom) */}
-              <tfoot className="border-t-2 border-slate-700 bg-slate-950/95 font-bold">
+              <tfoot className="border-t-2 border-slate-700 bg-slate-950/95 font-bold print:bg-gray-100 print:border-black">
                 {/* 1. Tiebreaker Guess Row */}
-                <tr className="border-b border-slate-800/80">
-                  <td className="sticky left-0 z-20 bg-slate-950/95 backdrop-blur-md px-4 py-3 border-r border-slate-800 text-xs text-indigo-300 font-extrabold flex items-center space-x-2">
-                    <Target className="w-4 h-4 text-indigo-400 shrink-0" />
+                <tr className="border-b border-slate-800/80 print:border-black">
+                  <td className="sticky left-0 z-20 bg-slate-950/95 backdrop-blur-md px-4 py-3 border-r border-slate-800 text-xs text-indigo-300 font-extrabold flex items-center space-x-2 print:static print:bg-gray-100 print:text-black print:border-black">
+                    <Target className="w-4 h-4 text-indigo-400 shrink-0 print:hidden" />
                     <span>Tiebreaker Guess</span>
                   </td>
                   {matrixData.columns.map((col) => {
@@ -425,7 +588,7 @@ export const LeagueMatrixView: React.FC = () => {
                     return (
                       <td
                         key={col.user_id}
-                        className="px-3 py-3 text-center border-r border-slate-800/60 text-xs font-mono font-black text-indigo-300"
+                        className="px-3 py-3 text-center border-r border-slate-800/60 text-xs font-mono font-black text-indigo-300 print:border-black print:text-black"
                       >
                         {guess !== null && guess !== undefined ? `${guess} pts` : '—'}
                       </td>
@@ -434,9 +597,9 @@ export const LeagueMatrixView: React.FC = () => {
                 </tr>
 
                 {/* 2. Weekly Wins Row */}
-                <tr className="border-b border-slate-800/80">
-                  <td className="sticky left-0 z-20 bg-slate-950/95 backdrop-blur-md px-4 py-3 border-r border-slate-800 text-xs text-emerald-300 font-extrabold flex items-center space-x-2">
-                    <Trophy className="w-4 h-4 text-emerald-400 shrink-0" />
+                <tr className="border-b border-slate-800/80 print:border-black">
+                  <td className="sticky left-0 z-20 bg-slate-950/95 backdrop-blur-md px-4 py-3 border-r border-slate-800 text-xs text-emerald-300 font-extrabold flex items-center space-x-2 print:static print:bg-gray-100 print:text-black print:border-black">
+                    <Trophy className="w-4 h-4 text-emerald-400 shrink-0 print:hidden" />
                     <span>Weekly Wins</span>
                   </td>
                   {matrixData.columns.map((col) => {
@@ -444,7 +607,7 @@ export const LeagueMatrixView: React.FC = () => {
                     return (
                       <td
                         key={col.user_id}
-                        className="px-3 py-3 text-center border-r border-slate-800/60 text-xs font-black text-emerald-300"
+                        className="px-3 py-3 text-center border-r border-slate-800/60 text-xs font-black text-emerald-300 print:border-black print:text-black"
                       >
                         {wins}
                       </td>
@@ -454,8 +617,8 @@ export const LeagueMatrixView: React.FC = () => {
 
                 {/* 3. Cumulative Shots Row */}
                 <tr>
-                  <td className="sticky left-0 z-20 bg-slate-950/95 backdrop-blur-md px-4 py-3 border-r border-slate-800 text-xs text-amber-300 font-extrabold flex items-center space-x-2">
-                    <Beer className="w-4 h-4 text-amber-400 shrink-0" />
+                  <td className="sticky left-0 z-20 bg-slate-950/95 backdrop-blur-md px-4 py-3 border-r border-slate-800 text-xs text-amber-300 font-extrabold flex items-center space-x-2 print:static print:bg-gray-100 print:text-black print:border-black">
+                    <Beer className="w-4 h-4 text-amber-400 shrink-0 print:hidden" />
                     <span>Cumulative Shots</span>
                   </td>
                   {matrixData.columns.map((col) => {
@@ -463,7 +626,7 @@ export const LeagueMatrixView: React.FC = () => {
                     return (
                       <td
                         key={col.user_id}
-                        className="px-3 py-3 text-center border-r border-slate-800/60 text-xs font-mono font-black text-amber-300"
+                        className="px-3 py-3 text-center border-r border-slate-800/60 text-xs font-mono font-black text-amber-300 print:border-black print:text-black"
                       >
                         {Number(shots).toFixed(2)}
                       </td>

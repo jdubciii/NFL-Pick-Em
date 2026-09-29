@@ -112,17 +112,17 @@
 ### Prompt 8.5: LeagueMatrixView UI [✅]
 > "In the React frontend, create `LeagueMatrixView.tsx`. Use standard HTML `<table>` or CSS Grid to build a spreadsheet layout. The Y-axis (rows) should be the NFL games. The X-axis (columns) should be the members. Implement sticky positioning so the member names and game matchups stay visible when scrolling. For the cells: if `is_masked` is true, render a lock icon. If the game is 'FINAL', apply a light green background if `is_correct` is true, or light red if false. At the bottom, render summary footer rows displaying the Tiebreaker Guess, Weekly Wins, and Cumulative Shots (formatted to 2 decimals)."
 
-## Phase 9: Rule Engine Expansions & Dispatch
-### Prompt 9.1: Schema & Settings Migrations
+## Phase 9: Rule Engine Expansions & Dispatch [✅ COMPLETED]
+### Prompt 9.1: Schema & Settings Migrations [✅]
 > "Update `schema.prisma`. Add `is_finalized` (Boolean) to `WeeklySubmission` and `commissioner_notes` (String) to `Game`. Update `PoolSettings` type to include `lockMode`, `excludedGameWindows`, and `tieBreakerType`. Generate and apply the migration."
 
-### Prompt 9.2: Dual-Mode API Middleware
+### Prompt 9.2: Dual-Mode API Middleware [✅]
 > "Update `GET /api/pools/:pool_id/matrix`. Implement Dual-Mode Visibility. If `hide_picks_until_kickoff` is true, mask unstarted games. If false, expose picks for unstarted games ONLY if the opponent's `WeeklySubmission.is_finalized` is true."
 
-### Prompt 9.3: Scoring Exclusion Pipeline
+### Prompt 9.3: Scoring Exclusion Pipeline [✅]
 > "Update the `executeWeeklyWrapUp` and scoring engines. Check `pool.settings.excludedGameWindows`. If a game matches an excluded window, skip point allocation entirely."
 
-### Prompt 9.4: Matrix Dispatch & Print Styles
+### Prompt 9.4: Matrix Dispatch & Print Styles [✅]
 > "Update `LeagueMatrixView.tsx`. Add `@media print` Tailwind utilities to enforce landscape letter formatting. Add a 'Generate Dispatch' button to format the matrix state into a clipboard-ready plaintext summary block."
 
 ## Phase 10: Shot-Cam Penalty Portal (Storage Infrastructure)
