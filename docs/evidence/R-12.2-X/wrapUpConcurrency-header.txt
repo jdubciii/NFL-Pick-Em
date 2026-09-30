@@ -1,0 +1,35 @@
+﻿import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { PrismaClient } from '@prisma/client';
+import { assertDisposableUrl } from '../src/db/safeguards';
+
+const localRehearsalUrl = process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/pickem_rehearsal';
+
+describe('BR-4 Wrap-Up Concurrency & Claim Idempotency', () => {
+  let prisma: PrismaClient;
+  const poolId = 'b0000000-0000-0000-0000-000000000001';
+  const weekNo = 5;
+
+  beforeAll(async () => {
+    assertDisposableUrl(localRehearsalUrl);
+    prisma = new PrismaClient({ datasources: { db: { url: localRehearsalUrl } } });
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS public.weekly_wrapups (
+        pool_id UUID NOT NULL,
+        week_number INTEGER NOT NULL,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        applied_by UUID NOT NULL,
+        CONSTRAINT weekly_wrapups_pkey PRIMARY KEY (pool_id, week_number)
+      );
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      DELETE FROM public.weekly_wrapups WHERE pool_id = '${poolId}' AND week_number = ${weekNo};
+    `);
+  });
+
+  afterAll(async () => {
+    if (prisma) {
+      await prisma.$disconnect();
+    }
+  });

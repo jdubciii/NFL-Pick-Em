@@ -1,0 +1,2 @@
+﻿96fca3d feat: implement database safeguards and testing infrastructure alongside Incident I-1 forensic artifacts
+a2362c0 test: add vitest dependency and characterization and concurrency test suites

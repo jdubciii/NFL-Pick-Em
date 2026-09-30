@@ -1,0 +1,22 @@
+﻿
+Path                                                                                 LineNumber Line                                                                                                                                              
+----                                                                                 ---------- ----                                                                                                                                              
+C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\db\test.ts                 15         role: Role.ADMIN,                                                                                                                         
+C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\middleware\auth.ts         55   if (req.user.role !== Role.ADMIN) {                                                                                                             
+C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\middleware\auth.ts         67 export async function requirePoolCommissioner(req: Request, res: Response, next: NextFunction): Promise<void> {                                   
+C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\middleware\auth.ts         95     req.pool = pool;                                                                                                                              
+C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\middleware\auth.ts         98     console.error('Error in requirePoolCommissioner:', error);                                                                                    
+C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\middleware\auth.ts        107 export async function requirePoolMember(req: Request, res: Response, next: NextFunction): Promise<void> {                                         
+C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\middleware\auth.ts        131       req.pool = pool;                                                                                                                            
+C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\middleware\auth.ts        150     req.pool = pool;                                                                                                                              
+C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\middleware\auth.ts        153     console.error('Error in requirePoolMember:', error);                                                                                          
+C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\server.ts                   9 import { JWT_SECRET, requireAuth, requireAdmin, requirePoolCommissioner, requirePoolMember } from './middleware/auth';                            
+C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\server.ts                 185 app.get('/api/pools/:pool_id/leaderboard', requireAuth, requirePoolMember, async (req: Request, res: Response): Promise<void> => {                
+C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\server.ts                 321 app.get('/api/pools/:pool_id/leaderboard/cumulative', requireAuth, requirePoolMember, async (req: Request, res: Response): Promise<void> => {     
+C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\server.ts                 433 app.post('/api/pools/:pool_id/penalties/adjust', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {    
+C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\server.ts                 545 app.get('/api/pools/:pool_id/penalties/member/:member_id', requireAuth, requirePoolMember, async (req: Request, res: Response): Promise<void> => {
+C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\server.ts                 756 app.get('/api/pools/:pool_id/penalties/:id/media', requireAuth, requirePoolMember, async (req: Request, res: Response): Promise<void> => {        
+C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\server.ts                 801 app.get('/api/pools/:pool_id/matrix', requireAuth, requirePoolMember, async (req: Request, res: Response): Promise<void> => {                     
+
+
+
