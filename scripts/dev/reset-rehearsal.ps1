@@ -2,8 +2,6 @@
 $ErrorActionPreference = "Stop"
 
 $LocalRehearsalUrl = if ($env:TEST_DATABASE_URL) { $env:TEST_DATABASE_URL } elseif ($env:DATABASE_URL) { $env:DATABASE_URL } else { "postgresql://postgres:postgres@localhost:5432/pickem_rehearsal" }
-$LocalDefaultUrl = "postgresql://postgres:postgres@localhost:5432/postgres"
-$RootDir = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 Write-Host "=== RESET REHEARSAL DATABASE (Decision #35) ===" -ForegroundColor Cyan
 
