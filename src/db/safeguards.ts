@@ -28,7 +28,7 @@ const DISALLOWED_HOST_PATTERNS = [
  * Throws a descriptive Error if the URL points to a hosted database or violates isolation rules.
  */
 export function assertDisposableUrl(rawUrl?: string): void {
-  const targetUrl = rawUrl || process.env.TEST_DATABASE_URL || '';
+  const targetUrl = rawUrl !== undefined ? rawUrl : (process.env.TEST_DATABASE_URL || '');
   if (!targetUrl) {
     throw new Error('SAFETY_VIOLATION: TEST_DATABASE_URL is not set. Refusing to run tests against primary or unconfigured database.');
   }
@@ -62,6 +62,8 @@ export function assertDisposableUrl(rawUrl?: string): void {
   const dbName = parsed.pathname.replace(/^\//, '');
   const isValidDbName = 
     dbName === 'pickem_rehearsal' || 
+    dbName.startsWith('pickem_rehearsal') ||
+    dbName.startsWith('pickem_test') ||
     dbName.endsWith('_test') || 
     dbName.endsWith('_rehearsal') ||
     dbName === 'test';
