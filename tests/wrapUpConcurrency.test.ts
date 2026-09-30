@@ -1,13 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { assertDisposableDatabase } from '../src/db/safeguards';
+import { assertDisposableUrl } from '../src/db/safeguards';
 
-const dbUrl = process.env.DATABASE_URL || '';
-const rehearsalUrl = dbUrl.includes('?')
-  ? dbUrl.replace('?', '?schema=rehearsal&')
-  : `${dbUrl}?schema=rehearsal`;
-
-process.env.TEST_DATABASE_URL = rehearsalUrl;
+const localRehearsalUrl = process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/pickem_rehearsal';
 
 describe('BR-4 Wrap-Up Concurrency & Claim Idempotency', () => {
   let prisma: PrismaClient;
@@ -15,11 +10,11 @@ describe('BR-4 Wrap-Up Concurrency & Claim Idempotency', () => {
   const weekNo = 5;
 
   beforeAll(async () => {
-    assertDisposableDatabase(process.env.TEST_DATABASE_URL);
-    prisma = new PrismaClient({ datasources: { db: { url: rehearsalUrl } } });
+    assertDisposableUrl(localRehearsalUrl);
+    prisma = new PrismaClient({ datasources: { db: { url: localRehearsalUrl } } });
 
     await prisma.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS rehearsal.weekly_wrapups (
+      CREATE TABLE IF NOT EXISTS public.weekly_wrapups (
         pool_id UUID NOT NULL,
         week_number INTEGER NOT NULL,
         applied_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -29,7 +24,7 @@ describe('BR-4 Wrap-Up Concurrency & Claim Idempotency', () => {
     `);
 
     await prisma.$executeRawUnsafe(`
-      DELETE FROM rehearsal.weekly_wrapups WHERE pool_id = '${poolId}' AND week_number = ${weekNo};
+      DELETE FROM public.weekly_wrapups WHERE pool_id = '${poolId}' AND week_number = ${weekNo};
     `);
   });
 
@@ -47,12 +42,12 @@ describe('BR-4 Wrap-Up Concurrency & Claim Idempotency', () => {
       [1, 2, 3].map(async (workerId) => {
         try {
           const insertCount = await prisma.$executeRawUnsafe(`
-            INSERT INTO rehearsal.weekly_wrapups (pool_id, week_number, applied_by)
+            INSERT INTO public.weekly_wrapups (pool_id, week_number, applied_by)
             VALUES ('${poolId}', ${weekNo}, '${adminId}')
             ON CONFLICT (pool_id, week_number) DO NOTHING;
           `);
           return { workerId, acquired: insertCount === 1 };
-        } catch (e) {
+        } catch (e: any) {
           return { workerId, acquired: false, error: e.message };
         }
       })
