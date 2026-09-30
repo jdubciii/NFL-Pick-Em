@@ -49,9 +49,19 @@ describe('BR-6 Safeguards: assertDisposableUrl', () => {
     }).toThrow(/SAFETY_VIOLATION.*Database name 'production_db' is not recognized/);
   });
 
-  it('sabotage test: throws when TEST_DATABASE_URL is empty or missing', () => {
+  it('sabotage test: throws when TEST_DATABASE_URL is empty string or undefined', () => {
     expect(() => {
       assertDisposableUrl('');
     }).toThrow(/SAFETY_VIOLATION: TEST_DATABASE_URL is not set/);
+
+    const oldEnv = process.env.TEST_DATABASE_URL;
+    try {
+      delete process.env.TEST_DATABASE_URL;
+      expect(() => {
+        assertDisposableUrl(undefined);
+      }).toThrow(/SAFETY_VIOLATION: TEST_DATABASE_URL is not set/);
+    } finally {
+      process.env.TEST_DATABASE_URL = oldEnv;
+    }
   });
 });
