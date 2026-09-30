@@ -6,7 +6,7 @@ import cors from 'cors';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import prisma from './db/client';
-import { JWT_SECRET, requireAuth, requireAdmin } from './middleware/auth';
+import { JWT_SECRET, requireAuth, requireAdmin, requirePoolCommissioner, requirePoolMember } from './middleware/auth';
 import { picksRouter } from './routes/picks';
 import { adminRouter } from './routes/admin';
 import type {
@@ -182,7 +182,7 @@ export interface LeaderboardUserEntry {
  * Protected endpoint that returns the pool leaderboard aggregated from PickResult records.
  * Sorts users descending by total points and tags the lowest scoring user(s) with is_weekly_loser: true.
  */
-app.get('/api/pools/:pool_id/leaderboard', requireAuth, async (req: Request, res: Response): Promise<void> => {
+app.get('/api/pools/:pool_id/leaderboard', requireAuth, requirePoolMember, async (req: Request, res: Response): Promise<void> => {
   const poolId = String(req.params.pool_id);
 
   if (!poolId) {
@@ -318,7 +318,7 @@ export interface CumulativeLeaderboardEntry {
  * including cumulative shot counts, 1st place finishes, dead place finishes, and pick accuracy.
  * Supports sorting by 'shots', 'wins', 'dead_place', or 'accuracy'.
  */
-app.get('/api/pools/:pool_id/leaderboard/cumulative', requireAuth, async (req: Request, res: Response): Promise<void> => {
+app.get('/api/pools/:pool_id/leaderboard/cumulative', requireAuth, requirePoolMember, async (req: Request, res: Response): Promise<void> => {
   const poolId = String(req.params.pool_id);
   const sortBy = String(req.query.sort_by || 'shots').toLowerCase();
   const order = String(req.query.order || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
@@ -430,7 +430,7 @@ app.get('/api/pools/:pool_id/leaderboard/cumulative', requireAuth, async (req: R
  * Accepts member_id, delta (integer), and reason.
  * Inserts a new record into PenaltyLedger and triggers recalculation of total_shots_drank in PoolMemberStat.
  */
-app.post('/api/pools/:pool_id/penalties/adjust', requireAuth, requireAdmin, async (req: Request, res: Response): Promise<void> => {
+app.post('/api/pools/:pool_id/penalties/adjust', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {
   const poolId = String(req.params.pool_id);
   const memberId = req.body.member_id || req.body.memberId || req.body.user_id || req.body.userId;
   const rawDelta = req.body.delta;
@@ -542,7 +542,7 @@ app.post('/api/pools/:pool_id/penalties/adjust', requireAuth, requireAdmin, asyn
  * GET /api/pools/:pool_id/penalties/member/:member_id
  * Returns the penalty ledger history for a specific member in the pool.
  */
-app.get('/api/pools/:pool_id/penalties/member/:member_id', requireAuth, async (req: Request, res: Response): Promise<void> => {
+app.get('/api/pools/:pool_id/penalties/member/:member_id', requireAuth, requirePoolMember, async (req: Request, res: Response): Promise<void> => {
   const poolId = String(req.params.pool_id);
   const memberId = String(req.params.member_id);
 
@@ -753,7 +753,7 @@ app.patch('/api/pools/:pool_id/penalties/:id/media/confirm', requireAuth, async 
  * GET /api/pools/:pool_id/penalties/:id/media
  * Returns penalty media details for a specific penalty entry.
  */
-app.get('/api/pools/:pool_id/penalties/:id/media', requireAuth, async (req: Request, res: Response): Promise<void> => {
+app.get('/api/pools/:pool_id/penalties/:id/media', requireAuth, requirePoolMember, async (req: Request, res: Response): Promise<void> => {
   const poolId = String(req.params.pool_id);
   const penaltyId = String(req.params.id);
 
@@ -798,7 +798,7 @@ app.get('/api/pools/:pool_id/penalties/:id/media', requireAuth, async (req: Requ
  * - cells: 2D map nested by game_id -> user_id -> { pick_id, selected_team_id, is_masked, is_correct, points_awarded }
  * - summary: object map keyed by user_id -> { user_id, weekly_wins, tiebreaker_guess, cumulative_shots }
  */
-app.get('/api/pools/:pool_id/matrix', requireAuth, async (req: Request, res: Response): Promise<void> => {
+app.get('/api/pools/:pool_id/matrix', requireAuth, requirePoolMember, async (req: Request, res: Response): Promise<void> => {
   const poolId = String(req.params.pool_id);
   const rawWeekNo = req.query.week_no || req.query.weekNumber || req.query.week || '1';
   const weekNumber = parseInt(String(rawWeekNo), 10) || 1;
