@@ -8,7 +8,7 @@ SELECT count(*) AS applied_migrations,
        CASE WHEN count(*) = 8 THEN 'PASS' ELSE 'FAIL: Unexpected migration count' END AS migration_status
 FROM _prisma_migrations;
 
--- 2. Verify RLS is ENABLED (true) and NOT FORCED (false) across all 11 public tables
+-- 2. Verify RLS is ENABLED (true) and NOT FORCED (false) across all 12 public tables
 SELECT relname,
        relrowsecurity,
        relforcerowsecurity,
@@ -16,8 +16,7 @@ SELECT relname,
 FROM pg_class
 JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
 WHERE pg_namespace.nspname = 'public' 
-  AND relkind = 'r' 
-  AND relname NOT LIKE '_prisma%'
+  AND relkind IN ('r', 'p')
 ORDER BY relname;
 
 -- 3. Verify anon and authenticated roles have NO table privileges
@@ -26,7 +25,7 @@ SELECT table_name,
        has_table_privilege('authenticated', 'public.' || table_name, 'select') AS auth_select,
        has_table_privilege('anon', 'public.' || table_name, 'update') AS anon_update
 FROM information_schema.tables
-WHERE table_schema = 'public' AND table_name NOT LIKE '_prisma%'
+WHERE table_schema = 'public'
 ORDER BY table_name;
 
 -- 4. Verify trigger function execute privileges are revoked

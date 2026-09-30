@@ -29,6 +29,9 @@ REVOKE ALL ON TABLE "weekly_submissions" FROM anon, authenticated;
 ALTER TABLE "penalty_media" ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE "penalty_media" FROM anon, authenticated;
 
+ALTER TABLE "_prisma_migrations" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE "_prisma_migrations" FROM anon, authenticated;
+
 -- Revoke execute on BR-1 trigger functions from PUBLIC, anon, authenticated
 REVOKE ALL ON FUNCTION public.penalty_ledger_prevent_update_delete() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.penalty_ledger_prevent_truncate() FROM PUBLIC, anon, authenticated;

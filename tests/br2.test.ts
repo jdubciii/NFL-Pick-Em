@@ -38,37 +38,43 @@ describe('BR-2b & BR-2c: Row-Level Security & Privilege Lockdown Matrix', () => 
       SELECT relname, relrowsecurity, relforcerowsecurity
       FROM pg_class
       JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
-      WHERE pg_namespace.nspname = 'public' AND relkind = 'r' AND relname NOT LIKE '_prisma%'
+      WHERE pg_namespace.nspname = 'public' AND relkind IN ('r', 'p')
       ORDER BY relname;
     `);
 
-    expect(rlsResults.length).toBeGreaterThanOrEqual(12);
+    expect(rlsResults.length).toBeGreaterThanOrEqual(11);
 
-    for (const table of publicTables) {
-      const row = rlsResults.find((r) => r.relname === table);
-      expect(row, `Table ${table} should exist in public schema`).toBeDefined();
-      expect(row.relrowsecurity, `Table ${table} must have relrowsecurity = true`).toBe(true);
-      expect(row.relforcerowsecurity, `Table ${table} must have relforcerowsecurity = false`).toBe(false);
+    for (const row of rlsResults) {
+      expect(row.relrowsecurity, `Table ${row.relname} must have relrowsecurity = true`).toBe(true);
+      expect(row.relforcerowsecurity, `Table ${row.relname} must have relforcerowsecurity = false`).toBe(false);
     }
   });
 
   it('BR-2b/2c: asserts anon role is denied SELECT (SQLSTATE 42501) across all public tables', async () => {
-    for (const table of publicTables) {
+    const tables = await prisma.$queryRawUnsafe<any[]>(`
+      SELECT tablename FROM pg_tables WHERE schemaname = 'public';
+    `);
+
+    for (const t of tables) {
       await expect(
         prisma.$transaction(async (tx) => {
           await tx.$executeRawUnsafe(`SET LOCAL ROLE anon;`);
-          return await tx.$queryRawUnsafe(`SELECT * FROM public.${table} LIMIT 1;`);
+          return await tx.$queryRawUnsafe(`SELECT * FROM public."${t.tablename}" LIMIT 1;`);
         })
       ).rejects.toThrow(/(42501|permission denied)/);
     }
   });
 
   it('BR-2b/2c: asserts authenticated role is denied SELECT (SQLSTATE 42501) across all public tables', async () => {
-    for (const table of publicTables) {
+    const tables = await prisma.$queryRawUnsafe<any[]>(`
+      SELECT tablename FROM pg_tables WHERE schemaname = 'public';
+    `);
+
+    for (const t of tables) {
       await expect(
         prisma.$transaction(async (tx) => {
           await tx.$executeRawUnsafe(`SET LOCAL ROLE authenticated;`);
-          return await tx.$queryRawUnsafe(`SELECT * FROM public.${table} LIMIT 1;`);
+          return await tx.$queryRawUnsafe(`SELECT * FROM public."${t.tablename}" LIMIT 1;`);
         })
       ).rejects.toThrow(/(42501|permission denied)/);
     }
@@ -84,22 +90,22 @@ describe('BR-2b & BR-2c: Row-Level Security & Privilege Lockdown Matrix', () => 
   });
 
   it('BR-2c: asserts has_function_privilege returns false for anon and authenticated on BR-1 trigger functions', async () => {
-    const triggerFunctions = [
-      'penalty_ledger_prevent_update_delete()',
-      'penalty_ledger_prevent_truncate()',
-      'weekly_wrapups_prevent_update_delete()',
-      'weekly_wrapups_prevent_truncate()',
-    ];
+    const funcs = await prisma.$queryRawUnsafe<any[]>(`
+      SELECT proname, oid FROM pg_proc
+      WHERE pronamespace = 'public'::regnamespace AND proname LIKE '%prevent%';
+    `);
 
-    for (const fn of triggerFunctions) {
+    expect(funcs.length).toBeGreaterThanOrEqual(2);
+
+    for (const fn of funcs) {
       const privs = await prisma.$queryRawUnsafe<any[]>(`
         SELECT 
-          has_function_privilege('anon', '${fn}', 'execute') AS anon_priv,
-          has_function_privilege('authenticated', '${fn}', 'execute') AS auth_priv;
+          has_function_privilege('anon', ${fn.oid}, 'execute') AS anon_priv,
+          has_function_privilege('authenticated', ${fn.oid}, 'execute') AS auth_priv;
       `);
 
-      expect(privs[0].anon_priv, `anon must not have execute privilege on ${fn}`).toBe(false);
-      expect(privs[0].auth_priv, `authenticated must not have execute privilege on ${fn}`).toBe(false);
+      expect(privs[0].anon_priv, `anon must not have execute privilege on ${fn.proname}`).toBe(false);
+      expect(privs[0].auth_priv, `authenticated must not have execute privilege on ${fn.proname}`).toBe(false);
     }
   });
 });

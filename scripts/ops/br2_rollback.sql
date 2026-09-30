@@ -15,6 +15,7 @@ ALTER TABLE "pool_member_stats" DISABLE ROW LEVEL SECURITY;
 ALTER TABLE "penalty_ledger" DISABLE ROW LEVEL SECURITY;
 ALTER TABLE "weekly_submissions" DISABLE ROW LEVEL SECURITY;
 ALTER TABLE "penalty_media" DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "_prisma_migrations" DISABLE ROW LEVEL SECURITY;
 
 -- 2. Grant table privileges back to anon and authenticated
 GRANT ALL ON TABLE "users" TO anon, authenticated;
@@ -28,6 +29,7 @@ GRANT ALL ON TABLE "pool_member_stats" TO anon, authenticated;
 GRANT ALL ON TABLE "penalty_ledger" TO anon, authenticated;
 GRANT ALL ON TABLE "weekly_submissions" TO anon, authenticated;
 GRANT ALL ON TABLE "penalty_media" TO anon, authenticated;
+GRANT ALL ON TABLE "_prisma_migrations" TO anon, authenticated;
 
 -- 3. Grant function execution privileges back
 GRANT ALL ON FUNCTION public.penalty_ledger_prevent_update_delete() TO PUBLIC, anon, authenticated;
