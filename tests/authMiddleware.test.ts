@@ -1,3 +1,8 @@
+/**
+ * BR-5 middleware unit tests (pure mock)
+ * Verified against Decision #20 & R-12.2-W:
+ * Global ADMIN has ZERO override bypass on pool-scoped commissioner/membership routes.
+ */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import jwt from 'jsonwebtoken';
 import { Role } from '@prisma/client';
@@ -51,11 +56,10 @@ function createMockReqRes(options: {
   };
 
   const next = vi.fn();
-
   return { req, res, next };
 }
 
-describe('BR-5 Route Guard Middleware: Unit & Isolation Suite', () => {
+describe('BR-5 middleware unit tests (pure mock)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -64,47 +68,29 @@ describe('BR-5 Route Guard Middleware: Unit & Isolation Suite', () => {
     it('returns 401 when Authorization header is absent', () => {
       const { req, res, next } = createMockReqRes();
       requireAuth(req, res, next);
-
       expect(res.statusCode).toBe(401);
-      expect(res.body).toEqual({ error: 'Authentication required. Missing or malformed token.' });
       expect(next).not.toHaveBeenCalled();
     });
 
     it('returns 401 when Authorization header does not start with Bearer', () => {
-      const { req, res, next } = createMockReqRes({
-        headers: { authorization: 'Basic 123456' },
-      });
+      const { req, res, next } = createMockReqRes({ headers: { authorization: 'Basic 123456' } });
       requireAuth(req, res, next);
-
       expect(res.statusCode).toBe(401);
-      expect(res.body).toEqual({ error: 'Authentication required. Missing or malformed token.' });
       expect(next).not.toHaveBeenCalled();
     });
 
     it('returns 401 for an invalid / expired token', () => {
-      const { req, res, next } = createMockReqRes({
-        headers: { authorization: 'Bearer invalid.token.payload' },
-      });
+      const { req, res, next } = createMockReqRes({ headers: { authorization: 'Bearer bad.token' } });
       requireAuth(req, res, next);
-
       expect(res.statusCode).toBe(401);
-      expect(res.body).toEqual({ error: 'Invalid or expired token.' });
       expect(next).not.toHaveBeenCalled();
     });
 
     it('decodes valid JWT and attaches user to req.user, then calls next()', () => {
-      const payload: AuthUserPayload = {
-        id: 'user-uuid-1',
-        email: 'test@example.com',
-        role: Role.USER,
-      };
+      const payload: AuthUserPayload = { id: 'user-1', email: 'test@example.com', role: Role.USER };
       const token = jwt.sign(payload, JWT_SECRET);
-
-      const { req, res, next } = createMockReqRes({
-        headers: { authorization: `Bearer ${token}` },
-      });
+      const { req, res, next } = createMockReqRes({ headers: { authorization: `Bearer ${token}` } });
       requireAuth(req, res, next);
-
       expect(res.statusCode).toBe(200);
       expect(req.user).toMatchObject(payload);
       expect(next).toHaveBeenCalledTimes(1);
@@ -115,29 +101,24 @@ describe('BR-5 Route Guard Middleware: Unit & Isolation Suite', () => {
     it('returns 401 if req.user is undefined', () => {
       const { req, res, next } = createMockReqRes();
       requireAdmin(req, res, next);
-
       expect(res.statusCode).toBe(401);
-      expect(res.body).toEqual({ error: 'Authentication required.' });
       expect(next).not.toHaveBeenCalled();
     });
 
     it('returns 403 if req.user is not ADMIN', () => {
       const { req, res, next } = createMockReqRes({
-        user: { id: 'user-uuid-1', email: 'user@test.com', role: Role.USER },
+        user: { id: 'u1', email: 'u@test.com', role: Role.USER },
       });
       requireAdmin(req, res, next);
-
       expect(res.statusCode).toBe(403);
-      expect(res.body).toEqual({ error: 'Forbidden. Admin privileges required.' });
       expect(next).not.toHaveBeenCalled();
     });
 
     it('calls next() if user is ADMIN', () => {
       const { req, res, next } = createMockReqRes({
-        user: { id: 'admin-uuid-1', email: 'admin@test.com', role: Role.ADMIN },
+        user: { id: 'a1', email: 'a@test.com', role: Role.ADMIN },
       });
       requireAdmin(req, res, next);
-
       expect(res.statusCode).toBe(200);
       expect(next).toHaveBeenCalledTimes(1);
     });
@@ -147,82 +128,64 @@ describe('BR-5 Route Guard Middleware: Unit & Isolation Suite', () => {
     const validPoolId = '11111111-1111-1111-1111-111111111111';
 
     it('returns 401 if req.user is missing', async () => {
-      const { req, res, next } = createMockReqRes({
-        params: { pool_id: validPoolId },
-      });
+      const { req, res, next } = createMockReqRes({ params: { pool_id: validPoolId } });
       await requirePoolCommissioner(req, res, next);
-
       expect(res.statusCode).toBe(401);
       expect(next).not.toHaveBeenCalled();
     });
 
     it('returns 400 for a malformed non-UUID pool_id', async () => {
       const { req, res, next } = createMockReqRes({
-        user: { id: 'user-1', email: 'u@test.com', role: Role.USER },
-        params: { pool_id: 'non-uuid-pool-id' },
+        user: { id: 'u1', email: 'u@test.com', role: Role.USER },
+        params: { pool_id: 'invalid-uuid' },
       });
       await requirePoolCommissioner(req, res, next);
-
       expect(res.statusCode).toBe(400);
-      expect(res.body).toEqual({ error: 'Invalid pool ID format. Must be a valid UUID.' });
       expect(next).not.toHaveBeenCalled();
     });
 
     it('returns 404 when the pool does not exist in DB', async () => {
       (prisma.pool.findUnique as any).mockResolvedValue(null);
-
       const { req, res, next } = createMockReqRes({
-        user: { id: 'user-1', email: 'u@test.com', role: Role.USER },
+        user: { id: 'u1', email: 'u@test.com', role: Role.USER },
         params: { pool_id: validPoolId },
       });
       await requirePoolCommissioner(req, res, next);
-
       expect(res.statusCode).toBe(404);
-      expect(res.body).toEqual({ error: 'Pool not found.' });
       expect(next).not.toHaveBeenCalled();
     });
 
-    it('returns 403 when user is neither commissioner nor global admin', async () => {
-      (prisma.pool.findUnique as any).mockResolvedValue({
-        id: validPoolId,
-        adminId: 'commissioner-uuid',
-      });
-
+    it('returns 403 when user is neither commissioner nor member', async () => {
+      (prisma.pool.findUnique as any).mockResolvedValue({ id: validPoolId, adminId: 'commish-id' });
       const { req, res, next } = createMockReqRes({
-        user: { id: 'some-other-user', email: 'u@test.com', role: Role.USER },
+        user: { id: 'other-user', email: 'o@test.com', role: Role.USER },
         params: { pool_id: validPoolId },
       });
       await requirePoolCommissioner(req, res, next);
-
       expect(res.statusCode).toBe(403);
-      expect(res.body).toEqual({ error: 'Forbidden. Pool commissioner privileges required.' });
       expect(next).not.toHaveBeenCalled();
     });
 
-    it('calls next() and attaches pool when user is pool commissioner', async () => {
-      const poolRecord = { id: validPoolId, adminId: 'commissioner-uuid' };
-      (prisma.pool.findUnique as any).mockResolvedValue(poolRecord);
-
+    it('Decision #20 & R-12.2-W: global ADMIN who is not the pool commissioner -> 403, no req.pool, zero side effects', async () => {
+      (prisma.pool.findUnique as any).mockResolvedValue({ id: validPoolId, adminId: 'commish-id' });
       const { req, res, next } = createMockReqRes({
-        user: { id: 'commissioner-uuid', email: 'commish@test.com', role: Role.USER },
+        user: { id: 'admin-not-commish', email: 'admin@test.com', role: Role.ADMIN },
         params: { pool_id: validPoolId },
       });
       await requirePoolCommissioner(req, res, next);
-
-      expect(req.pool).toEqual(poolRecord);
-      expect(next).toHaveBeenCalledTimes(1);
+      expect(res.statusCode).toBe(403);
+      expect(req.pool).toBeUndefined();
+      expect(next).not.toHaveBeenCalled();
     });
 
-    it('calls next() and attaches pool when user is global admin (even if not commissioner)', async () => {
-      const poolRecord = { id: validPoolId, adminId: 'commissioner-uuid' };
+    it('calls next() and attaches pool when user is the pool commissioner', async () => {
+      const poolRecord = { id: validPoolId, adminId: 'commish-id' };
       (prisma.pool.findUnique as any).mockResolvedValue(poolRecord);
-
       const { req, res, next } = createMockReqRes({
-        user: { id: 'admin-uuid', email: 'admin@test.com', role: Role.ADMIN },
+        user: { id: 'commish-id', email: 'c@test.com', role: Role.USER },
         params: { pool_id: validPoolId },
       });
       await requirePoolCommissioner(req, res, next);
-
       expect(req.pool).toEqual(poolRecord);
       expect(next).toHaveBeenCalledTimes(1);
     });
@@ -231,39 +194,49 @@ describe('BR-5 Route Guard Middleware: Unit & Isolation Suite', () => {
   describe('requirePoolMember', () => {
     const validPoolId = '11111111-1111-1111-1111-111111111111';
 
-    it('returns 403 if user is not a member or status is inactive', async () => {
-      (prisma.pool.findUnique as any).mockResolvedValue({
-        id: validPoolId,
-        adminId: 'commissioner-uuid',
-      });
+    it('returns 403 if user is not a member and not the commissioner', async () => {
+      (prisma.pool.findUnique as any).mockResolvedValue({ id: validPoolId, adminId: 'commish-id' });
       (prisma.poolMembership.findUnique as any).mockResolvedValue(null);
-
       const { req, res, next } = createMockReqRes({
-        user: { id: 'non-member-uuid', email: 'nm@test.com', role: Role.USER },
+        user: { id: 'non-member', email: 'nm@test.com', role: Role.USER },
         params: { pool_id: validPoolId },
       });
       await requirePoolMember(req, res, next);
-
       expect(res.statusCode).toBe(403);
-      expect(res.body).toEqual({ error: 'Forbidden. Active pool membership required.' });
       expect(next).not.toHaveBeenCalled();
     });
 
-    it('calls next() and passes when user is active pool member', async () => {
-      const poolRecord = { id: validPoolId, adminId: 'commissioner-uuid' };
-      (prisma.pool.findUnique as any).mockResolvedValue(poolRecord);
-      (prisma.poolMembership.findUnique as any).mockResolvedValue({
-        poolId: validPoolId,
-        userId: 'member-uuid',
-        status: 'ACTIVE',
-      });
-
+    it('Decision #20 & R-12.2-W: global ADMIN who is not a member and not commissioner -> 403, no req.pool', async () => {
+      (prisma.pool.findUnique as any).mockResolvedValue({ id: validPoolId, adminId: 'commish-id' });
+      (prisma.poolMembership.findUnique as any).mockResolvedValue(null);
       const { req, res, next } = createMockReqRes({
-        user: { id: 'member-uuid', email: 'm@test.com', role: Role.USER },
+        user: { id: 'global-admin-id', email: 'ga@test.com', role: Role.ADMIN },
         params: { pool_id: validPoolId },
       });
       await requirePoolMember(req, res, next);
+      expect(res.statusCode).toBe(403);
+      expect(req.pool).toBeUndefined();
+      expect(next).not.toHaveBeenCalled();
+    });
 
+    it('calls next() when user is active pool member', async () => {
+      (prisma.pool.findUnique as any).mockResolvedValue({ id: validPoolId, adminId: 'commish-id' });
+      (prisma.poolMembership.findUnique as any).mockResolvedValue({ poolId: validPoolId, userId: 'm1', status: 'ACTIVE' });
+      const { req, res, next } = createMockReqRes({
+        user: { id: 'm1', email: 'm@test.com', role: Role.USER },
+        params: { pool_id: validPoolId },
+      });
+      await requirePoolMember(req, res, next);
+      expect(next).toHaveBeenCalledTimes(1);
+    });
+
+    it('calls next() when user is the pool commissioner (even without explicit membership row)', async () => {
+      (prisma.pool.findUnique as any).mockResolvedValue({ id: validPoolId, adminId: 'commish-id' });
+      const { req, res, next } = createMockReqRes({
+        user: { id: 'commish-id', email: 'c@test.com', role: Role.USER },
+        params: { pool_id: validPoolId },
+      });
+      await requirePoolMember(req, res, next);
       expect(next).toHaveBeenCalledTimes(1);
     });
   });

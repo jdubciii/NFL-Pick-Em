@@ -87,9 +87,7 @@ export async function requirePoolCommissioner(req: Request, res: Response, next:
     }
 
     const isCommissioner = pool.adminId === req.user.id;
-    const isGlobalAdmin = req.user.role === Role.ADMIN;
-
-    if (!isCommissioner && !isGlobalAdmin) {
+    if (!isCommissioner) {
       res.status(403).json({ error: 'Forbidden. Pool commissioner privileges required.' });
       return;
     }
@@ -129,9 +127,7 @@ export async function requirePoolMember(req: Request, res: Response, next: NextF
     }
 
     const isCommissioner = pool.adminId === req.user.id;
-    const isGlobalAdmin = req.user.role === Role.ADMIN;
-
-    if (isCommissioner || isGlobalAdmin) {
+    if (isCommissioner) {
       req.pool = pool;
       next();
       return;
