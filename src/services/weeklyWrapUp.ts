@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, GameStatus } from '@prisma/client';
 import prisma from '../db/client';
 import type { PoolSettings, TiebreakerSettings, PenaltySettings } from '../types/pool';
 import { isGameInExcludedWindow } from './scoringEngine';
@@ -11,13 +11,15 @@ export interface ScoredMember {
 }
 
 export interface WeeklyWrapUpResult {
-  applied?: boolean;
-  reason?: string;
+  applied: boolean;
+  reason?: 'ALREADY_WRAPPED_UP' | 'NO_GAMES_FOR_WEEK' | 'WEEK_NOT_FINAL' | string;
+  pendingCount?: number;
+  earliestPendingKickoff?: Date | string | null;
   poolId?: string;
   weekNo?: number;
   topScorers?: Array<{ userId: string; score: number; tiebreakerDistance: number }>;
   deadPlaceMembers?: Array<{ userId: string; score: number; tiebreakerDistance: number }>;
-  penaltyAssigned?: number | Prisma.Decimal;
+  penaltyAssigned?: Prisma.Decimal | number;
   processedMembers?: number;
   targetGameId?: string | null;
   targetGameScore?: number | null;
@@ -58,34 +60,29 @@ export function resolveTiebreakerGame(games: any[], gameTargetSetting?: string):
 }
 
 /**
- * Executes the weekly wrap-up pipeline for a completed week in a pool.
- * Uses a Prisma transaction to:
- * 0. Check claim table idempotency (BR-4b).
- * 1. Query all finalized pick_results for the pool to calculate total scores.
- * 2. Find the target tiebreaker game from settings.tiebreaker.game_target and calculate its actual total score.
- * 3. Query WeeklySubmission to get everyone's tie_breaker_prediction.
- * 4. Sort users by points (DESC) and absolute distance to the tiebreaker total (ASC).
- * 5. Identify top scorer(s) (1st Place) and increment first_place_finishes in PoolMemberStat.
- * 6. Identify lowest scorer(s) (Dead Place). If tied, divides dead_place_penalty by the number of tied users
- *    using pure Prisma.Decimal math, writing to PenaltyLedger (skipping if 0.00).
- * 7. Increment dead_place_finishes for lowest scorer(s).
- * 8. Recalculate total_shots_drank by summing PenaltyLedger entries for affected users.
+ * Executes the weekly wrap-up pipeline for a completed week in a pool according to R-12.2-I order of execution:
+ * 1. READ (Claim Check): Check if marker exists for (poolId, weekNumber).
+ * 2. READ (Game Resolver & Non-Excluded Set): Resolve non-excluded games for the week via the shared scoring resolver.
+ * 3. READ (Status Check): Verify that every resolved game has status === 'FINAL'.
+ * 4. WRITE (Claim): Create the weekly_wrapups claim via createMany({ skipDuplicates: true }).
+ * 5. WRITE (Effects): Execute BR-4 Decimal split penalty ledger entries and pool_member_stats updates.
  */
 export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promise<WeeklyWrapUpResult> {
   return await prisma.$transaction(async (tx: any) => {
-    // 0. Claim check (BR-4b Idempotency): ensure this pool and week has not already been wrapped up
-    if (tx.weeklyWrapup || tx.weekly_wrapups || tx.weeklyWrapups) {
-      const claimModel = tx.weeklyWrapup || tx.weekly_wrapups || tx.weeklyWrapups;
-      const claim = await claimModel.createMany({
-        data: [{ poolId, weekNumber: weekNo }],
-        skipDuplicates: true,
+    // -------------------------------------------------------------------------
+    // Step 1: READ (Claim Check) - Fast check if already wrapped up
+    // -------------------------------------------------------------------------
+    const claimModel = tx.weeklyWrapup || tx.weekly_wrapups || tx.weeklyWrapups;
+    if (claimModel) {
+      const existingClaim = await claimModel.findFirst({
+        where: { poolId, weekNumber: weekNo },
       });
-      if (claim && claim.count === 0) {
-        return { applied: false, reason: 'ALREADY_WRAPPED_UP' };
+      if (existingClaim) {
+        return { applied: false, reason: 'ALREADY_WRAPPED_UP', poolId, weekNo };
       }
     }
 
-    // 1. Fetch Pool and all active members
+    // Fetch Pool and all active members
     const pool = await tx.pool.findUnique({
       where: { id: poolId },
       include: {
@@ -106,14 +103,15 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
       throw new Error(`Pool with ID ${poolId} has no active members.`);
     }
 
-    // Extract settings configuration
     const settings = (pool.settings as PoolSettings) || {};
     const penaltiesConfig = settings.penalties || {};
-
     const tiebreakerConfig = settings.tiebreaker || {};
     const gameTargetSetting = tiebreakerConfig.game_target || tiebreakerConfig.gameTarget || 'MONDAY_NIGHT';
 
-    // 2. Fetch all picks for the pool with their finalized results and associated game
+    // -------------------------------------------------------------------------
+    // Step 2: READ (Game Resolver & Non-Excluded Set)
+    // -------------------------------------------------------------------------
+    // Fetch picks for this pool with associated games and results
     const picks = await tx.pick.findMany({
       where: { poolId },
       include: {
@@ -122,7 +120,6 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
       },
     });
 
-    // 3. Extract unique games and determine target tiebreaker game
     const gamesMap = new Map<string, any>();
     for (const pick of picks) {
       if (pick.game) {
@@ -131,20 +128,65 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
     }
     const poolGames = Array.from(gamesMap.values());
 
-    // If no games from picks, query all finalized games as fallback
-    let allGames = poolGames;
-    if (allGames.length === 0) {
-      allGames = await tx.game.findMany({
-        orderBy: { kickoffTime: 'desc' },
-      });
+    // Resolve non-excluded games using shared scoring resolver
+    const excludedWindows = settings.excludedGameWindows ?? settings.excluded_game_windows;
+    const nonExcludedGames = poolGames.filter(
+      (game) => !isGameInExcludedWindow(game.kickoffTime, excludedWindows)
+    );
+
+    // If no non-excluded games are found, strictly abort (do NOT trigger database-wide fallback)
+    if (nonExcludedGames.length === 0) {
+      return {
+        applied: false,
+        reason: 'NO_GAMES_FOR_WEEK',
+        poolId,
+        weekNo,
+      };
     }
 
-    const targetGame = resolveTiebreakerGame(allGames, gameTargetSetting);
+    // -------------------------------------------------------------------------
+    // Step 3: READ (Status Check) - All resolved non-excluded games MUST be FINAL
+    // -------------------------------------------------------------------------
+    const pendingGames = nonExcludedGames.filter(
+      (g) => g.status !== GameStatus.FINAL || g.homeScore === null || g.awayScore === null
+    );
+
+    if (pendingGames.length > 0) {
+      const sortedPending = [...pendingGames].sort(
+        (a, b) => new Date(a.kickoffTime).getTime() - new Date(b.kickoffTime).getTime()
+      );
+      return {
+        applied: false,
+        reason: 'WEEK_NOT_FINAL',
+        pendingCount: pendingGames.length,
+        earliestPendingKickoff: sortedPending[0]?.kickoffTime ?? null,
+        poolId,
+        weekNo,
+      };
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 4: WRITE (Claim) - Atomic claim insertion
+    // -------------------------------------------------------------------------
+    if (claimModel) {
+      const claim = await claimModel.createMany({
+        data: [{ poolId, weekNumber: weekNo }],
+        skipDuplicates: true,
+      });
+      if (claim && claim.count === 0) {
+        return { applied: false, reason: 'ALREADY_WRAPPED_UP', poolId, weekNo };
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 5: WRITE (Effects) - Grade, Split Penalties, and Update Stats
+    // -------------------------------------------------------------------------
+    const targetGame = resolveTiebreakerGame(nonExcludedGames, gameTargetSetting);
     const targetGameHomeScore = targetGame?.homeScore ?? 0;
     const targetGameAwayScore = targetGame?.awayScore ?? 0;
     const actualTiebreakerTotal = targetGame ? targetGameHomeScore + targetGameAwayScore : 0;
 
-    // 4. Query WeeklySubmission to get everyone's tie_breaker_prediction
+    // Fetch weekly submissions for tiebreaker predictions
     const weeklySubmissions = await tx.weeklySubmission.findMany({
       where: {
         poolId: pool.id,
@@ -161,8 +203,7 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
       }
     }
 
-    // 5. Calculate scores per user (respecting excludedGameWindows)
-    const excludedWindows = settings.excludedGameWindows ?? settings.excluded_game_windows;
+    // Calculate score per member
     const memberScoresMap = new Map<string, number>();
     for (const membership of pool.memberships) {
       memberScoresMap.set(membership.userId, 0);
@@ -178,7 +219,7 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
       }
     }
 
-    // 6. Build scored members array with tiebreaker distance
+    // Build scored members array with tiebreaker distance
     const memberEntries: ScoredMember[] = pool.memberships.map((membership: any) => {
       const userId = membership.userId;
       const score = memberScoresMap.get(userId) || 0;
@@ -197,24 +238,17 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
       };
     });
 
-    if (memberEntries.length === 0) {
-      throw new Error(`No scored members found in pool ${poolId}.`);
-    }
-
-    // 7. Sort users first by points (DESC) and then by absolute distance to tiebreaker total (ASC)
+    // Sort users: Points (DESC), then Tiebreaker Distance (ASC)
     memberEntries.sort((a, b) => {
-      // Primary Sort: Points (DESC)
       if (b.score !== a.score) {
         return b.score - a.score;
       }
-      // Secondary Sort: Tiebreaker Distance (ASC)
       if (a.tiebreakerDistance !== b.tiebreakerDistance) {
         return a.tiebreakerDistance - b.tiebreakerDistance;
       }
       return a.userId.localeCompare(b.userId);
     });
 
-    // 8. Identify 1st Place (Top Scorers) and Dead Place (Lowest Scorers)
     const bestScore = memberEntries[0].score;
     const bestDistance = memberEntries[0].tiebreakerDistance;
     const topScorers = memberEntries.filter(
@@ -231,7 +265,7 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
     const topScorerUserIds = new Set(topScorers.map((m) => m.userId));
     const deadPlaceUserIds = new Set(deadPlaceMembers.map((m) => m.userId));
 
-    // 9. Calculate split penalty if there is a tie for dead place (Pure Prisma.Decimal Math)
+    // Calculate split penalty using pure Prisma.Decimal math
     const penaltyConfigVal = penaltiesConfig.dead_place_penalty ?? penaltiesConfig.deadPlacePenalty ?? 1;
     const deadPlacePenalty = new Prisma.Decimal(penaltyConfigVal.toString());
     const memberCount = new Prisma.Decimal(deadPlaceMembers.length);
@@ -239,7 +273,7 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
       ? deadPlacePenalty.dividedBy(memberCount).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
       : new Prisma.Decimal(0);
 
-    // 10. Insert PenaltyLedger records for all Dead Place finishers with split_penalty (skip if 0.00)
+    // Insert PenaltyLedger records (bypassing if share is 0.00)
     if (splitPenalty.greaterThan(0)) {
       for (const deadMember of deadPlaceMembers) {
         await tx.penaltyLedger.create({
@@ -255,13 +289,12 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
       }
     }
 
-    // 11. Update/Upsert PoolMemberStat for all pool members & recalculate total_shots_drank
+    // Update/Upsert PoolMemberStat for all pool members & recalculate total_shots_drank
     for (const membership of pool.memberships) {
       const userId = membership.userId;
       const isTopScorer = topScorerUserIds.has(userId);
       const isDeadPlace = deadPlaceUserIds.has(userId);
 
-      // Sum all penalty deltas for this user to get total_shots_drank
       const ledgerSum = await tx.penaltyLedger.aggregate({
         where: {
           poolId: pool.id,
@@ -317,3 +350,5 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
     };
   });
 }
+
+export const runWeeklyWrapUp = executeWeeklyWrapUp;
