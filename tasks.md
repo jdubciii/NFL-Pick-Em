@@ -95,8 +95,6 @@
 > "Build the `AdminPenaltyModal` to allow manual `PenaltyLedger` adjustments with a read-only audit history."
 
 ## Phase 8: Square Sheet Matrix & Precision Tiebreaker Engine [✅ COMPLETED]
-*Instructions: Copy and paste the blocks below one by one into your Antigravity IDE. Do not proceed to the next prompt until the IDE successfully completes the current one.*
-
 ### Prompt 8.1: Precision Schema Migrations [✅]
 > "Update the `schema.prisma` file. Change `total_shots_drank` in `PoolMemberStat` and `delta` in `PenaltyLedger` from `Int` to `Decimal` with a scale of 2. Add a new model called `WeeklySubmission` with `id`, `pool_id`, `member_id`, `week_number`, and `tie_breaker_prediction` (Decimal, nullable). Enforce a unique constraint on `[pool_id, member_id, week_number]`. Update the TypeScript interfaces for `PoolSettings` to include the new `tiebreaker`, `picking_mode`, and `hide_picks_until_kickoff` properties as defined in our spec. Generate and apply the Prisma migration."
 
@@ -112,7 +110,7 @@
 ### Prompt 8.5: LeagueMatrixView UI [✅]
 > "In the React frontend, create `LeagueMatrixView.tsx`. Use standard HTML `<table>` or CSS Grid to build a spreadsheet layout. The Y-axis (rows) should be the NFL games. The X-axis (columns) should be the members. Implement sticky positioning so the member names and game matchups stay visible when scrolling. For the cells: if `is_masked` is true, render a lock icon. If the game is 'FINAL', apply a light green background if `is_correct` is true, or light red if false. At the bottom, render summary footer rows displaying the Tiebreaker Guess, Weekly Wins, and Cumulative Shots (formatted to 2 decimals)."
 
-## Phase 9: Rule Engine Expansions & Dispatch [✅ COMPLETED]
+## Phase 9: Rule Engine Expansions & Dispatch (Data & Visibility Layer) [✅ COMPLETED]
 ### Prompt 9.1: Schema & Settings Migrations [✅]
 > "Update `schema.prisma`. Add `is_finalized` (Boolean) to `WeeklySubmission` and `commissioner_notes` (String) to `Game`. Update `PoolSettings` type to include `lockMode`, `excludedGameWindows`, and `tieBreakerType`. Generate and apply the migration."
 
@@ -144,3 +142,96 @@
 
 ### Prompt 11.3: Social Presets (Contrarian & Mirror) [✅]
 > "In `PickPresetControls`, build 'Contrarian' and 'Mirror Rival' logic. These must be disabled if `hide_picks_until_kickoff` is true. They should calculate distributions from the currently visible matrix cells and auto-fill the form strictly in client memory."
+
+### Baseline Remediation (BR-0, BR-1, BR-2, BR-3, BR-4, BR-5)
+- [ ] **BR-0.1 Rehearsal Provisioning:** Rehearsal DB provisioned; bootstrap script committed; migrations replay from zero; structural diff vs hosted reported.
+- [ ] **BR-0.2 Test Isolation:** `assertDisposableDatabase()` merged; tests use `TEST_DATABASE_URL` only; freeze acknowledged.
+- [ ] **BR-1 Acceptance:** Section 3 H1-H4 attached (hosted ledger row unchanged, `intact = true`). Rehearsal evidence gathered (six negative-test errors, fixture cascade shows P0001, FK inventory attached, regression green, CI drift check merged, extended grep reported).
+- [ ] **BR-2b/2c Authorization & Rehearsal:** All gates evidenced; rehearsal run clean; hosted applied via `migrate deploy` in order 2b then 2c. Per-table anon/authenticated denial output attached (rehearsal and hosted); BR-1 `intact = true` afterwards; read-only smoke test passes.
+- [ ] **BR-3a Facts & Hardening:** Facts 1-3 reported before code; parser and full matrix merged; Pardon (-1) still works end to end; zero rows on 422; CI grep active; no data mutated.
+- [ ] **Authorization / INV-8:** S-2 facts delivered (or S-2 escalated); INV-8 facts delivered.
+- [ ] **BR-4.1 Wrap-Up Math:** Deliver facts 1-6; commit characterization matrix; merge Decimal-only `splitPenalty`; escalate diffs; ensure no zero-delta rows; active CI grep.
+- [ ] **BR-4b Idempotency Migration:** Deliver facts 3.1; confirm FINAL-games precondition; merge `weekly_wrapups` migration and claim code on rehearsal; ensure all Section 3.4 tests green; apply to hosted after BR-1/BR-2b/2c.
+- [ ] **BR-5.1 Per-Pool Auth Facts:** Deliver facts 1-5; ensure no escalation triggers fired.
+- [ ] **BR-5.2 Per-Pool Auth Fix:** Merge `requirePoolCommissioner` and `requirePoolMember`; migrate all pool-scoped routes; ensure full role x pool test matrix is green on rehearsal; activate route-table CI scan.
+- [ ] **BR-1 Trigger Acceptance:** RAW trigger and function definitions attached; criteria (a) and (b) demonstrated; criterion (c) withdrawn. Negative tests assert SQLSTATE and unchanged rows, not message text.
+- [ ] **BR-2 Trigger Rehearsal:** Trigger-function REVOKEs rehearsed with proof the triggers still fire; consumer audit full scope; Data API dashboard state reported.
+- [ ] **Classification Confirmation:** Owner confirmation of SHARED-DEV recorded (name/date), or classification reverted.
+- [ ] **Documentation / Evidence:** Invariant Status Register updated with evidence links. Link to `docs/evidence/R-12.2-H.md` provided.
+
+### R-12.2-J Acceptance Criteria
+- [ ] BR-0: rehearsal replays from zero via `migrate deploy`; structural diff vs hosted attached; guard path reported.
+- [ ] R-12.2-I guard: all R-12.2-I §3 tests green on rehearsal, including guard-vs-scoring set equality and concurrency tests on real Postgres.
+- [ ] Report-body summaries (Section 2) delivered; status table (Section 4) delivered.
+- [ ] Documentation baseline reconciled with RAW `git diff --stat` and zero deletions.
+
+### Phase 12 Execution Status Table
+| Item | Status | Evidence link |
+|---|---|---|
+| BR-0 rehearsal DB + replay + structural diff | VERIFIED | [docs/evidence/R-12.2-J.md](docs/evidence/R-12.2-J.md) |
+| BR-1 acceptance (definitions, negative tests, cascade fixture, regression, CI drift) | VERIFIED | [docs/evidence/R-12.2-J.md](docs/evidence/R-12.2-J.md) |
+| BR-2b ledger lockdown (rehearsal / hosted) | NOT STARTED | |
+| BR-2c other tables + trigger functions (rehearsal / hosted) | NOT STARTED | |
+| BR-3a strict signed parser + modal + tests | IMPLEMENTED-UNVERIFIED | |
+| BR-4 splitPenalty Decimal + characterization | VERIFIED | [docs/evidence/R-12.2-J.md](docs/evidence/R-12.2-J.md) |
+| BR-4b claim table + wrap-up claim + FINAL guard + tests | IMPLEMENTED-UNVERIFIED | |
+| BR-5 requirePoolCommissioner + requirePoolMember + CI route scan | IMPLEMENTED-UNVERIFIED | |
+| SHARED-DEV owner confirmation (name/date) | BLOCKED | Awaiting owner written confirmation |
+| Backup status (dashboard timestamp, PITR yes/no) | BLOCKED | Awaiting PITR dashboard check |
+| Consumer audit (full scope) + Data API dashboard state | VERIFIED | [docs/evidence/R-12.2-H.md](docs/evidence/R-12.2-H.md) |
+| INV-8 file contents + penalty_media / pool_member_stats facts | VERIFIED | [docs/evidence/R-12.2-H.md](docs/evidence/R-12.2-H.md) |
+
+## Phase 12: League Operations, Resilience & Season Lifecycle
+*Hosted migrations blocked until BR-1 is accepted and BR-2b/2c are executed or deferred. Phase 12.1 development proceeds on Rehearsal DB after BR-0 completes.*
+### 12.1 Resilient Outbox, Inbox & Job Health
+- [ ] **12.1.1 Schema Expansion:** Apply migrations for `OutboxStatus`, `InboxMessage`, `OutboxEvent`, `NotificationPreference`, `JobStatus`, and `JobRun` without modifying existing models.
+- [ ] **12.1.2 Transactional Queue Helper:** Implement `enqueueNotification` accepting a Prisma transaction client to guarantee atomicity, strictly avoiding network calls inside the helper.
+- [ ] **12.1.3 Drain & Scan Workers:** Implement the outbox drain worker (`FOR UPDATE SKIP LOCKED`, exponential backoff) and the stateless reminder scanner (`dedupeKey`, dynamic lock calculation).
+- [ ] **12.1.4 API Infrastructure:** Implement Inbox CRUD routes, preference updates, and the Commissioner Health panel returning sync staleness and job history.
+
+### 12.2 Audit & Correction Engine
+- [ ] **12.2.1 Schema Expansion:** Apply migrations for `AuditLog` (append-only), `GameResultOverride`, `ScoreCorrectionProposal`, `ScoringRun`. Add `LeagueRole`.
+- [ ] **12.2.2 Core Correction Pipelines:** Implement Game Override logic (divergence flag) and the auto-apply / pending-approval logic for upstream Score Correction Proposals.
+- [ ] **12.2.3 Scoring Dry-Run:** Implement `ScoringRun` with unique `inputHash`, ensuring dry-run diffs only compute against locked/final games (INV-4).
+- [ ] **12.2.4 Pick-on-Behalf:** Implement write-only Admin submission bypassing lock via explicit LATE_EXCEPTION flag.
+- [✅] **12.2.5 Pre-flight audit (Section 2) reported to Arbiter**
+- [ ] **12.2.6 Migration A applied:** Migration files contain no `UPDATE`, no `DISABLE TRIGGER`, no `DROP`/`RENAME`/`ALTER COLUMN ... TYPE` on any existing column. (Automated grep check in CI.)
+- [ ] **12.2.7 Migration B applied (only if pre-flight clean):** After migration, 100% of pre-existing rows read as `ASSESSMENT`, and the immutability trigger is present and enabled; UPDATE/DELETE on the ledger still fails at the DB level (INV-2). `reason` values on all pre-existing rows are byte-identical before and after migration. All amounts round-trip as exact Decimal(5,2); `CHECK (amount > 0)` enforced (INV-1).
+- [ ] **12.2.8 Read-path audit + `ledgerEffect` helper + parity test:** Read-path parity test passes (old totals == helper totals, to the cent).
+- [ ] **12.2.9 Enable `LEDGER_TYPED_WRITES`:** (blocked until the previous task passes). `LEDGER_TYPED_WRITES` flag OFF => no non-ASSESSMENT row can be written through any API.
+- [ ] **12.2.10 Reverse / waive / Shot-Cam FULFILLMENT paths:** Double reversal rejected (unique `reversalOfId`); reversal-of-reversal rejected; mismatched user/season/amount rejected. Over-fulfillment/over-waiver rejected with an explicit error.
+- [✅] **12.2.11 Pre-Flight Update:** Column-level reconciliation of `penalty_ledger` reported to Arbiter (Pre-Flight D/E).
+- [ ] **12.2.12 SQL Identity Check:** All Phase 12 SQL and migrations reference `penalty_ledger` and `delta`; no reference to `PenaltyLedgerEntry` or `amount` in any SQL (CI grep).
+- [ ] **12.2.13 Prisma Identity Check:** No existing Prisma model or field was renamed (diff of `schema.prisma` shows additions only).
+- [✅] **12.2.14 Pre-Flight Verification:** Pre-Flight A–E results are reported verbatim; B returns 0 rows before Migration B runs.
+- [ ] **12.2.15 Non-Destructive Verification:** Migration files contain no `UPDATE`, `DISABLE TRIGGER`, `DROP`, `RENAME`, or `ALTER COLUMN ... TYPE` on any existing column.
+- [ ] **12.2.16 Ledger State Verification:** After migration, 100% of pre-existing rows read as `ASSESSMENT`; `reason` and `delta` values are byte-identical before and after; the immutability trigger is present and enabled; UPDATE/DELETE still fail (INV-2).
+- [ ] **12.2.17 Magnitude & DTO Verification:** `delta` stays Decimal(5,2) and strictly positive; new DTO `amount` values round-trip as exact 2-decimal strings mapped to `delta` (INV-1).
+- [ ] **12.2.18 Gate Verification:** Read-path parity test passes; `LEDGER_TYPED_WRITES` stays OFF until it does.
+- [ ] **12.2.19 Migration Updates:** Ensure `reversal_of_id` is typed as `uuid` and strictly enforce `snake_case` in SQL and `camelCase` with `@map` in Prisma.
+- [ ] **12.2.20 Advisory Locks:** Implement transaction-scoped advisory locking by `pool_id` and `user_id` for `FULFILLMENT`, `WAIVER`, and `REVERSAL` writes.
+- [ ] **12.2.21 Migration C (Amended):** Reversal guard rejects a `week_number` mismatch.
+- [ ] **12.2.22 Enum Validation:** Enum is `"LedgerEntryType"` with no `@@map`.
+- [ ] **12.2.23 Data API RLS Checks:** Every Phase 12 CREATE TABLE has REVOKE + RLS (CI check).
+
+### 12.3 Penalty Settlement & Season Close
+- [ ] **12.3.1 Schema Expansion:** Apply migrations for `SeasonState` enum and `SeasonSeal`.
+- [ ] **12.3.2 Readiness Check API:** Implement `GET` endpoint returning blockers (non-final games, pending runs/verifications, open penalties).
+- [ ] **12.3.3 Immutable Seal Generation:** Implement the state transition logic to `CLOSED`, writing the exact checksummed JSON snapshot (amounts as string) and carry policy.
+- [ ] **12.3.4 Recap Generation:** Build the offline-only string generator for chat pasting (INV-4 compliant).
+
+### 12.4 Season Rollover, Archive & Hardening
+- [ ] **12.4.1 Schema Expansion:** Apply migration for `MemberSeasonStatus`.
+- [ ] **12.4.2 Rollover Engine:** Implement the season duplication logic into `SETUP`, member copying (`INVITED`), and carry-over balance generation upon commissioner `CONFIRMED`.
+- [ ] **12.4.3 Archive Export:** Implement JSON/CSV bundle endpoint restricting generation to `CLOSED` seasons only, guaranteeing exclusion of unlocked drafts.
+- [ ] **12.4.4 Test Harness:** Complete automated Chaos suite, Concurrency stress suite, and Storage RLS validations.
+
+### 12.X Invariant Regression
+- [ ] **INV-1:** Precision confirmed: Decimal(5,2) used end-to-end, fixed strings in DTOs.
+- [ ] **INV-2:** Immutable Ledger confirmed: DB triggers block UPDATE/DELETE.
+- [ ] **INV-3:** Snapshot Rule confirmed: Presets operate in memory only.
+- [ ] **INV-4:** Matrix Anti-Peeking confirmed: Lockout and visibility logic untouched.
+- [ ] **INV-5:** Fallback & Lockout confirmed: Lockouts based on timestamp, unaffected by sync errors.
+- [ ] **INV-6:** Non-Blocking Outbound confirmed: TX never fails due to email/network transport.
+- [ ] **INV-7:** Anti-Bloat confirmed: No scope creep beyond specified specs.
+- [ ] **INV-8:** Shot-Cam confirmed: RLS policies intact.

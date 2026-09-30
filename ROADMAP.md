@@ -76,3 +76,30 @@
 - [✅] **11.1 Gamified Viewport Selector:** Build toggles for Cards, Slate, and Matrix views.
 - [✅] **11.2 Standard Presets:** Build Home, Away, and Favorites deterministic auto-fills.
 - [✅] **11.3 Social Presets (Contrarian & Mirror):** Build conditional logic relying on Open Slate mode to analyze and clone competitor picks.
+
+### Baseline Remediation
+- [ ] **BR-0 (Rehearsal DB):** Provision disposable database to isolate testing.
+  *R-12.2-J: BR-0 GO; guard and claim code undeployable until rehearsal tests pass.*
+- [ ] **BR-1 (INV-2 Trigger):** Out-of-band deployment of the `enforce_append_only` trigger on `penalty_ledger` (Acceptance pending local fixture test).
+- [ ] **BR-2b/2c (Data API Lockdown):** Audit and apply strict RLS deny-all logic to explicitly listed phase tables (Gated on BR-0/BR-1).
+- [ ] **BR-3a (Ledger Write Input):** Strict `server.ts` signed decimal parser implementation (Runs in parallel with BR-0).
+- [ ] **BR-4 (Wrap-up Math):** Fix `delta` decimal splitting and verify idempotency (Parallel with BR-0).
+- [ ] **BR-4b (Wrap-up Idempotency):** Migration to add `weekly_wrapups` claim table to enforce idempotency (Rehearsal first, hosted-gated).
+  *R-12.2-I: FINAL-games precondition folded into BR-4b; no bypass.*
+- [ ] **BR-5 (Per-pool Authorization):** Code-only fixes for S-2 authorization gaps (Parallel with BR-0).
+
+## Phase 12: League Operations, Resilience & Season Lifecycle [PLANNED]
+*Objective: Stabilize network events, expand commissioner auditing and correction workflows, and formalize the season lifecycle to guarantee reliable operation and history retention.*
+*Sequence Update: Now: BR-3a, BR-4, BR-5 (parallel with BR-0). Rehearsal: BR-4b. Hosted: BR-1 acceptance -> BR-2b -> BR-2c -> `br_4b_weekly_wrapups` via `migrate deploy` -> claim code -> 12.1 hosted migrations. 12.1 dev on rehearsal after BR-0 AND BR-5 helper merged.*
+
+- [ ] **12.1 Resilient Outbox, Inbox & Job Health:** Ensure non-blocking outbound event delivery, stateless reminders, and job logging.
+- [ ] **12.2 Audit & Correction Engine:** Implement dry-run scoring, override rules, and the additive penalty ledger formula.
+  - *Ruling R-12.2-A: ledger entryType is additive/parallel; read-path audit gate required before typed writes.*
+  - *Ruling R-12.2-B: physical names `penalty_ledger`/`delta` govern; Option A approved; `delta` is a positive magnitude, pending Pre-Flight B.*
+  - *Ruling R-12.2-C: BR-1 (append-only trigger) executed out-of-band. UUID typing and snake_case naming enforced. Advisory locks required for negative-balance operations.*
+- [ ] **12.3 Penalty Settlement & Season Close:** Establish season states, close-readiness checks, and the immutable JSON seal pattern.
+- [ ] **12.4 Season Rollover, Archive & Hardening:** Enable one-click rollovers, read-only sealed history, secure JSON/CSV exports, and system stress tests.
+
+### Explicitly Rejected / Deferred
+- **Rejected:** SMS/Twilio, native push notifications, websockets, in-app payment processing, live odds/weather, cross-league analytics, AI-generated recaps.
+- **Deferred:** Shot-Cam media retention and purge policy.
