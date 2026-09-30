@@ -1,0 +1,20 @@
+# ACL and Platform Allow-list for Diff A Validation (R-12.2-U §1.B / Decisions #39, #47)
+# Platform Roles
+supabase_admin
+dashboard_user
+supabase_auth_admin
+supabase_storage_admin
+supabase_functions_admin
+supabase_read_only_user
+authenticator
+pgbouncer
+
+# Default Privileges & Schema Grants
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA public
+GRANT USAGE ON SCHEMA public TO
+GRANT ALL ON TABLE public.
+GRANT ALL ON FUNCTION public.
+REVOKE ALL ON FUNCTION public.penalty_ledger_prevent_truncate() FROM PUBLIC
+REVOKE ALL ON FUNCTION public.penalty_ledger_prevent_update_delete() FROM PUBLIC
