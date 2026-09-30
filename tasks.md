@@ -95,6 +95,8 @@
 > "Build the `AdminPenaltyModal` to allow manual `PenaltyLedger` adjustments with a read-only audit history."
 
 ## Phase 8: Square Sheet Matrix & Precision Tiebreaker Engine [✅ COMPLETED]
+*Instructions: Copy and paste the blocks below one by one into your Antigravity IDE. Do not proceed to the next prompt until the IDE successfully completes the current one.*
+
 ### Prompt 8.1: Precision Schema Migrations [✅]
 > "Update the `schema.prisma` file. Change `total_shots_drank` in `PoolMemberStat` and `delta` in `PenaltyLedger` from `Int` to `Decimal` with a scale of 2. Add a new model called `WeeklySubmission` with `id`, `pool_id`, `member_id`, `week_number`, and `tie_breaker_prediction` (Decimal, nullable). Enforce a unique constraint on `[pool_id, member_id, week_number]`. Update the TypeScript interfaces for `PoolSettings` to include the new `tiebreaker`, `picking_mode`, and `hide_picks_until_kickoff` properties as defined in our spec. Generate and apply the Prisma migration."
 
@@ -110,7 +112,7 @@
 ### Prompt 8.5: LeagueMatrixView UI [✅]
 > "In the React frontend, create `LeagueMatrixView.tsx`. Use standard HTML `<table>` or CSS Grid to build a spreadsheet layout. The Y-axis (rows) should be the NFL games. The X-axis (columns) should be the members. Implement sticky positioning so the member names and game matchups stay visible when scrolling. For the cells: if `is_masked` is true, render a lock icon. If the game is 'FINAL', apply a light green background if `is_correct` is true, or light red if false. At the bottom, render summary footer rows displaying the Tiebreaker Guess, Weekly Wins, and Cumulative Shots (formatted to 2 decimals)."
 
-## Phase 9: Rule Engine Expansions & Dispatch (Data & Visibility Layer) [✅ COMPLETED]
+## Phase 9: Rule Engine Expansions & Dispatch [✅ COMPLETED]
 ### Prompt 9.1: Schema & Settings Migrations [✅]
 > "Update `schema.prisma`. Add `is_finalized` (Boolean) to `WeeklySubmission` and `commissioner_notes` (String) to `Game`. Update `PoolSettings` type to include `lockMode`, `excludedGameWindows`, and `tieBreakerType`. Generate and apply the migration."
 
