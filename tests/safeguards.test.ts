@@ -18,7 +18,7 @@ describe('BR-6 Safeguards: assertDisposableUrl', () => {
 
   it('rejects remote / hosted database URLs (Supabase, AWS, Neon, etc.)', () => {
     expect(() => {
-      assertDisposableUrl('postgresql://postgres.nsljipyoihcoqkuphhll:pass@aws-0-us-east-1.pooler.supabase.com:5432/postgres');
+      assertDisposableUrl('postgresql://postgres.exampleref:pass@aws-0-us-east-1.pooler.supabase.com:5432/postgres');
     }).toThrow(/SAFETY_VIOLATION.*Database host/);
 
     expect(() => {
