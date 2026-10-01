@@ -60,25 +60,66 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
   next();
 }
 
+export interface PoolGuardOptions {
+  from?: 'param' | 'query' | 'body';
+  name?: string;
+}
+
 /**
- * Middleware to verify that the authenticated user is the commissioner of the specified pool (or global ADMIN).
- * Validates pool UUID format, checks pool existence (404), and verifies admin ownership (403).
+ * Middleware to verify that the authenticated user is the commissioner of the specified pool.
+ * Accepts optional options { from: 'param' | 'query' | 'body', name?: string }.
+ * Validates check order: 401 (auth) -> 400 (missing/invalid UUID) -> 404 (pool not found) -> 403 (not commissioner).
+ * Attaches verified pool to req.pool.
  */
-export async function requirePoolCommissioner(req: Request, res: Response, next: NextFunction): Promise<void> {
+export function requirePoolCommissioner(
+  optionsOrReq?: PoolGuardOptions | Request,
+  maybeRes?: Response,
+  maybeNext?: NextFunction
+): any {
+  // If invoked directly as middleware: requirePoolCommissioner(req, res, next)
+  if (optionsOrReq && (optionsOrReq as Request).headers !== undefined && maybeRes && maybeNext) {
+    return handlePoolCommissioner({ from: 'param', name: 'pool_id' }, optionsOrReq as Request, maybeRes, maybeNext);
+  }
+
+  // Otherwise, invoked as factory: requirePoolCommissioner({ from: 'query' })
+  const options: PoolGuardOptions = (optionsOrReq as PoolGuardOptions) || { from: 'param', name: 'pool_id' };
+  return (req: Request, res: Response, next: NextFunction) => {
+    return handlePoolCommissioner(options, req, res, next);
+  };
+}
+
+async function handlePoolCommissioner(
+  options: PoolGuardOptions,
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
   if (!req.user) {
     res.status(401).json({ error: 'Authentication required.' });
     return;
   }
 
-  const poolId = req.params.pool_id || req.params.poolId || req.body.pool_id || req.body.poolId || req.query.pool_id;
-  if (!poolId || !UUID_REGEX.test(String(poolId))) {
+  const from = options.from || 'param';
+  const paramName = options.name || 'pool_id';
+
+  let rawPoolId: any;
+  if (from === 'query') {
+    rawPoolId = req.query[paramName] || (paramName === 'pool_id' ? req.query.poolId : undefined);
+  } else if (from === 'body') {
+    rawPoolId = req.body?.[paramName] || (paramName === 'pool_id' ? req.body?.poolId : undefined);
+  } else {
+    // param (default)
+    rawPoolId = req.params[paramName] || (paramName === 'pool_id' ? (req.params.poolId || req.body?.pool_id || req.body?.poolId || req.query?.pool_id) : undefined);
+  }
+
+  if (!rawPoolId || typeof rawPoolId !== 'string' || !UUID_REGEX.test(rawPoolId)) {
     res.status(400).json({ error: 'Invalid pool ID format. Must be a valid UUID.' });
     return;
   }
 
   try {
     const pool = await prisma.pool.findUnique({
-      where: { id: String(poolId) },
+      where: { id: rawPoolId },
     });
 
     if (!pool) {

@@ -1,0 +1,80 @@
+================================================================================
+DOCUMENTATION AUDIT & LINEAGE RECOVERY — RULING R-12.2-AA (Section 3)
+================================================================================
+
+### 1. Baseline Revisions
+```text
+Baseline hash (e41ce72): e41ce7249fc8e5120957cc61ce0e6ce14dcdac4a
+Current HEAD: 8ec0ca50ba64891cba07935d72faa544bc91e311
+```
+
+### 2. Line Counts at Baseline (`e41ce72`)
+```text
+   293 e41ce72:ARCHITECTURE.md
+    78 e41ce72:ROADMAP.md
+   146 e41ce72:tasks.md
+```
+
+### 3. Current Line Counts on HEAD
+```text
+   485 ARCHITECTURE.md
+   110 ROADMAP.md
+   251 tasks.md
+```
+
+### 4. Git Diff Numstat Against Baseline (`git diff -w --numstat e41ce72 -- ...`)
+```text
+192	0	ARCHITECTURE.md
+32	0	ROADMAP.md
+105	0	tasks.md
+```
+
+### 5. Git Lineage, Stash, and Branch State
+```text
+Current branch: main
+Working tree status:
+M src/middleware/auth.ts
+ M src/routes/admin.ts
+ M tests/authMiddleware.test.ts
+?? docs/evidence/R-12.2-AA/
+?? scripts/docs_audit_aa.js
+?? scripts/gather_facts_aa.js
+?? tests/br5b_routes.test.ts
+Stash list:
+(empty)
+
+Reflog (last 15 entries):
+8ec0ca5 HEAD@{0}: commit: docs: generate evidence bundle and finalize changes for R-12.2-Z
+a28e55d HEAD@{1}: checkout: moving from e0e857933e9a0dc21ca9792804935b947e2dd445 to main
+e0e8579 HEAD@{2}: checkout: moving from main to HEAD~1
+a28e55d HEAD@{3}: reset: moving to HEAD
+a28e55d HEAD@{4}: checkout: moving from e0e857933e9a0dc21ca9792804935b947e2dd445 to main
+e0e8579 HEAD@{5}: checkout: moving from main to HEAD~1
+a28e55d HEAD@{6}: reset: moving to HEAD
+a28e55d HEAD@{7}: checkout: moving from e0e857933e9a0dc21ca9792804935b947e2dd445 to main
+e0e8579 HEAD@{8}: checkout: moving from main to HEAD~1
+a28e55d HEAD@{9}: reset: moving to HEAD
+a28e55d HEAD@{10}: checkout: moving from e0e857933e9a0dc21ca9792804935b947e2dd445 to main
+e0e8579 HEAD@{11}: checkout: moving from main to HEAD~1
+a28e55d HEAD@{12}: reset: moving to HEAD
+a28e55d HEAD@{13}: checkout: moving from e0e857933e9a0dc21ca9792804935b947e2dd445 to main
+e0e8579 HEAD@{14}: checkout: moving from main to HEAD~1
+
+Commit log for doc files across all refs:
+8ec0ca5 docs: generate evidence bundle and finalize changes for R-12.2-Z
+908f447 feat(phase12): deliver R-12.2-V offline rehearsal requirements (CI checks, BR-5 suite, and docs)
+18238ff feat: add Phase 12 ground-truth verification scripts, documentation CI guard, and arbiter ruling evidence
+bb4c463 docs: add Phase 12 architecture specification for league operations and resilience patterns
+e41ce72 feat: implement penalty media storage, database schema, and UI components for weekly picks and penalty tracking
+c2e1ff9 feat: implement core scoring engine, weekly wrap-up service, server entry point, and league matrix view
+94eff17 docs: update architecture specs, roadmap phases, and task lists for advanced lock modes, dual visibility rules, and penalty media storage
+b767907 feat: implement backend server, navigation components, matrix views, and weekly wrap-up service
+68c7b65 feat: add Prisma schema and migration for decimal precision and weekly submissions
+3d27d53 feat: add Prisma database schema, pool type definitions, and Phase 8 roadmap
+```
+
+### 6. Restoration Proof (Asserting 0 Deleted Lines against Baseline)
+```text
+RESTORED_CLEAN: Exactly 0 deleted lines found in tasks.md relative to e41ce72.
+```
+

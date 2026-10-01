@@ -189,6 +189,54 @@ describe('BR-5 middleware unit tests (pure mock)', () => {
       expect(req.pool).toEqual(poolRecord);
       expect(next).toHaveBeenCalledTimes(1);
     });
+
+    it('from: query - extracts pool_id from query params and authorizes commissioner', async () => {
+      const poolRecord = { id: validPoolId, adminId: 'commish-id' };
+      (prisma.pool.findUnique as any).mockResolvedValue(poolRecord);
+      const middleware = requirePoolCommissioner({ from: 'query' });
+      const { req, res, next } = createMockReqRes({
+        user: { id: 'commish-id', email: 'c@test.com', role: Role.USER },
+        query: { pool_id: validPoolId },
+      });
+      await middleware(req, res, next);
+      expect(req.pool).toEqual(poolRecord);
+      expect(next).toHaveBeenCalledTimes(1);
+    });
+
+    it('from: query - returns 400 when pool_id query parameter is missing', async () => {
+      const middleware = requirePoolCommissioner({ from: 'query' });
+      const { req, res, next } = createMockReqRes({
+        user: { id: 'commish-id', email: 'c@test.com', role: Role.USER },
+        query: {},
+      });
+      await middleware(req, res, next);
+      expect(res.statusCode).toBe(400);
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('from: body - extracts pool_id from request body and authorizes commissioner', async () => {
+      const poolRecord = { id: validPoolId, adminId: 'commish-id' };
+      (prisma.pool.findUnique as any).mockResolvedValue(poolRecord);
+      const middleware = requirePoolCommissioner({ from: 'body' });
+      const { req, res, next } = createMockReqRes({
+        user: { id: 'commish-id', email: 'c@test.com', role: Role.USER },
+        body: { pool_id: validPoolId },
+      });
+      await middleware(req, res, next);
+      expect(req.pool).toEqual(poolRecord);
+      expect(next).toHaveBeenCalledTimes(1);
+    });
+
+    it('from: body - returns 400 when pool_id body parameter is missing', async () => {
+      const middleware = requirePoolCommissioner({ from: 'body' });
+      const { req, res, next } = createMockReqRes({
+        user: { id: 'commish-id', email: 'c@test.com', role: Role.USER },
+        body: {},
+      });
+      await middleware(req, res, next);
+      expect(res.statusCode).toBe(400);
+      expect(next).not.toHaveBeenCalled();
+    });
   });
 
   describe('requirePoolMember', () => {

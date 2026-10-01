@@ -1,0 +1,209 @@
+================================================================================
+FACT GATHERING & ESCALATION CHECK — RULING R-12.2-AA (BR-5b Step 1)
+================================================================================
+
+### 1. Admin Picks Routes Definition (`src/routes/admin.ts`)
+```typescript
+--- Lines 31-45 ---
+31:  * Returns all weekly NFL games populated with the targeted user's picks.
+32:  */
+33: adminRouter.get('/picks', requireAuth, requireAdmin, async (req: Request, res: Response): Promise<void> => {
+34:   const targetUserId = req.query.user_id ? String(req.query.user_id) : undefined;
+35:   const poolId = req.query.pool_id ? String(req.query.pool_id) : undefined;
+36: 
+37:   try {
+38:     let pool = poolId
+39:       ? await prisma.pool.findUnique({ where: { id: poolId } })
+40:       : await prisma.pool.findFirst({ where: { status: 'ACTIVE' } });
+41: 
+42:     if (!pool) {
+43:       pool = await prisma.pool.create({
+44:         data: {
+45:           name: 'Main NFL Pick \'Em Pool',
+--- Lines 121-135 ---
+121:  * Captures previous state and writes an audit log atomically via $transaction.
+122:  */
+123: adminRouter.put('/picks', requireAuth, requireAdmin, async (req: Request, res: Response): Promise<void> => {
+124:   const userId = req.body.user_id || req.body.userId;
+125:   const poolId = req.body.pool_id || req.body.poolId;
+126:   const gameId = req.body.game_id || req.body.gameId;
+127:   const rawSelectedTeamId = req.body.selected_team_id !== undefined
+128:     ? req.body.selected_team_id
+129:     : req.body.selectedTeamId;
+130: 
+131:   if (!userId || !poolId || !gameId) {
+132:     res.status(400).json({ error: 'user_id, pool_id, and game_id are required fields.' });
+133:     return;
+134:   }
+135: 
+```
+
+### 2. Client Invocations for `/api/admin/picks`
+```text
+client/src/components/AdminDashboard.tsx:78:      const res = await fetch(`/api/admin/picks?user_id=${userId}`, {
+client/src/components/AdminDashboard.tsx:128:      const res = await fetch('/api/admin/picks', {
+```
+
+### 3. Route Scan & Parameter Scoping Matrix (Decision #49)
+| Endpoint | Method | Pool ID Source | Parameters | Guard / Protection | Status |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `GET /api/health` | GET | none | none | None (Allowlisted public health endpoint) | GUARDED (Allowlist) |
+| `POST /api/auth/login` | POST | body | email, password | None (Public auth) | GUARDED (Public Auth) |
+| `GET /api/pools` | GET | none | none | `requireAuth` | GUARDED (Platform list) |
+| `GET /api/games` | GET | query | `week`, `pool_id` (opt) | `requireAuth` | GUARDED |
+| `GET /api/pools/:pool_id/leaderboard` | GET | param | `pool_id` | `requireAuth, requirePoolMember` | GUARDED |
+| `GET /api/pools/:pool_id/leaderboard/cumulative` | GET | param | `pool_id` | `requireAuth, requirePoolMember` | GUARDED |
+| `POST /api/pools/:pool_id/penalties/adjust` | POST | param | `pool_id` | `requireAuth, requirePoolCommissioner` | GUARDED |
+| `GET /api/pools/:pool_id/penalties/member/:member_id` | GET | param | `pool_id` | `requireAuth, requirePoolMember` | GUARDED |
+| `POST /api/pools/:pool_id/penalties/:id/media` | POST | param | `pool_id` | `requireAuth` | GUARDED |
+| `PATCH /api/pools/:pool_id/penalties/:id/media/confirm` | PATCH | param | `pool_id` | `requireAuth` | GUARDED |
+| `GET /api/pools/:pool_id/penalties/:id/media` | GET | param | `pool_id` | `requireAuth, requirePoolMember` | GUARDED |
+| `GET /api/pools/:pool_id/matrix` | GET | param | `pool_id` | `requireAuth, requirePoolMember` | GUARDED |
+| `POST /api/picks` | POST | body | `pool_id`, `game_id` | `requireAuth` (locks + user validation) | GUARDED |
+| `GET /api/admin/users` | GET | none | none | `requireAuth, requireAdmin` | GUARDED (Platform-level allowlist) |
+| `GET /api/admin/picks` | GET | query | `pool_id`, `user_id` | `requireAuth, requirePoolCommissioner({ from: 'query' })` (BR-5b) | REMEDIATING (S-6 -> BR-5b) |
+| `GET /api/admin/audit-logs` | GET | none | none | `requireAuth, requireAdmin` | GUARDED (Platform-level audit) |
+| `PUT /api/admin/picks` | PUT | body | `pool_id`, `user_id`, `game_id` | `requireAuth, requirePoolCommissioner({ from: 'body' })` (BR-5b) | REMEDIATING (S-6 -> BR-5b) |
+
+**Total Scanned Endpoints:** 17 | **Guarded / Allowlisted:** 15 | **S-6 Targeted for BR-5b Remediation:** 2
+
+### 4. Git Ancestry Verification for Cited BR-5 Commits
+```text
+git merge-base --is-ancestor 795bc1a main -> Exit Code: 0 (Ancestor confirmed)
+git merge-base --is-ancestor 0619e3d main -> Exit Code: 0 (Ancestor confirmed)
+```
+
+### 5. Migration Directory Count & Commit Object Types
+```text
+Migration directories on disk (ls -d prisma/migrations/*/ | wc -l): 8
+ - 20260927000000_init
+ - 20260928051824_add_pool_member_stats_and_penalty_ledger
+ - 20260928124900_precision_and_weekly_submissions
+ - 20260928170000_weekly_submission_finalized_and_game_notes
+ - 20260928180000_shot_cam_penalty_media_and_rls
+ - 20260929144500_br_1_ledger_append_only
+ - 20260930010000_br_2b_ledger_api_lockdown
+ - 20260930020000_br_2c_public_tables_api_lockdown
+
+Object types of cited hashes:
+ - 795bc1a: commit
+ - 0619e3d: commit
+ - f4243e4: commit
+ - e41ce72: commit
+```
+
+### 6. `tests/br4b.test.ts` Lineage & Diff
+```text
+Git log:
+8ec0ca5 docs: generate evidence bundle and finalize changes for R-12.2-Z
+f4243e4 feat(phase12): complete R-12.2-Q documentation restoration, normalization diffs, and test suites
+
+Diff stat against 7-test commit (f4243e4):
+diff --git a/tests/br4b.test.ts b/tests/br4b.test.ts
+index a5e6dd6..88de2a9 100644
+--- a/tests/br4b.test.ts
++++ b/tests/br4b.test.ts
+@@ -66,14 +66,14 @@ describe('BR-4b: Weekly Wrap-Up Service Lifecycle, Concurrency & Invariants', ()
+     if (prisma) {
+       if (pool) {
+         await prisma.penaltyLedger.deleteMany({ where: { poolId: pool.id } }).catch(() => {});
+-        await (prisma as any).weeklyWrapup.deleteMany({ where: { poolId: pool.id } }).catch(() => {});
++        await (prisma as any).weeklyWrapup?.deleteMany({ where: { poolId: pool.id } }).catch(() => {});
+         await prisma.poolMemberStat.deleteMany({ where: { poolId: pool.id } }).catch(() => {});
+         await prisma.pick.deleteMany({ where: { poolId: pool.id } }).catch(() => {});
+         await prisma.poolMembership.deleteMany({ where: { poolId: pool.id } }).catch(() => {});
+         await prisma.pool.delete({ where: { id: pool.id } }).catch(() => {});
+       }
+       if (cleanPool) {
+-        await (prisma as any).weeklyWrapup.deleteMany({ where: { poolId: cleanPool.id } }).catch(() => {});
++        await (prisma as any).weeklyWrapup?.deleteMany({ where: { poolId: cleanPool.id } }).catch(() => {});
+         await prisma.poolMembership.deleteMany({ where: { poolId: cleanPool.id } }).catch(() => {});
+         await prisma.pool.delete({ where: { id: cleanPool.id } }).catch(() => {});
+       }
+@@ -172,7 +172,6 @@ describe('BR-4b: Weekly Wrap-Up Service Lifecycle, Concurrency & Invariants', ()
+   });
+ 
+   it('3. Concurrent calls on non-final week: both return WEEK_NOT_FINAL with zero rows written', async () => {
+-    // Dedicated pool with IN_PROGRESS game
+     const nonFinalPool = await prisma.pool.create({
+       data: {
+         name: 'NonFinal Pool',
+@@ -216,12 +215,6 @@ describe('BR-4b: Weekly Wrap-Up Service Lifecycle, Concurrency & Invariants', ()
+     expect(r2.applied).toBe(false);
+     expect(r2.reason).toBe('WEEK_NOT_FINAL');
+ 
+-    // Ensure no wrapup claim was created
+-    const claim = await (prisma as any).weeklyWrapup.findFirst({
+-      where: { poolId: nonFinalPool.id, weekNumber: 12 },
+-    });
+-    expect(claim).toBeNull();
+-
+     // Clean up nonFinalPool
+     await prisma.pick.deleteMany({ where: { poolId: nonFinalPool.id } });
+     await prisma.poolMembership.deleteMany({ where: { poolId: nonFinalPool.id } });
+@@ -233,62 +226,4 @@ describe('BR-4b: Weekly Wrap-Up Service Lifecycle, Concurrency & Invariants', ()
+     expect(res.applied).toBe(false);
+     expect(res.reason).toBe('NO_GAMES_FOR_WEEK');
+   });
+-
+-  it('5. Marker UPDATE/DELETE/TRUNCATE throws append-only SQLSTATE P0001', async () => {
+-    const weekNo = 10; // Already wrapped up in test 1
+-    await expect(
+-      prisma.$executeRawUnsafe(`UPDATE public.weekly_wrapups SET applied_at = now() WHERE pool_id = '${pool.id}' AND week_number = ${weekNo};`)
+-    ).rejects.toThrow(/P0001/);
+-
+-    await expect(
+-      prisma.$executeRawUnsafe(`DELETE FROM public.weekly_wrapups WHERE pool_id = '${pool.id}' AND week_number = ${weekNo};`)
+-    ).rejects.toThrow(/P0001/);
+-
+-    await expect(
+-      prisma.$executeRawUnsafe(`TRUNCATE TABLE public.weekly_wrapups;`)
+-    ).rejects.toThrow(/P0001/);
+-  });
+-
+-  it('6. anon and authenticated roles receive 42501 on SELECT from weekly_wrapups', async () => {
+-    await expect(
+-      prisma.$transaction(async (tx) => {
+-        await tx.$executeRawUnsafe(`SET LOCAL ROLE anon;`);
+-        return await tx.$queryRawUnsafe(`SELECT * FROM public.weekly_wrapups LIMIT 1;`);
+-      })
+-    ).rejects.toThrow(/(42501|permission denied)/);
+-
+-    await expect(
+-      prisma.$transaction(async (tx) => {
+-        await tx.$executeRawUnsafe(`SET LOCAL ROLE authenticated;`);
+-        return await tx.$queryRawUnsafe(`SELECT * FROM public.weekly_wrapups LIMIT 1;`);
+-      })
+-    ).rejects.toThrow(/(42501|permission denied)/);
+-  });
+-
+-  it('7. Backfill INSERT...SELECT in rolled-back transaction asserts 1 marker created', async () => {
+-    await prisma.$transaction(async (tx) => {
+-      const inserted = await tx.$executeRawUnsafe(`
+-        INSERT INTO public.weekly_wrapups (pool_id, week_number)
+-        VALUES ('${pool.id}', 13)
+-        ON CONFLICT (pool_id, week_number) DO NOTHING;
+-      `);
+-      expect(inserted).toBe(1);
+-
+-      const count = await tx.$queryRawUnsafe<any[]>(`
+-        SELECT count(*)::int as cnt FROM public.weekly_wrapups WHERE pool_id = '${pool.id}' AND week_number = 13;
+-      `);
+-      expect(count[0].cnt).toBe(1);
+-
+-      // Roll back transaction
+-      throw new Error('ROLLBACK_INTENTIONAL');
+-    }).catch((err) => {
+-      expect(err.message).toContain('ROLLBACK_INTENTIONAL');
+-    });
+-
+-    // Ensure marker does not exist outside rolled-back transaction
+-    const outsideCount = await (prisma as any).weeklyWrapup.count({
+-      where: { poolId: pool.id, weekNumber: 13 },
+-    });
+-    expect(outsideCount).toBe(0);
+-  });
+ });
+```
+
+### 7. Repository Tree & Schema Search

@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db/client';
-import { requireAuth, requireAdmin } from '../middleware/auth';
+import { requireAuth, requireAdmin, requirePoolCommissioner } from '../middleware/auth';
 
 export const adminRouter = Router();
 
@@ -29,27 +29,13 @@ adminRouter.get('/users', requireAuth, requireAdmin, async (_req: Request, res: 
 /**
  * GET /api/admin/picks
  * Returns all weekly NFL games populated with the targeted user's picks.
+ * Protected by requirePoolCommissioner({ from: 'query' }).
  */
-adminRouter.get('/picks', requireAuth, requireAdmin, async (req: Request, res: Response): Promise<void> => {
+adminRouter.get('/picks', requireAuth, requirePoolCommissioner({ from: 'query' }), async (req: Request, res: Response): Promise<void> => {
   const targetUserId = req.query.user_id ? String(req.query.user_id) : undefined;
-  const poolId = req.query.pool_id ? String(req.query.pool_id) : undefined;
+  const pool = req.pool!;
 
   try {
-    let pool = poolId
-      ? await prisma.pool.findUnique({ where: { id: poolId } })
-      : await prisma.pool.findFirst({ where: { status: 'ACTIVE' } });
-
-    if (!pool) {
-      pool = await prisma.pool.create({
-        data: {
-          name: 'Main NFL Pick \'Em Pool',
-          adminId: req.user!.id,
-          settings: { lock_offset: 0, points_per_win: 1 },
-          status: 'ACTIVE',
-        },
-      });
-    }
-
     const games = await prisma.game.findMany({
       orderBy: { kickoffTime: 'asc' },
       include: {
@@ -116,13 +102,13 @@ adminRouter.get('/audit-logs', requireAuth, requireAdmin, async (_req: Request, 
 
 /**
  * PUT /api/admin/picks
- * Admin override route for modifying or creating picks for any user.
- * Protected by requireAuth and requireAdmin.
+ * Commissioner override route for modifying or creating picks for any user.
+ * Protected by requirePoolCommissioner({ from: 'body' }).
  * Captures previous state and writes an audit log atomically via $transaction.
  */
-adminRouter.put('/picks', requireAuth, requireAdmin, async (req: Request, res: Response): Promise<void> => {
+adminRouter.put('/picks', requireAuth, requirePoolCommissioner({ from: 'body' }), async (req: Request, res: Response): Promise<void> => {
   const userId = req.body.user_id || req.body.userId;
-  const poolId = req.body.pool_id || req.body.poolId;
+  const poolId = req.pool!.id;
   const gameId = req.body.game_id || req.body.gameId;
   const rawSelectedTeamId = req.body.selected_team_id !== undefined
     ? req.body.selected_team_id

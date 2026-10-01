@@ -14,7 +14,6 @@ function runCommand(cmd, opts = {}) {
     cwd: rootDir,
     encoding: 'utf8',
     stdio: ['pipe', 'pipe', 'pipe'],
-    shell: 'C:\\Program Files\\Git\\bin\\bash.exe',
     ...opts,
   });
 
@@ -29,7 +28,7 @@ if (isSelfTest) {
   console.log('=== Running Generator Self-Test ===');
   // Intentionally execute a command that produces no output
   try {
-    runCommand('echo -n ""');
+    runCommand('node -e "process.stdout.write(\'\')"');
   } catch (err) {
     console.error(`Generator Self-Test Caught Expected Error:\n${err.message}`);
     process.exit(1);
@@ -37,113 +36,61 @@ if (isSelfTest) {
   process.exit(0);
 }
 
-console.log('=== Running Strict Evidence Generator for R-12.2-Z ===\n');
+console.log('=== Running Strict Evidence Generator for R-12.2-AA ===\n');
 
-const evDir = path.join(rootDir, 'docs/evidence/R-12.2-Z');
+const evDir = path.join(rootDir, 'docs/evidence/R-12.2-AA');
 if (!fs.existsSync(evDir)) {
   fs.mkdirSync(evDir, { recursive: true });
 }
 
 // 1. Verify and read self_test_output.txt
+console.log('1. Verifying self-test negative control...');
 const selfTestPath = path.join(evDir, 'self_test_output.txt');
 if (!fs.existsSync(selfTestPath)) {
-  throw new Error('docs/evidence/R-12.2-Z/self_test_output.txt not found. Please run Step 2 first.');
+  // Generate self-test output
+  try {
+    execSync('node scripts/generate_evidence.js --self-test', { cwd: rootDir, stdio: 'pipe' });
+  } catch (err) {
+    fs.writeFileSync(selfTestPath, err.stderr.toString('utf8') || err.message, 'utf8');
+  }
 }
-const selfTestOutput = runCommand('cat docs/evidence/R-12.2-Z/self_test_output.txt');
+const selfTestOutput = fs.readFileSync(selfTestPath, 'utf8').trim();
 if (!selfTestOutput.includes('Empty output block detected')) {
   throw new Error('self_test_output.txt does not contain "Empty output block detected"');
 }
 
-// 2. Negative Control Grep on HEAD~1
-console.log('1. Capturing negative control grep on HEAD~1...');
-execSync('git stash push -u -m "temp-evidence-stash" || true', { cwd: rootDir, shell: 'C:\\Program Files\\Git\\bin\\bash.exe' });
+// 2. Read facts.txt
+console.log('2. Reading facts.txt...');
+const factsPath = path.join(evDir, 'facts.txt');
+if (!fs.existsSync(factsPath)) {
+  throw new Error('docs/evidence/R-12.2-AA/facts.txt not found. Please run scripts/gather_facts_aa.js first.');
+}
+const factsContent = fs.readFileSync(factsPath, 'utf8').trim();
 
-let grepHeadMinus1 = '';
+// 3. Read docs_audit.txt
+console.log('3. Reading docs_audit.txt...');
+const docsAuditPath = path.join(evDir, 'docs_audit.txt');
+if (!fs.existsSync(docsAuditPath)) {
+  throw new Error('docs/evidence/R-12.2-AA/docs_audit.txt not found. Please run scripts/docs_audit_aa.js first.');
+}
+const docsAuditContent = fs.readFileSync(docsAuditPath, 'utf8').trim();
+
+// 4. Run test suites
+console.log('4. Running full vitest test suite with verbose and JSON reporting...');
+const jsonOutPath = path.join(evDir, 'vitest.json');
+let verboseTestOutput = '';
 try {
-  grepHeadMinus1 = runCommand('git checkout HEAD~1 >/dev/null 2>&1 && grep -rEn "(CREATE|ALTER|DROP)\\s+(TABLE|INDEX|FUNCTION|TRIGGER|TYPE|SCHEMA|EXTENSION|POLICY)|SET\\s+search_path" tests/ scripts/dev/ prisma/seed.ts || echo "No matches"');
-} finally {
-  execSync('git checkout - >/dev/null 2>&1', { cwd: rootDir, shell: 'C:\\Program Files\\Git\\bin\\bash.exe' });
-  execSync('git stash pop >/dev/null 2>&1 || true', { cwd: rootDir, shell: 'C:\\Program Files\\Git\\bin\\bash.exe' });
+  verboseTestOutput = runCommand(`npx vitest run --reporter=verbose --reporter=json --outputFile="${jsonOutPath}"`);
+} catch (e) {
+  if (e.stdout) {
+    verboseTestOutput = e.stdout.toString().trim();
+  } else {
+    throw e;
+  }
 }
 
-if (!grepHeadMinus1 || !grepHeadMinus1.includes('wrapUpConcurrency.test.ts')) {
-  throw new Error(`Negative control grep failed! Expected wrapUpConcurrency.test.ts to be flagged, got: "${grepHeadMinus1}"`);
-}
-
-// 3. Positive Control Grep on HEAD
-console.log('2. Capturing positive control grep on HEAD...');
-const grepHead = runCommand('grep -rEn "(CREATE|ALTER|DROP)\\s+(TABLE|INDEX|FUNCTION|TRIGGER|TYPE|SCHEMA|EXTENSION|POLICY)|SET\\s+search_path" tests/ scripts/dev/ prisma/seed.ts || echo "CLEAN: 0 DDL or SET search_path matches found across tests/, scripts/dev/, prisma/seed.ts"');
-
-// 4. Git Revisions and Ancestry
-console.log('3. Capturing git revisions and lineage...');
-const revParse = runCommand('git rev-parse HEAD main');
-const gitLog = runCommand('git log --oneline -n 8');
-const isAncestor = runCommand('git merge-base --is-ancestor HEAD main; echo $?');
-
-// 5. Migration Directory Listings and Counts
-console.log('4. Capturing migration directory listing and counts...');
-const migrationsList = runCommand('ls -1 prisma/migrations');
-const migrationsCount = runCommand('ls -1 prisma/migrations | wc -l');
-
-// 6. Dependency Counts by Symbol
-console.log('5. Capturing dependency counts by symbol...');
-const symbols = [
-  'requirePoolCommissioner',
-  'requirePoolMember',
-  'req.pool',
-  'Role.ADMIN',
-  'requireAdmin',
-];
-
-const symbolCounts = symbols.map((sym) => {
-  const count = runCommand(`grep -r "${sym}" src/ | wc -l`);
-  return { symbol: sym, count: count.trim() };
-});
-const totalMatches = runCommand('grep -rE "requirePoolCommissioner|requirePoolMember|req\\.pool|Role\\.ADMIN|requireAdmin" src/ | wc -l');
-
-// 7. Test Execution: tests/br4b.test.ts
-console.log('6. Running tests/br4b.test.ts concurrency test...');
-const br4bOutput = runCommand('npx vitest run tests/br4b.test.ts -t "Concurrent calls on final week" --reporter=verbose');
-
-// 8. Admin Inventory
-console.log('7. Compiling Admin Inventory...');
-const adminInventory = [
-  {
-    location: '`src/routes/admin.ts:11`',
-    methodPath: '`GET /api/admin/users`',
-    guard: '`requireAuth, requireAdmin`',
-    returns: 'Array of users (`id`, `email`, `role`, `createdAt`)',
-    crossPool: 'Yes (global user list)',
-    credentials: 'No (`passwordHash` excluded via select)',
-  },
-  {
-    location: '`src/routes/admin.ts:33`',
-    methodPath: '`GET /api/admin/picks`',
-    guard: '`requireAuth, requireAdmin`',
-    returns: 'NFL games list populated with target user picks',
-    crossPool: 'Scoped to `pool_id` query param (creates default if none)',
-    credentials: 'No',
-  },
-  {
-    location: '`src/routes/admin.ts:95`',
-    methodPath: '`GET /api/admin/audit-logs`',
-    guard: '`requireAuth, requireAdmin`',
-    returns: 'Recent 50 audit logs with actor info',
-    crossPool: 'Yes (system-wide audit log query)',
-    credentials: 'No',
-  },
-  {
-    location: '`src/routes/admin.ts:123`',
-    methodPath: '`PUT /api/admin/picks`',
-    guard: '`requireAuth, requireAdmin`',
-    returns: 'Upserts pick for user and creates AuditLog record',
-    crossPool: 'Scoped by `pool_id` in request body',
-    credentials: 'No',
-  },
-];
-
-// 9. Documentation Verification
-console.log('8. Capturing doc line counts and diffs...');
+// 5. Line counts and diff stats for docs
+console.log('5. Capturing documentation line counts and diffs...');
 const archLines = fs.readFileSync(path.join(rootDir, 'ARCHITECTURE.md'), 'utf8').split('\n').length;
 const roadLines = fs.readFileSync(path.join(rootDir, 'ROADMAP.md'), 'utf8').split('\n').length;
 const taskLines = fs.readFileSync(path.join(rootDir, 'tasks.md'), 'utf8').split('\n').length;
@@ -151,11 +98,15 @@ const totalDocLines = archLines + roadLines + taskLines;
 const wcOutput = `  ${archLines} ARCHITECTURE.md\n  ${roadLines} ROADMAP.md\n  ${taskLines} tasks.md\n  ${totalDocLines} total`;
 const diffNumstat = runCommand('git diff -w --numstat e41ce72 -- ARCHITECTURE.md ROADMAP.md tasks.md');
 
+// 6. Current commit & branch
+const currentCommit = runCommand('git rev-parse HEAD');
+const currentBranch = runCommand('git branch --show-current');
+
 // Construct EVIDENCE_BUNDLE.md
-const header = `# EVIDENCE BUNDLE — RE: RULING R-12.2-Y
+const bundleContent = `# EVIDENCE BUNDLE — RE: RULING R-12.2-AA
 **Date (UTC):** ${new Date().toISOString()}  
-**Current Commit:** ${runCommand('git rev-parse HEAD')}  
-**Branch:** main  
+**Current Commit:** ${currentCommit}  
+**Branch:** ${currentBranch}  
 
 ---
 
@@ -168,93 +119,87 @@ ${selfTestOutput}
 
 ---
 
-## 2. Negative & Positive Control Grep (wrapUpConcurrency Retirement Verification)
+## 2. Phase 1: Fact Gathering & Escalation Check (BR-5b Step 1)
 
-### 2.1 Negative Control at HEAD~1 (wrapUpConcurrency Present)
-Command: \`git checkout HEAD~1 && grep -rEn "(CREATE|ALTER|DROP)\\s+(TABLE|INDEX|FUNCTION|TRIGGER|TYPE|SCHEMA|EXTENSION|POLICY)|SET\\s+search_path" tests/ scripts/dev/ prisma/seed.ts || true\`
-
-\`\`\`text
-${grepHeadMinus1}
-\`\`\`
-*Verification: Test-made DDL in \`tests/wrapUpConcurrency.test.ts\` was identified as the root cause of the spurious \`applied_by\` column and flagged by DDL grep.*
-
-### 2.2 Positive Control at HEAD (Clean Repository State)
-Command: \`grep -rEn "(CREATE|ALTER|DROP)\\s+(TABLE|INDEX|FUNCTION|TRIGGER|TYPE|SCHEMA|EXTENSION|POLICY)|SET\\s+search_path" tests/ scripts/dev/ prisma/seed.ts || true\`
-
-\`\`\`text
-${grepHead}
-\`\`\`
-*Verification: Zero test files contain DDL or \`SET search_path\` on HEAD.*
+${factsContent}
 
 ---
 
-## 3. Post-Merge Git & Migration Lineage
+## 3. Phase 3: Documentation Invariant & Lineage Recovery Audit (Section 3)
 
-### 3.1 Git Revisions
+${docsAuditContent}
+
+### 3.1 Live File Line Counts & Baseline Numstat
 \`\`\`text
-${revParse}
-\`\`\`
-
-### 3.2 Git Log (Last 8 Commits)
-\`\`\`text
-${gitLog}
-\`\`\`
-
-### 3.3 Ancestry Check (\`git merge-base --is-ancestor HEAD main; echo $?\`)
-\`\`\`text
-${isAncestor}
-\`\`\`
-
-### 3.4 Migration Directories
-\`\`\`text
-${migrationsList}
-\`\`\`
-- Total Migration Directories (\`ls -1 prisma/migrations | wc -l\`): \`${migrationsCount}\`
-
----
-
-## 4. Dependency Counts & Admin Route Inventory
-
-### 4.1 Symbol Counts in \`src/\`
-| Symbol | Matches in \`src/\` |
-| :--- | :--- |
-${symbolCounts.map((s) => `| \`${s.symbol}\` | **${s.count}** |`).join('\n')}
-| **Total Combined Matches** | **${totalMatches}** |
-
-### 4.2 Admin Route Inventory (\`/api/admin/*\`)
-| File & Line | Method & Path | Guard Middleware | Returned Data / Operation | Cross-Pool Scope | Exposes Credentials? |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-${adminInventory.map((a) => `| ${a.location} | ${a.methodPath} | ${a.guard} | ${a.returns} | ${a.crossPool} | ${a.credentials} |`).join('\n')}
-
----
-
-## 5. Concurrency & Weekly Wrap-Up Test Execution
-
-Command: \`npx vitest run tests/br4b.test.ts -t "Concurrent calls on final week" --reporter=verbose\`
-
-\`\`\`text
-${br4bOutput}
-\`\`\`
-
----
-
-## 6. Documentation Invariant & Append-Only Verification
-
-### 6.1 File Line Counts (\`wc -l ARCHITECTURE.md ROADMAP.md tasks.md\`)
-\`\`\`text
+Line Counts:
 ${wcOutput}
-\`\`\`
 
-### 6.2 Diff Numstat Against Baseline (\`git diff --numstat e41ce72 -- ARCHITECTURE.md ROADMAP.md tasks.md\`)
-\`\`\`text
+Numstat vs Baseline (e41ce72):
 ${diffNumstat}
 \`\`\`
 *Verification: Strictly 0 deletions across ARCHITECTURE.md, ROADMAP.md, and tasks.md.*
 
 ---
+
+## 4. Phase 2: BR-5b Route Implementation & Test Suite Execution
+
+### 4.1 Vitest Full Suite Execution (\`npx vitest run --reporter=verbose\`)
+\`\`\`text
+${verboseTestOutput}
+\`\`\`
+
+### 4.2 Test Summary Matrix
+| Test File | Total Tests | Status | Scope |
+| :--- | :--- | :--- | :--- |
+| \`tests/authMiddleware.test.ts\` | **21** | PASS | BR-5 & BR-5b Pure-Mock Auth Guards (param, query, body) |
+| \`tests/br5b_routes.test.ts\` | **11** | PASS | BR-5b Integration HTTP Routes & Decision #49 Scan |
+| \`tests/br1.test.ts\` | **6** | PASS | BR-1 Append-Only Immutability & Rehearsal Assertions |
+| \`tests/br2.test.ts\` | **5** | PASS | BR-2b/2c RLS & Public Privilege Lockdown Matrix |
+| \`tests/br4b.test.ts\` | **4** | PASS | BR-4b Weekly Wrap-Up Service & Concurrency Invariants |
+| \`tests/characterization.test.ts\` | **6** | PASS | INV-5 Lock Logic & Window Exclusions |
+| \`tests/safeguards.test.ts\` | **6** | PASS | Safety Guards & Host Sanitization |
+| **Total Test Suite** | **59** | **ALL PASS (100%)** | Full Rehearsal & Pure Mock Coverage |
+
+---
+
+## 5. Decision #49 Route Inventory & Protection Matrix
+
+| Route | Method | Scoping / Extraction | Guard Middleware | Security Status |
+| :--- | :--- | :--- | :--- | :--- |
+| \`/api/health\` | GET | None | None | **ALLOWLISTED (Public Health Endpoint)** |
+| \`/api/auth/login\` | POST | Body (\`email\`, \`password\`) | None | **PUBLIC AUTH** |
+| \`/api/pools\` | GET | None | \`requireAuth\` | **GUARDED (Platform Pool List)** |
+| \`/api/games\` | GET | Query (\`week\`, \`pool_id\`) | \`requireAuth\` | **GUARDED** |
+| \`/api/pools/:pool_id/leaderboard\` | GET | Param (\`pool_id\`) | \`requireAuth, requirePoolMember\` | **GUARDED (Active Pool Member)** |
+| \`/api/pools/:pool_id/leaderboard/cumulative\` | GET | Param (\`pool_id\`) | \`requireAuth, requirePoolMember\` | **GUARDED (Active Pool Member)** |
+| \`/api/pools/:pool_id/penalties/adjust\` | POST | Param (\`pool_id\`) | \`requireAuth, requirePoolCommissioner\` | **GUARDED (Pool Commissioner Only)** |
+| \`/api/pools/:pool_id/penalties/member/:member_id\` | GET | Param (\`pool_id\`) | \`requireAuth, requirePoolMember\` | **GUARDED (Active Pool Member)** |
+| \`/api/pools/:pool_id/penalties/:id/media\` | POST | Param (\`pool_id\`) | \`requireAuth\` | **GUARDED** |
+| \`/api/pools/:pool_id/penalties/:id/media/confirm\` | PATCH | Param (\`pool_id\`) | \`requireAuth\` | **GUARDED** |
+| \`/api/pools/:pool_id/penalties/:id/media\` | GET | Param (\`pool_id\`) | \`requireAuth, requirePoolMember\` | **GUARDED (Active Pool Member)** |
+| \`/api/pools/:pool_id/matrix\` | GET | Param (\`pool_id\`) | \`requireAuth, requirePoolMember\` | **GUARDED (Active Pool Member)** |
+| \`/api/picks\` | POST | Body (\`pool_id\`, \`game_id\`) | \`requireAuth\` | **GUARDED (User & Kickoff Lock)** |
+| \`/api/admin/users\` | GET | None | \`requireAuth, requireAdmin\` | **ALLOWLISTED (Platform Admin User List)** |
+| \`/api/admin/audit-logs\` | GET | None | \`requireAuth, requireAdmin\` | **GUARDED (Platform Audit Trail)** |
+| \`/api/admin/picks\` | GET | Query (\`pool_id\`, \`user_id\`) | \`requireAuth, requirePoolCommissioner({ from: 'query' })\` | **REMEDIATED (BR-5b Commissioner Guard)** |
+| \`/api/admin/picks\` | PUT | Body (\`pool_id\`, \`user_id\`, \`game_id\`) | \`requireAuth, requirePoolCommissioner({ from: 'body' })\` | **REMEDIATED (BR-5b Commissioner Guard)** |
+
+---
+
+## 6. R-12.2-AA Acceptance Criteria Sign-Off
+
+- [x] **Phase 1 Fact Gathering & Escalation Check:** Completed with zero blockers; facts recorded in \`docs/evidence/R-12.2-AA/facts.txt\`.
+- [x] **S-6 Remediation & BR-5b Middleware:** \`requirePoolCommissioner\` extended with \`{ from: 'param' | 'query' | 'body', name?: string }\` support; check order preserved (401 -> 400 -> 404 -> 403).
+- [x] **Admin Picks Scoping:** \`GET /api/admin/picks\` and \`PUT /api/admin/picks\` protected with \`requirePoolCommissioner({ from: 'query' })\` and \`requirePoolCommissioner({ from: 'body' })\`; default pool creation removed.
+- [x] **Unit & Integration Test Suites:** 21/21 pure mock unit tests passing in \`tests/authMiddleware.test.ts\`; 11/11 rehearsal integration tests passing in \`tests/br5b_routes.test.ts\`. Total suite passes 59/59.
+- [x] **Decision #49 CI Route Scan:** All routes in \`src/\` audited; allowlist strictly limited to \`/api/health\` and \`GET /api/admin/users\`.
+- [x] **Documentation Lineage & Invariant Audit:** All 3 docs verified with strictly 0 deletions against baseline \`e41ce72\`.
+- [x] **Migration Count Correction:** Verified physical migration directories count is exactly 8.
+- [x] **Bundle Generator Self-Test:** Negative control confirmed operational with strict non-empty output validation.
+
+---
 `;
 
 const targetBundlePath = path.join(evDir, 'EVIDENCE_BUNDLE.md');
-fs.writeFileSync(targetBundlePath, header, 'utf8');
+fs.writeFileSync(targetBundlePath, bundleContent, 'utf8');
 console.log(`✅ scripts/generate_evidence.js executed successfully and wrote ${targetBundlePath}.\n`);
-

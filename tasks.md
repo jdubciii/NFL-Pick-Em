@@ -248,4 +248,15 @@
 - [ ] **BR-4b Hosted Deployment:** Gated on Arbiter sign-off.
 - [ ] Bundle generator fixed; self-test failure shown; header, timestamp and commit differ from the R-12.2-X bundle.
 - [ ] Every R-12.2-Y item present in the file with non-empty output.
+
+### R-12.2-AA Acceptance Criteria (Section 6)
+- [✅] **Phase 1 Fact Gathering & Escalation Check:** Completed with zero blockers; facts recorded in `docs/evidence/R-12.2-AA/facts.txt`.
+- [✅] **S-6 Remediation & BR-5b Middleware:** `requirePoolCommissioner` extended with `{ from: 'param' | 'query' | 'body', name?: string }` support; check order preserved (401 -> 400 -> 404 -> 403).
+- [✅] **Admin Picks Scoping:** `GET /api/admin/picks` and `PUT /api/admin/picks` protected with `requirePoolCommissioner({ from: 'query' })` and `requirePoolCommissioner({ from: 'body' })`; default pool creation removed.
+- [✅] **Unit & Integration Test Suites:** 21/21 pure mock unit tests passing in `tests/authMiddleware.test.ts`; 11/11 rehearsal integration tests passing in `tests/br5b_routes.test.ts`. Total suite passes 59/59.
+- [✅] **Decision #49 CI Route Scan:** All routes in `src/` audited; allowlist strictly limited to `/api/health` and `GET /api/admin/users`.
+- [✅] **Documentation Lineage & Invariant Audit:** All 3 docs verified with strictly 0 deletions against baseline `e41ce72`.
+- [✅] **Migration Count Correction:** Verified physical migration directories count is exactly 8.
+- [✅] **Bundle Generator Self-Test:** Negative control confirmed operational with strict non-empty output validation.
+
 

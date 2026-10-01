@@ -482,4 +482,6 @@ Before enabling `LEDGER_TYPED_WRITES`, a read-path parity test must pass. Every 
 - **R-12.2-I guard:** IMPLEMENTED, UNVERIFIED pending rehearsal tests.
 - **R-12.2-Y:** applied_by root cause identified as test-made table in wrapUpConcurrency. False DDL-grep finding noted. App runs locally.
 - **R-12.2-Z:** stale-submission finding noted. R-12.2-Y re-issued.
+- **R-12.2-AA:** S-6 triggered (admin picks routes cross-pool). Decision #49 implemented. /api/admin/users accepted as platform-level. Migration count corrected to 8.
+
 
