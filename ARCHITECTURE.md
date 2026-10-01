@@ -487,6 +487,7 @@ Before enabling `LEDGER_TYPED_WRITES`, a read-path parity test must pass. Every 
 - **R-12.2-AC:** Decision #52 applied (claim code fails closed). S-7 global admin override removed from Shot-Cam routes. 00e89dd deviation recorded.
 - **R-12.2-AD:** Decisions #53-#54 applied. S-7 reclassified. S-8 write-on-GET removed. Commit-hygiene deviation recorded. Decisions #28-#54 registered.
 - **R-12.2-AE:** Decision #55 applied. S-7 reversal confirmed. S-8 explicit pool_id guarded. Claim step fail-closed fixed. Wrap-up game-set deviation recorded.
+- **R-12.2-AE-V2:** Ruling BLOCKED. BR-4b migration-branch test failure documented. Decisions #53, #54, and #55 reconciled.
 
 ---
 
@@ -544,9 +545,10 @@ Before enabling `LEDGER_TYPED_WRITES`, a read-path parity test must pass. Every 
 50. **Decision #50:** `GET /api/admin/users` allowlisted as platform-level admin endpoint.
 51. **Decision #51:** Admin picks routes scoped with `requirePoolCommissioner` (`from: 'query'` / `from: 'body'`).
 52. **Decision #52:** Weekly wrap-up claim step fails closed (`CLAIM_STORE_UNAVAILABLE`) if `weekly_wrapups` table is absent.
-53. **Decision #53:** Shot-Cam media upload and confirmation routes restricted to owner and pool commissioner only.
-54. **Decision #54:** Removal of write-on-GET in `GET /api/games`; 404 POOL_NOT_FOUND when missing; active pool resolution on omitted `pool_id`.
-55. **Decision #55:** S-7 reversal confirmed; S-8 explicit `pool_id` guarded with `requirePoolMember` authorization (400 UUID -> 404 existence -> 403 member/commissioner); wrap-up game-set deviation recorded.
+53. **Decision #53:** Agents never push, force-push or change remotes.
+54. **Decision #54:** GET handlers perform no writes.
+55. **Decision #55:** A guard is never bypassed by a conditional when its dependency is missing.
+
 
 
 

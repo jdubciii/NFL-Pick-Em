@@ -300,6 +300,17 @@
 - [ ] **8. Evidence Bundle Generated:** `scripts/generate_evidence.js` hardened with `spawnSync`, UTF-8 encoding, NUL-byte sanitization, and output saved to `docs/evidence/R-12.2-AE/EVIDENCE_BUNDLE.md`.
 - [ ] **9. Clean Working Tree:** All changes committed locally without remote push.
 
+### R-12.2-AE-V2 Acceptance Criteria (Section 8)
+- [ ] **1. Documentation & Decision Register Reconciliation:** Decisions #53, #54, and #55 reconciled in `ARCHITECTURE.md`; append-only invariant preserved across `ARCHITECTURE.md`, `ROADMAP.md`, and `tasks.md`.
+- [ ] **2. Evidence Generator Hardening:** Generator uses `spawnSync` with `encoding: 'utf8'`, NUL-byte stripping, incremental writes, structure validation, and raw test artifact capture.
+- [ ] **3. Live Repository Context Auto-Injection:** Generator appends `# LIVE REPOSITORY CONTEXT` at the bundle footer containing raw `prisma/schema.prisma` and `ARCHITECTURE.md`.
+- [ ] **4. Secret Scan Cleanliness:** `scripts/secret_scan.sh` created and executed; tests excluded; clean status confirmed.
+- [ ] **5. BR-4b Migration Branch Lifecycle Verification:** Switched to `feat/phase12-migrations`, executed guarded DB reset, `prisma migrate deploy`, `prisma generate` (resolving `weeklyWrapup`), and `vitest run tests/br4b.test.ts` passing cleanly.
+- [ ] **6. Main Branch Verification:** Guarded reset, migrate deploy, prisma generate, and full test suite passing on `main` (63/63 tests passing).
+- [ ] **7. Evidence Bundle Generation:** `docs/evidence/R-12.2-AE-V2/EVIDENCE_BUNDLE.md` generated with complete test logs, source excerpts, secret scan, and live context.
+- [ ] **8. Local Git Finalization:** All changes committed locally with clean working tree; strictly no remote push.
+
+
 
 
 

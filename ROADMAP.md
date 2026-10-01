@@ -112,6 +112,8 @@
 - R-12.2-AC: branch truth; claim code fails closed; S-7 facts.
 - R-12.2-AD: commit hygiene; stale DB; S-8.
 - R-12.2-AE: claim defects; S-8 completion; BR-5 closure matrix.
+- R-12.2-AE-V2: BR-4b lifecycle verification, evidence-bundle integrity, secret-scan cleanliness, and live-context reconciliation are acceptance blockers.
+
 
 
 
