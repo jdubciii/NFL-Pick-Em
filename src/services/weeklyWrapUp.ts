@@ -70,16 +70,18 @@ export function resolveTiebreakerGame(games: any[], gameTargetSetting?: string):
 export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promise<WeeklyWrapUpResult> {
   return await prisma.$transaction(async (tx: any) => {
     // -------------------------------------------------------------------------
-    // Step 1: READ (Claim Check) - Fast check if already wrapped up
+    // Step 1: READ (Claim Check) - Fail-closed check if claim store exists
     // -------------------------------------------------------------------------
-    const claimModel = tx.weeklyWrapup || tx.weekly_wrapups || tx.weeklyWrapups;
-    if (claimModel) {
-      const existingClaim = await claimModel.findFirst({
-        where: { poolId, weekNumber: weekNo },
-      });
-      if (existingClaim) {
-        return { applied: false, reason: 'ALREADY_WRAPPED_UP', poolId, weekNo };
-      }
+    const tableExists = await tx.$queryRaw`SELECT to_regclass('public.weekly_wrapups')::text as tbl;`;
+    if (!tableExists || !tableExists[0] || !tableExists[0].tbl) {
+      return { applied: false, reason: 'CLAIM_STORE_UNAVAILABLE', poolId, weekNo };
+    }
+
+    const existingClaim = await tx.$queryRaw`
+      SELECT 1 FROM public.weekly_wrapups WHERE pool_id = ${poolId}::uuid AND week_number = ${weekNo} LIMIT 1;
+    `;
+    if (existingClaim && existingClaim.length > 0) {
+      return { applied: false, reason: 'ALREADY_WRAPPED_UP', poolId, weekNo };
     }
 
     // Fetch Pool and all active members
@@ -264,6 +266,13 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
 
     const topScorerUserIds = new Set(topScorers.map((m) => m.userId));
     const deadPlaceUserIds = new Set(deadPlaceMembers.map((m) => m.userId));
+
+    // Step 4: WRITE (Claim) - Insert claim record into weekly_wrapups
+    await tx.$executeRaw`
+      INSERT INTO public.weekly_wrapups (pool_id, week_number)
+      VALUES (${pool.id}::uuid, ${weekNo})
+      ON CONFLICT (pool_id, week_number) DO NOTHING;
+    `;
 
     // Calculate split penalty using pure Prisma.Decimal math
     const penaltyConfigVal = penaltiesConfig.dead_place_penalty ?? penaltiesConfig.deadPlacePenalty ?? 1;
