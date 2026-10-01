@@ -62,6 +62,14 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       },
     });
 
+    await prisma.poolMembership.create({
+      data: {
+        poolId: testPool.id,
+        userId: nonCommissionerUser.id,
+        status: 'ACTIVE',
+      },
+    });
+
     testGame = await prisma.game.create({
       data: {
         externalGameId: `br5b_game_${Date.now()}`,
@@ -248,6 +256,132 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.pick.selectedTeamId).toBe('DET');
+    });
+  });
+
+  describe('S-7: Shot-Cam Media Routes Scoping (No Global Admin Bypass)', () => {
+    let penaltyRecord: any;
+    let globalAdminUser: any;
+    let globalAdminToken: string;
+
+    beforeAll(async () => {
+      globalAdminUser = await prisma.user.create({
+        data: {
+          email: `global_admin_${Date.now()}@example.com`,
+          passwordHash: 'hash',
+          role: Role.ADMIN,
+        },
+      });
+
+      globalAdminToken = jwt.sign(
+        { id: globalAdminUser.id, email: globalAdminUser.email, role: globalAdminUser.role },
+        JWT_SECRET
+      );
+
+      penaltyRecord = await prisma.penaltyLedger.create({
+        data: {
+          poolId: testPool.id,
+          userId: nonCommissionerUser.id,
+          weekNumber: 1,
+          delta: 1.0,
+          reason: 'TEST_PENALTY',
+          createdById: commissionerUser.id,
+        },
+      });
+    });
+
+    afterAll(async () => {
+      if (prisma) {
+        if (penaltyRecord) {
+          await prisma.penaltyMedia.deleteMany({ where: { penaltyId: penaltyRecord.id } }).catch(() => {});
+          await prisma.penaltyLedger.delete({ where: { id: penaltyRecord.id } }).catch(() => {});
+        }
+        if (globalAdminUser) {
+          await prisma.user.delete({ where: { id: globalAdminUser.id } }).catch(() => {});
+        }
+      }
+    });
+
+    it('POST /api/pools/:pool_id/penalties/:id/media: global ADMIN who is neither owner nor commissioner -> 403', async () => {
+      const res = await fetch(`${baseUrl}/api/pools/${testPool.id}/penalties/${penaltyRecord.id}/media`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${globalAdminToken}`,
+        },
+        body: JSON.stringify({
+          storage_path: 'penalties/test_shot.mp4',
+        }),
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it('PATCH /api/pools/:pool_id/penalties/:id/media/confirm: global ADMIN who is not commissioner -> 403', async () => {
+      const res = await fetch(`${baseUrl}/api/pools/${testPool.id}/penalties/${penaltyRecord.id}/media/confirm`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${globalAdminToken}`,
+        },
+        body: JSON.stringify({
+          status: 'CONFIRMED',
+        }),
+      });
+      expect(res.status).toBe(403);
+    });
+  });
+
+  describe('S-8: GET /api/games Pool Scoping (No Pool Auto-Creation / Write-on-GET)', () => {
+    let unassociatedUser: any;
+    let unassociatedToken: string;
+
+    beforeAll(async () => {
+      unassociatedUser = await prisma.user.create({
+        data: {
+          email: `unassociated_${Date.now()}@example.com`,
+          passwordHash: 'hash',
+          role: Role.USER,
+        },
+      });
+      unassociatedToken = jwt.sign(
+        { id: unassociatedUser.id, email: unassociatedUser.email, role: unassociatedUser.role },
+        JWT_SECRET
+      );
+    });
+
+    afterAll(async () => {
+      if (prisma && unassociatedUser) {
+        await prisma.user.delete({ where: { id: unassociatedUser.id } }).catch(() => {});
+      }
+    });
+
+    it('returns 404 POOL_NOT_FOUND when user is not member/commissioner of any pool and pool_id is omitted', async () => {
+      const res = await fetch(`${baseUrl}/api/games`, {
+        headers: { Authorization: `Bearer ${unassociatedToken}` },
+      });
+      expect(res.status).toBe(404);
+      const data = await res.json();
+      expect(data.error).toBe('POOL_NOT_FOUND');
+    });
+
+    it('returns 404 POOL_NOT_FOUND when explicit pool_id does not exist', async () => {
+      const nonExistentUuid = '00000000-0000-0000-0000-000000000000';
+      const res = await fetch(`${baseUrl}/api/games?pool_id=${nonExistentUuid}`, {
+        headers: { Authorization: `Bearer ${commissionerToken}` },
+      });
+      expect(res.status).toBe(404);
+      const data = await res.json();
+      expect(data.error).toBe('POOL_NOT_FOUND');
+    });
+
+    it('returns 200 with pool and games when pool_id is valid', async () => {
+      const res = await fetch(`${baseUrl}/api/games?pool_id=${testPool.id}`, {
+        headers: { Authorization: `Bearer ${commissionerToken}` },
+      });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.pool.id).toBe(testPool.id);
+      expect(Array.isArray(data.games)).toBe(true);
     });
   });
 
