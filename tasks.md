@@ -326,6 +326,17 @@
 - [ ] Preserve Decisions #53-#55 exactly as reconciled.
 - [ ] Preserve append-only documentation invariant.
 
+### R-12.2-AF Acceptance Criteria (Section 6)
+- [ ] **1. Branch Setup:** Created branch `feat/phase12-1-outbox` from `main`; no application code in `src/` modified for 12.1.
+- [ ] **2. Record Repair & Superseding Register:** Created interim fallback rulings; appended Decision Register from `docs/rulings/appendix-a.md` to `ARCHITECTURE.md`; created and verified `scripts/ci_check_register.js` positive and negative controls.
+- [ ] **3. Evidence Repair:** `tests/safeguards.test.ts` sanitized (`postgres.exampleref`); S-8 pool-count and snapshot assertions added; S-7 permission and denial assertions added.
+- [ ] **4. 12.1 Design Note:** Created `docs/design/12.1.md` documenting outbox models, lock resolver extraction, and internal scheduler mechanism.
+- [ ] **5. Tripwire Script:** Created `scripts/run_tripwire.js` querying hosted database metrics and `to_regclass` claim state.
+- [ ] **6. Evidence Generator Hardening:** Generator executes early git status/commit capture, CI checks, Decision #50 headers for both branches, secret scan, doc metrics, reflog, and tripwire.
+- [ ] **7. Pre-Run Cleanliness:** Git status clean prior to evidence run.
+- [ ] **8. Local Binding:** Final evidence bundle bound in `docs/evidence/R-12.2-AF/EVIDENCE_BUNDLE.md` with strictly no remote push.
+
+
 
 
 

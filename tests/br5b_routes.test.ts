@@ -263,6 +263,8 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
     let penaltyRecord: any;
     let globalAdminUser: any;
     let globalAdminToken: string;
+    let otherMemberUser: any;
+    let otherMemberToken: string;
 
     beforeAll(async () => {
       globalAdminUser = await prisma.user.create({
@@ -275,6 +277,27 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
 
       globalAdminToken = jwt.sign(
         { id: globalAdminUser.id, email: globalAdminUser.email, role: globalAdminUser.role },
+        JWT_SECRET
+      );
+
+      otherMemberUser = await prisma.user.create({
+        data: {
+          email: `other_member_${Date.now()}@example.com`,
+          passwordHash: 'hash',
+          role: Role.USER,
+        },
+      });
+
+      await prisma.poolMembership.create({
+        data: {
+          poolId: testPool.id,
+          userId: otherMemberUser.id,
+          status: 'ACTIVE',
+        },
+      });
+
+      otherMemberToken = jwt.sign(
+        { id: otherMemberUser.id, email: otherMemberUser.email, role: otherMemberUser.role },
         JWT_SECRET
       );
 
@@ -296,6 +319,10 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
           await prisma.penaltyMedia.deleteMany({ where: { penaltyId: penaltyRecord.id } }).catch(() => {});
           await prisma.penaltyLedger.delete({ where: { id: penaltyRecord.id } }).catch(() => {});
         }
+        if (otherMemberUser) {
+          await prisma.poolMembership.deleteMany({ where: { userId: otherMemberUser.id } }).catch(() => {});
+          await prisma.user.delete({ where: { id: otherMemberUser.id } }).catch(() => {});
+        }
         if (globalAdminUser) {
           await prisma.user.delete({ where: { id: globalAdminUser.id } }).catch(() => {});
         }
@@ -316,6 +343,44 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       expect(res.status).toBe(403);
     });
 
+    it('POST /api/pools/:pool_id/penalties/:id/media: member who is NOT the penalty owner -> 403', async () => {
+      const res = await fetch(`${baseUrl}/api/pools/${testPool.id}/penalties/${penaltyRecord.id}/media`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${otherMemberToken}`,
+        },
+        body: JSON.stringify({
+          storage_path: 'penalties/unauthorized_shot.mp4',
+        }),
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it('verifies zero penalty_media rows exist after denied upload attempts', async () => {
+      const rows = await prisma.penaltyMedia.findMany({
+        where: { penaltyId: penaltyRecord.id },
+      });
+      expect(rows.length).toBe(0);
+    });
+
+    it('POST /api/pools/:pool_id/penalties/:id/media: penalty OWNER -> 201 success', async () => {
+      const res = await fetch(`${baseUrl}/api/pools/${testPool.id}/penalties/${penaltyRecord.id}/media`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${nonCommissionerToken}`,
+        },
+        body: JSON.stringify({
+          storage_path: 'penalties/owner_shot.mp4',
+        }),
+      });
+      expect(res.status).toBe(201);
+      const data = await res.json();
+      expect(data.media.storagePath).toBe('penalties/owner_shot.mp4');
+      expect(data.media.status).toBe('PENDING');
+    });
+
     it('PATCH /api/pools/:pool_id/penalties/:id/media/confirm: global ADMIN who is not commissioner -> 403', async () => {
       const res = await fetch(`${baseUrl}/api/pools/${testPool.id}/penalties/${penaltyRecord.id}/media/confirm`, {
         method: 'PATCH',
@@ -328,6 +393,23 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
         }),
       });
       expect(res.status).toBe(403);
+    });
+
+    it('PATCH /api/pools/:pool_id/penalties/:id/media/confirm: pool COMMISSIONER -> 200 success', async () => {
+      const res = await fetch(`${baseUrl}/api/pools/${testPool.id}/penalties/${penaltyRecord.id}/media/confirm`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${commissionerToken}`,
+        },
+        body: JSON.stringify({
+          status: 'CONFIRMED',
+        }),
+      });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.media.status).toBe('CONFIRMED');
+      expect(data.media.confirmedBy).toBe(commissionerUser.id);
     });
   });
 
@@ -355,16 +437,20 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       }
     });
 
-    it('returns 404 POOL_NOT_FOUND when user is not member/commissioner of any pool and pool_id is omitted', async () => {
+    it('returns 404 POOL_NOT_FOUND when user is not member/commissioner of any pool and pool_id is omitted (no pool write)', async () => {
+      const poolCountBefore = await prisma.pool.count();
       const res = await fetch(`${baseUrl}/api/games`, {
         headers: { Authorization: `Bearer ${unassociatedToken}` },
       });
       expect(res.status).toBe(404);
       const data = await res.json();
       expect(data.error).toBe('POOL_NOT_FOUND');
+      const poolCountAfter = await prisma.pool.count();
+      expect(poolCountAfter).toBe(poolCountBefore);
     });
 
-    it('returns 404 POOL_NOT_FOUND when explicit pool_id does not exist', async () => {
+    it('returns 404 POOL_NOT_FOUND when explicit pool_id does not exist (no pool write)', async () => {
+      const poolCountBefore = await prisma.pool.count();
       const nonExistentUuid = '00000000-0000-0000-0000-000000000000';
       const res = await fetch(`${baseUrl}/api/games?pool_id=${nonExistentUuid}`, {
         headers: { Authorization: `Bearer ${commissionerToken}` },
@@ -372,34 +458,60 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       expect(res.status).toBe(404);
       const data = await res.json();
       expect(data.error).toBe('POOL_NOT_FOUND');
+      const poolCountAfter = await prisma.pool.count();
+      expect(poolCountAfter).toBe(poolCountBefore);
     });
 
-    it('returns 400 when explicit pool_id is not a valid UUID', async () => {
+    it('returns 400 when explicit pool_id is not a valid UUID (no pool write)', async () => {
+      const poolCountBefore = await prisma.pool.count();
       const res = await fetch(`${baseUrl}/api/games?pool_id=invalid-uuid`, {
         headers: { Authorization: `Bearer ${commissionerToken}` },
       });
       expect(res.status).toBe(400);
       const data = await res.json();
       expect(data.error).toContain('valid UUID');
+      const poolCountAfter = await prisma.pool.count();
+      expect(poolCountAfter).toBe(poolCountBefore);
     });
 
-    it('returns 403 when user is not a member or commissioner of the requested pool', async () => {
+    it('returns 403 when user is not a member or commissioner of the requested pool (no pool write)', async () => {
+      const poolCountBefore = await prisma.pool.count();
       const res = await fetch(`${baseUrl}/api/games?pool_id=${testPool.id}`, {
         headers: { Authorization: `Bearer ${unassociatedToken}` },
       });
       expect(res.status).toBe(403);
       const data = await res.json();
       expect(data.error).toContain('Active pool membership required');
+      const poolCountAfter = await prisma.pool.count();
+      expect(poolCountAfter).toBe(poolCountBefore);
     });
 
-    it('returns 200 with pool and games when pool_id is valid and user is commissioner or active member', async () => {
-      const res = await fetch(`${baseUrl}/api/games?pool_id=${testPool.id}`, {
+    it('returns 200 with pool and games when pool_id is valid, with zero pool writes and identical schema snapshot', async () => {
+      const poolCountBefore = await prisma.pool.count();
+
+      // Commissioner request
+      const commishRes = await fetch(`${baseUrl}/api/games?pool_id=${testPool.id}`, {
         headers: { Authorization: `Bearer ${commissionerToken}` },
       });
-      expect(res.status).toBe(200);
-      const data = await res.json();
-      expect(data.pool.id).toBe(testPool.id);
-      expect(Array.isArray(data.games)).toBe(true);
+      expect(commishRes.status).toBe(200);
+      const commishData = await commishRes.json();
+
+      // Member request
+      const memberRes = await fetch(`${baseUrl}/api/games?pool_id=${testPool.id}`, {
+        headers: { Authorization: `Bearer ${nonCommissionerToken}` },
+      });
+      expect(memberRes.status).toBe(200);
+      const memberData = await memberRes.json();
+
+      const poolCountAfter = await prisma.pool.count();
+      expect(poolCountAfter).toBe(poolCountBefore);
+
+      // Snapshot parity assertions
+      expect(Object.keys(memberData).sort()).toEqual(Object.keys(commishData).sort());
+      expect(memberData.pool.id).toBe(testPool.id);
+      expect(commishData.pool.id).toBe(testPool.id);
+      expect(memberData.pool.name).toBe(commishData.pool.name);
+      expect(memberData.games.length).toBe(commishData.games.length);
     });
   });
 
