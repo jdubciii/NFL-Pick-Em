@@ -259,4 +259,13 @@
 - [✅] **Migration Count Correction:** Verified physical migration directories count is exactly 8.
 - [✅] **Bundle Generator Self-Test:** Negative control confirmed operational with strict non-empty output validation.
 
+### R-12.2-AB Acceptance Criteria (Section 10)
+- [ ] **BR-5b Commits on Isolated Branch:** All BR-5b changes committed to `fix/br5b-admin-picks` with clean working tree.
+- [ ] **Evidence Generator Negative Control via Worktree:** Strict evidence generator uses `git worktree` isolation for negative control without modifying live working tree.
+- [ ] **No Markdown Truncation:** Generator validates that no empty sections or empty code blocks exist in the bundle.
+- [ ] **Integrity Checks Completed:** Facts recorded for "Main NFL Pick" occurrences, Prisma migrate status, and route handlers.
+- [ ] **Docs Invariant Upheld:** `ARCHITECTURE.md`, `ROADMAP.md`, `tasks.md` strictly 0 deletions against `e41ce72`.
+- [ ] **59/59 Tests Passing:** Full suite passes across rehearsal and mock environments.
+
+
 

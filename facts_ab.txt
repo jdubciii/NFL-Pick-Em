@@ -1,0 +1,50 @@
+================================================================================
+FACT GATHERING & INTEGRITY CHECKS — RULING R-12.2-AB
+================================================================================
+
+### 1. Grep for "Main NFL Pick" in src, prisma, client, seed
+```text
+src/server.ts:122:          name: 'Main NFL Pick \'Em Pool',
+```
+
+### 2. Git Working Tree State & Current Branch
+```text
+Branch: fix/br5b-admin-picks
+Status: ?? facts_ab.txt
+?? scripts/gather_facts_ab.js
+?? state.txt
+```
+
+### 3. Rehearsal Database Migration Status (`npx prisma migrate status`)
+```text
+Environment variables loaded from .env
+Prisma schema loaded from prisma\schema.prisma
+Datasource "db": PostgreSQL database "pickem_rehearsal", schema "public" at "localhost:5432"
+
+8 migrations found in prisma/migrations
+
+Database schema is up to date!
+```
+
+### 4. Schema & Prisma Client Types Search for `WeeklyWrapup`
+```text
+Schema & Code search on main:
+main:src/services/weeklyWrapUp.ts:13:export interface WeeklyWrapUpResult {
+main:src/services/weeklyWrapUp.ts:67: * 4. WRITE (Claim): Create the weekly_wrapups claim via createMany({ skipDuplicates: true }).
+main:src/services/weeklyWrapUp.ts:70:export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promise<WeeklyWrapUpResult> {
+main:src/services/weeklyWrapUp.ts:75:    const claimModel = tx.weeklyWrapup || tx.weekly_wrapups || tx.weeklyWrapups;
+main:src/services/weeklyWrapUp.ts:354:export const runWeeklyWrapUp = executeWeeklyWrapUp;
+
+Matches for "WeeklyWrapup" in node_modules/.prisma/client/index.d.ts: 707
+```
+
+### 5. Audited Route Handlers & Protection Facts
+| Endpoint | File Location | Middleware | Authorization & Scoping | Notes / Audit |
+| :--- | :--- | :--- | :--- | :--- |
+| `POST /api/pools/:pool_id/penalties/:id/media` | `src/server.ts:581` | `requireAuth` | Scoped to pool: checks penalty exists in pool, user is owner/commish/admin | Creates `UPLOAD_PENALTY_MEDIA` audit log |
+| `PATCH /api/pools/:pool_id/penalties/:id/media/confirm` | `src/server.ts:676` | `requireAuth` | Scoped to pool: verifies commissioner or admin role | Creates `CONFIRM_PENALTY_MEDIA` audit log |
+| `GET /api/games` | `src/server.ts:110` | `requireAuth` | Global game schedule with optional week & pool_id filtering | Read-only |
+| `POST /api/picks` | `src/routes/picks.ts:15` | `requireAuth` | Submits/updates user own pick; enforces pool lock offset and game kickoff lock | Upserts pick on [poolId, userId, gameId] |
+| `GET /api/pools` | `src/server.ts:93` | `requireAuth` | Platform pool directory; lists all ACTIVE pools | Read-only |
+| `GET /api/admin/audit-logs` | `src/routes/admin.ts:71` | `requireAuth, requireAdmin` | Platform-level global audit viewer; recent 50 logs with actor info | Read-only platform management |
+
