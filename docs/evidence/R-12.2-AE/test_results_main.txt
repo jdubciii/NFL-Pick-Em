@@ -1,0 +1,243 @@
+
+> nfl-pick-em@1.0.0 test:db
+> npm run db:reset && npx prisma migrate deploy && npx prisma generate && node scripts/db_header.js && vitest --no-color --reporter=verbose --reporter=json --outputFile=docs/evidence/R-12.2-AE/vitest.json
+
+
+> nfl-pick-em@1.0.0 db:reset
+> tsx scripts/dev/reset-rehearsal.mjs
+
+=== RESET REHEARSAL DATABASE (Decision #35) ===
+
+✅ URL Safety verified (localhost, no schema, pickem_rehearsal).
+Terminating active connections to pickem_rehearsal...
+Dropping and recreating pickem_rehearsal...
+✅ pickem_rehearsal database recreated with timezone=UTC and app.disposable=true.
+✅ Server sentinel app.disposable verified.
+✅ Role 'anon' provisioned.
+✅ Role 'authenticated' provisioned.
+✅ Role 'service_role' provisioned.
+
+--- Running prisma migrate deploy on pickem_rehearsal ---
+Environment variables loaded from .env
+Prisma schema loaded from prisma\schema.prisma
+Datasource "db": PostgreSQL database "pickem_rehearsal", schema "public" at "localhost:5432"
+
+8 migrations found in prisma/migrations
+
+Applying migration `20260927000000_init`
+Applying migration `20260928051824_add_pool_member_stats_and_penalty_ledger`
+Applying migration `20260928124900_precision_and_weekly_submissions`
+Applying migration `20260928170000_weekly_submission_finalized_and_game_notes`
+Applying migration `20260928180000_shot_cam_penalty_media_and_rls`
+Applying migration `20260929144500_br_1_ledger_append_only`
+Applying migration `20260930010000_br_2b_ledger_api_lockdown`
+Applying migration `20260930020000_br_2c_public_tables_api_lockdown`
+
+The following migration(s) have been applied:
+
+migrations/
+  └─ 20260927000000_init/
+    └─ migration.sql
+  └─ 20260928051824_add_pool_member_stats_and_penalty_ledger/
+    └─ migration.sql
+  └─ 20260928124900_precision_and_weekly_submissions/
+    └─ migration.sql
+  └─ 20260928170000_weekly_submission_finalized_and_game_notes/
+    └─ migration.sql
+  └─ 20260928180000_shot_cam_penalty_media_and_rls/
+    └─ migration.sql
+  └─ 20260929144500_br_1_ledger_append_only/
+    └─ migration.sql
+  └─ 20260930010000_br_2b_ledger_api_lockdown/
+    └─ migration.sql
+  └─ 20260930020000_br_2c_public_tables_api_lockdown/
+    └─ migration.sql
+      
+All migrations have been successfully applied.
+
+Applied Migrations:
+┌─────────┬─────────────────────────────────────────────────────────────┬──────────────────────────┐
+│ (index) │ migration_name                                              │ finished_at              │
+├─────────┼─────────────────────────────────────────────────────────────┼──────────────────────────┤
+│ 0       │ '20260927000000_init'                                       │ 2026-10-01T04:39:20.852Z │
+│ 1       │ '20260928051824_add_pool_member_stats_and_penalty_ledger'   │ 2026-10-01T04:39:20.878Z │
+│ 2       │ '20260928124900_precision_and_weekly_submissions'           │ 2026-10-01T04:39:20.915Z │
+│ 3       │ '20260928170000_weekly_submission_finalized_and_game_notes' │ 2026-10-01T04:39:20.920Z │
+│ 4       │ '20260928180000_shot_cam_penalty_media_and_rls'             │ 2026-10-01T04:39:20.939Z │
+│ 5       │ '20260929144500_br_1_ledger_append_only'                    │ 2026-10-01T04:39:20.944Z │
+│ 6       │ '20260930010000_br_2b_ledger_api_lockdown'                  │ 2026-10-01T04:39:20.950Z │
+│ 7       │ '20260930020000_br_2c_public_tables_api_lockdown'           │ 2026-10-01T04:39:20.958Z │
+└─────────┴─────────────────────────────────────────────────────────────┴──────────────────────────┘
+weekly_wrapups exists in public: false (Expected: false)
+Environment variables loaded from .env
+Prisma schema loaded from prisma\schema.prisma
+Datasource "db": PostgreSQL database "pickem_rehearsal", schema "public" at "localhost:5432"
+
+8 migrations found in prisma/migrations
+
+
+No pending migrations to apply.
+Environment variables loaded from .env
+Prisma schema loaded from prisma\schema.prisma
+
+✔ Generated Prisma Client (v5.22.0) to .\node_modules\@prisma\client in 400ms
+
+Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+
+Help us improve the Prisma ORM for everyone. Share your feedback in a short 2-min survey: https://pris.ly/orm/survey/release-5-22
+
+=== DB Header & Rehearsal Verification ===
+
+1. Database Identity:
+[
+  {
+    "current_database": "pickem_rehearsal",
+    "current_user": "postgres",
+    "inet_server_addr": "::1",
+    "inet_server_port": 5432
+  }
+]
+
+2. Applied Migrations:
+[
+  {
+    "migration_name": "20260927000000_init",
+    "started_at": "2026-10-01T04:39:20.778Z",
+    "finished_at": "2026-10-01T04:39:20.852Z",
+    "applied_steps_count": 1
+  },
+  {
+    "migration_name": "20260928051824_add_pool_member_stats_and_penalty_ledger",
+    "started_at": "2026-10-01T04:39:20.853Z",
+    "finished_at": "2026-10-01T04:39:20.878Z",
+    "applied_steps_count": 1
+  },
+  {
+    "migration_name": "20260928124900_precision_and_weekly_submissions",
+    "started_at": "2026-10-01T04:39:20.879Z",
+    "finished_at": "2026-10-01T04:39:20.915Z",
+    "applied_steps_count": 1
+  },
+  {
+    "migration_name": "20260928170000_weekly_submission_finalized_and_game_notes",
+    "started_at": "2026-10-01T04:39:20.915Z",
+    "finished_at": "2026-10-01T04:39:20.920Z",
+    "applied_steps_count": 1
+  },
+  {
+    "migration_name": "20260928180000_shot_cam_penalty_media_and_rls",
+    "started_at": "2026-10-01T04:39:20.921Z",
+    "finished_at": "2026-10-01T04:39:20.939Z",
+    "applied_steps_count": 1
+  },
+  {
+    "migration_name": "20260929144500_br_1_ledger_append_only",
+    "started_at": "2026-10-01T04:39:20.940Z",
+    "finished_at": "2026-10-01T04:39:20.944Z",
+    "applied_steps_count": 1
+  },
+  {
+    "migration_name": "20260930010000_br_2b_ledger_api_lockdown",
+    "started_at": "2026-10-01T04:39:20.946Z",
+    "finished_at": "2026-10-01T04:39:20.950Z",
+    "applied_steps_count": 1
+  },
+  {
+    "migration_name": "20260930020000_br_2c_public_tables_api_lockdown",
+    "started_at": "2026-10-01T04:39:20.951Z",
+    "finished_at": "2026-10-01T04:39:20.958Z",
+    "applied_steps_count": 1
+  }
+]
+
+3. Prisma Migrate Status:
+Environment variables loaded from .env
+Prisma schema loaded from prisma\schema.prisma
+Datasource "db": PostgreSQL database "pickem_rehearsal", schema "public" at "localhost:5432"
+
+8 migrations found in prisma/migrations
+
+Database schema is up to date!
+
+ RUN  v5.0.2 C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em
+
+ ✓ tests/br2.test.ts > BR-2b & BR-2c: Row-Level Security & Privilege Lockdown Matrix > BR-2b/2c: asserts RLS is ENABLED (relrowsecurity=true) and relforcerowsecurity=false on all application public tables 152ms
+ ✓ tests/br1.test.ts > BR-1: Append-Only Trigger Definitions, Immutability & Cascading Constraints > BR-1: asserts trigger and function definitions match requirements (BEFORE ROW/STATEMENT, plpgsql, prosecdef=false, unconditional RAISE) 41ms
+ ✓ tests/br1.test.ts > BR-1: Append-Only Trigger Definitions, Immutability & Cascading Constraints > BR-1: UPDATE (including no-op update) is blocked with count >= 1 and SQLSTATE P0001 65ms
+ ✓ tests/br1.test.ts > BR-1: Append-Only Trigger Definitions, Immutability & Cascading Constraints > BR-1: DELETE on penalty_ledger is blocked with count >= 1 and SQLSTATE P0001 33ms
+ ✓ tests/br1.test.ts > BR-1: Append-Only Trigger Definitions, Immutability & Cascading Constraints > BR-1: TRUNCATE on penalty_ledger is blocked with count >= 1 and SQLSTATE P0001 13ms
+ ✓ tests/br1.test.ts > BR-1: Append-Only Trigger Definitions, Immutability & Cascading Constraints > BR-1: membership-row DELETE cascades to penalty_ledger and is intercepted by trigger with P0001 61ms
+ ✓ tests/br1.test.ts > BR-1: Append-Only Trigger Definitions, Immutability & Cascading Constraints > BR-1: DELETE FROM pools fixture asserts exact foreign key constraint pool_memberships_pool_id_fkey and SQLSTATE 23503 5ms
+ ✓ tests/br2.test.ts > BR-2b & BR-2c: Row-Level Security & Privilege Lockdown Matrix > BR-2b/2c: asserts anon role is denied SELECT (SQLSTATE 42501) across all public tables 663ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > GET /api/admin/picks (Guarded by requirePoolCommissioner({ from: "query" })) > returns 401 when Authorization header is missing 569ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > GET /api/admin/picks (Guarded by requirePoolCommissioner({ from: "query" })) > returns 400 when pool_id query parameter is missing or malformed 32ms
+ ✓ tests/br2.test.ts > BR-2b & BR-2c: Row-Level Security & Privilege Lockdown Matrix > BR-2b/2c: asserts authenticated role is denied SELECT (SQLSTATE 42501) across all public tables 1012ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > GET /api/admin/picks (Guarded by requirePoolCommissioner({ from: "query" })) > returns 404 when pool does not exist 238ms
+ ✓ tests/br2.test.ts > BR-2b & BR-2c: Row-Level Security & Privilege Lockdown Matrix > BR-2b: asserts anon role is denied UPDATE on penalty_ledger with SQLSTATE 42501 (privilege proof) 19ms
+ ✓ tests/br2.test.ts > BR-2b & BR-2c: Row-Level Security & Privilege Lockdown Matrix > BR-2c: asserts has_function_privilege returns false for anon and authenticated on BR-1 trigger functions 89ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > GET /api/admin/picks (Guarded by requirePoolCommissioner({ from: "query" })) > returns 403 when user is not the pool commissioner 7ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > GET /api/admin/picks (Guarded by requirePoolCommissioner({ from: "query" })) > returns 200 and game slate snapshot when user is the verified commissioner 86ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > PUT /api/admin/picks (Guarded by requirePoolCommissioner({ from: "body" })) > returns 401 when Authorization header is missing 34ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > PUT /api/admin/picks (Guarded by requirePoolCommissioner({ from: "body" })) > returns 400 when pool_id is missing or malformed in request body 11ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > PUT /api/admin/picks (Guarded by requirePoolCommissioner({ from: "body" })) > returns 404 when pool does not exist in request body 16ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > PUT /api/admin/picks (Guarded by requirePoolCommissioner({ from: "body" })) > returns 403 when user is not the pool commissioner 39ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > PUT /api/admin/picks (Guarded by requirePoolCommissioner({ from: "body" })) > returns 200 and upserts pick when authenticated user is the commissioner 102ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > S-7: Shot-Cam Media Routes Scoping (No Global Admin Bypass) > POST /api/pools/:pool_id/penalties/:id/media: global ADMIN who is neither owner nor commissioner -> 403 38ms
+ ✓ tests/br4b.test.ts > BR-4b: Fail-Closed Claim Store Invariant (Decision #52) > Decision #52: executeWeeklyWrapUp returns CLAIM_STORE_UNAVAILABLE when claim table is absent or fails closed 119ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > S-7: Shot-Cam Media Routes Scoping (No Global Admin Bypass) > PATCH /api/pools/:pool_id/penalties/:id/media/confirm: global ADMIN who is not commissioner -> 403 12ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > S-8: GET /api/games Pool Scoping (No Pool Auto-Creation / Write-on-GET) > returns 404 POOL_NOT_FOUND when user is not member/commissioner of any pool and pool_id is omitted 12ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > S-8: GET /api/games Pool Scoping (No Pool Auto-Creation / Write-on-GET) > returns 404 POOL_NOT_FOUND when explicit pool_id does not exist 10ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > S-8: GET /api/games Pool Scoping (No Pool Auto-Creation / Write-on-GET) > returns 400 when explicit pool_id is not a valid UUID 3ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > S-8: GET /api/games Pool Scoping (No Pool Auto-Creation / Write-on-GET) > returns 403 when user is not a member or commissioner of the requested pool 6ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > S-8: GET /api/games Pool Scoping (No Pool Auto-Creation / Write-on-GET) > returns 200 with pool and games when pool_id is valid and user is commissioner or active member 34ms
+ ✓ tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > Decision #49: CI Route Scan & Route Guard Verification > verifies all routes with pool parameters are guarded; only /api/health and GET /api/admin/users allowlisted 1ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requireAuth > returns 401 when Authorization header is absent 5ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requireAuth > returns 401 when Authorization header does not start with Bearer 1ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requireAuth > returns 401 for an invalid / expired token 1ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requireAuth > decodes valid JWT and attaches user to req.user, then calls next() 10ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requireAdmin > returns 401 if req.user is undefined 1ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requireAdmin > returns 403 if req.user is not ADMIN 1ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requireAdmin > calls next() if user is ADMIN 1ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requirePoolCommissioner > returns 401 if req.user is missing 2ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requirePoolCommissioner > returns 400 for a malformed non-UUID pool_id 1ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requirePoolCommissioner > returns 404 when the pool does not exist in DB 1ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requirePoolCommissioner > returns 403 when user is neither commissioner nor member 1ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requirePoolCommissioner > Decision #20 & R-12.2-W: global ADMIN who is not the pool commissioner -> 403, no req.pool, zero side effects 1ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requirePoolCommissioner > calls next() and attaches pool when user is the pool commissioner 1ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requirePoolCommissioner > from: query - extracts pool_id from query params and authorizes commissioner 1ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requirePoolCommissioner > from: query - returns 400 when pool_id query parameter is missing 0ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requirePoolCommissioner > from: body - extracts pool_id from request body and authorizes commissioner 0ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requirePoolCommissioner > from: body - returns 400 when pool_id body parameter is missing 0ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requirePoolMember > returns 403 if user is not a member and not the commissioner 1ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requirePoolMember > Decision #20 & R-12.2-W: global ADMIN who is not a member and not commissioner -> 403, no req.pool 0ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requirePoolMember > calls next() when user is active pool member 0ms
+ ✓ tests/authMiddleware.test.ts > BR-5 middleware unit tests (pure mock) > requirePoolMember > calls next() when user is the pool commissioner (even without explicit membership row) 0ms
+ ✓ tests/safeguards.test.ts > BR-6 Safeguards: assertDisposableUrl > allows valid local disposable database URLs 5ms
+ ✓ tests/safeguards.test.ts > BR-6 Safeguards: assertDisposableUrl > rejects remote / hosted database URLs (Supabase, AWS, Neon, etc.) 1ms
+ ✓ tests/safeguards.test.ts > BR-6 Safeguards: assertDisposableUrl > Decision #32 Sabotage Test: point TEST_DATABASE_URL at production fingerprint -> aborts before connection 1ms
+ ✓ tests/safeguards.test.ts > BR-6 Safeguards: assertDisposableUrl > rejects URLs using ?schema= parameter to bypass host isolation 1ms
+ ✓ tests/safeguards.test.ts > BR-6 Safeguards: assertDisposableUrl > rejects non-disposable production database names on localhost 1ms
+ ✓ tests/safeguards.test.ts > BR-6 Safeguards: assertDisposableUrl > sabotage test: throws when TEST_DATABASE_URL is empty string or undefined 1ms
+ ✓ tests/characterization.test.ts > INV-5 Lock Logic & Boundary Characterization > Rolling lock: enforces lock per-game at kickoff boundary 3ms
+ ✓ tests/characterization.test.ts > INV-5 Lock Logic & Boundary Characterization > Rolling lock with offset: enforces lock at (kickoff - offset) 1ms
+ ✓ tests/characterization.test.ts > INV-5 Lock Logic & Boundary Characterization > Global lock vs Rolling lock: handles first game vs later games 1ms
+ ✓ tests/characterization.test.ts > INV-5 Lock Logic & Boundary Characterization > Excluded windows: correctly identifies TNF, MNF, Sunday Early/Late, SNF 2ms
+ ✓ tests/characterization.test.ts > BR-4 splitPenalty Math Characterization > Worked matrix: confirms exact zero-diff decimal split amounts 4ms
+ ✓ tests/characterization.test.ts > BR-4b Set-Equality: Wrap-Up vs Scoring Resolver > Asserts 100% game ID set equality between wrap-up and scoring resolvers 2ms
+
+ Test Files  7 passed (7)
+      Tests  63 passed (63)
+   Start at  21:39:34
+   Duration  4.02s (tests 66%, import 17%, transform 9%, setup 6%, worker 2%)
+
+    Isolate  7 workers spawned · ~604ms startup each (spawn + environment, per file)
+             at least ~806ms faster with isolate: false — reuses workers across files instead of one per file
+
+JSON report written to C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/docs/evidence/R-12.2-AE/vitest.json
+(node:17676) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/kacone/Documents/AI%20and%20Tech/Antigravity/NFL%20Pick%20Em/scripts/db_header.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.

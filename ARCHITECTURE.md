@@ -486,6 +486,68 @@ Before enabling `LEDGER_TYPED_WRITES`, a read-path parity test must pass. Every 
 - **R-12.2-AB:** BR-5b not accepted (uncommitted). Decisions #50-#51 applied. Docs-base verdict withdrawn. Default-creation deviation recorded.
 - **R-12.2-AC:** Decision #52 applied (claim code fails closed). S-7 global admin override removed from Shot-Cam routes. 00e89dd deviation recorded.
 - **R-12.2-AD:** Decisions #53-#54 applied. S-7 reclassified. S-8 write-on-GET removed. Commit-hygiene deviation recorded. Decisions #28-#54 registered.
+- **R-12.2-AE:** Decision #55 applied. S-7 reversal confirmed. S-8 explicit pool_id guarded. Claim step fail-closed fixed. Wrap-up game-set deviation recorded.
+
+---
+
+## Phase 12 Decision Register (Appendix A)
+
+1. **Decision #1:** Numeric precision Decimal(5,2) standardized for all penalty ledger entries and calculations (INV-1).
+2. **Decision #2:** Immutable penalty ledger enforced via database-level append-only triggers (`penalty_ledger_prevent_update_delete`, `penalty_ledger_prevent_truncate`) (INV-2).
+3. **Decision #3:** Elimination of floating-point arithmetic in scoring and wrap-up services; use `Prisma.Decimal` and `decimal.js`.
+4. **Decision #4:** Client presets (All Home, All Away, Favorites, Contrarian, Mirror Rival) operate purely in memory with zero server persistence (INV-3).
+5. **Decision #5:** Square Sheet Matrix dual-mode anti-peeking visibility enforcement (INV-4).
+6. **Decision #6:** Granular rolling vs global game lockout derived exclusively from stored kickoff timestamps (INV-5).
+7. **Decision #7:** Support for excluded game windows (e.g. skipped Thursday night games) in scoring and wrap-up.
+8. **Decision #8:** Decoupled 3-tier sync/scoring fallback architecture preserving local DB as source of truth.
+9. **Decision #9:** Non-blocking outbound network actions with database transactions insulated against external transport failures (INV-6).
+10. **Decision #10:** Anti-bloat principle (INV-7): prohibition of live odds, weather APIs, Twilio/SMS, payment processors, and third-party bloat.
+11. **Decision #11:** Shot-Cam storage verification portal metadata endpoints and owner verification model (INV-8).
+12. **Decision #12:** Role enum strictly limited to `ADMIN` and `USER`; rejection of `COMMISSIONER` or `CO_COMMISSIONER` role additions.
+13. **Decision #13:** Explicit pool scoping via `/api/pools/:pool_id/...` across all pool-specific endpoints.
+14. **Decision #14:** Foreign key constraints enforce `RESTRICT` on pools, users, and memberships.
+15. **Decision #15:** Primary keys standardized to UUID (`id String @id @default(uuid()) @db.Uuid`) across relational models.
+16. **Decision #16:** Timestamps standardized to `timestamp(3)` in UTC across all models.
+17. **Decision #17:** Physical reconciliation mapping: `leagueId`/`seasonId` -> `pool_id`, `userId` -> `user_id`, `weekId` -> `week_number`.
+18. **Decision #18:** Migration naming and sequencing standardization for Phase 12.
+19. **Decision #19:** Ledger effect formula: `Outstanding = Σ effect(e)` where assessments/opening balances are `+delta`, fulfillments/waivers are `-delta`, reversals are `-effect(target)`.
+20. **Decision #20:** Removal of global ADMIN bypass on pool-scoped routes (`requirePoolMember` and `requirePoolCommissioner`).
+21. **Decision #21:** Reversal constraints: target must match user/season/amount; unique `reversal_of_id`; rejection of double reversals.
+22. **Decision #22:** Read-path audit parity test required before enabling `LEDGER_TYPED_WRITES`.
+23. **Decision #23:** BR-1 immutability triggers installed on `penalty_ledger` (`BEFORE DELETE OR UPDATE` and `BEFORE TRUNCATE`).
+24. **Decision #24:** Rejection of table mutation on `weekly_wrapups` via `weekly_wrapups_prevent_mutation()` trigger.
+25. **Decision #25:** Hosted Supabase database environment classified as SHARED-DEV with write freeze.
+26. **Decision #26:** BR-2b/BR-2c Row-Level Security and Data API lockdown across public tables.
+27. **Decision #27:** Direct anon/authenticated access revoked from `users.password_hash` and sensitive tables.
+28. **Decision #28:** Local rehearsal database environment isolation (`pickem_rehearsal` on `localhost:5432`).
+29. **Decision #29:** `assertDisposableDatabase()` safeguard preventing test execution against hosted database.
+30. **Decision #30:** Separation of `.env` (rehearsal) and `.env.hosted` (hosted pooler).
+31. **Decision #31:** Guarded drop of rehearsal schema on hosted database.
+32. **Decision #32:** Permanent `.env` flip to local rehearsal and Vitest global setup assertions.
+33. **Decision #33:** CI documentation append-only guard enforcing strictly 0 deletions against baseline `e41ce72`.
+34. **Decision #34:** `db:reset` script standardizing rehearsal recreation with `app.disposable=true` sentinel.
+35. **Decision #35:** Rehearsal database provisioning with `anon`, `authenticated`, and `service_role` roles.
+36. **Decision #36:** Migration catalog checksum verification across all 8 migration files.
+37. **Decision #37:** Negative control verification using isolated worktrees (`.worktree-ctl`).
+38. **Decision #38:** Prohibition of test-created tables in production/rehearsal migrations.
+39. **Decision #39:** Git diff allowlist check enforcing bounded PR modifications.
+40. **Decision #40:** DDL grep negative control verifying zero DDL or SET statements in application codebase.
+41. **Decision #41:** BR-2 pre-check, post-check, and rollback script provisioning for hosted migration.
+42. **Decision #42:** Verification of SQLSTATE 42501 permission denial for anon and authenticated roles.
+43. **Decision #43:** Elimination of float arithmetic in weekly wrap-up calculations.
+44. **Decision #44:** Tiebreaker distance calculation using absolute score difference.
+45. **Decision #45:** Split-penalty rounding and remainder distribution logic preservation.
+46. **Decision #46:** Weekly wrap-up game-set resolution via shared scoring exclusion resolver.
+47. **Decision #47:** Strict fail-closed wrap-up precondition if non-excluded games are pending or absent.
+48. **Decision #48:** CI check for migration file checksums against `_prisma_migrations`.
+49. **Decision #49:** CI route scan enforcing parameter scoping and guard middleware on all routes.
+50. **Decision #50:** `GET /api/admin/users` allowlisted as platform-level admin endpoint.
+51. **Decision #51:** Admin picks routes scoped with `requirePoolCommissioner` (`from: 'query'` / `from: 'body'`).
+52. **Decision #52:** Weekly wrap-up claim step fails closed (`CLAIM_STORE_UNAVAILABLE`) if `weekly_wrapups` table is absent.
+53. **Decision #53:** Shot-Cam media upload and confirmation routes restricted to owner and pool commissioner only.
+54. **Decision #54:** Removal of write-on-GET in `GET /api/games`; 404 POOL_NOT_FOUND when missing; active pool resolution on omitted `pool_id`.
+55. **Decision #55:** S-7 reversal confirmed; S-8 explicit `pool_id` guarded with `requirePoolMember` authorization (400 UUID -> 404 existence -> 403 member/commissioner); wrap-up game-set deviation recorded.
+
 
 
 

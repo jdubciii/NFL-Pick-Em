@@ -289,6 +289,18 @@
 - [ ] **9. Docs Invariant Upheld:** `ARCHITECTURE.md`, `ROADMAP.md`, `tasks.md` strictly 0 deletions against `e41ce72`.
 - [ ] **10. Evidence Bundle Generated:** `docs/evidence/R-12.2-AD/EVIDENCE_BUNDLE.md` generated with size >= 2000 bytes.
 
+### R-12.2-AE Acceptance Criteria (Section 8)
+- [ ] **1. Pre-Push Scan & Facts:** No credentials or exposed .env files in git; all pre-push facts collected.
+- [ ] **2. Wrap-Up Claim Fail-Closed (Decision #52):** Removed 3-name fallback from `src/services/weeklyWrapUp.ts`; `SELECT to_regclass('public.weekly_wrapups')` checked; returns `CLAIM_STORE_UNAVAILABLE` when claim table absent; result keys aligned to `weekNumber`.
+- [ ] **3. S-8 Completion (Decision #55):** `GET /api/games` explicit `pool_id` enforces `requirePoolMember` authorization (400 UUID -> 404 existence -> 403 active member/commissioner); omitted `pool_id` resolves active membership/commissioner pool with deterministic ordering; zero writes on read.
+- [ ] **4. Full Test Suite on Main:** `npm run test:db` executes with 100% pass rate (63/63 tests passing).
+- [ ] **5. BR-4b Test on Migration Branch:** Switched to `feat/phase12-migrations`, checked out `f4243e4 -- tests/br4b.test.ts`, ran tests, and returned to `main`.
+- [ ] **6. Phase 12 Decision Register (#1–#55):** Complete 55-item decision register and R-12.2-AE rulings appended to `ARCHITECTURE.md`.
+- [ ] **7. Roadmap & Tasks Updated:** R-12.2-AE entries appended to `ROADMAP.md` and `tasks.md`.
+- [ ] **8. Evidence Bundle Generated:** `scripts/generate_evidence.js` hardened with `spawnSync`, UTF-8 encoding, NUL-byte sanitization, and output saved to `docs/evidence/R-12.2-AE/EVIDENCE_BUNDLE.md`.
+- [ ] **9. Clean Working Tree:** All changes committed locally without remote push.
+
+
 
 
 

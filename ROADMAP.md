@@ -111,6 +111,8 @@
 - R-12.2-AB: BR-5b not accepted; environment integrity; route-table facts.
 - R-12.2-AC: branch truth; claim code fails closed; S-7 facts.
 - R-12.2-AD: commit hygiene; stale DB; S-8.
+- R-12.2-AE: claim defects; S-8 completion; BR-5 closure matrix.
+
 
 
 
