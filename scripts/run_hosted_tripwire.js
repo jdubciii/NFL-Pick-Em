@@ -1,10 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const { spawnSync, execSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const dotenv = require('dotenv');
-const { PrismaClient } = require('@prisma/client');
-
-const isNegativeControl = process.argv.includes('--negative-control') || process.argv.includes('--dummy-localhost');
 
 function redactUrl(rawUrl) {
   if (!rawUrl) return '(undefined)';
@@ -17,21 +14,55 @@ function redactUrl(rawUrl) {
   }
 }
 
+function sanitizeOutput(text) {
+  if (!text) return '';
+  return text
+    .replace(/postgres(?:ql)?:\/\/[^@\s]+@/g, 'postgresql://[REDACTED]:****@')
+    .replace(/password=[^\s;&]+/gi, 'password=****')
+    .replace(/:[A-Za-z0-9_!@#$%^&*()\-+=]+@/g, ':****@');
+}
+
+const tripwireSql = `BEGIN READ ONLY;
+SELECT current_database(), current_user, version();
+SELECT now() AS db_now, EXTRACT(EPOCH FROM (now() - TIMESTAMPTZ '2026-09-30T06:14:37Z'))/3600 AS hours_since_t0;
+SELECT 'users' t, count(*) FROM users UNION ALL SELECT 'pools', count(*) FROM pools
+UNION ALL SELECT 'pool_memberships', count(*) FROM pool_memberships UNION ALL SELECT 'games', count(*) FROM games
+UNION ALL SELECT 'picks', count(*) FROM picks UNION ALL SELECT 'pick_results', count(*) FROM pick_results
+UNION ALL SELECT 'weekly_submissions', count(*) FROM weekly_submissions UNION ALL SELECT 'penalty_ledger', count(*) FROM penalty_ledger
+UNION ALL SELECT 'penalty_media', count(*) FROM penalty_media UNION ALL SELECT 'pool_member_stats', count(*) FROM pool_member_stats
+UNION ALL SELECT 'audit_logs', count(*) FROM audit_logs;
+SELECT to_regclass('public.weekly_wrapups');
+SELECT migration_name FROM _prisma_migrations ORDER BY started_at;
+SELECT count(*) = 2 AS intact FROM pg_trigger WHERE tgrelid='public.penalty_ledger'::regclass AND NOT tgisinternal AND tgenabled IN ('O','A')
+  AND tgname IN ('penalty_ledger_no_update_delete','penalty_ledger_no_truncate');
+SELECT count(*) FILTER (WHERE relrowsecurity) AS rls_on, count(*) AS tables FROM pg_class WHERE relnamespace='public'::regnamespace AND relkind IN ('r','p');
+COMMIT;
+`;
+
 async function runHostedTripwire(targetUrl) {
-  console.log('=== HOSTED DATABASE TRIPWIRE (R-12.2-AG) ===\n');
+  console.log('=== HOSTED DATABASE TRIPWIRE (R-12.2-AH) ===\n');
 
   let dbUrl = targetUrl;
+  const args = process.argv.slice(2);
+  
   if (!dbUrl) {
-    if (isNegativeControl) {
+    if (args.includes('--dummy-localhost') || args.includes('--negative-control')) {
       dbUrl = 'postgresql://postgres:postgres@localhost:5432/pickem_rehearsal';
+    } else if (args.includes('--dummy-127.0.0.1')) {
+      dbUrl = 'postgresql://postgres:postgres@127.0.0.1:5432/pickem_rehearsal';
     } else {
-      const envHostedPath = path.resolve(__dirname, '../.env.hosted');
-      if (fs.existsSync(envHostedPath)) {
-        const envConfig = dotenv.parse(fs.readFileSync(envHostedPath));
-        dbUrl = envConfig.DATABASE_URL || envConfig.DIRECT_URL || envConfig.TEST_DATABASE_URL;
-      }
-      if (!dbUrl) {
-        dbUrl = process.env.DATABASE_URL;
+      const explicitUrlArg = args.find(a => a.startsWith('postgres://') || a.startsWith('postgresql://'));
+      if (explicitUrlArg) {
+        dbUrl = explicitUrlArg;
+      } else {
+        const envHostedPath = path.resolve(__dirname, '../.env.hosted');
+        if (fs.existsSync(envHostedPath)) {
+          const envConfig = dotenv.parse(fs.readFileSync(envHostedPath));
+          dbUrl = envConfig.DATABASE_URL || envConfig.DIRECT_URL || envConfig.TEST_DATABASE_URL;
+        }
+        if (!dbUrl) {
+          dbUrl = process.env.DATABASE_URL;
+        }
       }
     }
   }
@@ -43,7 +74,7 @@ async function runHostedTripwire(targetUrl) {
 
   console.log(`Target Host: ${redactUrl(dbUrl)}`);
 
-  // Inverse Guard: parse host and strictly require Supabase pooler/direct host
+  // Parse hostname for Inverse Guard
   let host = '';
   try {
     const parsed = new URL(dbUrl);
@@ -55,9 +86,10 @@ async function runHostedTripwire(targetUrl) {
 
   console.log(`Parsed Hostname: ${host}`);
 
-  if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.includes('local')) {
+  // Strict Inverse Guard enforcement
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.includes('localhost') || host.includes('127.0.0.1')) {
     console.error('SAFETY_ERROR: Refusing to run against localhost.');
-    throw new Error('Refusing to run against localhost: Inverse Guard requires hosted Supabase database (*.pooler.supabase.com or *.supabase.co)');
+    throw new Error('Refusing to run against localhost');
   }
 
   const isSupabase = host.endsWith('.supabase.com') || host.endsWith('.supabase.co') || host.includes('pooler.supabase.com');
@@ -68,74 +100,29 @@ async function runHostedTripwire(targetUrl) {
 
   console.log('✅ Inverse Guard verified: Target is confirmed hosted Supabase database.\n');
 
-  const tripwireSql = `
-SELECT count(*) as pools_count FROM pools;
-SELECT count(*) as users_count FROM users;
-SELECT count(*) as penalty_ledger_count FROM penalty_ledger;
-SELECT count(*) as weekly_submissions_count FROM weekly_submissions;
-SELECT now() as server_time;
-SELECT EXTRACT(EPOCH FROM (now() - '2026-10-01T06:15Z'::timestamptz))/3600 as hours_since_t0;
-SELECT to_regclass('public.weekly_wrapups') as to_regclass;
-`;
-
-  console.log('1. Executing SQL via prisma db execute --stdin...');
-  try {
-    const isWindows = process.platform === 'win32';
-    const shellCmd = isWindows ? 'powershell' : '/bin/sh';
-    const execCmd = `npx prisma db execute --url="${dbUrl}" --stdin`;
-    const shellArgs = isWindows ? ['-NoProfile', '-Command', execCmd] : ['-c', execCmd];
-
-    const result = spawnSync(shellCmd, shellArgs, {
-      input: tripwireSql,
-      encoding: 'utf8',
-      env: { ...process.env, NO_COLOR: '1' },
-      maxBuffer: 1024 * 1024 * 10,
-    });
-
-    const rawOut = ((result.stdout || '') + (result.stderr || '')).trim();
-    const safeOut = rawOut.replace(/postgres:[^@]+@/g, 'postgres:****@');
-    console.log(safeOut || 'Script executed successfully.');
-  } catch (err) {
-    console.warn(`Prisma db execute notice: ${err.message}`);
-  }
-
-  console.log('\n2. Retrieving Exact Query Results via Database Connection...');
-  const prisma = new PrismaClient({
-    datasources: { db: { url: dbUrl } },
+  console.log('Executing read-only SQL tripwire via prisma db execute --stdin...');
+  const result = spawnSync('npx', ['prisma', 'db', 'execute', `--url=${dbUrl}`, '--stdin'], {
+    cwd: path.resolve(__dirname, '..'),
+    input: tripwireSql,
+    encoding: 'utf8',
+    shell: true,
+    env: { ...process.env, NO_COLOR: '1' },
+    maxBuffer: 1024 * 1024 * 10,
   });
 
-  try {
-    const timeRes = await prisma.$queryRawUnsafe(`SELECT now() as server_time;`);
-    console.log('Database Server Time:', timeRes);
+  const rawStdout = result.stdout || '';
+  const rawStderr = result.stderr || '';
+  const fullOutput = (rawStdout + '\n' + rawStderr).trim();
+  const safeOutput = sanitizeOutput(fullOutput);
 
-    const hoursRes = await prisma.$queryRawUnsafe(
-      `SELECT EXTRACT(EPOCH FROM (now() - '2026-10-01T06:15Z'::timestamptz))/3600 as hours_since_t0;`
-    );
-    console.log('Hours Since T0 (2026-10-01T06:15Z):', hoursRes);
-
-    const regclassRes = await prisma.$queryRawUnsafe(
-      `SELECT to_regclass('public.weekly_wrapups')::text as to_regclass;`
-    );
-    console.log('to_regclass(public.weekly_wrapups):', regclassRes);
-
-    const tables = ['pools', 'users', 'penalty_ledger', 'weekly_submissions'];
-    console.log('\nTable Row Counts:');
-    for (const tbl of tables) {
-      try {
-        const countRes = await prisma.$queryRawUnsafe(`SELECT count(*) as count FROM "${tbl}";`);
-        console.log(`  - ${tbl}: ${countRes[0]?.count ?? '0'}`);
-      } catch (err) {
-        console.log(`  - ${tbl}: (query error / table missing: ${err.message})`);
-      }
-    }
-
-    console.log('\n✅ Hosted Tripwire executed successfully.');
-  } catch (error) {
-    console.error('ERROR during query execution:', error.message);
-    process.exit(1);
-  } finally {
-    await prisma.$disconnect();
+  if (result.status !== 0) {
+    console.error(`Tripwire execution failed with exit code ${result.status}:`);
+    console.error(safeOutput);
+    process.exit(result.status || 1);
   }
+
+  console.log(safeOutput);
+  console.log('\n✅ Hosted Tripwire executed successfully.');
 }
 
 if (require.main === module) {
@@ -145,4 +132,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { runHostedTripwire, redactUrl };
+module.exports = { runHostedTripwire, redactUrl, sanitizeOutput };

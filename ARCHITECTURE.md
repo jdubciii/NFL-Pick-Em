@@ -551,6 +551,7 @@ Before enabling `LEDGER_TYPED_WRITES`, a read-path parity test must pass. Every 
 53. **Decision #53:** Agents never push, force-push or change remotes.
 54. **Decision #54:** GET handlers perform no writes.
 55. **Decision #55:** A guard is never bypassed by a conditional when its dependency is missing.
+56. **Decision #56:** Rulings are stored verbatim under docs/rulings/. The Decision Register in ARCHITECTURE.md is a byte-for-byte copy of docs/rulings/appendix-a.md, and CI diffs the two.
 
 ---
 
@@ -611,10 +612,13 @@ Before enabling `LEDGER_TYPED_WRITES`, a read-path parity test must pass. Every 
 53 Agents never push, force-push or change remotes.
 54 GET handlers perform no writes.
 55 A guard is never bypassed by a conditional when its dependency is missing.
+56 Rulings are stored verbatim under docs/rulings/. The Decision Register in ARCHITECTURE.md is a byte-for-byte copy of docs/rulings/appendix-a.md, and CI diffs the two.
 
 V4: APPROVED by Fallback; RATIFIED IN PART by the Arbiter.
 
 R-12.2-AG: Register ratified. Hosted tripwire re-run. Authoritative register is located at 'Phase 12 Decision Register (supersedes...)'.
+
+R-12.2-AH: Milestone 12.1 CONDITIONAL START; hosted tripwire & evidence repair cycle.
 
 
 

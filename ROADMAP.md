@@ -117,6 +117,7 @@
 - R-12.2-AE-V4: Substantive implementation and verification complete. Local Git finalization executed.
 - R-12.2-AF: 12.1 conditional start; BR-5 closure; register repair.
 - R-12.2-AG: register ratified; hosted tripwire re-run.
+- R-12.2-AH: Milestone 12.1 CONDITIONAL START; hosted tripwire & evidence repair cycle.
 
 
 

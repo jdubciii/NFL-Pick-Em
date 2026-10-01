@@ -25,7 +25,7 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
 
   beforeAll(async () => {
     assertDisposableUrl(rehearsalDbUrl);
-    prisma = new PrismaClient({ datasources: { db: { url: rehearsalDbUrl } } });
+    prisma = new PrismaClient({ datasources: { db: { url: rehearsalDbUrl } }, log: [] });
 
     // Start server on ephemeral port
     await new Promise<void>((resolve) => {
@@ -341,6 +341,8 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
         }),
       });
       expect(res.status).toBe(403);
+      const penaltyMediaCount = await prisma.penaltyMedia.count({ where: { penaltyId: penaltyRecord.id } });
+      expect(penaltyMediaCount).toBe(0);
     });
 
     it('POST /api/pools/:pool_id/penalties/:id/media: member who is NOT the penalty owner -> 403', async () => {
@@ -355,13 +357,15 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
         }),
       });
       expect(res.status).toBe(403);
+      const penaltyMediaCount = await prisma.penaltyMedia.count({ where: { penaltyId: penaltyRecord.id } });
+      expect(penaltyMediaCount).toBe(0);
     });
 
     it('verifies zero penalty_media rows exist after denied upload attempts', async () => {
-      const rows = await prisma.penaltyMedia.findMany({
+      const penaltyMediaCount = await prisma.penaltyMedia.count({
         where: { penaltyId: penaltyRecord.id },
       });
-      expect(rows.length).toBe(0);
+      expect(penaltyMediaCount).toBe(0);
     });
 
     it('POST /api/pools/:pool_id/penalties/:id/media: penalty OWNER -> 201 success', async () => {
@@ -393,6 +397,10 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
         }),
       });
       expect(res.status).toBe(403);
+      const confirmedMediaCount = await prisma.penaltyMedia.count({
+        where: { penaltyId: penaltyRecord.id, status: 'CONFIRMED' },
+      });
+      expect(confirmedMediaCount).toBe(0);
     });
 
     it('PATCH /api/pools/:pool_id/penalties/:id/media/confirm: pool COMMISSIONER -> 200 success', async () => {
@@ -446,7 +454,7 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       const data = await res.json();
       expect(data.error).toBe('POOL_NOT_FOUND');
       const poolCountAfter = await prisma.pool.count();
-      expect(poolCountAfter).toBe(poolCountBefore);
+      expect(poolCountBefore).toBe(poolCountAfter);
     });
 
     it('returns 404 POOL_NOT_FOUND when explicit pool_id does not exist (no pool write)', async () => {
@@ -459,7 +467,7 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       const data = await res.json();
       expect(data.error).toBe('POOL_NOT_FOUND');
       const poolCountAfter = await prisma.pool.count();
-      expect(poolCountAfter).toBe(poolCountBefore);
+      expect(poolCountBefore).toBe(poolCountAfter);
     });
 
     it('returns 400 when explicit pool_id is not a valid UUID (no pool write)', async () => {
@@ -471,7 +479,7 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       const data = await res.json();
       expect(data.error).toContain('valid UUID');
       const poolCountAfter = await prisma.pool.count();
-      expect(poolCountAfter).toBe(poolCountBefore);
+      expect(poolCountBefore).toBe(poolCountAfter);
     });
 
     it('returns 403 when user is not a member or commissioner of the requested pool (no pool write)', async () => {
@@ -483,10 +491,12 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       const data = await res.json();
       expect(data.error).toContain('Active pool membership required');
       const poolCountAfter = await prisma.pool.count();
-      expect(poolCountAfter).toBe(poolCountBefore);
+      expect(poolCountBefore).toBe(poolCountAfter);
     });
 
     it('returns 200 with pool and games when pool_id is valid, with zero pool writes and identical schema snapshot', async () => {
+      // Ensure clean state without prior picks for byte-for-byte comparison
+      await prisma.pick.deleteMany({ where: { poolId: testPool.id } });
       const poolCountBefore = await prisma.pool.count();
 
       // Commissioner request
@@ -504,9 +514,11 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       const memberData = await memberRes.json();
 
       const poolCountAfter = await prisma.pool.count();
-      expect(poolCountAfter).toBe(poolCountBefore);
+      expect(poolCountBefore).toBe(poolCountAfter);
 
-      // Snapshot parity assertions
+      // Snapshot parity and byte-for-byte payload comparisons
+      expect(JSON.stringify(memberData)).toBe(JSON.stringify(commishData));
+      expect(memberData).toEqual(commishData);
       expect(Object.keys(memberData).sort()).toEqual(Object.keys(commishData).sort());
       expect(memberData.pool.id).toBe(testPool.id);
       expect(commishData.pool.id).toBe(testPool.id);

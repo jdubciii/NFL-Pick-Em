@@ -346,6 +346,15 @@
 - [ ] **7. Pre-Run Cleanliness:** Clean working tree verified before running generator.
 - [ ] **8. Local Binding:** Final evidence bundle bound to `docs/evidence/R-12.2-AG/EVIDENCE_BUNDLE.md` with strictly no remote push.
 
+### R-12.2-AH Acceptance Criteria (Section 7)
+- [ ] **1. Decision #56 Register Addition:** Added Decision #56 to `docs/rulings/appendix-a.md` and superseding register in `ARCHITECTURE.md`; `scripts/ci_check_register.js` positive and negative controls passing.
+- [ ] **2. Documentation Updates:** Append-only updates added to `ARCHITECTURE.md`, `ROADMAP.md`, and `tasks.md` with 0 deletions against baseline `e41ce72`.
+- [ ] **3. S-7 / S-8 Test Assertions Update:** `tests/br5b_routes.test.ts` updated with `poolCountBefore === poolCountAfter`, byte-for-byte snapshot / exact payload comparisons for member and commissioner on S-8 200, zero penalty_media count on denied S-7 attempts; `tests/setup.ts` explicitly contains `log: []` suppression for PrismaClient instantiation.
+- [ ] **4. Complete Hosted Tripwire Script:** `scripts/run_hosted_tripwire.js` strictly enforces inverse guard rejecting localhost and 127.0.0.1 (exit 1); exact read-only SQL block executed via `prisma db execute --stdin`; password and URL redacted.
+- [ ] **5. Evidence Generator Hardening:** `scripts/generate_evidence.js` enforces clean git status at start (exit 1 if dirty); captures `git merge-base --is-ancestor 6c2fb46 HEAD`; reflog captured without `||`; `tests/setup.ts` dumped; tripwire localhost/127.0.0.1 negative controls (exit 1); real hosted tripwire; `npm run test:db`; full verbatim dump of `docs/design/12.1.md`; live repository context.
+- [ ] **6. Pre-Run Git Finalization:** Clean working tree committed locally before running evidence generator.
+- [ ] **7. Evidence Generation & Binding:** Final evidence bundle bound in `docs/evidence/R-12.2-AH/EVIDENCE_BUNDLE.md` with strictly no remote push.
+
 
 
 
