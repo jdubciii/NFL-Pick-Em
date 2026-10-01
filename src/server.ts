@@ -6,7 +6,7 @@ import cors from 'cors';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import prisma from './db/client';
-import { JWT_SECRET, requireAuth, requireAdmin, requirePoolCommissioner, requirePoolMember } from './middleware/auth';
+import { JWT_SECRET, UUID_REGEX, requireAuth, requireAdmin, requirePoolCommissioner, requirePoolMember } from './middleware/auth';
 import { picksRouter } from './routes/picks';
 import { adminRouter } from './routes/admin';
 import type {
@@ -109,30 +109,62 @@ app.get('/api/pools', requireAuth, async (_req: Request, res: Response): Promise
  */
 app.get('/api/games', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = req.user!.id;
-  const poolId = req.query.pool_id ? String(req.query.pool_id) : undefined;
+  const poolIdParam = req.query.pool_id;
+  const poolId = poolIdParam !== undefined && poolIdParam !== null && poolIdParam !== ''
+    ? String(poolIdParam)
+    : undefined;
 
   try {
     let pool: any = null;
     if (poolId) {
+      if (!UUID_REGEX.test(poolId)) {
+        res.status(400).json({ error: 'Invalid pool ID format. Must be a valid UUID.' });
+        return;
+      }
+
       pool = await prisma.pool.findUnique({ where: { id: poolId } });
+      if (!pool) {
+        res.status(404).json({ error: 'POOL_NOT_FOUND' });
+        return;
+      }
+
+      const isCommissioner = pool.adminId === userId;
+      if (!isCommissioner) {
+        const membership = await prisma.poolMembership.findUnique({
+          where: {
+            poolId_userId: {
+              poolId,
+              userId,
+            },
+          },
+        });
+
+        if (!membership || membership.status !== 'ACTIVE') {
+          res.status(403).json({ error: 'Forbidden. Active pool membership required.' });
+          return;
+        }
+      }
     } else {
-      const membership = await prisma.poolMembership.findFirst({
+      pool = await prisma.pool.findFirst({
         where: {
-          userId,
           status: 'ACTIVE',
-          pool: { status: 'ACTIVE' },
+          memberships: {
+            some: {
+              userId,
+              status: 'ACTIVE',
+            },
+          },
         },
-        include: { pool: true },
+        orderBy: [{ name: 'asc' }],
       });
 
-      if (membership) {
-        pool = membership.pool;
-      } else {
+      if (!pool) {
         pool = await prisma.pool.findFirst({
           where: {
             adminId: userId,
             status: 'ACTIVE',
           },
+          orderBy: [{ name: 'asc' }],
         });
       }
     }

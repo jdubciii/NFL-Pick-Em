@@ -374,7 +374,25 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       expect(data.error).toBe('POOL_NOT_FOUND');
     });
 
-    it('returns 200 with pool and games when pool_id is valid', async () => {
+    it('returns 400 when explicit pool_id is not a valid UUID', async () => {
+      const res = await fetch(`${baseUrl}/api/games?pool_id=invalid-uuid`, {
+        headers: { Authorization: `Bearer ${commissionerToken}` },
+      });
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('valid UUID');
+    });
+
+    it('returns 403 when user is not a member or commissioner of the requested pool', async () => {
+      const res = await fetch(`${baseUrl}/api/games?pool_id=${testPool.id}`, {
+        headers: { Authorization: `Bearer ${unassociatedToken}` },
+      });
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.error).toContain('Active pool membership required');
+    });
+
+    it('returns 200 with pool and games when pool_id is valid and user is commissioner or active member', async () => {
       const res = await fetch(`${baseUrl}/api/games?pool_id=${testPool.id}`, {
         headers: { Authorization: `Bearer ${commissionerToken}` },
       });

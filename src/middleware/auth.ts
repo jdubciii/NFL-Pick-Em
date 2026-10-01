@@ -20,7 +20,7 @@ declare global {
 
 export const JWT_SECRET = process.env.JWT_SECRET || 'nfl-pick-em-secret-key-change-in-prod';
 
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Middleware to verify JWT and attach user payload to req.user.
