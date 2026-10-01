@@ -108,5 +108,11 @@
 - R-12.2-Y: guard merge accepted; wrapUp test retired; admin inventory; BR-5 verification next.
 - R-12.2-Z: prior bundle re-sent; R-12.2-Y re-issued.
 - R-12.2-AA: S-6 admin picks routes; BR-5b; bundle gaps; docs arithmetic.
+- R-12.2-AB: BR-5b not accepted; environment integrity; route-table facts.
+- R-12.2-AC: branch truth; claim code fails closed; S-7 facts.
+- R-12.2-AD: commit hygiene; stale DB; S-8.
+
+
+
 
 

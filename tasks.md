@@ -259,4 +259,37 @@
 - [✅] **Migration Count Correction:** Verified physical migration directories count is exactly 8.
 - [✅] **Bundle Generator Self-Test:** Negative control confirmed operational with strict non-empty output validation.
 
+### R-12.2-AB Acceptance Criteria (Section 10)
+- [ ] **BR-5b Commits on Isolated Branch:** All BR-5b changes committed to `fix/br5b-admin-picks` with clean working tree.
+- [ ] **Evidence Generator Negative Control via Worktree:** Strict evidence generator uses `git worktree` isolation for negative control without modifying live working tree.
+- [ ] **No Markdown Truncation:** Generator validates that no empty sections or empty code blocks exist in the bundle.
+- [ ] **Integrity Checks Completed:** Facts recorded for "Main NFL Pick" occurrences, Prisma migrate status, and route handlers.
+- [ ] **Docs Invariant Upheld:** `ARCHITECTURE.md`, `ROADMAP.md`, `tasks.md` strictly 0 deletions against `e41ce72`.
+- [ ] **59/59 Tests Passing:** Full suite passes across rehearsal and mock environments.
+
+### R-12.2-AC Acceptance Criteria (Section 9)
+- [ ] **Workspace Hygiene & Worktree Isolation:** Live working tree clean; negative controls run exclusively in `.worktree-ctl` without `reset`, `checkout`, or `stash`.
+- [ ] **Evidence Generator Hardening:** Generator utilizes 50MB buffer, incremental writes, non-empty section/code validation, and size checks (>1000 bytes).
+- [ ] **Decision #52 Applied (Claim Code Fails Closed):** 3-name fallback removed from `weeklyWrapUp.ts`; `to_regclass` checked; returns `CLAIM_STORE_UNAVAILABLE` when claim table absent.
+- [ ] **S-7 Remediation (Shot-Cam):** Global `Role.ADMIN` override removed from `POST .../media` and `PATCH .../media/confirm` routes in `src/server.ts`.
+- [ ] **BR-5b UI Integration:** `AdminDashboard.tsx` sends `pool_id` on both GET and PUT calls sourced from active pool context.
+- [ ] **Minimal Fail-Closed Test:** `tests/br4b.test.ts` on branch contains only the fail-closed claim store check.
+- [ ] **Docs Invariant Upheld:** `ARCHITECTURE.md`, `ROADMAP.md`, `tasks.md` strictly 0 deletions against `e41ce72`.
+- [ ] **Strict Two-Commit Separation:** Code fixes committed separately from docs and evidence bundle.
+
+### R-12.2-AD Acceptance Criteria (Section 10)
+- [ ] **1. History Rewrite (Local Only):** Branch `fix/br5b-admin-picks` rewritten into 4 clean atomic commits on top of `main`; no remote push executed.
+- [ ] **2. Evidence Generator Hardening:** Generator strictly uses `spawnSync`, UTF-8 encoding, `NO_COLOR=1`, NUL-byte sanitization (`\x00` stripped), incremental writes, non-empty section validation, and size >= 2000 bytes.
+- [ ] **3. Fact Gathering & DB Verification:** All facts captured (commit logs, migrations count 8, `weeklyWrapUp.ts` game resolution, 0 DDL grep, S-7 diff, S-8 client calls, BR-5b UI, Decision register).
+- [ ] **4. Decision #53 Applied (S-7 Reclassification):** Shot-Cam routes scoped to owner and pool commissioner only.
+- [ ] **5. Decision #54 Applied (S-8 Write-on-GET Removal):** `GET /api/games` returns 404 POOL_NOT_FOUND when missing; resolves active membership/commissioner pool when `pool_id` omitted; zero writes on read.
+- [ ] **6. Decision #52 Applied (Claim Store Fails Closed):** Claim store checks `to_regclass` and fails closed with `CLAIM_STORE_UNAVAILABLE`.
+- [ ] **7. BR-5b UI:** `client/src/pages/AdminDashboard.tsx` uses pool context for `pool_id` on GET and PUT calls.
+- [ ] **8. Test Execution:** `npm run test:db` executes clean DB reset, migrate deploy, client generate, `db_header.js`, and all 61 tests passing.
+- [ ] **9. Docs Invariant Upheld:** `ARCHITECTURE.md`, `ROADMAP.md`, `tasks.md` strictly 0 deletions against `e41ce72`.
+- [ ] **10. Evidence Bundle Generated:** `docs/evidence/R-12.2-AD/EVIDENCE_BUNDLE.md` generated with size >= 2000 bytes.
+
+
+
+
 

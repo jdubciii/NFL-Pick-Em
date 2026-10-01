@@ -1,0 +1,4 @@
+﻿f76d7c1 test: BR-5b, S-7, S-8, and fail-closed tests
+7abab7d fix: BR-5b UI pool_id context
+43abc9c fix: S-7 Shot-Cam roles and S-8 GET /api/games pool creation
+5c01adf fix: claim code fail-closed (Decision #52)

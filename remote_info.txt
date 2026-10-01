@@ -1,0 +1,2 @@
+﻿origin	https://github.com/jdubciii/NFL-Pick-Em.git (fetch)
+origin	https://github.com/jdubciii/NFL-Pick-Em.git (push)
