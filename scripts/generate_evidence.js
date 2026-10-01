@@ -77,9 +77,9 @@ if (ancestryRes.status === 0) {
   throw new Error('Ancestry check failed: 6c2fb46 is not an ancestor of HEAD');
 }
 
-console.log('=== Running Strict Evidence Generator for R-12.2-AH-V2 ===\n');
+console.log('=== Running Strict Evidence Generator for R-12.2-AH-V2-ACK ===\n');
 
-const evDir = path.join(rootDir, 'docs/evidence/R-12.2-AH-V2');
+const evDir = path.join(rootDir, 'docs/evidence/R-12.2-AH-V2-ACK');
 if (!fs.existsSync(evDir)) {
   fs.mkdirSync(evDir, { recursive: true });
 }
@@ -297,7 +297,7 @@ function appendSection(content) {
   fs.appendFileSync(targetBundlePath, content + '\n\n', 'utf8');
 }
 
-appendSection(`# EVIDENCE BUNDLE — RE: RULING R-12.2-AH-V2
+appendSection(`# EVIDENCE BUNDLE — RE: RULING R-12.2-AH-V2-ACK
 **Date (UTC):** ${new Date().toISOString()}  
 **Current Commit:** ${initialCurrentCommit}  
 **Branch:** ${currentBranch}  
@@ -547,14 +547,15 @@ ${vitestJsonContent}
 
 ---`);
 
-appendSection(`## 14. R-12.2-AH-V2 Acceptance Criteria Checklist (Section 7)
-
-- [ ] **1. Update S-7 / S-8 Tests with Explicit Console Logs:** \`tests/br5b_routes.test.ts\` updated with explicit console logs for pool count before/after, pool count invariant PASS, member/commissioner response byte equality PASS, and penalty_media row count = 0.
-- [ ] **2. Fix Hosted Tripwire Script Query Streaming:** \`scripts/run_hosted_tripwire.js\` uses Node \`pg\` client to stream and print all exact rows (database, user, version, 11 table counts, \`to_regclass\`, migrations, triggers, RLS 12/12); inverse guards reject localhost/127.0.0.1; credentials redacted.
-- [ ] **3. Update Evidence Generator:** \`scripts/generate_evidence.js\` enforces clean pre-generation workspace hygiene via \`git status --porcelain\` at start (fails closed if dirty); records ancestry confirmation; captures tripwire negative and real runs; captures \`npm run test:db -- --reporter=verbose\`; dumps \`docs/design/12.1.md\` and \`# LIVE REPOSITORY CONTEXT\`.
-- [ ] **4. Documentation Updates:** Append-only updates added to \`ARCHITECTURE.md\`, \`ROADMAP.md\`, and \`tasks.md\` with 0 deletions against baseline \`e41ce72\`.
-- [ ] **5. Pre-Run Git Finalization:** All changes committed cleanly before evidence run; \`git status --porcelain\` verified empty.
-- [ ] **6. Evidence Generation & Binding:** Final evidence bundle bound to \`docs/evidence/R-12.2-AH-V2/EVIDENCE_BUNDLE.md\` with strictly no remote push.
+appendSection(`## 14. R-12.2-AH-V2-ACK Acceptance Criteria Checklist
+- [ ] Preserve feat/phase12-1-outbox as the implementation branch until the next binding gate is issued.
+- [ ] Do not merge 12.1 work to main under this ruling.
+- [ ] Do not execute hosted DDL or hosted schema mutation under this ruling.
+- [ ] Keep the V2 hosted tripwire raw-output contract intact for subsequent evidence runs.
+- [ ] Preserve the explicit S-7/S-8 invariant console assertions.
+- [ ] Preserve Decision #50 DB-header and query-log suppression controls.
+- [ ] Preserve Decision #56 byte-for-byte register enforcement.
+- [ ] Treat INV-6 and all actual 12.1 runtime behavior as deferred until implementation evidence is separately adjudicated.
 
 ---`);
 

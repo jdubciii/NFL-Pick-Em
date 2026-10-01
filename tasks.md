@@ -363,6 +363,16 @@
 - [ ] **5. Pre-Run Git Finalization:** All changes committed cleanly before evidence run; `git status --porcelain` verified empty.
 - [ ] **6. Evidence Generation & Binding:** Final evidence bundle bound to `docs/evidence/R-12.2-AH-V2/EVIDENCE_BUNDLE.md` with strictly no remote push.
 
+### R-12.2-AH-V2-ACK Acceptance Criteria
+- [ ] Preserve feat/phase12-1-outbox as the implementation branch until the next binding gate is issued.
+- [ ] Do not merge 12.1 work to main under this ruling.
+- [ ] Do not execute hosted DDL or hosted schema mutation under this ruling.
+- [ ] Keep the V2 hosted tripwire raw-output contract intact for subsequent evidence runs.
+- [ ] Preserve the explicit S-7/S-8 invariant console assertions.
+- [ ] Preserve Decision #50 DB-header and query-log suppression controls.
+- [ ] Preserve Decision #56 byte-for-byte register enforcement.
+- [ ] Treat INV-6 and all actual 12.1 runtime behavior as deferred until implementation evidence is separately adjudicated.
+
 
 
 
