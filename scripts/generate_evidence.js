@@ -43,9 +43,9 @@ if (isSelfTest) {
   process.exit(0);
 }
 
-console.log('=== Running Strict Evidence Generator for R-12.2-AE-V2 ===\n');
+console.log('=== Running Strict Evidence Generator for R-12.2-AE-V3 ===\n');
 
-const evDir = path.join(rootDir, 'docs/evidence/R-12.2-AE-V2');
+const evDir = path.join(rootDir, 'docs/evidence/R-12.2-AE-V3');
 if (!fs.existsSync(evDir)) {
   fs.mkdirSync(evDir, { recursive: true });
 }
@@ -149,23 +149,23 @@ const serverGamesCode = fs.readFileSync(path.join(rootDir, 'src/server.ts'), 'ut
 console.log(' - Decision register in ARCHITECTURE.md...');
 const decisionGrep = runCommand('git grep -n "Decision #" ARCHITECTURE.md');
 
-// 2.8 Test Execution Results
-console.log(' - Loading test results for main and br4b...');
-const mainTestPath = fs.existsSync(path.join(evDir, 'test_results_main.txt')) 
-  ? path.join(evDir, 'test_results_main.txt') 
-  : path.join(rootDir, 'test_results_main.txt');
-const mainTestOutput = fs.existsSync(mainTestPath) ? fs.readFileSync(mainTestPath, 'utf8').trim() : runCommand('npm run test:db');
+// 2.8 Main and BR-4b Test Results & Raw Prisma Generate Outputs
+console.log(' - Loading test results & raw prisma generate outputs...');
+const prismaGenerateBr4bPath = path.join(rootDir, 'prisma_generate_br4b.txt');
+const prismaGenerateBr4bContent = fs.existsSync(prismaGenerateBr4bPath) ? fs.readFileSync(prismaGenerateBr4bPath, 'utf8').trim() : '(not found)';
 
-const br4bTestPath = fs.existsSync(path.join(evDir, 'test_results_br4b.txt'))
-  ? path.join(evDir, 'test_results_br4b.txt')
-  : path.join(rootDir, 'test_results_br4b.txt');
-const br4bTestOutput = fs.existsSync(br4bTestPath) ? fs.readFileSync(br4bTestPath, 'utf8').trim() : '(br4b results pending)';
+const testResultsBr4bPath = path.join(rootDir, 'test_results_br4b.txt');
+const testResultsBr4bContent = fs.existsSync(testResultsBr4bPath) ? fs.readFileSync(testResultsBr4bPath, 'utf8').trim() : '(not found)';
+
+const prismaGenerateMainPath = path.join(rootDir, 'prisma_generate_main.txt');
+const prismaGenerateMainContent = fs.existsSync(prismaGenerateMainPath) ? fs.readFileSync(prismaGenerateMainPath, 'utf8').trim() : '(not found)';
+
+const testResultsMainPath = path.join(rootDir, 'test_results_main.txt');
+const testResultsMainContent = fs.existsSync(testResultsMainPath) ? fs.readFileSync(testResultsMainPath, 'utf8').trim() : '(not found)';
 
 // 2.9 BR-5 / BR-5b Vitest JSON Artifact
 console.log(' - Loading vitest.json artifact...');
-const vitestJsonPath = fs.existsSync(path.join(evDir, 'vitest.json'))
-  ? path.join(evDir, 'vitest.json')
-  : path.join(rootDir, 'vitest.json');
+const vitestJsonPath = path.join(rootDir, 'vitest.json');
 const vitestJsonContent = fs.existsSync(vitestJsonPath) ? fs.readFileSync(vitestJsonPath, 'utf8').trim() : '{}';
 
 // 2.10 Docs Audit
@@ -191,7 +191,7 @@ function appendSection(content) {
   fs.appendFileSync(targetBundlePath, content + '\n\n', 'utf8');
 }
 
-appendSection(`# EVIDENCE BUNDLE — RE: RULING R-12.2-AE-V2
+appendSection(`# EVIDENCE BUNDLE — RE: RULING R-12.2-AE-V3
 **Date (UTC):** ${new Date().toISOString()}  
 **Current Commit:** ${currentCommit}  
 **Branch:** ${currentBranch}  
@@ -282,13 +282,19 @@ ${decisionGrep}
 
 ---`);
 
-appendSection(`## 7. Main Test Suite Execution (\`npm run test:db\`)
+appendSection(`## 7. Main Branch Verification
 
+### 7.1 Raw Prisma Generate Output on Main
 \`\`\`text
-${mainTestOutput}
+${prismaGenerateMainContent}
 \`\`\`
 
-### 7.1 Test Matrix Summary
+### 7.2 Main Full Test Suite Execution (\`npm run test:db\`)
+\`\`\`text
+${testResultsMainContent}
+\`\`\`
+
+### 7.3 Main Test Matrix Summary
 | Test File | Total Tests | Status | Scope |
 | :--- | :--- | :--- | :--- |
 | \`tests/authMiddleware.test.ts\` | **21** | PASS | BR-5 & BR-5b Pure-Mock Auth Guards (param, query, body) |
@@ -304,8 +310,14 @@ ${mainTestOutput}
 
 appendSection(`## 8. Branch Migration Verification (\`feat/phase12-migrations\`)
 
+### 8.1 Raw Prisma Generate Output on Migration Branch
 \`\`\`text
-${br4bTestOutput}
+${prismaGenerateBr4bContent}
+\`\`\`
+
+### 8.2 BR-4b Test Results on Migration Branch
+\`\`\`text
+${testResultsBr4bContent}
 \`\`\`
 *Verification: Full 7-test lifecycle in \`tests/br4b.test.ts\` passes cleanly on \`feat/phase12-migrations\` after \`prisma generate\`.*
 
@@ -357,16 +369,14 @@ ${vitestJsonContent}
 
 ---`);
 
-appendSection(`## 12. R-12.2-AE-V2 Acceptance Criteria Checklist (Section 8)
+appendSection(`## 12. R-12.2-AE-V3 Acceptance Criteria Checklist (Section 8)
 
-- [ ] **1. Documentation & Decision Register Reconciliation:** Decisions #53, #54, and #55 reconciled in \`ARCHITECTURE.md\`; append-only invariant preserved across \`ARCHITECTURE.md\`, \`ROADMAP.md\`, and \`tasks.md\`.
-- [ ] **2. Evidence Generator Hardening:** Generator uses \`spawnSync\` with \`encoding: 'utf8'\`, NUL-byte stripping, incremental writes, structure validation, and raw test artifact capture.
-- [ ] **3. Live Repository Context Auto-Injection:** Generator appends \`# LIVE REPOSITORY CONTEXT\` at the bundle footer containing raw \`prisma/schema.prisma\` and \`ARCHITECTURE.md\`.
-- [ ] **4. Secret Scan Cleanliness:** \`scripts/secret_scan.sh\` created and executed; tests excluded; clean status confirmed.
-- [ ] **5. BR-4b Migration Branch Lifecycle Verification:** Switched to \`feat/phase12-migrations\`, executed guarded DB reset, \`prisma migrate deploy\`, \`prisma generate\` (resolving \`weeklyWrapup\`), and \`vitest run tests/br4b.test.ts\` passing cleanly.
-- [ ] **6. Main Branch Verification:** Guarded reset, migrate deploy, prisma generate, and full test suite passing on \`main\` (63/63 tests passing).
-- [ ] **7. Evidence Bundle Generation:** \`docs/evidence/R-12.2-AE-V2/EVIDENCE_BUNDLE.md\` generated with complete test logs, source excerpts, secret scan, and live context.
-- [ ] **8. Local Git Finalization:** All changes committed locally with clean working tree; strictly no remote push.
+- [ ] **1. Documentation Updates:** Append-only updates committed to \`ARCHITECTURE.md\`, \`ROADMAP.md\`, and \`tasks.md\`.
+- [ ] **2. Pre-Evidence Git Finalization:** \`git add -A\` and \`git commit\` executed before evidence run; clean working tree verified.
+- [ ] **3. BR-4b Migration Branch Verification:** \`feat/phase12-migrations\` verified with raw \`prisma generate\` and \`vitest run tests/br4b.test.ts\` (7/7 passing).
+- [ ] **4. Main Branch Verification:** \`main\` branch verified with \`npm run db:reset\`, \`prisma migrate deploy\`, raw \`prisma generate\`, and full test suite (63/63 passing).
+- [ ] **5. Evidence Generator Execution:** \`scripts/generate_evidence.js\` captures raw outputs, git status/log, test logs, JSON artifact, and \`# LIVE REPOSITORY CONTEXT\`.
+- [ ] **6. Cleanup & Final Git Commit:** Temporary files removed, bundle and scripts committed locally, strictly no remote push.
 
 ---`);
 
