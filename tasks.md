@@ -237,3 +237,15 @@
 - [ ] **INV-6:** Non-Blocking Outbound confirmed: TX never fails due to email/network transport.
 - [ ] **INV-7:** Anti-Bloat confirmed: No scope creep beyond specified specs.
 - [ ] **INV-8:** Shot-Cam confirmed: RLS policies intact.
+
+### R-12.2-Y Acceptance Criteria (Section 8)
+- [✅] **wrapUpConcurrency.test.ts Retired:** Deleted from repository; DDL grep clean across tests/.
+- [✅] **Safeguards Sanitized:** Real project ref replaced with `postgres.exampleref` in tests/safeguards.test.ts.
+- [✅] **Negative Control Grep Verified:** Grep at HEAD~1 catches DDL in wrapUpConcurrency.test.ts; grep at HEAD clean.
+- [✅] **BR-5 Unit & Pure Mock Tests:** 17/17 tests passing with zero database dependency.
+- [✅] **Admin Route Inventory:** Completed and documented in EVIDENCE_BUNDLE.md.
+- [ ] **BR-5 Route Guard Full Verification:** Gated on Arbiter review.
+- [ ] **BR-4b Hosted Deployment:** Gated on Arbiter sign-off.
+- [ ] Bundle generator fixed; self-test failure shown; header, timestamp and commit differ from the R-12.2-X bundle.
+- [ ] Every R-12.2-Y item present in the file with non-empty output.
+

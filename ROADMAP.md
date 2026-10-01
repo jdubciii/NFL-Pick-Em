@@ -103,3 +103,8 @@
 ### Explicitly Rejected / Deferred
 - **Rejected:** SMS/Twilio, native push notifications, websockets, in-app payment processing, live odds/weather, cross-league analytics, AI-generated recaps.
 - **Deferred:** Shot-Cam media retention and purge policy.
+
+### Ruling R-12.2-Y: Guard Merge Accepted; WrapUp Test Retired; Admin Inventory; BR-5 Verification Next
+- R-12.2-Y: guard merge accepted; wrapUp test retired; admin inventory; BR-5 verification next.
+- R-12.2-Z: prior bundle re-sent; R-12.2-Y re-issued.
+

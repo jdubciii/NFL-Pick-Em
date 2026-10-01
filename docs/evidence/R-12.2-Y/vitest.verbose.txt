@@ -1,26 +1,24 @@
-﻿
 [1m[30m[46m RUN [49m[39m[22m [36mv5.0.2 [39m[90mC:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em[39m
 
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequireAuth[2m > [22mreturns 401 when Authorization header is absent[32m 4[2mms[22m[39m
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequireAuth[2m > [22mreturns 401 when Authorization header does not start with Bearer[32m 1[2mms[22m[39m
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequireAuth[2m > [22mreturns 401 for an invalid / expired token[32m 1[2mms[22m[39m
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequireAuth[2m > [22mdecodes valid JWT and attaches user to req.user, then calls next()[32m 13[2mms[22m[39m
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequireAdmin[2m > [22mreturns 401 if req.user is undefined[32m 1[2mms[22m[39m
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequireAdmin[2m > [22mreturns 403 if req.user is not ADMIN[32m 1[2mms[22m[39m
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequireAdmin[2m > [22mcalls next() if user is ADMIN[32m 1[2mms[22m[39m
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolCommissioner[2m > [22mreturns 401 if req.user is missing[32m 1[2mms[22m[39m
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolCommissioner[2m > [22mreturns 400 for a malformed non-UUID pool_id[32m 2[2mms[22m[39m
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolCommissioner[2m > [22mreturns 404 when the pool does not exist in DB[32m 1[2mms[22m[39m
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolCommissioner[2m > [22mreturns 403 when user is neither commissioner nor member[32m 1[2mms[22m[39m
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolCommissioner[2m > [22mDecision #20 & R-12.2-W: global ADMIN who is not the pool commissioner -> 403, no req.pool, zero side effects[32m 1[2mms[22m[39m
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolCommissioner[2m > [22mcalls next() and attaches pool when user is the pool commissioner[32m 0[2mms[22m[39m
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolMember[2m > [22mreturns 403 if user is not a member and not the commissioner[32m 1[2mms[22m[39m
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolMember[2m > [22mDecision #20 & R-12.2-W: global ADMIN who is not a member and not commissioner -> 403, no req.pool[32m 1[2mms[22m[39m
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolMember[2m > [22mcalls next() when user is active pool member[32m 1[2mms[22m[39m
- [32mΓ£ô[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolMember[2m > [22mcalls next() when user is the pool commissioner (even without explicit membership row)[32m 0[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequireAuth[2m > [22mreturns 401 when Authorization header is absent[32m 3[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequireAuth[2m > [22mreturns 401 when Authorization header does not start with Bearer[32m 0[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequireAuth[2m > [22mreturns 401 for an invalid / expired token[32m 1[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequireAuth[2m > [22mdecodes valid JWT and attaches user to req.user, then calls next()[32m 6[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequireAdmin[2m > [22mreturns 401 if req.user is undefined[32m 0[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequireAdmin[2m > [22mreturns 403 if req.user is not ADMIN[32m 0[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequireAdmin[2m > [22mcalls next() if user is ADMIN[32m 0[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolCommissioner[2m > [22mreturns 401 if req.user is missing[32m 1[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolCommissioner[2m > [22mreturns 400 for a malformed non-UUID pool_id[32m 1[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolCommissioner[2m > [22mreturns 404 when the pool does not exist in DB[32m 1[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolCommissioner[2m > [22mreturns 403 when user is neither commissioner nor member[32m 1[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolCommissioner[2m > [22mDecision #20 & R-12.2-W: global ADMIN who is not the pool commissioner -> 403, no req.pool, zero side effects[32m 1[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolCommissioner[2m > [22mcalls next() and attaches pool when user is the pool commissioner[32m 1[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolMember[2m > [22mreturns 403 if user is not a member and not the commissioner[32m 1[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolMember[2m > [22mDecision #20 & R-12.2-W: global ADMIN who is not a member and not commissioner -> 403, no req.pool[32m 1[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolMember[2m > [22mcalls next() when user is active pool member[32m 0[2mms[22m[39m
+ [32m✓[39m tests/authMiddleware.test.ts[2m > [22mBR-5 middleware unit tests (pure mock)[2m > [22mrequirePoolMember[2m > [22mcalls next() when user is the pool commissioner (even without explicit membership row)[32m 0[2mms[22m[39m
 
 [2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
 [2m      Tests [22m [1m[32m17 passed[39m[22m[90m (17)[39m
-[2m   Start at [22m 15:21:44
-[2m   Duration [22m 682ms[2m (import 45%, transform 38%, tests 8%, setup 7%, worker 2%)[22m
-
+[2m   Start at [22m 17:05:37
+[2m   Duration [22m 815ms[2m (import 42%, transform 39%, setup 9%, tests 6%, worker 3%)[22m
