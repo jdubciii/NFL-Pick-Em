@@ -336,6 +336,17 @@
 - [ ] **7. Pre-Run Cleanliness:** Git status clean prior to evidence run.
 - [ ] **8. Local Binding:** Final evidence bundle bound in `docs/evidence/R-12.2-AF/EVIDENCE_BUNDLE.md` with strictly no remote push.
 
+### R-12.2-AG Acceptance Criteria (Section 5)
+- [ ] **1. Tooling Commit on Main:** `scripts/db_header.js` created and committed to `main`; `package.json` `test:db` script runs `db_header.js` before `vitest`; merged into `feat/phase12-1-outbox`.
+- [ ] **2. Test Config & Safeguards:** Query logging silenced; `tests/safeguards.test.ts` uses `postgres.exampleref`; S-8 pool-count and snapshot assertions added; S-7 permission and zero-rows assertions added.
+- [ ] **3. Hosted Tripwire Execution:** `scripts/run_hosted_tripwire.js` implemented with Inverse Guard rejecting localhost and requiring Supabase; password/URL redacted; negative control fails with exit 1; real run succeeds against hosted database.
+- [ ] **4. 12.1 Design Note:** Created `docs/design/12.1.md` with files to add (`outbox.ts`, `inbox.ts`, `drain.ts`, `reminder.ts`), lock-resolver extraction plan, scheduler trigger mechanism, and open questions.
+- [ ] **5. Documentation Updates:** Append-only updates added to `ARCHITECTURE.md`, `ROADMAP.md`, and `tasks.md` with 0 deletions against baseline `e41ce72`.
+- [ ] **6. Evidence Generator Hardening:** Generator targets the superseding Appendix A Decision Register block; captures `test:db`, secret scan, reflog, and live repository context.
+- [ ] **7. Pre-Run Cleanliness:** Clean working tree verified before running generator.
+- [ ] **8. Local Binding:** Final evidence bundle bound to `docs/evidence/R-12.2-AG/EVIDENCE_BUNDLE.md` with strictly no remote push.
+
+
 
 
 

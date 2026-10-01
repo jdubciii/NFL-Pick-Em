@@ -614,6 +614,9 @@ Before enabling `LEDGER_TYPED_WRITES`, a read-path parity test must pass. Every 
 
 V4: APPROVED by Fallback; RATIFIED IN PART by the Arbiter.
 
+R-12.2-AG: Register ratified. Hosted tripwire re-run. Authoritative register is located at 'Phase 12 Decision Register (supersedes...)'.
+
+
 
 
 
