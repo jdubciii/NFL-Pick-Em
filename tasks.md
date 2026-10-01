@@ -267,5 +267,16 @@
 - [ ] **Docs Invariant Upheld:** `ARCHITECTURE.md`, `ROADMAP.md`, `tasks.md` strictly 0 deletions against `e41ce72`.
 - [ ] **59/59 Tests Passing:** Full suite passes across rehearsal and mock environments.
 
+### R-12.2-AC Acceptance Criteria (Section 9)
+- [ ] **Workspace Hygiene & Worktree Isolation:** Live working tree clean; negative controls run exclusively in `.worktree-ctl` without `reset`, `checkout`, or `stash`.
+- [ ] **Evidence Generator Hardening:** Generator utilizes 50MB buffer, incremental writes, non-empty section/code validation, and size checks (>1000 bytes).
+- [ ] **Decision #52 Applied (Claim Code Fails Closed):** 3-name fallback removed from `weeklyWrapUp.ts`; `to_regclass` checked; returns `CLAIM_STORE_UNAVAILABLE` when claim table absent.
+- [ ] **S-7 Remediation (Shot-Cam):** Global `Role.ADMIN` override removed from `POST .../media` and `PATCH .../media/confirm` routes in `src/server.ts`.
+- [ ] **BR-5b UI Integration:** `AdminDashboard.tsx` sends `pool_id` on both GET and PUT calls sourced from active pool context.
+- [ ] **Minimal Fail-Closed Test:** `tests/br4b.test.ts` on branch contains only the fail-closed claim store check.
+- [ ] **Docs Invariant Upheld:** `ARCHITECTURE.md`, `ROADMAP.md`, `tasks.md` strictly 0 deletions against `e41ce72`.
+- [ ] **Strict Two-Commit Separation:** Code fixes committed separately from docs and evidence bundle.
+
+
 
 
