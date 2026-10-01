@@ -310,6 +310,15 @@
 - [ ] **7. Evidence Bundle Generation:** `docs/evidence/R-12.2-AE-V2/EVIDENCE_BUNDLE.md` generated with complete test logs, source excerpts, secret scan, and live context.
 - [ ] **8. Local Git Finalization:** All changes committed locally with clean working tree; strictly no remote push.
 
+### R-12.2-AE-V3 Acceptance Criteria (Section 8)
+- [ ] **1. Documentation Updates:** Append-only updates committed to `ARCHITECTURE.md`, `ROADMAP.md`, and `tasks.md`.
+- [ ] **2. Pre-Evidence Git Finalization:** `git add -A` and `git commit` executed before evidence run; clean working tree verified.
+- [ ] **3. BR-4b Migration Branch Verification:** `feat/phase12-migrations` verified with raw `prisma generate` and `vitest run tests/br4b.test.ts` (7/7 passing).
+- [ ] **4. Main Branch Verification:** `main` branch verified with `npm run db:reset`, `prisma migrate deploy`, raw `prisma generate`, and full test suite (63/63 passing).
+- [ ] **5. Evidence Generator Execution:** `scripts/generate_evidence.js` captures raw outputs, git status/log, test logs, JSON artifact, and `# LIVE REPOSITORY CONTEXT`.
+- [ ] **6. Cleanup & Final Git Commit:** Temporary files removed, bundle and scripts committed locally, strictly no remote push.
+
+
 
 
 
