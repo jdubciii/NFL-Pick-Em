@@ -50,7 +50,24 @@ export const AdminDashboard: React.FC = () => {
   const [showAuditLogs, setShowAuditLogs] = useState(false);
   const [penaltyModalOpen, setPenaltyModalOpen] = useState(false);
 
-  // 1. Fetch Users on load
+  // 1. Fetch Pools on load
+  const fetchPools = useCallback(async () => {
+    try {
+      const res = await fetch('/api/pools', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.length > 0 && !poolId) {
+          setPoolId(data[0].id);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load pools:', err);
+    }
+  }, [token, poolId]);
+
+  // 2. Fetch Users on load
   const fetchUsers = useCallback(async () => {
     setLoadingUsers(true);
     try {
@@ -70,26 +87,28 @@ export const AdminDashboard: React.FC = () => {
     }
   }, [token, selectedUserId]);
 
-  // 2. Fetch User's Picks for the week
-  const fetchUserPicks = useCallback(async (userId: string) => {
+  // 3. Fetch User's Picks for the week (with pool_id)
+  const fetchUserPicks = useCallback(async (userId: string, targetPoolId?: string) => {
     if (!userId) return;
+    const currentPoolId = targetPoolId || poolId;
+    if (!currentPoolId) return;
     setLoadingPicks(true);
     try {
-      const res = await fetch(`/api/admin/picks?user_id=${userId}`, {
+      const res = await fetch(`/api/admin/picks?user_id=${userId}&pool_id=${currentPoolId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error('Failed to fetch user pick slate.');
       const data = await res.json();
       setGames(data.games || []);
-      setPoolId(data.pool?.id || '');
+      if (data.pool?.id) setPoolId(data.pool.id);
     } catch (err: any) {
       setToast({ message: err.message || 'Error fetching picks', type: 'error' });
     } finally {
       setLoadingPicks(false);
     }
-  }, [token]);
+  }, [token, poolId]);
 
-  // 3. Fetch Audit Logs
+  // 4. Fetch Audit Logs
   const fetchAuditLogs = useCallback(async () => {
     try {
       const res = await fetch('/api/admin/audit-logs', {
@@ -106,16 +125,17 @@ export const AdminDashboard: React.FC = () => {
 
   useEffect(() => {
     fetchUsers();
+    fetchPools();
     fetchAuditLogs();
-  }, [fetchUsers, fetchAuditLogs]);
+  }, [fetchUsers, fetchPools, fetchAuditLogs]);
 
   useEffect(() => {
-    if (selectedUserId) {
-      fetchUserPicks(selectedUserId);
+    if (selectedUserId && poolId) {
+      fetchUserPicks(selectedUserId, poolId);
     }
-  }, [selectedUserId, fetchUserPicks]);
+  }, [selectedUserId, poolId, fetchUserPicks]);
 
-  // 4. Handle Override Submission
+  // 5. Handle Override Submission
   const handleAdminOverride = async (game: AdminGameItem, targetTeam: string | null) => {
     if (!selectedUserId || !poolId) {
       setToast({ message: 'Missing user or pool identifier.', type: 'error' });
