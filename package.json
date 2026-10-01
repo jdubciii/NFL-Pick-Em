@@ -17,6 +17,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "seed": "tsx prisma/seed.ts",
     "test": "vitest run",
+    "test:db": "vitest run",
     "worker:sync": "tsx src/workers/syncWorker.ts",
     "client:dev": "npm --prefix client run dev",
     "client:build": "npm --prefix client run build"
