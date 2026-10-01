@@ -120,6 +120,7 @@
 - R-12.2-AH: Milestone 12.1 CONDITIONAL START; hosted tripwire & evidence repair cycle.
 - R-12.2-AH-V2: Tripwire row output and test assertion logs captured.
 - R-12.2-AH-V2: Evidence gate cleared. Milestone 12.1 conditional start active on feat/phase12-1-outbox.
+- R-12.2-AI: 12.1 Core Schema & Outbox models applied to rehearsal DB.
 
 
 

@@ -58,6 +58,20 @@ if (rawPorcelain.length > 0) {
   throw new Error('Workspace is not clean');
 }
 
+// -----------------------------------------------------------------------------
+// RESOLVE RULING ID & TARGET PATH DYNAMICALLY
+// -----------------------------------------------------------------------------
+const rulingId = process.argv[2] || process.env.RULING_ID;
+if (!rulingId) {
+  throw new Error('FATAL: Ruling/Step ID required. Usage: node scripts/generate_evidence.js <RULING_ID>');
+}
+
+const targetBundlePath = path.join(process.cwd(), 'docs', 'evidence', rulingId, 'EVIDENCE_BUNDLE.md');
+const evDir = path.dirname(targetBundlePath);
+if (!fs.existsSync(evDir)) {
+  fs.mkdirSync(evDir, { recursive: true });
+}
+
 const porcelainOutputForBundle = rawPorcelain.length === 0 ? '(clean - 0 uncommitted changes)' : rawPorcelain;
 
 const initialGitBranchStatus = runCommand('git status --short --branch');
@@ -77,12 +91,7 @@ if (ancestryRes.status === 0) {
   throw new Error('Ancestry check failed: 6c2fb46 is not an ancestor of HEAD');
 }
 
-console.log('=== Running Strict Evidence Generator for R-12.2-AH-V2-ACK ===\n');
-
-const evDir = path.join(rootDir, 'docs/evidence/R-12.2-AH-V2-ACK');
-if (!fs.existsSync(evDir)) {
-  fs.mkdirSync(evDir, { recursive: true });
-}
+console.log(`=== Running Strict Evidence Generator for ${rulingId} ===\n`);
 
 // 1. Self-Test Negative Control Execution
 console.log('1. Verifying generator self-test negative control...');
@@ -288,7 +297,6 @@ const designSpecContent = fs.readFileSync(designSpecPath, 'utf8').trim();
 
 // 13. Assemble Incremental Bundle
 console.log('13. Writing EVIDENCE_BUNDLE.md incrementally...');
-const targetBundlePath = path.join(evDir, 'EVIDENCE_BUNDLE.md');
 if (fs.existsSync(targetBundlePath)) {
   fs.unlinkSync(targetBundlePath);
 }
@@ -297,7 +305,7 @@ function appendSection(content) {
   fs.appendFileSync(targetBundlePath, content + '\n\n', 'utf8');
 }
 
-appendSection(`# EVIDENCE BUNDLE — RE: RULING R-12.2-AH-V2-ACK
+appendSection(`# EVIDENCE BUNDLE — RE: RULING ${rulingId}
 **Date (UTC):** ${new Date().toISOString()}  
 **Current Commit:** ${initialCurrentCommit}  
 **Branch:** ${currentBranch}  
@@ -547,17 +555,22 @@ ${vitestJsonContent}
 
 ---`);
 
-appendSection(`## 14. R-12.2-AH-V2-ACK Acceptance Criteria Checklist
-- [ ] Preserve feat/phase12-1-outbox as the implementation branch until the next binding gate is issued.
-- [ ] Do not merge 12.1 work to main under this ruling.
-- [ ] Do not execute hosted DDL or hosted schema mutation under this ruling.
-- [ ] Keep the V2 hosted tripwire raw-output contract intact for subsequent evidence runs.
-- [ ] Preserve the explicit S-7/S-8 invariant console assertions.
-- [ ] Preserve Decision #50 DB-header and query-log suppression controls.
-- [ ] Preserve Decision #56 byte-for-byte register enforcement.
-- [ ] Treat INV-6 and all actual 12.1 runtime behavior as deferred until implementation evidence is separately adjudicated.
+const tasksPath = path.join(rootDir, 'tasks.md');
+let checklistText = '';
+if (fs.existsSync(tasksPath)) {
+  const tasksContent = fs.readFileSync(tasksPath, 'utf8');
+  const escapedRulingId = rulingId.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+  const regex = new RegExp(`###\\s+${escapedRulingId}[^\\n]*\\n([\\s\\S]*?)(?=\\n###|$)`, 'i');
+  const match = tasksContent.match(regex);
+  if (match && match[1].trim()) {
+    checklistText = match[1].trim();
+  }
+}
+if (!checklistText) {
+  checklistText = `- [ ] Execution evidence captured for ${rulingId}.\n- [ ] Clean git status verified prior to run.\n- [ ] Tripwire and test suite verified passing.`;
+}
 
----`);
+appendSection(`## 14. ${rulingId} Acceptance Criteria Checklist\n\n${checklistText}\n\n---`);
 
 // 15. MILESTONE 12.1 DESIGN SPECIFICATION (Complete Verbatim Dump)
 console.log('14. Appending MILESTONE 12.1 DESIGN SPECIFICATION (Complete Verbatim Dump)...');

@@ -373,6 +373,10 @@
 - [ ] Preserve Decision #56 byte-for-byte register enforcement.
 - [ ] Treat INV-6 and all actual 12.1 runtime behavior as deferred until implementation evidence is separately adjudicated.
 
+### R-12.2-AI Acceptance Criteria
+- [ ] 12.1 Core schema (`inbox_messages`, `outbox_events`, `notification_preferences`, `job_runs`) applied with RLS & Revoke.
+- [ ] `enqueueNotification` implemented with transactional isolation and zero network I/O.
+
 
 
 

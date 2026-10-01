@@ -30,20 +30,24 @@ enum PenaltyMediaStatus {
 }
 
 model User {
-  id               String           @id @default(uuid()) @db.Uuid
-  email            String           @unique
-  passwordHash     String           @map("password_hash")
-  role             Role             @default(USER)
-  createdAt        DateTime         @default(now()) @map("created_at")
-  pools            Pool[]           @relation("AdministeredPools")
-  memberships      PoolMembership[]
-  picks            Pick[]           @relation("UserPicks")
-  submittedPicks   Pick[]           @relation("SubmittedPicks")
-  auditLogs        AuditLog[]       @relation("UserAuditLogs")
-  createdPenalties   PenaltyLedger[]    @relation("CreatedPenalties")
-  weeklySubmissions  WeeklySubmission[]
-  penaltyMedia       PenaltyMedia[]     @relation("UserPenaltyMedia")
-  confirmedMedia     PenaltyMedia[]     @relation("ConfirmedPenaltyMedia")
+  id                     String                  @id @default(uuid()) @db.Uuid
+  email                  String                  @unique
+  passwordHash           String                  @map("password_hash")
+  role                   Role                    @default(USER)
+  createdAt              DateTime                @default(now()) @map("created_at")
+  pools                  Pool[]                  @relation("AdministeredPools")
+  memberships            PoolMembership[]
+  picks                  Pick[]                  @relation("UserPicks")
+  submittedPicks         Pick[]                  @relation("SubmittedPicks")
+  auditLogs              AuditLog[]              @relation("UserAuditLogs")
+  createdPenalties       PenaltyLedger[]         @relation("CreatedPenalties")
+  weeklySubmissions      WeeklySubmission[]
+  penaltyMedia           PenaltyMedia[]          @relation("UserPenaltyMedia")
+  confirmedMedia         PenaltyMedia[]          @relation("ConfirmedPenaltyMedia")
+  inboxMessages          InboxMessage[]
+  outboxEventsReceived   OutboxEvent[]           @relation("OutboxEventRecipient")
+  outboxEventsRetried    OutboxEvent[]           @relation("OutboxEventRetrier")
+  notificationPreference NotificationPreference?
 
   @@map("users")
 }
@@ -61,6 +65,8 @@ model Pool {
   penaltyLedger     PenaltyLedger[]
   weeklySubmissions WeeklySubmission[]
   penaltyMedia      PenaltyMedia[]
+  inboxMessages     InboxMessage[]
+  outboxEvents      OutboxEvent[]
 
   @@map("pools")
 }
@@ -211,6 +217,88 @@ model PenaltyMedia {
 
   @@index([poolId, userId])
   @@map("penalty_media")
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  DEAD
+}
+
+enum JobStatus {
+  RUNNING
+  OK
+  PARTIAL
+  FAILED
+}
+
+model InboxMessage {
+  id        String    @id @default(uuid()) @db.Uuid
+  poolId    String    @map("pool_id") @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  type      String
+  payload   Json
+  readAt    DateTime? @map("read_at") @db.Timestamp(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamp(3)
+
+  pool Pool @relation(fields: [poolId], references: [id], onDelete: Restrict)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, readAt, createdAt])
+  @@map("inbox_messages")
+}
+
+model OutboxEvent {
+  id              String       @id @default(uuid()) @db.Uuid
+  poolId          String       @map("pool_id") @db.Uuid
+  recipientUserId String       @map("recipient_user_id") @db.Uuid
+  type            String
+  payload         Json
+  dedupeKey       String       @unique @map("dedupe_key")
+  status          OutboxStatus @default(PENDING)
+  attempts        Int          @default(0)
+  nextAttemptAt   DateTime     @default(now()) @map("next_attempt_at") @db.Timestamp(3)
+  leaseExpiresAt  DateTime?    @map("lease_expires_at") @db.Timestamp(3)
+  lastErrorCode   String?      @map("last_error_code")
+  sentAt          DateTime?    @map("sent_at") @db.Timestamp(3)
+  retriedBy       String?      @map("retried_by") @db.Uuid
+  retriedAt       DateTime?    @map("retried_at") @db.Timestamp(3)
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamp(3)
+
+  pool      Pool  @relation(fields: [poolId], references: [id], onDelete: Restrict)
+  recipient User  @relation("OutboxEventRecipient", fields: [recipientUserId], references: [id], onDelete: Restrict)
+  retrier   User? @relation("OutboxEventRetrier", fields: [retriedBy], references: [id], onDelete: Restrict)
+
+  @@index([status, nextAttemptAt])
+  @@map("outbox_events")
+}
+
+model NotificationPreference {
+  userId               String   @id @map("user_id") @db.Uuid
+  emailEnabled         Boolean  @default(true) @map("email_enabled")
+  reminderOffsetsHours Int[]    @default([24, 2]) @map("reminder_offsets_hours")
+  unsubscribeToken     String   @unique @default(uuid()) @map("unsubscribe_token")
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamp(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@map("notification_preferences")
+}
+
+model JobRun {
+  id             String    @id @default(uuid()) @db.Uuid
+  jobName        String    @map("job_name")
+  status         JobStatus
+  startedAt      DateTime  @default(now()) @map("started_at") @db.Timestamp(3)
+  finishedAt     DateTime? @map("finished_at") @db.Timestamp(3)
+  itemsProcessed Int       @default(0) @map("items_processed")
+  errorCode      String?   @map("error_code")
+  meta           Json?
+
+  @@index([jobName, startedAt])
+  @@map("job_runs")
 }
 
 
