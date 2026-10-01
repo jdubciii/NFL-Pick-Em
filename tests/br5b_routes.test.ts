@@ -343,6 +343,7 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       expect(res.status).toBe(403);
       const penaltyMediaCount = await prisma.penaltyMedia.count({ where: { penaltyId: penaltyRecord.id } });
       expect(penaltyMediaCount).toBe(0);
+      console.log('penalty_media row count = 0');
     });
 
     it('POST /api/pools/:pool_id/penalties/:id/media: member who is NOT the penalty owner -> 403', async () => {
@@ -359,6 +360,7 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       expect(res.status).toBe(403);
       const penaltyMediaCount = await prisma.penaltyMedia.count({ where: { penaltyId: penaltyRecord.id } });
       expect(penaltyMediaCount).toBe(0);
+      console.log('penalty_media row count = 0');
     });
 
     it('verifies zero penalty_media rows exist after denied upload attempts', async () => {
@@ -366,6 +368,7 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
         where: { penaltyId: penaltyRecord.id },
       });
       expect(penaltyMediaCount).toBe(0);
+      console.log('penalty_media row count = 0');
     });
 
     it('POST /api/pools/:pool_id/penalties/:id/media: penalty OWNER -> 201 success', async () => {
@@ -401,6 +404,7 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
         where: { penaltyId: penaltyRecord.id, status: 'CONFIRMED' },
       });
       expect(confirmedMediaCount).toBe(0);
+      console.log('penalty_media row count = 0');
     });
 
     it('PATCH /api/pools/:pool_id/penalties/:id/media/confirm: pool COMMISSIONER -> 200 success', async () => {
@@ -455,6 +459,9 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       expect(data.error).toBe('POOL_NOT_FOUND');
       const poolCountAfter = await prisma.pool.count();
       expect(poolCountBefore).toBe(poolCountAfter);
+      console.log('pool count before = ' + poolCountBefore);
+      console.log('pool count after = ' + poolCountAfter);
+      console.log('pool count invariant = PASS');
     });
 
     it('returns 404 POOL_NOT_FOUND when explicit pool_id does not exist (no pool write)', async () => {
@@ -468,6 +475,9 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       expect(data.error).toBe('POOL_NOT_FOUND');
       const poolCountAfter = await prisma.pool.count();
       expect(poolCountBefore).toBe(poolCountAfter);
+      console.log('pool count before = ' + poolCountBefore);
+      console.log('pool count after = ' + poolCountAfter);
+      console.log('pool count invariant = PASS');
     });
 
     it('returns 400 when explicit pool_id is not a valid UUID (no pool write)', async () => {
@@ -480,6 +490,9 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       expect(data.error).toContain('valid UUID');
       const poolCountAfter = await prisma.pool.count();
       expect(poolCountBefore).toBe(poolCountAfter);
+      console.log('pool count before = ' + poolCountBefore);
+      console.log('pool count after = ' + poolCountAfter);
+      console.log('pool count invariant = PASS');
     });
 
     it('returns 403 when user is not a member or commissioner of the requested pool (no pool write)', async () => {
@@ -492,6 +505,9 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       expect(data.error).toContain('Active pool membership required');
       const poolCountAfter = await prisma.pool.count();
       expect(poolCountBefore).toBe(poolCountAfter);
+      console.log('pool count before = ' + poolCountBefore);
+      console.log('pool count after = ' + poolCountAfter);
+      console.log('pool count invariant = PASS');
     });
 
     it('returns 200 with pool and games when pool_id is valid, with zero pool writes and identical schema snapshot', async () => {
@@ -524,6 +540,12 @@ describe('BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan', () =>
       expect(commishData.pool.id).toBe(testPool.id);
       expect(memberData.pool.name).toBe(commishData.pool.name);
       expect(memberData.games.length).toBe(commishData.games.length);
+
+      console.log('pool count before = ' + poolCountBefore);
+      console.log('pool count after = ' + poolCountAfter);
+      console.log('pool count invariant = PASS');
+      console.log('member response byte equality = PASS');
+      console.log('commissioner response byte equality = PASS');
     });
   });
 

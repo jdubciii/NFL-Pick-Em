@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
 const dotenv = require('dotenv');
+const { Client } = require('pg');
 
 function redactUrl(rawUrl) {
   if (!rawUrl) return '(undefined)';
@@ -22,25 +22,8 @@ function sanitizeOutput(text) {
     .replace(/:[A-Za-z0-9_!@#$%^&*()\-+=]+@/g, ':****@');
 }
 
-const tripwireSql = `BEGIN READ ONLY;
-SELECT current_database(), current_user, version();
-SELECT now() AS db_now, EXTRACT(EPOCH FROM (now() - TIMESTAMPTZ '2026-09-30T06:14:37Z'))/3600 AS hours_since_t0;
-SELECT 'users' t, count(*) FROM users UNION ALL SELECT 'pools', count(*) FROM pools
-UNION ALL SELECT 'pool_memberships', count(*) FROM pool_memberships UNION ALL SELECT 'games', count(*) FROM games
-UNION ALL SELECT 'picks', count(*) FROM picks UNION ALL SELECT 'pick_results', count(*) FROM pick_results
-UNION ALL SELECT 'weekly_submissions', count(*) FROM weekly_submissions UNION ALL SELECT 'penalty_ledger', count(*) FROM penalty_ledger
-UNION ALL SELECT 'penalty_media', count(*) FROM penalty_media UNION ALL SELECT 'pool_member_stats', count(*) FROM pool_member_stats
-UNION ALL SELECT 'audit_logs', count(*) FROM audit_logs;
-SELECT to_regclass('public.weekly_wrapups');
-SELECT migration_name FROM _prisma_migrations ORDER BY started_at;
-SELECT count(*) = 2 AS intact FROM pg_trigger WHERE tgrelid='public.penalty_ledger'::regclass AND NOT tgisinternal AND tgenabled IN ('O','A')
-  AND tgname IN ('penalty_ledger_no_update_delete','penalty_ledger_no_truncate');
-SELECT count(*) FILTER (WHERE relrowsecurity) AS rls_on, count(*) AS tables FROM pg_class WHERE relnamespace='public'::regnamespace AND relkind IN ('r','p');
-COMMIT;
-`;
-
 async function runHostedTripwire(targetUrl) {
-  console.log('=== HOSTED DATABASE TRIPWIRE (R-12.2-AH) ===\n');
+  console.log('=== HOSTED DATABASE TRIPWIRE (R-12.2-AH-V2) ===\n');
 
   let dbUrl = targetUrl;
   const args = process.argv.slice(2);
@@ -100,29 +83,90 @@ async function runHostedTripwire(targetUrl) {
 
   console.log('✅ Inverse Guard verified: Target is confirmed hosted Supabase database.\n');
 
-  console.log('Executing read-only SQL tripwire via prisma db execute --stdin...');
-  const result = spawnSync('npx', ['prisma', 'db', 'execute', `--url=${dbUrl}`, '--stdin'], {
-    cwd: path.resolve(__dirname, '..'),
-    input: tripwireSql,
-    encoding: 'utf8',
-    shell: true,
-    env: { ...process.env, NO_COLOR: '1' },
-    maxBuffer: 1024 * 1024 * 10,
+  console.log('Connecting via Node pg client to stream exact query rows...\n');
+  const client = new Client({
+    connectionString: dbUrl,
+    ssl: { rejectUnauthorized: false },
   });
 
-  const rawStdout = result.stdout || '';
-  const rawStderr = result.stderr || '';
-  const fullOutput = (rawStdout + '\n' + rawStderr).trim();
-  const safeOutput = sanitizeOutput(fullOutput);
+  try {
+    await client.connect();
 
-  if (result.status !== 0) {
-    console.error(`Tripwire execution failed with exit code ${result.status}:`);
-    console.error(safeOutput);
-    process.exit(result.status || 1);
+    // 1. Host Class, Database, Current User, Server Version
+    const dbInfoRes = await client.query(`SELECT current_database(), current_user, version();`);
+    const dbInfo = dbInfoRes.rows[0];
+    console.log('1. Database Identity & Server Info:');
+    console.log(`  - Database: ${dbInfo.current_database}`);
+    console.log(`  - Current User: ${dbInfo.current_user}`);
+    console.log(`  - Version: ${dbInfo.version}`);
+
+    // 2. Server Time & Hours Since T0
+    const timeRes = await client.query(
+      `SELECT now() AS db_now, EXTRACT(EPOCH FROM (now() - TIMESTAMPTZ '2026-09-30T06:14:37Z'))/3600 AS hours_since_t0;`
+    );
+    const timeInfo = timeRes.rows[0];
+    console.log('\n2. Timestamp & Drift Metrics:');
+    console.log(`  - DB Server Time: ${timeInfo.db_now}`);
+    console.log(`  - Hours Since T0 (2026-09-30T06:14:37Z): ${Number(timeInfo.hours_since_t0).toFixed(4)} hrs`);
+
+    // 3. All 11 Table Counts
+    const countsSql = `
+      SELECT 'users' t, count(*) FROM users
+      UNION ALL SELECT 'pools', count(*) FROM pools
+      UNION ALL SELECT 'pool_memberships', count(*) FROM pool_memberships
+      UNION ALL SELECT 'games', count(*) FROM games
+      UNION ALL SELECT 'picks', count(*) FROM picks
+      UNION ALL SELECT 'pick_results', count(*) FROM pick_results
+      UNION ALL SELECT 'weekly_submissions', count(*) FROM weekly_submissions
+      UNION ALL SELECT 'penalty_ledger', count(*) FROM penalty_ledger
+      UNION ALL SELECT 'penalty_media', count(*) FROM penalty_media
+      UNION ALL SELECT 'pool_member_stats', count(*) FROM pool_member_stats
+      UNION ALL SELECT 'audit_logs', count(*) FROM audit_logs;
+    `;
+    const countsRes = await client.query(countsSql);
+    console.log('\n3. All 11 Table Row Counts:');
+    for (const row of countsRes.rows) {
+      console.log(`  - ${row.t.padEnd(20)}: ${row.count}`);
+    }
+
+    // 4. public.weekly_wrapups table existence check
+    const wrapupRes = await client.query(`SELECT to_regclass('public.weekly_wrapups') AS to_regclass;`);
+    console.log(`\n4. to_regclass('public.weekly_wrapups'): ${wrapupRes.rows[0].to_regclass ?? 'NULL'}`);
+
+    // 5. Applied Migrations
+    const migsRes = await client.query(`SELECT migration_name FROM _prisma_migrations ORDER BY started_at;`);
+    console.log(`\n5. Applied Migrations (${migsRes.rows.length} total):`);
+    for (const m of migsRes.rows) {
+      console.log(`  - ${m.migration_name}`);
+    }
+
+    // 6. Penalty Ledger Triggers Intact
+    const triggerRes = await client.query(`
+      SELECT count(*) = 2 AS intact 
+      FROM pg_trigger 
+      WHERE tgrelid='public.penalty_ledger'::regclass 
+        AND NOT tgisinternal 
+        AND tgenabled IN ('O','A')
+        AND tgname IN ('penalty_ledger_no_update_delete','penalty_ledger_no_truncate');
+    `);
+    console.log(`\n6. Penalty Ledger Immutability Triggers Intact: ${triggerRes.rows[0].intact ? 'TRUE' : 'FALSE'}`);
+
+    // 7. RLS Status across public tables
+    const rlsRes = await client.query(`
+      SELECT count(*) FILTER (WHERE relrowsecurity) AS rls_on, count(*) AS tables 
+      FROM pg_class 
+      WHERE relnamespace='public'::regnamespace AND relkind IN ('r','p');
+    `);
+    const rlsInfo = rlsRes.rows[0];
+    console.log(`\n7. Row-Level Security: rls_on: ${rlsInfo.rls_on}/${rlsInfo.tables}`);
+
+    console.log('\n✅ Hosted Tripwire executed successfully.');
+  } catch (error) {
+    console.error('ERROR during query execution:', error.message);
+    process.exit(1);
+  } finally {
+    await client.end().catch(() => {});
   }
-
-  console.log(safeOutput);
-  console.log('\n✅ Hosted Tripwire executed successfully.');
 }
 
 if (require.main === module) {

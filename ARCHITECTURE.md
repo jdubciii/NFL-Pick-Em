@@ -620,6 +620,8 @@ R-12.2-AG: Register ratified. Hosted tripwire re-run. Authoritative register is 
 
 R-12.2-AH: Milestone 12.1 CONDITIONAL START; hosted tripwire & evidence repair cycle.
 
+R-12.2-AH-V2: Hosted tripwire query streaming corrected. S-7/S-8 explicit console assertions logged. Pre-run porcelain check enforced.
+
 
 
 
