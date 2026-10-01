@@ -318,6 +318,15 @@
 - [ ] **5. Evidence Generator Execution:** `scripts/generate_evidence.js` captures raw outputs, git status/log, test logs, JSON artifact, and `# LIVE REPOSITORY CONTEXT`.
 - [ ] **6. Cleanup & Final Git Commit:** Temporary files removed, bundle and scripts committed locally, strictly no remote push.
 
+### R-12.2-AE-V4 Acceptance Criteria (Section 8)
+- [ ] Commit the currently modified scripts/generate_evidence.js.
+- [ ] Remove or commit generated artifacts so git status is clean.
+- [ ] Regenerate final evidence bundle after final commit.
+- [ ] Return raw git status showing no M or ?? entries.
+- [ ] Preserve Decisions #53-#55 exactly as reconciled.
+- [ ] Preserve append-only documentation invariant.
+
+
 
 
 

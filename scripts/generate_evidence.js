@@ -43,9 +43,17 @@ if (isSelfTest) {
   process.exit(0);
 }
 
-console.log('=== Running Strict Evidence Generator for R-12.2-AE-V3 ===\n');
+// -----------------------------------------------------------------------------
+// CAPTURE GIT REPOSITORY STATE AT THE VERY BEGINNING (BEFORE CREATING FILES)
+// -----------------------------------------------------------------------------
+const initialGitBranchStatus = runCommand('git status --short --branch');
+const initialCurrentCommit = runCommand('git rev-parse HEAD');
+const initialGitLogRecent = runCommand('git log --oneline -n 5');
+const currentBranch = runCommand('git branch --show-current');
 
-const evDir = path.join(rootDir, 'docs/evidence/R-12.2-AE-V3');
+console.log('=== Running Strict Evidence Generator for R-12.2-AE-V4 ===\n');
+
+const evDir = path.join(rootDir, 'docs/evidence/R-12.2-AE-V4');
 if (!fs.existsSync(evDir)) {
   fs.mkdirSync(evDir, { recursive: true });
 }
@@ -72,16 +80,8 @@ if (!selfTestOutput.includes('Empty output detected')) {
 }
 console.log(`Self-test exit code: ${selfTestExitCode}`);
 
-// 2. Fact Gathering & Verifications
-console.log('2. Gathering facts & command outputs...');
-
-// 2.1 Git Status & Recent Log
-console.log(' - Git branch status and log...');
-const gitBranchStatus = runCommand('git status --short --branch');
-const gitLogRecent = runCommand('git log --oneline -n 5');
-
-// 2.2 Secret Scan
-console.log(' - Running secret scan (excluding tests)...');
+// 2. Secret Scan
+console.log('2. Running secret scan (excluding tests)...');
 let secretScanOutput = '';
 try {
   if (process.platform === 'win32') {
@@ -93,22 +93,54 @@ try {
   secretScanOutput = 'Clean';
 }
 
-// 2.3 Migrations Count & Tree
-console.log(' - Migrations count and git tree...');
+// 3. Migration Verification on feat/phase12-migrations
+console.log('3. Running BR-4b lifecycle tests on feat/phase12-migrations...');
+let prismaGenerateBr4bContent = '';
+let testResultsBr4bContent = '';
+try {
+  runCommand('git checkout feat/phase12-migrations');
+  runCommand('npx tsx scripts/dev/reset-rehearsal.mjs');
+  runCommand('npx prisma migrate deploy');
+  prismaGenerateBr4bContent = runCommand('npx prisma generate');
+  testResultsBr4bContent = runCommand('npx vitest run tests/br4b.test.ts --reporter=verbose');
+} finally {
+  runCommand('git checkout main');
+}
+
+// 4. Main Branch Verification
+console.log('4. Running full test suite on main...');
+runCommand('npm run db:reset');
+runCommand('npx prisma migrate deploy');
+const prismaGenerateMainContent = runCommand('npx prisma generate');
+const testResultsMainContent = runCommand('npx vitest run --reporter=verbose --reporter=json --outputFile=vitest.json');
+
+const vitestJsonPath = path.join(rootDir, 'vitest.json');
+const vitestJsonContent = fs.existsSync(vitestJsonPath) ? fs.readFileSync(vitestJsonPath, 'utf8').trim() : '{}';
+
+// 5. Migrations Count & Tree
+console.log('5. Gathering migration count and tree...');
 const migrationCount = (fs.readdirSync(path.join(rootDir, 'prisma/migrations'), { withFileTypes: true })
   .filter(d => d.isDirectory()).length).toString();
 const migrationTree = runCommand('git ls-tree --name-only HEAD prisma/migrations/');
 
-// 2.4 weeklyWrapUp lines (wrap-up claim fail closed)
-console.log(' - weeklyWrapUp.ts claim step...');
+// 6. Source Code Verifications
+console.log('6. Gathering source code facts & diffs...');
 const wrapUpLines = fs.readFileSync(path.join(rootDir, 'src/services/weeklyWrapUp.ts'), 'utf8')
   .split('\n')
   .slice(150, 215)
   .map((line, idx) => `${151 + idx}: ${line}`)
   .join('\n');
 
-// 2.5 DDL Grep (Positive & Negative Worktree)
-console.log(' - DDL grep on live tree & isolated worktree negative control at e0e8579...');
+const serverGamesCode = fs.readFileSync(path.join(rootDir, 'src/server.ts'), 'utf8')
+  .split('\n')
+  .slice(110, 160)
+  .map((line, idx) => `${111 + idx}: ${line}`)
+  .join('\n');
+
+const decisionGrep = runCommand('git grep -n "Decision #" ARCHITECTURE.md');
+
+// 7. DDL Grep (Positive & Isolated Worktree Negative Control)
+console.log('7. Running DDL grep on live tree & isolated worktree negative control at e0e8579...');
 let liveDdlGrep = '';
 try {
   liveDdlGrep = runCommand('git grep -n -i -E "(CREATE|ALTER|DROP)\\s+(TABLE|INDEX|FUNCTION|TRIGGER|TYPE|SCHEMA|EXTENSION|POLICY)|SET\\s+search_path" tests/ scripts/dev/ prisma/seed.ts');
@@ -137,39 +169,8 @@ try {
   }
 }
 
-// 2.6 S-8 Server Code
-console.log(' - S-8 GET /api/games server code...');
-const serverGamesCode = fs.readFileSync(path.join(rootDir, 'src/server.ts'), 'utf8')
-  .split('\n')
-  .slice(110, 160)
-  .map((line, idx) => `${111 + idx}: ${line}`)
-  .join('\n');
-
-// 2.7 Decision Register Grep
-console.log(' - Decision register in ARCHITECTURE.md...');
-const decisionGrep = runCommand('git grep -n "Decision #" ARCHITECTURE.md');
-
-// 2.8 Main and BR-4b Test Results & Raw Prisma Generate Outputs
-console.log(' - Loading test results & raw prisma generate outputs...');
-const prismaGenerateBr4bPath = path.join(rootDir, 'prisma_generate_br4b.txt');
-const prismaGenerateBr4bContent = fs.existsSync(prismaGenerateBr4bPath) ? fs.readFileSync(prismaGenerateBr4bPath, 'utf8').trim() : '(not found)';
-
-const testResultsBr4bPath = path.join(rootDir, 'test_results_br4b.txt');
-const testResultsBr4bContent = fs.existsSync(testResultsBr4bPath) ? fs.readFileSync(testResultsBr4bPath, 'utf8').trim() : '(not found)';
-
-const prismaGenerateMainPath = path.join(rootDir, 'prisma_generate_main.txt');
-const prismaGenerateMainContent = fs.existsSync(prismaGenerateMainPath) ? fs.readFileSync(prismaGenerateMainPath, 'utf8').trim() : '(not found)';
-
-const testResultsMainPath = path.join(rootDir, 'test_results_main.txt');
-const testResultsMainContent = fs.existsSync(testResultsMainPath) ? fs.readFileSync(testResultsMainPath, 'utf8').trim() : '(not found)';
-
-// 2.9 BR-5 / BR-5b Vitest JSON Artifact
-console.log(' - Loading vitest.json artifact...');
-const vitestJsonPath = path.join(rootDir, 'vitest.json');
-const vitestJsonContent = fs.existsSync(vitestJsonPath) ? fs.readFileSync(vitestJsonPath, 'utf8').trim() : '{}';
-
-// 2.10 Docs Audit
-console.log(' - Docs line counts and numstat vs baseline...');
+// 8. Docs Audit
+console.log('8. Checking documentation metrics and numstat vs baseline...');
 const archLines = fs.readFileSync(path.join(rootDir, 'ARCHITECTURE.md'), 'utf8').split('\n').length;
 const roadLines = fs.readFileSync(path.join(rootDir, 'ROADMAP.md'), 'utf8').split('\n').length;
 const taskLines = fs.readFileSync(path.join(rootDir, 'tasks.md'), 'utf8').split('\n').length;
@@ -177,11 +178,8 @@ const totalDocLines = archLines + roadLines + taskLines;
 const wcOutput = `  ${archLines} ARCHITECTURE.md\n  ${roadLines} ROADMAP.md\n  ${taskLines} tasks.md\n  ${totalDocLines} total`;
 const diffNumstat = runCommand('git diff -w --numstat e41ce72 -- ARCHITECTURE.md ROADMAP.md tasks.md');
 
-const currentCommit = runCommand('git rev-parse HEAD');
-const currentBranch = runCommand('git branch --show-current');
-
-// 3. Assemble Incremental Bundle
-console.log('3. Writing EVIDENCE_BUNDLE.md incrementally...');
+// 9. Assemble Incremental Bundle
+console.log('9. Writing EVIDENCE_BUNDLE.md incrementally...');
 const targetBundlePath = path.join(evDir, 'EVIDENCE_BUNDLE.md');
 if (fs.existsSync(targetBundlePath)) {
   fs.unlinkSync(targetBundlePath);
@@ -191,9 +189,9 @@ function appendSection(content) {
   fs.appendFileSync(targetBundlePath, content + '\n\n', 'utf8');
 }
 
-appendSection(`# EVIDENCE BUNDLE — RE: RULING R-12.2-AE-V3
+appendSection(`# EVIDENCE BUNDLE — RE: RULING R-12.2-AE-V4
 **Date (UTC):** ${new Date().toISOString()}  
-**Current Commit:** ${currentCommit}  
+**Current Commit:** ${initialCurrentCommit}  
 **Branch:** ${currentBranch}  
 **Generator Self-Test Exit Code:** ${selfTestExitCode}  
 **Generator Execution Exit Code:** 0  
@@ -209,16 +207,16 @@ ${selfTestOutput}
 
 ---`);
 
-appendSection(`## 2. Git State & Secret Cleanliness
+appendSection(`## 2. Pre-Run Git State & Secret Cleanliness
 
-### 2.1 Working Branch Status
+### 2.1 Working Branch Status (Captured Prior to Generation)
 \`\`\`text
-${gitBranchStatus}
+${initialGitBranchStatus}
 \`\`\`
 
 ### 2.2 Recent Commits (Last 5)
 \`\`\`text
-${gitLogRecent}
+${initialGitLogRecent}
 \`\`\`
 
 ### 2.3 Secret & Credential Scan (Tests Excluded)
@@ -369,19 +367,19 @@ ${vitestJsonContent}
 
 ---`);
 
-appendSection(`## 12. R-12.2-AE-V3 Acceptance Criteria Checklist (Section 8)
+appendSection(`## 12. R-12.2-AE-V4 Acceptance Criteria Checklist (Section 8)
 
-- [ ] **1. Documentation Updates:** Append-only updates committed to \`ARCHITECTURE.md\`, \`ROADMAP.md\`, and \`tasks.md\`.
-- [ ] **2. Pre-Evidence Git Finalization:** \`git add -A\` and \`git commit\` executed before evidence run; clean working tree verified.
-- [ ] **3. BR-4b Migration Branch Verification:** \`feat/phase12-migrations\` verified with raw \`prisma generate\` and \`vitest run tests/br4b.test.ts\` (7/7 passing).
-- [ ] **4. Main Branch Verification:** \`main\` branch verified with \`npm run db:reset\`, \`prisma migrate deploy\`, raw \`prisma generate\`, and full test suite (63/63 passing).
-- [ ] **5. Evidence Generator Execution:** \`scripts/generate_evidence.js\` captures raw outputs, git status/log, test logs, JSON artifact, and \`# LIVE REPOSITORY CONTEXT\`.
-- [ ] **6. Cleanup & Final Git Commit:** Temporary files removed, bundle and scripts committed locally, strictly no remote push.
+- [ ] Commit the currently modified scripts/generate_evidence.js.
+- [ ] Remove or commit generated artifacts so git status is clean.
+- [ ] Regenerate final evidence bundle after final commit.
+- [ ] Return raw git status showing no M or ?? entries.
+- [ ] Preserve Decisions #53-#55 exactly as reconciled.
+- [ ] Preserve append-only documentation invariant.
 
 ---`);
 
-// 4. Append LIVE REPOSITORY CONTEXT at the very bottom
-console.log('4. Appending LIVE REPOSITORY CONTEXT (prisma/schema.prisma & ARCHITECTURE.md)...');
+// 10. Append LIVE REPOSITORY CONTEXT at the very bottom
+console.log('10. Appending LIVE REPOSITORY CONTEXT (prisma/schema.prisma & ARCHITECTURE.md)...');
 const schemaPrismaContent = fs.readFileSync(path.join(rootDir, 'prisma/schema.prisma'), 'utf8');
 const architectureContent = fs.readFileSync(path.join(rootDir, 'ARCHITECTURE.md'), 'utf8');
 
@@ -400,8 +398,16 @@ ${architectureContent}
 \`\`\`\`
 `);
 
-// 5. Final Validation: Non-empty sections and size >= 2000 bytes
-console.log('5. Validating markdown structure and file size...');
+// 11. Cleanup temporary files created during run
+console.log('11. Cleaning up temporary runtime artifacts...');
+if (fs.existsSync(vitestJsonPath)) {
+  try {
+    fs.unlinkSync(vitestJsonPath);
+  } catch (e) {}
+}
+
+// 12. Final Validation: Non-empty sections and size >= 2000 bytes
+console.log('12. Validating markdown structure and file size...');
 const bundleContent = fs.readFileSync(targetBundlePath, 'utf8');
 const lines = bundleContent.split('\n');
 let inCodeBlock = false;
