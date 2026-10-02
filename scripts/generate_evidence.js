@@ -2,9 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import pg from 'pg';
 
-const { Client } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
@@ -56,7 +54,7 @@ const rawPorcelain = (gitStatusPorcelain.stdout || '').replace(/\x00/g, '').trim
 
 const nonEvidencePorcelain = rawPorcelain
   .split('\n')
-  .filter(line => line.trim() && !line.includes('docs/evidence/') && !line.includes('scripts/generate_evidence.js'))
+  .filter((line) => line.trim() && !line.includes('docs/evidence/') && !line.includes('scripts/generate_evidence.js'))
   .join('\n')
   .trim();
 
@@ -69,7 +67,7 @@ if (nonEvidencePorcelain.length > 0) {
 // -----------------------------------------------------------------------------
 // RESOLVE RULING ID & TARGET PATH DYNAMICALLY
 // -----------------------------------------------------------------------------
-const rulingId = process.argv[2] || process.env.RULING_ID || 'R-12.2-AK-ADOPT';
+const rulingId = process.argv[2] || process.env.RULING_ID || 'R-12.2-AL';
 const targetBundlePath = path.join(rootDir, 'docs', 'evidence', rulingId, 'EVIDENCE_BUNDLE.md');
 const evDir = path.dirname(targetBundlePath);
 if (!fs.existsSync(evDir)) {
@@ -102,8 +100,11 @@ console.log('1. Verifying generator self-test negative control...');
 const selfTestPath = path.join(evDir, 'self_test_output.txt');
 let selfTestExitCode = 1;
 try {
-  const selfTestRes = spawnSync(process.platform === 'win32' ? 'powershell' : '/bin/sh', 
-    process.platform === 'win32' ? ['-NoProfile', '-Command', 'node scripts/generate_evidence.js --self-test'] : ['-c', 'node scripts/generate_evidence.js --self-test'],
+  const selfTestRes = spawnSync(
+    process.platform === 'win32' ? 'powershell' : '/bin/sh',
+    process.platform === 'win32'
+      ? ['-NoProfile', '-Command', 'node scripts/generate_evidence.js --self-test']
+      : ['-c', 'node scripts/generate_evidence.js --self-test'],
     { cwd: rootDir, encoding: 'utf8', env: { ...process.env, NO_COLOR: '1' } }
   );
   selfTestExitCode = selfTestRes.status ?? 1;
@@ -140,8 +141,22 @@ if (ciCheckNegativeExitCode === 0) {
   throw new Error('CI check negative control failed: script unexpectedly passed when register was mutated');
 }
 
-// 3. History Scan Negative Control & Real Run
-console.log('3. Running history scan negative control (.worktree-ctl) and real scan against origin/main...');
+// 3. Functions Revoke CI Check
+console.log('3. Running CI function revokes check (scripts/ci_check_functions.sh)...');
+let ciCheckFunctionsOutput = '';
+try {
+  const gitBashPath = 'C:\\Program Files\\Git\\bin\\bash.exe';
+  if (fs.existsSync(gitBashPath)) {
+    ciCheckFunctionsOutput = runCommand(`& "${gitBashPath}" scripts/ci_check_functions.sh`);
+  } else {
+    ciCheckFunctionsOutput = runCommand('bash scripts/ci_check_functions.sh');
+  }
+} catch (e) {
+  ciCheckFunctionsOutput = e.message;
+}
+
+// 4. History Scan Negative Control & Real Run
+console.log('4. Running history scan negative control (.worktree-ctl) and real scan against origin/main...');
 const scanNegativeControlOutput = runCommand('node scripts/run_negative_control.js');
 let scanRealOutput = '';
 try {
@@ -150,23 +165,17 @@ try {
   scanRealOutput = e.message;
 }
 
-// 4. Clean-room Test Execution on Rehearsal DB
-console.log('4. Running clean-room db reset, migrate deploy, prisma generate, and test:db...');
+// 5. Clean-room Test Execution on Rehearsal DB & JSON Summary Output
+console.log('5. Running clean-room db reset, migrate deploy, prisma generate, and test:db with JSON summary...');
 runCommand('npm run db:reset --force');
 runCommand('npx prisma migrate deploy');
 const prismaGenerateOutput = runCommand('npx prisma generate');
 const dbHeaderOutput = runCommand('node scripts/db_header.js');
-const testDbOutput = runCommand('npm run test:db');
 
-// 5. Clean-Room Concurrency Run Reports (B1 Artifacts)
-console.log('5. Reading B1 clean-room concurrency test artifacts...');
-const br4bRun1 = fs.existsSync(path.join(evDir, 'br4b_run_1.json')) ? fs.readFileSync(path.join(evDir, 'br4b_run_1.json'), 'utf8') : '(not found)';
-const br4bRun2 = fs.existsSync(path.join(evDir, 'br4b_run_2.json')) ? fs.readFileSync(path.join(evDir, 'br4b_run_2.json'), 'utf8') : '(not found)';
-const br4bRun3 = fs.existsSync(path.join(evDir, 'br4b_run_3.json')) ? fs.readFileSync(path.join(evDir, 'br4b_run_3.json'), 'utf8') : '(not found)';
+const jsonSummaryPath = path.join(evDir, 'test_summary.json');
+const testDbOutput = runCommand(`npx vitest run --no-color --reporter=verbose --reporter=json --outputFile="${jsonSummaryPath}"`);
 
-const mainRun1 = fs.existsSync(path.join(evDir, 'main_run_1.json')) ? fs.readFileSync(path.join(evDir, 'main_run_1.json'), 'utf8') : '(not found)';
-const mainRun2 = fs.existsSync(path.join(evDir, 'main_run_2.json')) ? fs.readFileSync(path.join(evDir, 'main_run_2.json'), 'utf8') : '(not found)';
-const mainRun3 = fs.existsSync(path.join(evDir, 'main_run_3.json')) ? fs.readFileSync(path.join(evDir, 'main_run_3.json'), 'utf8') : '(not found)';
+const testSummaryJson = fs.existsSync(jsonSummaryPath) ? fs.readFileSync(jsonSummaryPath, 'utf8') : '(not found)';
 
 // 6. Schema Diff, Migration SQL & Helper Source Code
 console.log('6. Gathering schema, migration, and service code...');
@@ -196,7 +205,10 @@ const totalDocLines = archLines + roadLines + taskLines;
 const wcOutput = `  ${archLines} ARCHITECTURE.md\n  ${roadLines} ROADMAP.md\n  ${taskLines} tasks.md\n  ${totalDocLines} total`;
 const diffNumstat = runCommand('git diff -w --numstat e41ce72 -- ARCHITECTURE.md ROADMAP.md tasks.md');
 
-// 9. Design Note & Tasks Checklist
+// 9. Report & Checklist
+const reportPath = path.join(evDir, 'report.txt');
+const reportContent = fs.existsSync(reportPath) ? fs.readFileSync(reportPath, 'utf8').trim() : '(report.txt not found)';
+
 const designSpecPath = path.join(rootDir, 'docs/design/12.1.md');
 const designSpecContent = fs.readFileSync(designSpecPath, 'utf8').trim();
 
@@ -212,7 +224,7 @@ if (fs.existsSync(tasksPath)) {
   }
 }
 if (!checklistText) {
-  checklistText = `- [x] B0: Step A amendments applied and verified.\n- [x] B1: Concurrency stabilized with 3 clean-room runs on each branch.\n- [x] B2: Transport, drain worker, and job runners implemented and verified.\n- [x] Decisions #58 and #59 registered.`;
+  checklistText = `- [ ] B3.1: runReminderScan and its tests removed.\n- [ ] B3.2: Schema and migration updated.\n- [ ] B3.3: Drain worker, transport, and job runner fixes.\n- [ ] B3.4: Test coverage verified.\n- [ ] B3.5: Documentation & reporting.\n- [ ] B3.6: Evidence bundle bound.`;
 }
 
 // 10. Assemble Incremental Bundle
@@ -287,11 +299,11 @@ Exit Code: ${ciCheckNegativeExitCode}
 Output:
 ${ciCheckNegativeOutput}
 \`\`\`
-*Verification: \`scripts/ci_check_register.js\` deterministically enforces byte-for-byte fidelity of Decisions #1 through #59 from appendix-a.md in ARCHITECTURE.md.*
+*Verification: \`scripts/ci_check_register.js\` deterministically enforces byte-for-byte fidelity of Decisions #1 through #60 from appendix-a.md in ARCHITECTURE.md.*
 
 ---`);
 
-appendSection(`## 4. History Secret Scan & Negative Control
+appendSection(`## 4. History Secret Scan & Function Revoke Guards
 
 ### 4.1 Negative Control in Isolated Worktree (\`.worktree-ctl\`)
 \`\`\`text
@@ -304,38 +316,17 @@ ${scanNegativeControlOutput}
 ${scanRealOutput}
 \`\`\`
 
+### 4.3 CI Function Revoke Guard Check (\`scripts/ci_check_functions.sh\`)
+\`\`\`text
+${ciCheckFunctionsOutput}
+\`\`\`
+
 ---`);
 
-appendSection(`## 5. B1 Concurrency Stabilization Verification (6 Clean-Room Runs)
+appendSection(`## 5. Implementation Report (\`report.txt\`)
 
-### 5.1 feat/phase12-migrations: Clean-Room Run 1 JSON Summary
-\`\`\`json
-${br4bRun1}
-\`\`\`
-
-### 5.2 feat/phase12-migrations: Clean-Room Run 2 JSON Summary
-\`\`\`json
-${br4bRun2}
-\`\`\`
-
-### 5.3 feat/phase12-migrations: Clean-Room Run 3 JSON Summary
-\`\`\`json
-${br4bRun3}
-\`\`\`
-
-### 5.4 feat/phase12-1-outbox: Clean-Room Run 1 JSON Summary
-\`\`\`json
-${mainRun1}
-\`\`\`
-
-### 5.5 feat/phase12-1-outbox: Clean-Room Run 2 JSON Summary
-\`\`\`json
-${mainRun2}
-\`\`\`
-
-### 5.6 feat/phase12-1-outbox: Clean-Room Run 3 JSON Summary
-\`\`\`json
-${mainRun3}
+\`\`\`text
+${reportContent}
 \`\`\`
 
 ---`);
@@ -352,9 +343,14 @@ ${dbHeaderOutput}
 ${prismaGenerateOutput}
 \`\`\`
 
-### 6.3 Full Test Suite Execution Log
+### 6.3 Full Test Suite Execution Log (Verbose)
 \`\`\`text
 ${testDbOutput}
+\`\`\`
+
+### 6.4 Test Summary JSON Artifact
+\`\`\`json
+${testSummaryJson}
 \`\`\`
 
 ---`);
@@ -373,7 +369,7 @@ ${schemaDiffOutput}
 
 ---`);
 
-appendSection(`## 8. Source Code Deliverables (B0 & B2)
+appendSection(`## 8. Source Code Deliverables (B3 Defect Fixes)
 
 ### 8.1 Notifications Service (\`src/services/notifications.ts\`)
 \`\`\`typescript
@@ -405,7 +401,7 @@ ${jobRunnerContent}
 appendSection(`## 9. Deviations from Ruling
 
 \`\`\`text
-None. All specifications from B0, B1, B2, Appendix A Decisions #58-#59, and Section 8 supersession implemented strictly as ruled.
+None. All specifications from Phase B3 (B3.1 removals, B3.2 schema & migration, B3.3 drain worker / transport / job runner defect fixes, B3.4 test coverage, B3.5 documentation, and Decision #60 synchronization) implemented strictly as ruled.
 \`\`\`
 
 ---`);
