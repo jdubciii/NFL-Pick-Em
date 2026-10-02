@@ -31,3 +31,9 @@ Thumbs.db
 # Test artifacts
 vitest.json
 
+# Audit, diagnostic, and history scan dumps
+*_diff.txt
+*_scan.txt
+*_history*.txt
+scratch/
+
