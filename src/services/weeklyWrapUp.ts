@@ -12,10 +12,11 @@ export interface ScoredMember {
 
 export interface WeeklyWrapUpResult {
   applied: boolean;
-  reason?: 'ALREADY_WRAPPED_UP' | 'NO_GAMES_FOR_WEEK' | 'WEEK_NOT_FINAL' | string;
+  reason?: 'ALREADY_WRAPPED_UP' | 'NO_GAMES_FOR_WEEK' | 'WEEK_NOT_FINAL' | 'CLAIM_STORE_UNAVAILABLE' | string;
   pendingCount?: number;
   earliestPendingKickoff?: Date | string | null;
   poolId?: string;
+  weekNumber?: number;
   weekNo?: number;
   topScorers?: Array<{ userId: string; score: number; tiebreakerDistance: number }>;
   deadPlaceMembers?: Array<{ userId: string; score: number; tiebreakerDistance: number }>;
@@ -67,19 +68,14 @@ export function resolveTiebreakerGame(games: any[], gameTargetSetting?: string):
  * 4. WRITE (Claim): Create the weekly_wrapups claim via createMany({ skipDuplicates: true }).
  * 5. WRITE (Effects): Execute BR-4 Decimal split penalty ledger entries and pool_member_stats updates.
  */
-export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promise<WeeklyWrapUpResult> {
+export async function executeWeeklyWrapUp(poolId: string, weekNumber: number): Promise<WeeklyWrapUpResult> {
   return await prisma.$transaction(async (tx: any) => {
     // -------------------------------------------------------------------------
-    // Step 1: READ (Claim Check) - Fast check if already wrapped up
+    // Step 1: READ (Claim Check) - Fail-closed check if claim store exists
     // -------------------------------------------------------------------------
-    const claimModel = tx.weeklyWrapup || tx.weekly_wrapups || tx.weeklyWrapups;
-    if (claimModel) {
-      const existingClaim = await claimModel.findFirst({
-        where: { poolId, weekNumber: weekNo },
-      });
-      if (existingClaim) {
-        return { applied: false, reason: 'ALREADY_WRAPPED_UP', poolId, weekNo };
-      }
+    const tableExists: any = await tx.$queryRaw`SELECT to_regclass('public.weekly_wrapups')::text as to_regclass;`;
+    if (!tableExists || !tableExists[0] || !tableExists[0].to_regclass || !tx.weeklyWrapup) {
+      return { applied: false, reason: 'CLAIM_STORE_UNAVAILABLE', poolId, weekNumber, weekNo: weekNumber };
     }
 
     // Fetch Pool and all active members
@@ -140,7 +136,8 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
         applied: false,
         reason: 'NO_GAMES_FOR_WEEK',
         poolId,
-        weekNo,
+        weekNumber,
+        weekNo: weekNumber,
       };
     }
 
@@ -161,21 +158,20 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
         pendingCount: pendingGames.length,
         earliestPendingKickoff: sortedPending[0]?.kickoffTime ?? null,
         poolId,
-        weekNo,
+        weekNumber,
+        weekNo: weekNumber,
       };
     }
 
     // -------------------------------------------------------------------------
-    // Step 4: WRITE (Claim) - Atomic claim insertion
+    // Step 4: WRITE (Claim) - Atomic claim insertion via createMany
     // -------------------------------------------------------------------------
-    if (claimModel) {
-      const claim = await claimModel.createMany({
-        data: [{ poolId, weekNumber: weekNo }],
-        skipDuplicates: true,
-      });
-      if (claim && claim.count === 0) {
-        return { applied: false, reason: 'ALREADY_WRAPPED_UP', poolId, weekNo };
-      }
+    const claim = await tx.weeklyWrapup.createMany({
+      data: [{ poolId, weekNumber }],
+      skipDuplicates: true,
+    });
+    if (claim.count === 0) {
+      return { applied: false, reason: 'ALREADY_WRAPPED_UP', poolId, weekNumber, weekNo: weekNumber };
     }
 
     // -------------------------------------------------------------------------
@@ -190,7 +186,7 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
     const weeklySubmissions = await tx.weeklySubmission.findMany({
       where: {
         poolId: pool.id,
-        weekNumber: weekNo,
+        weekNumber,
       },
     });
 
@@ -280,7 +276,7 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
           data: {
             poolId: pool.id,
             userId: deadMember.userId,
-            weekNumber: weekNo,
+            weekNumber,
             delta: splitPenalty,
             reason: 'WEEKLY_DEAD_PLACE',
             createdById: pool.adminId,
@@ -332,7 +328,8 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
     return {
       applied: true,
       poolId: pool.id,
-      weekNo,
+      weekNumber,
+      weekNo: weekNumber,
       topScorers: topScorers.map((t) => ({
         userId: t.userId,
         score: t.score,
@@ -348,7 +345,7 @@ export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promi
       targetGameId: targetGame?.id ?? null,
       targetGameScore: actualTiebreakerTotal,
     };
-  });
+  }, { maxWait: 15000, timeout: 30000 });
 }
 
 export const runWeeklyWrapUp = executeWeeklyWrapUp;

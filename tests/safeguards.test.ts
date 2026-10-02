@@ -27,7 +27,7 @@ describe('BR-6 Safeguards: assertDisposableUrl', () => {
   });
 
   it('Decision #32 Sabotage Test: point TEST_DATABASE_URL at production fingerprint -> aborts before connection', () => {
-    const prodFingerprint = 'postgresql://postgres:fake@aws-0-us-east-1.pooler.supabase.com:5432/postgres';
+    const prodFingerprint = 'postgresql://postgres.exampleref:fake@aws-0-us-east-1.pooler.supabase.com:5432/postgres';
     expect(() => {
       assertDisposableUrl(prodFingerprint);
     }).toThrow(/SAFETY_VIOLATION: Database host 'aws-0-us-east-1.pooler.supabase.com' is not permitted for testing/);

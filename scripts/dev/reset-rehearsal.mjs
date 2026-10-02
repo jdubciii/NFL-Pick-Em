@@ -11,8 +11,8 @@ const rootDir = path.resolve(__dirname, '../../');
 
 dotenv.config({ path: path.join(rootDir, '.env') });
 
-const localRehearsalUrl = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/pickem_rehearsal';
-const localDefaultUrl = 'postgresql://postgres:postgres@localhost:5432/postgres';
+const localRehearsalUrl = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgresql://postgres:postgrespassword@localhost:5432/pickem_rehearsal';
+const localDefaultUrl = localRehearsalUrl.replace(/\/pickem_[a-zA-Z0-9_-]+/, '/postgres');
 
 async function resetRehearsal() {
   console.log('=== RESET REHEARSAL DATABASE (Decision #35) ===\n');

@@ -24,3 +24,18 @@ lerna-debug.log*
 # OS files
 .DS_Store
 Thumbs.db
+
+# Worktrees
+.worktree-ctl/
+
+# Test artifacts
+vitest.json
+self_test_output.txt
+test_summary.json
+
+# Audit, diagnostic, and history scan dumps
+*_diff.txt
+*_scan.txt
+*_history*.txt
+scratch/
+

@@ -108,5 +108,25 @@
 - R-12.2-Y: guard merge accepted; wrapUp test retired; admin inventory; BR-5 verification next.
 - R-12.2-Z: prior bundle re-sent; R-12.2-Y re-issued.
 - R-12.2-AA: S-6 admin picks routes; BR-5b; bundle gaps; docs arithmetic.
+- R-12.2-AB: BR-5b not accepted; environment integrity; route-table facts.
+- R-12.2-AC: branch truth; claim code fails closed; S-7 facts.
+- R-12.2-AD: commit hygiene; stale DB; S-8.
+- R-12.2-AE: claim defects; S-8 completion; BR-5 closure matrix.
+- R-12.2-AE-V2: BR-4b lifecycle verification, evidence-bundle integrity, secret-scan cleanliness, and live-context reconciliation are acceptance blockers.
+- R-12.2-AE-V3: BR-4b lifecycle verification completed. Local Git finalization executed.
+- R-12.2-AE-V4: Substantive implementation and verification complete. Local Git finalization executed.
+- R-12.2-AF: 12.1 conditional start; BR-5 closure; register repair.
+- R-12.2-AG: register ratified; hosted tripwire re-run.
+- R-12.2-AH: Milestone 12.1 CONDITIONAL START; hosted tripwire & evidence repair cycle.
+- R-12.2-AH-V2: Tripwire row output and test assertion logs captured.
+- R-12.2-AH-V2: Evidence gate cleared. Milestone 12.1 conditional start active on feat/phase12-1-outbox.
+- R-12.2-AI: 12.1 Core Schema & Outbox models applied to rehearsal DB.
+- R-12.2-AJ: I-1/I-2 closed; 12.1 step A accepted with amendment.
+- R-12.2-AK: 12.1 Step B GO; concurrency stabilization.
+- R-12.2-AL: B3 fixes; scanner deferred to step E.
 
+### Milestone Status (R-12.1-RESTORE-01)
+- **Milestone 12.1:** CLOSED provisionally, CONDITIONAL on R-12.1-RESTORE-01 verification. Merge to main strictly BLOCKED pending explicit authorization.
+- **Milestone 12.1-E (Reminder Scanner):** OPEN as a distinct follow-on milestone cut from main post-merge. Sequenced before Milestone 12.2 implementation.
+- **Milestone 12.2 (Weekly Wrap-up Engine & Distribution):** Paper scope only. Implementation BLOCKED.
 

@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import prisma from '../db/client';
 import { requireAuth } from '../middleware/auth';
 import { PoolSettings } from '../types/pool';
+import { isGameLocked } from '../services/lockResolver';
 
 export const picksRouter = Router();
 
@@ -52,15 +53,12 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
     const settings = (pool.settings as PoolSettings) || {};
     const lockOffsetMinutes = Number(settings.lock_offset ?? settings.lockOffset ?? 0);
 
-    // 3. Calculate lock threshold: game.kickoffTime - lockOffsetMinutes
-    const lockThreshold = new Date(game.kickoffTime.getTime() - lockOffsetMinutes * 60 * 1000);
-    const now = new Date();
-
-    // 4. Check if current server time >= lock threshold
-    if (now.getTime() >= lockThreshold.getTime()) {
+    // 3. Evaluate lock status via pure lockResolver
+    if (isGameLocked(game.kickoffTime, lockOffsetMinutes)) {
       res.status(403).json({ error: 'Game is locked' });
       return;
     }
+
 
     // 5. Upsert pick record
     const pick = await prisma.pick.upsert({

@@ -6,9 +6,12 @@ import cors from 'cors';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import prisma from './db/client';
-import { JWT_SECRET, requireAuth, requireAdmin, requirePoolCommissioner, requirePoolMember } from './middleware/auth';
+import { JWT_SECRET, UUID_REGEX, requireAuth, requireAdmin, requirePoolCommissioner, requirePoolMember } from './middleware/auth';
 import { picksRouter } from './routes/picks';
 import { adminRouter } from './routes/admin';
+import { meRouter } from './routes/me';
+import { notificationsRouter } from './routes/notifications';
+import { opsRouter } from './routes/ops';
 import type {
   PoolSettings,
   MatrixResponsePayload,
@@ -28,6 +31,11 @@ app.use(express.json());
 // Routes
 app.use('/api/picks', picksRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/me', meRouter);
+app.use('/api/notifications', notificationsRouter);
+app.use('/api/pools', opsRouter);
+
+
 
 // Health check endpoint
 app.get('/api/health', (_req: Request, res: Response) => {
@@ -109,22 +117,69 @@ app.get('/api/pools', requireAuth, async (_req: Request, res: Response): Promise
  */
 app.get('/api/games', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = req.user!.id;
-  const poolId = req.query.pool_id ? String(req.query.pool_id) : undefined;
+  const poolIdParam = req.query.pool_id;
+  const poolId = poolIdParam !== undefined && poolIdParam !== null && poolIdParam !== ''
+    ? String(poolIdParam)
+    : undefined;
 
   try {
-    let pool = poolId
-      ? await prisma.pool.findUnique({ where: { id: poolId } })
-      : await prisma.pool.findFirst({ where: { status: 'ACTIVE' } });
+    let pool: any = null;
+    if (poolId) {
+      if (!UUID_REGEX.test(poolId)) {
+        res.status(400).json({ error: 'Invalid pool ID format. Must be a valid UUID.' });
+        return;
+      }
+
+      pool = await prisma.pool.findUnique({ where: { id: poolId } });
+      if (!pool) {
+        res.status(404).json({ error: 'POOL_NOT_FOUND' });
+        return;
+      }
+
+      const isCommissioner = pool.adminId === userId;
+      if (!isCommissioner) {
+        const membership = await prisma.poolMembership.findUnique({
+          where: {
+            poolId_userId: {
+              poolId,
+              userId,
+            },
+          },
+        });
+
+        if (!membership || membership.status !== 'ACTIVE') {
+          res.status(403).json({ error: 'Forbidden. Active pool membership required.' });
+          return;
+        }
+      }
+    } else {
+      pool = await prisma.pool.findFirst({
+        where: {
+          status: 'ACTIVE',
+          memberships: {
+            some: {
+              userId,
+              status: 'ACTIVE',
+            },
+          },
+        },
+        orderBy: [{ name: 'asc' }],
+      });
+
+      if (!pool) {
+        pool = await prisma.pool.findFirst({
+          where: {
+            adminId: userId,
+            status: 'ACTIVE',
+          },
+          orderBy: [{ name: 'asc' }],
+        });
+      }
+    }
 
     if (!pool) {
-      pool = await prisma.pool.create({
-        data: {
-          name: 'Main NFL Pick \'Em Pool',
-          adminId: userId,
-          settings: { lock_offset: 0, points_per_win: 1 },
-          status: 'ACTIVE',
-        },
-      });
+      res.status(404).json({ error: 'POOL_NOT_FOUND' });
+      return;
     }
 
     const games = await prisma.game.findMany({
@@ -609,13 +664,12 @@ app.post('/api/pools/:pool_id/penalties/:id/media', requireAuth, async (req: Req
       return;
     }
 
-    // 2. Authorization check: penalty owner, pool commissioner, or global admin
+    // 2. Authorization check: penalty owner or pool commissioner
     const requestingUserId = req.user!.id;
     const isOwner = penalty.userId === requestingUserId;
     const isCommissioner = pool.adminId === requestingUserId;
-    const isAdmin = req.user!.role === 'ADMIN';
 
-    if (!isOwner && !isCommissioner && !isAdmin) {
+    if (!isOwner && !isCommissioner) {
       res.status(403).json({ error: 'Forbidden: You do not have permission to upload media for this penalty.' });
       return;
     }
@@ -671,7 +725,7 @@ app.post('/api/pools/:pool_id/penalties/:id/media', requireAuth, async (req: Req
 /**
  * PATCH /api/pools/:pool_id/penalties/:id/media/confirm
  * Commissioner action to flip penalty media status to CONFIRMED (or REJECTED/PENDING).
- * Restricted to the pool commissioner or global admin.
+ * Restricted to the pool commissioner.
  */
 app.patch('/api/pools/:pool_id/penalties/:id/media/confirm', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const poolId = String(req.params.pool_id);
@@ -684,7 +738,7 @@ app.patch('/api/pools/:pool_id/penalties/:id/media/confirm', requireAuth, async 
   }
 
   try {
-    // 1. Fetch pool and verify commissioner / admin permissions
+    // 1. Fetch pool and verify commissioner permissions
     const pool = await prisma.pool.findUnique({
       where: { id: poolId },
     });
@@ -696,10 +750,9 @@ app.patch('/api/pools/:pool_id/penalties/:id/media/confirm', requireAuth, async 
 
     const requestingUserId = req.user!.id;
     const isCommissioner = pool.adminId === requestingUserId;
-    const isAdmin = req.user!.role === 'ADMIN';
 
-    if (!isCommissioner && !isAdmin) {
-      res.status(403).json({ error: 'Forbidden: Only the pool commissioner or admin can confirm penalty media.' });
+    if (!isCommissioner) {
+      res.status(403).json({ error: 'Forbidden: Only the pool commissioner can confirm penalty media.' });
       return;
     }
 

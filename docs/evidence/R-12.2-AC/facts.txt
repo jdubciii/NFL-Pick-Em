@@ -1,0 +1,300 @@
+================================================================================
+FACT GATHERING (PHASE 1 - READ ONLY) — RULING R-12.2-AC
+================================================================================
+
+### 1. Commit & Branch Truth
+```text
+--- git show --stat 00e89dd ---
+commit 00e89dd64ae5c130b96cd7af476794a2014872b3
+Author: jdubciii <jack.w.cone@gmail.com>
+Date:   Wed Sep 30 19:21:10 2026 -0700
+
+    docs: generate evidence bundle and finalize changes for R-12.2-AA
+
+ ARCHITECTURE.md                              |   2 +
+ ROADMAP.md                                   |   2 +
+ docs/evidence/R-12.2-AA/EVIDENCE_BUNDLE.md   | 462 +++++++++++++++++++++++++++
+ docs/evidence/R-12.2-AA/docs_audit.txt       |  80 +++++
+ docs/evidence/R-12.2-AA/facts.txt            | 209 ++++++++++++
+ docs/evidence/R-12.2-AA/self_test_output.txt |   7 +
+ docs/evidence/R-12.2-AA/vitest.json          |   1 +
+ scripts/docs_audit_aa.js                     |  89 ++++++
+ scripts/gather_facts_aa.js                   | 174 ++++++++++
+ scripts/generate_evidence.js                 | 259 ++++++---------
+ src/middleware/auth.ts                       |  53 ++-
+ src/routes/admin.ts                          |  30 +-
+ tasks.md                                     |  11 +
+ tests/authMiddleware.test.ts                 |  48 +++
+ tests/br5b_routes.test.ts                    | 273 ++++++++++++++++
+ 15 files changed, 1515 insertions(+), 185 deletions(-)
+
+--- git branch --contains 00e89dd ---
+* fix/br5b-admin-picks
+  main
+
+--- git rev-parse main fix/br5b-admin-picks ---
+00e89dd64ae5c130b96cd7af476794a2014872b3
+397981d0b31b48539a22870ac5b3da70812bdd28
+
+--- git log --oneline -n 8 main ---
+00e89dd docs: generate evidence bundle and finalize changes for R-12.2-AA
+8ec0ca5 docs: generate evidence bundle and finalize changes for R-12.2-Z
+a28e55d chore: retire wrapUpConcurrency test and sanitize safeguards ref
+e0e8579 Merge branch 'feat/phase12-guard-e2e' into main (R-12.2-X: Decision #20 override removal & BR-5 unit tests)
+e67ad25 docs(evidence): record R-12.2-X verification bundle, diffs, and test outputs
+0619e3d fix(phase12): remove global-ADMIN override per Decision #20; pure mock tests green
+795bc1a test(phase12): add isolated unit & route guard integration suite for BR-5 auth middleware
+75c42c5 Merge branch 'release/br2' into main
+```
+
+### 2. Claim Code Implementation (`src/services/weeklyWrapUp.ts:60-130`)
+```typescript
+60: }
+61: 
+62: /**
+63:  * Executes the weekly wrap-up pipeline for a completed week in a pool according to R-12.2-I order of execution:
+64:  * 1. READ (Claim Check): Check if marker exists for (poolId, weekNumber).
+65:  * 2. READ (Game Resolver & Non-Excluded Set): Resolve non-excluded games for the week via the shared scoring resolver.
+66:  * 3. READ (Status Check): Verify that every resolved game has status === 'FINAL'.
+67:  * 4. WRITE (Claim): Create the weekly_wrapups claim via createMany({ skipDuplicates: true }).
+68:  * 5. WRITE (Effects): Execute BR-4 Decimal split penalty ledger entries and pool_member_stats updates.
+69:  */
+70: export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promise<WeeklyWrapUpResult> {
+71:   return await prisma.$transaction(async (tx: any) => {
+72:     // -------------------------------------------------------------------------
+73:     // Step 1: READ (Claim Check) - Fail-closed check if claim store exists
+74:     // -------------------------------------------------------------------------
+75:     const tableExists = await tx.$queryRaw`SELECT to_regclass('public.weekly_wrapups')::text as tbl;`;
+76:     if (!tableExists || !tableExists[0] || !tableExists[0].tbl) {
+77:       return { applied: false, reason: 'CLAIM_STORE_UNAVAILABLE', poolId, weekNo };
+78:     }
+79: 
+80:     const existingClaim = await tx.$queryRaw`
+81:       SELECT 1 FROM public.weekly_wrapups WHERE pool_id = ${poolId}::uuid AND week_number = ${weekNo} LIMIT 1;
+82:     `;
+83:     if (existingClaim && existingClaim.length > 0) {
+84:       return { applied: false, reason: 'ALREADY_WRAPPED_UP', poolId, weekNo };
+85:     }
+86: 
+87:     // Fetch Pool and all active members
+88:     const pool = await tx.pool.findUnique({
+89:       where: { id: poolId },
+90:       include: {
+91:         memberships: {
+92:           where: { status: 'ACTIVE' },
+93:           include: {
+94:             user: true,
+95:           },
+96:         },
+97:       },
+98:     });
+99: 
+100:     if (!pool) {
+101:       throw new Error(`Pool with ID ${poolId} not found.`);
+102:     }
+103: 
+104:     if (pool.memberships.length === 0) {
+105:       throw new Error(`Pool with ID ${poolId} has no active members.`);
+106:     }
+107: 
+108:     const settings = (pool.settings as PoolSettings) || {};
+109:     const penaltiesConfig = settings.penalties || {};
+110:     const tiebreakerConfig = settings.tiebreaker || {};
+111:     const gameTargetSetting = tiebreakerConfig.game_target || tiebreakerConfig.gameTarget || 'MONDAY_NIGHT';
+112: 
+113:     // -------------------------------------------------------------------------
+114:     // Step 2: READ (Game Resolver & Non-Excluded Set)
+115:     // -------------------------------------------------------------------------
+116:     // Fetch picks for this pool with associated games and results
+117:     const picks = await tx.pick.findMany({
+118:       where: { poolId },
+119:       include: {
+120:         result: true,
+121:         game: true,
+122:       },
+123:     });
+124: 
+125:     const gamesMap = new Map<string, any>();
+126:     for (const pick of picks) {
+127:       if (pick.game) {
+128:         gamesMap.set(pick.game.id, pick.game);
+129:       }
+130:     }
+```
+
+### 3. Database Facts (Rehearsal DB)
+```text
+Identity: {"current_database":"pickem_rehearsal","current_user":"postgres","inet_server_addr":"::1","inet_server_port":5432}
+to_regclass('public.weekly_wrapups'): {"to_regclass":"weekly_wrapups"}
+
+Applied Migrations (9):
+ - 20260927000000_init (finished: YES)
+ - 20260928051824_add_pool_member_stats_and_penalty_ledger (finished: YES)
+ - 20260928124900_precision_and_weekly_submissions (finished: YES)
+ - 20260928170000_weekly_submission_finalized_and_game_notes (finished: YES)
+ - 20260928180000_shot_cam_penalty_media_and_rls (finished: YES)
+ - 20260929144500_br_1_ledger_append_only (finished: YES)
+ - 20260930010000_br_2b_ledger_api_lockdown (finished: YES)
+ - 20260930020000_br_2c_public_tables_api_lockdown (finished: YES)
+ - 20260930030000_br_4b_weekly_wrapups (finished: YES)
+```
+
+### 4. DDL & search_path Grep Verification
+```text
+CLEAN: 0 DDL or SET search_path matches found across tests/, scripts/dev/, prisma/seed.ts
+```
+
+### 5. S-7 Shot-Cam Routes & Authorization Facts
+```typescript
+--- src/server.ts:580-625 (POST /api/pools/:pool_id/penalties/:id/media) ---
+580:  */
+581: app.post('/api/pools/:pool_id/penalties/:id/media', requireAuth, async (req: Request, res: Response): Promise<void> => {
+582:   const poolId = String(req.params.pool_id);
+583:   const penaltyId = String(req.params.id);
+584:   const storagePath = req.body.storage_path || req.body.storagePath;
+585:   const mediaType = req.body.media_type || req.body.mediaType || 'video/mp4';
+586: 
+587:   if (!storagePath || typeof storagePath !== 'string' || storagePath.trim().length === 0) {
+588:     res.status(400).json({ error: 'storage_path is required.' });
+589:     return;
+590:   }
+591: 
+592:   try {
+593:     // 1. Fetch pool and penalty ledger record
+594:     const pool = await prisma.pool.findUnique({
+595:       where: { id: poolId },
+596:     });
+597: 
+598:     if (!pool) {
+599:       res.status(404).json({ error: 'Pool not found.' });
+600:       return;
+601:     }
+602: 
+603:     const penalty = await db.penaltyLedger.findUnique({
+604:       where: { id: penaltyId },
+605:     });
+606: 
+607:     if (!penalty || penalty.poolId !== poolId) {
+608:       res.status(404).json({ error: 'Penalty record not found in this pool.' });
+609:       return;
+610:     }
+611: 
+612:     // 2. Authorization check: penalty owner or pool commissioner
+613:     const requestingUserId = req.user!.id;
+614:     const isOwner = penalty.userId === requestingUserId;
+615:     const isCommissioner = pool.adminId === requestingUserId;
+616: 
+617:     if (!isOwner && !isCommissioner) {
+618:       res.status(403).json({ error: 'Forbidden: You do not have permission to upload media for this penalty.' });
+619:       return;
+620:     }
+621: 
+622:     // 3. Upsert PenaltyMedia record
+623:     const penaltyMedia = await db.penaltyMedia.upsert({
+624:       where: {
+625:         penaltyId,
+
+--- src/server.ts:675-710 (PATCH /api/pools/:pool_id/penalties/:id/media/confirm) ---
+675: app.patch('/api/pools/:pool_id/penalties/:id/media/confirm', requireAuth, async (req: Request, res: Response): Promise<void> => {
+676:   const poolId = String(req.params.pool_id);
+677:   const penaltyId = String(req.params.id);
+678:   const targetStatus = String(req.body.status || 'CONFIRMED').toUpperCase();
+679: 
+680:   if (!['CONFIRMED', 'REJECTED', 'PENDING'].includes(targetStatus)) {
+681:     res.status(400).json({ error: 'Invalid status. Allowed values: CONFIRMED, REJECTED, PENDING.' });
+682:     return;
+683:   }
+684: 
+685:   try {
+686:     // 1. Fetch pool and verify commissioner permissions
+687:     const pool = await prisma.pool.findUnique({
+688:       where: { id: poolId },
+689:     });
+690: 
+691:     if (!pool) {
+692:       res.status(404).json({ error: 'Pool not found.' });
+693:       return;
+694:     }
+695: 
+696:     const requestingUserId = req.user!.id;
+697:     const isCommissioner = pool.adminId === requestingUserId;
+698: 
+699:     if (!isCommissioner) {
+700:       res.status(403).json({ error: 'Forbidden: Only the pool commissioner can confirm penalty media.' });
+701:       return;
+702:     }
+703: 
+704:     // 2. Fetch penalty media
+705:     const existingMedia = await db.penaltyMedia.findUnique({
+706:       where: { penaltyId },
+707:     });
+708: 
+709:     if (!existingMedia || existingMedia.poolId !== poolId) {
+710:       res.status(404).json({ error: 'Penalty media not found for this penalty in this pool.' });
+```
+
+### 6. `src/server.ts:105-135` Facts (GET /api/games Pool Scoping)
+```typescript
+105: 
+106: /**
+107:  * GET /api/games
+108:  * Returns upcoming and current week NFL games with the requesting user's pick status.
+109:  */
+110: app.get('/api/games', requireAuth, async (req: Request, res: Response): Promise<void> => {
+111:   const userId = req.user!.id;
+112:   const poolId = req.query.pool_id ? String(req.query.pool_id) : undefined;
+113: 
+114:   try {
+115:     let pool = poolId
+116:       ? await prisma.pool.findUnique({ where: { id: poolId } })
+117:       : await prisma.pool.findFirst({ where: { status: 'ACTIVE' } });
+118: 
+119:     if (!pool) {
+120:       pool = await prisma.pool.create({
+121:         data: {
+122:           name: 'Main NFL Pick \'Em Pool',
+123:           adminId: userId,
+124:           settings: { lock_offset: 0, points_per_win: 1 },
+125:           status: 'ACTIVE',
+126:         },
+127:       });
+128:     }
+129: 
+130:     const games = await prisma.game.findMany({
+131:       orderBy: { kickoffTime: 'asc' },
+132:       include: {
+133:         picks: {
+134:           where: {
+135:             userId: userId,
+```
+
+### 7. BR-5b Client Pool Scoping (`client/src/components/AdminDashboard.tsx`)
+```typescript
+44:   const [poolId, setPoolId] = useState<string>('');
+56:       const res = await fetch('/api/pools', {
+62:           setPoolId(data[0].id);
+97:       const res = await fetch(`/api/admin/picks?user_id=${userId}&pool_id=${currentPoolId}`, {
+103:       if (data.pool?.id) setPoolId(data.pool.id);
+148:       const res = await fetch('/api/admin/picks', {
+```
+
+### 8. Worktree & Control Hygiene
+```text
+--- git reflog -n 10 ---
+397981d HEAD@{0}: commit: docs: generate evidence bundle and finalize changes for R-12.2-AB
+00e89dd HEAD@{1}: checkout: moving from main to fix/br5b-admin-picks
+00e89dd HEAD@{2}: commit: docs: generate evidence bundle and finalize changes for R-12.2-AA
+8ec0ca5 HEAD@{3}: commit: docs: generate evidence bundle and finalize changes for R-12.2-Z
+a28e55d HEAD@{4}: checkout: moving from e0e857933e9a0dc21ca9792804935b947e2dd445 to main
+e0e8579 HEAD@{5}: checkout: moving from main to HEAD~1
+a28e55d HEAD@{6}: reset: moving to HEAD
+a28e55d HEAD@{7}: checkout: moving from e0e857933e9a0dc21ca9792804935b947e2dd445 to main
+e0e8579 HEAD@{8}: checkout: moving from main to HEAD~1
+a28e55d HEAD@{9}: reset: moving to HEAD
+
+--- git worktree list ---
+C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em 397981d [fix/br5b-admin-picks]
+
+--- .gitignore worktree entry ---
+.gitignore:29:.worktree-ctl/
+```

@@ -52,7 +52,7 @@ describe('BR-1: Append-Only Trigger Definitions, Immutability & Cascading Constr
     if (prisma) {
       if (poolId) {
         await prisma.penaltyLedger.deleteMany({ where: { poolId } }).catch(() => {});
-        await (prisma as any).weeklyWrapup.deleteMany({ where: { poolId } }).catch(() => {});
+        await (prisma as any).weeklyWrapup?.deleteMany?.({ where: { poolId } }).catch(() => {});
         await prisma.poolMembership.deleteMany({ where: { poolId } }).catch(() => {});
         await prisma.pool.delete({ where: { id: poolId } }).catch(() => {});
       }

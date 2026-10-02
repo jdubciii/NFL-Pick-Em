@@ -483,5 +483,183 @@ Before enabling `LEDGER_TYPED_WRITES`, a read-path parity test must pass. Every 
 - **R-12.2-Y:** applied_by root cause identified as test-made table in wrapUpConcurrency. False DDL-grep finding noted. App runs locally.
 - **R-12.2-Z:** stale-submission finding noted. R-12.2-Y re-issued.
 - **R-12.2-AA:** S-6 triggered (admin picks routes cross-pool). Decision #49 implemented. /api/admin/users accepted as platform-level. Migration count corrected to 8.
+- **R-12.2-AB:** BR-5b not accepted (uncommitted). Decisions #50-#51 applied. Docs-base verdict withdrawn. Default-creation deviation recorded.
+- **R-12.2-AC:** Decision #52 applied (claim code fails closed). S-7 global admin override removed from Shot-Cam routes. 00e89dd deviation recorded.
+- **R-12.2-AD:** Decisions #53-#54 applied. S-7 reclassified. S-8 write-on-GET removed. Commit-hygiene deviation recorded. Decisions #28-#54 registered.
+- **R-12.2-AE:** Decision #55 applied. S-7 reversal confirmed. S-8 explicit pool_id guarded. Claim step fail-closed fixed. Wrap-up game-set deviation recorded.
+- **R-12.2-AE-V2:** Ruling BLOCKED. BR-4b migration-branch test failure documented. Decisions #53, #54, and #55 reconciled.
+- **R-12.2-AE-V3:** Ruling BLOCKED solely on Git finalization. BR-4b 7/7 and S-8 passed. Git tree cleaned and raw prisma generate output captured.
+- **R-12.2-AE-V4:** Ruling BLOCKED solely on Git finalization. BR-4b 7/7, S-8, Decision #52, and Decision #54/#55 verification passed. Git tree cleaned prior to evidence generation.
+- **R-12.2-AE-V4 was recorded BLOCKED in the register and later APPROVED by the Fallback; the Arbiter ratifies gates individually.**
+
+---
+
+## Phase 12 Decision Register (Appendix A)
+
+1. **Decision #1:** Numeric precision Decimal(5,2) standardized for all penalty ledger entries and calculations (INV-1).
+2. **Decision #2:** Immutable penalty ledger enforced via database-level append-only triggers (`penalty_ledger_prevent_update_delete`, `penalty_ledger_prevent_truncate`) (INV-2).
+3. **Decision #3:** Elimination of floating-point arithmetic in scoring and wrap-up services; use `Prisma.Decimal` and `decimal.js`.
+4. **Decision #4:** Client presets (All Home, All Away, Favorites, Contrarian, Mirror Rival) operate purely in memory with zero server persistence (INV-3).
+5. **Decision #5:** Square Sheet Matrix dual-mode anti-peeking visibility enforcement (INV-4).
+6. **Decision #6:** Granular rolling vs global game lockout derived exclusively from stored kickoff timestamps (INV-5).
+7. **Decision #7:** Support for excluded game windows (e.g. skipped Thursday night games) in scoring and wrap-up.
+8. **Decision #8:** Decoupled 3-tier sync/scoring fallback architecture preserving local DB as source of truth.
+9. **Decision #9:** Non-blocking outbound network actions with database transactions insulated against external transport failures (INV-6).
+10. **Decision #10:** Anti-bloat principle (INV-7): prohibition of live odds, weather APIs, Twilio/SMS, payment processors, and third-party bloat.
+11. **Decision #11:** Shot-Cam storage verification portal metadata endpoints and owner verification model (INV-8).
+12. **Decision #12:** Role enum strictly limited to `ADMIN` and `USER`; rejection of `COMMISSIONER` or `CO_COMMISSIONER` role additions.
+13. **Decision #13:** Explicit pool scoping via `/api/pools/:pool_id/...` across all pool-specific endpoints.
+14. **Decision #14:** Foreign key constraints enforce `RESTRICT` on pools, users, and memberships.
+15. **Decision #15:** Primary keys standardized to UUID (`id String @id @default(uuid()) @db.Uuid`) across relational models.
+16. **Decision #16:** Timestamps standardized to `timestamp(3)` in UTC across all models.
+17. **Decision #17:** Physical reconciliation mapping: `leagueId`/`seasonId` -> `pool_id`, `userId` -> `user_id`, `weekId` -> `week_number`.
+18. **Decision #18:** Migration naming and sequencing standardization for Phase 12.
+19. **Decision #19:** Ledger effect formula: `Outstanding = Σ effect(e)` where assessments/opening balances are `+delta`, fulfillments/waivers are `-delta`, reversals are `-effect(target)`.
+20. **Decision #20:** Removal of global ADMIN bypass on pool-scoped routes (`requirePoolMember` and `requirePoolCommissioner`).
+21. **Decision #21:** Reversal constraints: target must match user/season/amount; unique `reversal_of_id`; rejection of double reversals.
+22. **Decision #22:** Read-path audit parity test required before enabling `LEDGER_TYPED_WRITES`.
+23. **Decision #23:** BR-1 immutability triggers installed on `penalty_ledger` (`BEFORE DELETE OR UPDATE` and `BEFORE TRUNCATE`).
+24. **Decision #24:** Rejection of table mutation on `weekly_wrapups` via `weekly_wrapups_prevent_mutation()` trigger.
+25. **Decision #25:** Hosted Supabase database environment classified as SHARED-DEV with write freeze.
+26. **Decision #26:** BR-2b/BR-2c Row-Level Security and Data API lockdown across public tables.
+27. **Decision #27:** Direct anon/authenticated access revoked from `users.password_hash` and sensitive tables.
+28. **Decision #28:** Local rehearsal database environment isolation (`pickem_rehearsal` on `localhost:5432`).
+29. **Decision #29:** `assertDisposableDatabase()` safeguard preventing test execution against hosted database.
+30. **Decision #30:** Separation of `.env` (rehearsal) and `.env.hosted` (hosted pooler).
+31. **Decision #31:** Guarded drop of rehearsal schema on hosted database.
+32. **Decision #32:** Permanent `.env` flip to local rehearsal and Vitest global setup assertions.
+33. **Decision #33:** CI documentation append-only guard enforcing strictly 0 deletions against baseline `e41ce72`.
+34. **Decision #34:** `db:reset` script standardizing rehearsal recreation with `app.disposable=true` sentinel.
+35. **Decision #35:** Rehearsal database provisioning with `anon`, `authenticated`, and `service_role` roles.
+36. **Decision #36:** Migration catalog checksum verification across all 8 migration files.
+37. **Decision #37:** Negative control verification using isolated worktrees (`.worktree-ctl`).
+38. **Decision #38:** Prohibition of test-created tables in production/rehearsal migrations.
+39. **Decision #39:** Git diff allowlist check enforcing bounded PR modifications.
+40. **Decision #40:** DDL grep negative control verifying zero DDL or SET statements in application codebase.
+41. **Decision #41:** BR-2 pre-check, post-check, and rollback script provisioning for hosted migration.
+42. **Decision #42:** Verification of SQLSTATE 42501 permission denial for anon and authenticated roles.
+43. **Decision #43:** Elimination of float arithmetic in weekly wrap-up calculations.
+44. **Decision #44:** Tiebreaker distance calculation using absolute score difference.
+45. **Decision #45:** Split-penalty rounding and remainder distribution logic preservation.
+46. **Decision #46:** Weekly wrap-up game-set resolution via shared scoring exclusion resolver.
+47. **Decision #47:** Strict fail-closed wrap-up precondition if non-excluded games are pending or absent.
+48. **Decision #48:** CI check for migration file checksums against `_prisma_migrations`.
+49. **Decision #49:** CI route scan enforcing parameter scoping and guard middleware on all routes.
+50. **Decision #50:** `GET /api/admin/users` allowlisted as platform-level admin endpoint.
+51. **Decision #51:** Admin picks routes scoped with `requirePoolCommissioner` (`from: 'query'` / `from: 'body'`).
+52. **Decision #52:** Weekly wrap-up claim step fails closed (`CLAIM_STORE_UNAVAILABLE`) if `weekly_wrapups` table is absent.
+53. **Decision #53:** Agents never push, force-push or change remotes.
+54. **Decision #54:** GET handlers perform no writes.
+55. **Decision #55:** A guard is never bypassed by a conditional when its dependency is missing.
+56. **Decision #56:** Rulings are stored verbatim under docs/rulings/. The Decision Register in ARCHITECTURE.md is a byte-for-byte copy of docs/rulings/appendix-a.md, and CI diffs the two.
+
+---
+
+## Phase 12 Decision Register (supersedes the register at ARCHITECTURE.md lines 498-548)
+
+1 Points are derived; penalties are ledger entries.
+2 Provider corrections are proposals; auto-apply only when no outcome changes.
+3 Manual overrides beat sync; divergence is flagged.
+4 Locks derive from the stored kickoff time only.
+5 Inbox is the source of truth; email is best-effort.
+6 Aggregates are never stored in numeric columns.
+7 Pick-on-behalf is write-only.
+8 History reads sealed snapshots only.
+9 Ledger entry_type is additive and parallel to reason; backfill by column default, never UPDATE.
+10 Physical schema names govern; logical names in handoffs are documentation.
+11 DB-enforced invariants are verified against the catalog, never assumed.
+12 Typed ledger writes serialize per (pool_id, user_id).
+13 Ledger-bearing pools and memberships are never hard-deleted.
+14 Season is Pool; routes use /api/pools/:pool_id.
+15 New tables and functions are deny-by-default to Data API roles.
+16 Money input goes through one strict parser; never parseInt/parseFloat/Number.
+17 Every evidence report states host class, database, user and server version.
+18 Destructive work runs only on a disposable database; hosted gets migrate deploy only.
+19 Legacy ASSESSMENT rows may be signed; typed rows are positive.
+20 Per-pool authority derives from pools.admin_id; no global-role override.
+21 Authorization defect fixes are code-only and precede new commissioner endpoints.
+22 Money splitting is Decimal-only with characterization first; no zero-delta rows.
+23 Every invariant carries an evidence status.
+24 Period-close jobs are idempotent via a DB-enforced claim in the same transaction.
+25 Acceptance tests assert behavior (SQLSTATE, row state), never message text.
+26 Read routes are guarded like write routes; guards change access, never payloads.
+27 Period-close preconditions use authoritative state; empty sets fail closed; no bypass flag.
+28 VERIFIED requires numbers or raw output in the report body.
+29 Isolation is by database, never by schema; the guard has three independent checks.
+30 Raw evidence is unedited tool output; identifiers resolve; figures are consistent.
+31 Irreversible operations run only from committed scripts with machine-checked preconditions.
+32 The default environment is disposable; hosted credentials live in a separate file.
+33 Docs are append-only, enforced by CI against a tagged baseline.
+34 Every acceptance criterion maps to a named test or evidence item.
+35 Tests never create or alter schema; databases reset via a guarded script.
+36 A migration stays off the deployable branch until its hosted gate clears.
+37 Evidence is produced by one committed script; empty sections fail; UTF-8 via spawn.
+38 Trigger proofs run as a privileged role; privilege proofs as anon/authenticated.
+39 Evidence and CI scripts measure inputs independently and ship with a negative control.
+40 Every evidence run stamps commit, branch and time; identical output counts as not run.
+41 A matrix row may cite only tests present in the committed JSON artifact.
+42 Schema evidence comes from real pg_dump including ACLs, bodies and indexes.
+43 Every ordered criterion appears in the matrix as PASS, FAIL or NOT VERIFIED.
+44 Only a human runs or approves hosted changes; authorizations are typed in the conversation.
+45 Rollbacks are generated from a pre-state snapshot and proven by hash equality.
+46 External exposure is measured identically before and after a change.
+47 Machine-checkable gates are decided by script exit codes.
+48 Applied migrations are immutable; CI compares checksums.
+49 Authorization scans cover every source of an identifier (path, query, body, headers).
+50 Each test run begins with reset, migrate deploy and generate, and prints a header.
+51 Tests are never deleted or weakened in non-test commits; controls run in a separate worktree.
+52 Code depending on a schema object ships with its migration or fails closed.
+53 Agents never push, force-push or change remotes.
+54 GET handlers perform no writes.
+55 A guard is never bypassed by a conditional when its dependency is missing.
+56 Rulings are stored verbatim under docs/rulings/. The Decision Register in ARCHITECTURE.md is a byte-for-byte copy of docs/rulings/appendix-a.md, and CI diffs the two.
+57 Every table written by a re-running job carries a database-enforced dedupe key.
+58 Outbound payload sanitization is default-deny against an explicit per-type registry.
+59 Outbox drain workers claim via FOR UPDATE SKIP LOCKED with explicit lease timeouts and discrete backoff.
+60 Every claim of a leased job item counts as an attempt; the lease is verified before each send and when the result is recorded.
+
+V4: APPROVED by Fallback; RATIFIED IN PART by the Arbiter.
+
+R-12.2-AG: Register ratified. Hosted tripwire re-run. Authoritative register is located at 'Phase 12 Decision Register (supersedes...)'.
+
+R-12.2-AH: Milestone 12.1 CONDITIONAL START; hosted tripwire & evidence repair cycle.
+
+R-12.2-AH-V2: Hosted tripwire query streaming corrected. S-7/S-8 explicit console assertions logged. Pre-run porcelain check enforced.
+
+R-12.2-AH-V2: Evidence gate cleared. Hosted tripwire now provides raw hosted identity, all 11 required table counts, migration state, trigger state, and rls_on 12/12; localhost inverse controls fail closed. S-7/S-8 required invariant and byte-equality assertions are explicitly logged. Pre-generation workspace hygiene is directly evidenced as clean. Milestone 12.1 remains CONDITIONAL START on feat/phase12-1-outbox; hosted DDL and merges to main remain blocked pending separate implementation gates.
+
+R-12.2-AI: Step 1 (Core Schema & Migration) implemented on rehearsal DB. Revoke/RLS applied.
+
+R-12.2-AJ: I-1/I-2 CLOSED; 12.1 step A accepted with amendment. Authoritative register pointer updated.
+
+R-12.2-AK: 12.1 Step B GO. Decisions #58/#59 applied.
+
+R-12.2-AL: B3 fixes applied. Scanner deferred to step E. Decision #60 applied.
+
+### Operational Standard: Single-Commit Atomic Amend Evidence Protocol & Tier Separation
+
+1. **Atomic Amend Protocol:**
+   - Evidence generation must execute via the single-commit amend cycle to eliminate SHA discrepancies between execution baselines and binding commits:
+     1. `git commit -m "chore: prepare <step> evidence baseline"`
+     2. `node scripts/generate_evidence_<step>.js > docs/evidence/<step>/EVIDENCE_BUNDLE.md`
+     3. `git commit --amend --no-edit`
+   - Generated evidence bundles must record and display exclusively the single authoritative commit SHA.
+
+2. **Strict API Tier Separation:**
+   - Endpoints under `/api/pools/:pool_id/*` are Pool-Tier only. Cross-tenant leakage is strictly forbidden (Decision #20).
+   - Worker runs, engine cycles, and system-tier tasks (such as `JobRun`) operate at the System Tier and must never be exposed or returned in pool-scoped routes.
+
+### Amend Protocol Constraint & Operational Boundaries (R-12.1-RESTORE-01)
+- **Amend Constraint:** Absolutely ZERO `git commit --amend` or history rewriting is permitted on branches already pushed to origin (Decision #53).
+- **Scheduled Producer Rule:** Scheduled outbox producers (including Reminder Scanner and Wrap-Up Engine) operate at the System Tier, are idempotent at the store level, honor user notification preferences, fail closed per Decision #55, and are never triggered by GET requests.
+
+### Operational Standard: Two-Stage Forward-Binding Evidence Protocol (Published Branches)
+When an evidence bundle is produced on a branch that has already been published to a remote (where `git commit --amend` is strictly prohibited by Decision #53), the Two-Stage Forward-Binding Model governs:
+1. **Stage 1 (Execution Baseline):** The test suite, regression controls, CI checks, and live telemetry execute against a clean execution baseline commit `E_SHA`.
+2. **Stage 2 (Binding Container):** The resulting bundle is committed forward as `B_SHA`. The evidence bundle MUST contain an explicit `# TWO-STAGE EVIDENCE BINDING RECORD` section establishing the cryptographic lineage:
+   - `Execution Baseline SHA: <E_SHA>`
+   - `Binding Container SHA: <B_SHA>`
+   - `Lineage Parent Assertion: git rev-parse <B_SHA>~1 == <E_SHA>`
+   - `Working Tree at Generation: 100% CLEAN`
 
 

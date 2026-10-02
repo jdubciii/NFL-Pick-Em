@@ -1,0 +1,167 @@
+﻿================================================================================
+FACT GATHERING (PHASE 1 - PRE-PUSH SCAN) ΓÇö RULING R-12.2-AE
+================================================================================
+
+### 1. Git Remote Verification
+```text
+origin	https://github.com/jdubciii/NFL-Pick-Em.git (fetch)
+origin	https://github.com/jdubciii/NFL-Pick-Em.git (push)
+```
+
+### 2. .env Git Ignore Status
+```text
+.gitignore:8:.env	.env
+.gitignore:10:.env.hosted	.env.hosted
+```
+
+### 3. Tracked .env Files in Repository
+```text
+.env.example
+```
+
+### 4. Secret & Credential History Scan
+```text
+POTENTIAL LEAKS DETECTED (11 occurrences):
+908f447121c9068e4b3a31ec524d3094ff4083f8:tests/br6.test.ts:6:    const dummyUrl = 'postgresql://u:p@db.invalid:5432/x';
+ecba144dd7ee4fbeaa20d777832d8df3178d2981:tests/br6.test.ts:6:    const dummyUrl = 'postgresql://u:p@db.invalid:5432/x';
+baa8760b93d83874295e42c2be8fe90766888a2f:tests/br6.test.ts:6:    const dummyUrl = 'postgresql://u:p@db.invalid:5432/x';
+528d6e82a1d708c986cc6fd085de717c620c04b7:tests/br6.test.ts:6:    const dummyUrl = 'postgresql://u:p@db.invalid:5432/x';
+22db0f3e1bb76a11a21c017142e44746664167b6:tests/br6.test.ts:6:    const dummyUrl = 'postgresql://u:p@db.invalid:5432/x';
+f27584fa854aae8ba520fcd82ab7c6c40a5d9b06:tests/br6.test.ts:6:    const dummyUrl = 'postgresql://u:p@db.invalid:5432/x';
+335f3221f8eb309932362557e7d22c435b220c4b:tests/br6.test.ts:6:    const dummyUrl = 'postgresql://u:p@db.invalid:5432/x';
+66b3bc43255cc0d1a283ee419a4507ae5528197d:tests/br6.test.ts:6:    const dummyUrl = 'postgresql://u:p@db.invalid:5432/x';
+93038206f38e658d8c7ace90a195557f9c56722b:tests/br6.test.ts:6:    const dummyUrl = 'postgresql://u:p@db.invalid:5432/x';
+4c7096fb459f34f2e5f5c1bce7b2b005cac41aff:tests/br6.test.ts:6:    const dummyUrl = 'postgresql://u:p@db.invalid:5432/x';
+Credential scan detected unmasked sensitive tokens!
+```
+
+### 5. `claimModel` Grep in `src/services/weeklyWrapUp.ts`
+```text
+src/services/weeklyWrapUp.ts:173:    if (claimModel) {
+src/services/weeklyWrapUp.ts:174:      const claim = await claimModel.createMany({
+```
+
+### 6. `weekNo` Grep in `src/services/weeklyWrapUp.ts`
+```text
+src/services/weeklyWrapUp.ts:19:  weekNo?: number;
+src/services/weeklyWrapUp.ts:70:export async function executeWeeklyWrapUp(poolId: string, weekNo: number): Promise<WeeklyWrapUpResult> {
+src/services/weeklyWrapUp.ts:77:      return { applied: false, reason: 'CLAIM_STORE_UNAVAILABLE', poolId, weekNo };
+src/services/weeklyWrapUp.ts:81:      SELECT 1 FROM public.weekly_wrapups WHERE pool_id = ${poolId}::uuid AND week_number = ${weekNo} LIMIT 1;
+src/services/weeklyWrapUp.ts:84:      return { applied: false, reason: 'ALREADY_WRAPPED_UP', poolId, weekNo };
+src/services/weeklyWrapUp.ts:145:        weekNo,
+src/services/weeklyWrapUp.ts:166:        weekNo,
+src/services/weeklyWrapUp.ts:175:        data: [{ poolId, weekNumber: weekNo }],
+src/services/weeklyWrapUp.ts:179:        return { applied: false, reason: 'ALREADY_WRAPPED_UP', poolId, weekNo };
+src/services/weeklyWrapUp.ts:195:        weekNumber: weekNo,
+src/services/weeklyWrapUp.ts:273:      VALUES (${pool.id}::uuid, ${weekNo})
+src/services/weeklyWrapUp.ts:292:            weekNumber: weekNo,
+src/services/weeklyWrapUp.ts:344:      weekNo,
+```
+
+### 7. `client/src/pages/AdminDashboard.tsx` (Lines 40-70)
+```typescript
+40:   const { token, user: currentAdmin } = useAuth();
+41:   const [users, setUsers] = useState<UserItem[]>([]);
+42:   const [selectedUserId, setSelectedUserId] = useState<string>('');
+43:   const [games, setGames] = useState<AdminGameItem[]>([]);
+44:   const [poolId, setPoolId] = useState<string>('');
+45:   const [loadingUsers, setLoadingUsers] = useState(true);
+46:   const [loadingPicks, setLoadingPicks] = useState(false);
+47:   const [overridingGameId, setOverridingGameId] = useState<string | null>(null);
+48:   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+49:   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
+50:   const [showAuditLogs, setShowAuditLogs] = useState(false);
+51:   const [penaltyModalOpen, setPenaltyModalOpen] = useState(false);
+52: 
+53:   // 1. Fetch Pools on load
+54:   const fetchPools = useCallback(async () => {
+55:     try {
+56:       const res = await fetch('/api/pools', {
+57:         headers: { Authorization: `Bearer ${token}` },
+58:       });
+59:       if (res.ok) {
+60:         const data = await res.json();
+61:         if (data.length > 0 && !poolId) {
+62:           setPoolId(data[0].id);
+63:         }
+64:       }
+65:     } catch (err) {
+66:       console.error('Failed to load pools:', err);
+67:     }
+68:   }, [token, poolId]);
+69: 
+70:   // 2. Fetch Users on load
+```
+
+### 8. AdminDashboard Tracked Files in Git
+```text
+client/src/components/AdminDashboard.tsx
+client/src/pages/AdminDashboard.tsx
+```
+
+### 9. `GET /api/pools` Route Definition
+```typescript
+90:  * GET /api/pools
+91:  * Returns all active pools.
+92:  */
+93: app.get('/api/pools', requireAuth, async (_req: Request, res: Response): Promise<void> => {
+94:   try {
+95:     const pools = await prisma.pool.findMany({
+96:       where: { status: 'ACTIVE' },
+97:       orderBy: { name: 'asc' },
+98:     });
+99:     res.json(pools);
+100:   } catch (error) {
+101:     console.error('Error fetching pools:', error);
+102:     res.status(500).json({ error: 'Failed to fetch pools.' });
+103:   }
+104: });
+105: 
+106: /**
+107:  * GET /api/games
+```
+
+### 10. Client `/api/pools` Grep
+```text
+client/src/components/AdminDashboard.tsx:56:      const res = await fetch('/api/pools', {
+client/src/components/AdminPenaltyModal.tsx:63:      const res = await fetch(`/api/pools/${poolId}/penalties/member/${memberId}`, {
+client/src/components/AdminPenaltyModal.tsx:103:      const res = await fetch(`/api/pools/${poolId}/penalties/adjust`, {
+client/src/components/Leaderboard.tsx:32:        const res = await fetch('/api/pools', {
+client/src/components/Leaderboard.tsx:59:      const response = await fetch(`/api/pools/${selectedPoolId}/leaderboard`, {
+client/src/components/LeagueMatrixView.tsx:86:        const res = await fetch('/api/pools', {
+client/src/components/LeagueMatrixView.tsx:115:        `/api/pools/${selectedPoolId}/matrix?week_no=${selectedWeek}`,
+client/src/components/PenaltyLedgerView.tsx:103:        const res = await fetch('/api/pools', {
+client/src/components/PenaltyLedgerView.tsx:129:        ? `/api/pools/${selectedPoolId}/penalties/member/${memberIdFilter}`
+client/src/components/PenaltyLedgerView.tsx:130:        : `/api/pools/${selectedPoolId}/penalties/member/${user?.id}`;
+client/src/components/PenaltyLedgerView.tsx:308:      const res = await fetch(`/api/pools/${selectedPoolId}/penalties/${activePenaltyForUpload.id}/media`, {
+client/src/components/PenaltyLedgerView.tsx:341:      const res = await fetch(`/api/pools/${selectedPoolId}/penalties/${penaltyId}/media/confirm`, {
+client/src/components/WallOfShame.tsx:80:        const res = await fetch('/api/pools', {
+client/src/components/WallOfShame.tsx:107:        `/api/pools/${poolId}/leaderboard/cumulative?sort_by=${sortBy}&order=${sortOrder}`,
+client/src/components/WeeklyPicks.tsx:74:          const matrixRes = await fetch(`/api/pools/${data.pool.id}/matrix`, {
+client/src/pages/AdminDashboard.tsx:56:      const res = await fetch('/api/pools', {
+```
+
+### 11. `POST /api/picks` Route Definition (`src/routes/picks.ts`)
+```typescript
+9:  * POST /api/picks
+10:  * Protected route for users to submit or update their game pick.
+11:  * Accepts: pool_id, game_id, selected_team_id (optional)
+12:  * Enforces granular kickoff locking based on pool.settings.lock_offset.
+13:  * Uses Prisma upsert on compound unique [pool_id, user_id, game_id].
+14:  */
+15: picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<void> => {
+16:   const poolId = req.body.pool_id || req.body.poolId;
+17:   const gameId = req.body.game_id || req.body.gameId;
+18:   const rawSelectedTeamId = req.body.selected_team_id !== undefined 
+19:     ? req.body.selected_team_id 
+20:     : req.body.selectedTeamId;
+21: 
+22:   if (!poolId || !gameId) {
+23:     res.status(400).json({ error: 'pool_id and game_id are required fields.' });
+24:     return;
+25:   }
+26: 
+27:   // Ensure missing, empty string, or whitespace-only inputs resolve to null
+28:   const selectedTeamId = rawSelectedTeamId && String(rawSelectedTeamId).trim().length > 0
+```
+

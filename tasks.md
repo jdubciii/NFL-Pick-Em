@@ -259,4 +259,166 @@
 - [✅] **Migration Count Correction:** Verified physical migration directories count is exactly 8.
 - [✅] **Bundle Generator Self-Test:** Negative control confirmed operational with strict non-empty output validation.
 
+### R-12.2-AB Acceptance Criteria (Section 10)
+- [ ] **BR-5b Commits on Isolated Branch:** All BR-5b changes committed to `fix/br5b-admin-picks` with clean working tree.
+- [ ] **Evidence Generator Negative Control via Worktree:** Strict evidence generator uses `git worktree` isolation for negative control without modifying live working tree.
+- [ ] **No Markdown Truncation:** Generator validates that no empty sections or empty code blocks exist in the bundle.
+- [ ] **Integrity Checks Completed:** Facts recorded for "Main NFL Pick" occurrences, Prisma migrate status, and route handlers.
+- [ ] **Docs Invariant Upheld:** `ARCHITECTURE.md`, `ROADMAP.md`, `tasks.md` strictly 0 deletions against `e41ce72`.
+- [ ] **59/59 Tests Passing:** Full suite passes across rehearsal and mock environments.
+
+### R-12.2-AC Acceptance Criteria (Section 9)
+- [ ] **Workspace Hygiene & Worktree Isolation:** Live working tree clean; negative controls run exclusively in `.worktree-ctl` without `reset`, `checkout`, or `stash`.
+- [ ] **Evidence Generator Hardening:** Generator utilizes 50MB buffer, incremental writes, non-empty section/code validation, and size checks (>1000 bytes).
+- [ ] **Decision #52 Applied (Claim Code Fails Closed):** 3-name fallback removed from `weeklyWrapUp.ts`; `to_regclass` checked; returns `CLAIM_STORE_UNAVAILABLE` when claim table absent.
+- [ ] **S-7 Remediation (Shot-Cam):** Global `Role.ADMIN` override removed from `POST .../media` and `PATCH .../media/confirm` routes in `src/server.ts`.
+- [ ] **BR-5b UI Integration:** `AdminDashboard.tsx` sends `pool_id` on both GET and PUT calls sourced from active pool context.
+- [ ] **Minimal Fail-Closed Test:** `tests/br4b.test.ts` on branch contains only the fail-closed claim store check.
+- [ ] **Docs Invariant Upheld:** `ARCHITECTURE.md`, `ROADMAP.md`, `tasks.md` strictly 0 deletions against `e41ce72`.
+- [ ] **Strict Two-Commit Separation:** Code fixes committed separately from docs and evidence bundle.
+
+### R-12.2-AD Acceptance Criteria (Section 10)
+- [ ] **1. History Rewrite (Local Only):** Branch `fix/br5b-admin-picks` rewritten into 4 clean atomic commits on top of `main`; no remote push executed.
+- [ ] **2. Evidence Generator Hardening:** Generator strictly uses `spawnSync`, UTF-8 encoding, `NO_COLOR=1`, NUL-byte sanitization (`\x00` stripped), incremental writes, non-empty section validation, and size >= 2000 bytes.
+- [ ] **3. Fact Gathering & DB Verification:** All facts captured (commit logs, migrations count 8, `weeklyWrapUp.ts` game resolution, 0 DDL grep, S-7 diff, S-8 client calls, BR-5b UI, Decision register).
+- [ ] **4. Decision #53 Applied (S-7 Reclassification):** Shot-Cam routes scoped to owner and pool commissioner only.
+- [ ] **5. Decision #54 Applied (S-8 Write-on-GET Removal):** `GET /api/games` returns 404 POOL_NOT_FOUND when missing; resolves active membership/commissioner pool when `pool_id` omitted; zero writes on read.
+- [ ] **6. Decision #52 Applied (Claim Store Fails Closed):** Claim store checks `to_regclass` and fails closed with `CLAIM_STORE_UNAVAILABLE`.
+- [ ] **7. BR-5b UI:** `client/src/pages/AdminDashboard.tsx` uses pool context for `pool_id` on GET and PUT calls.
+- [ ] **8. Test Execution:** `npm run test:db` executes clean DB reset, migrate deploy, client generate, `db_header.js`, and all 61 tests passing.
+- [ ] **9. Docs Invariant Upheld:** `ARCHITECTURE.md`, `ROADMAP.md`, `tasks.md` strictly 0 deletions against `e41ce72`.
+- [ ] **10. Evidence Bundle Generated:** `docs/evidence/R-12.2-AD/EVIDENCE_BUNDLE.md` generated with size >= 2000 bytes.
+
+### R-12.2-AE Acceptance Criteria (Section 8)
+- [ ] **1. Pre-Push Scan & Facts:** No credentials or exposed .env files in git; all pre-push facts collected.
+- [ ] **2. Wrap-Up Claim Fail-Closed (Decision #52):** Removed 3-name fallback from `src/services/weeklyWrapUp.ts`; `SELECT to_regclass('public.weekly_wrapups')` checked; returns `CLAIM_STORE_UNAVAILABLE` when claim table absent; result keys aligned to `weekNumber`.
+- [ ] **3. S-8 Completion (Decision #55):** `GET /api/games` explicit `pool_id` enforces `requirePoolMember` authorization (400 UUID -> 404 existence -> 403 active member/commissioner); omitted `pool_id` resolves active membership/commissioner pool with deterministic ordering; zero writes on read.
+- [ ] **4. Full Test Suite on Main:** `npm run test:db` executes with 100% pass rate (63/63 tests passing).
+- [ ] **5. BR-4b Test on Migration Branch:** Switched to `feat/phase12-migrations`, checked out `f4243e4 -- tests/br4b.test.ts`, ran tests, and returned to `main`.
+- [ ] **6. Phase 12 Decision Register (#1–#55):** Complete 55-item decision register and R-12.2-AE rulings appended to `ARCHITECTURE.md`.
+- [ ] **7. Roadmap & Tasks Updated:** R-12.2-AE entries appended to `ROADMAP.md` and `tasks.md`.
+- [ ] **8. Evidence Bundle Generated:** `scripts/generate_evidence.js` hardened with `spawnSync`, UTF-8 encoding, NUL-byte sanitization, and output saved to `docs/evidence/R-12.2-AE/EVIDENCE_BUNDLE.md`.
+- [ ] **9. Clean Working Tree:** All changes committed locally without remote push.
+
+### R-12.2-AE-V2 Acceptance Criteria (Section 8)
+- [ ] **1. Documentation & Decision Register Reconciliation:** Decisions #53, #54, and #55 reconciled in `ARCHITECTURE.md`; append-only invariant preserved across `ARCHITECTURE.md`, `ROADMAP.md`, and `tasks.md`.
+- [ ] **2. Evidence Generator Hardening:** Generator uses `spawnSync` with `encoding: 'utf8'`, NUL-byte stripping, incremental writes, structure validation, and raw test artifact capture.
+- [ ] **3. Live Repository Context Auto-Injection:** Generator appends `# LIVE REPOSITORY CONTEXT` at the bundle footer containing raw `prisma/schema.prisma` and `ARCHITECTURE.md`.
+- [ ] **4. Secret Scan Cleanliness:** `scripts/secret_scan.sh` created and executed; tests excluded; clean status confirmed.
+- [ ] **5. BR-4b Migration Branch Lifecycle Verification:** Switched to `feat/phase12-migrations`, executed guarded DB reset, `prisma migrate deploy`, `prisma generate` (resolving `weeklyWrapup`), and `vitest run tests/br4b.test.ts` passing cleanly.
+- [ ] **6. Main Branch Verification:** Guarded reset, migrate deploy, prisma generate, and full test suite passing on `main` (63/63 tests passing).
+- [ ] **7. Evidence Bundle Generation:** `docs/evidence/R-12.2-AE-V2/EVIDENCE_BUNDLE.md` generated with complete test logs, source excerpts, secret scan, and live context.
+- [ ] **8. Local Git Finalization:** All changes committed locally with clean working tree; strictly no remote push.
+
+### R-12.2-AE-V3 Acceptance Criteria (Section 8)
+- [ ] **1. Documentation Updates:** Append-only updates committed to `ARCHITECTURE.md`, `ROADMAP.md`, and `tasks.md`.
+- [ ] **2. Pre-Evidence Git Finalization:** `git add -A` and `git commit` executed before evidence run; clean working tree verified.
+- [ ] **3. BR-4b Migration Branch Verification:** `feat/phase12-migrations` verified with raw `prisma generate` and `vitest run tests/br4b.test.ts` (7/7 passing).
+- [ ] **4. Main Branch Verification:** `main` branch verified with `npm run db:reset`, `prisma migrate deploy`, raw `prisma generate`, and full test suite (63/63 passing).
+- [ ] **5. Evidence Generator Execution:** `scripts/generate_evidence.js` captures raw outputs, git status/log, test logs, JSON artifact, and `# LIVE REPOSITORY CONTEXT`.
+- [ ] **6. Cleanup & Final Git Commit:** Temporary files removed, bundle and scripts committed locally, strictly no remote push.
+
+### R-12.2-AE-V4 Acceptance Criteria (Section 8)
+- [ ] Commit the currently modified scripts/generate_evidence.js.
+- [ ] Remove or commit generated artifacts so git status is clean.
+- [ ] Regenerate final evidence bundle after final commit.
+- [ ] Return raw git status showing no M or ?? entries.
+- [ ] Preserve Decisions #53-#55 exactly as reconciled.
+- [ ] Preserve append-only documentation invariant.
+
+### R-12.2-AF Acceptance Criteria (Section 6)
+- [ ] **1. Branch Setup:** Created branch `feat/phase12-1-outbox` from `main`; no application code in `src/` modified for 12.1.
+- [ ] **2. Record Repair & Superseding Register:** Created interim fallback rulings; appended Decision Register from `docs/rulings/appendix-a.md` to `ARCHITECTURE.md`; created and verified `scripts/ci_check_register.js` positive and negative controls.
+- [ ] **3. Evidence Repair:** `tests/safeguards.test.ts` sanitized (`postgres.exampleref`); S-8 pool-count and snapshot assertions added; S-7 permission and denial assertions added.
+- [ ] **4. 12.1 Design Note:** Created `docs/design/12.1.md` documenting outbox models, lock resolver extraction, and internal scheduler mechanism.
+- [ ] **5. Tripwire Script:** Created `scripts/run_tripwire.js` querying hosted database metrics and `to_regclass` claim state.
+- [ ] **6. Evidence Generator Hardening:** Generator executes early git status/commit capture, CI checks, Decision #50 headers for both branches, secret scan, doc metrics, reflog, and tripwire.
+- [ ] **7. Pre-Run Cleanliness:** Git status clean prior to evidence run.
+- [ ] **8. Local Binding:** Final evidence bundle bound in `docs/evidence/R-12.2-AF/EVIDENCE_BUNDLE.md` with strictly no remote push.
+
+### R-12.2-AG Acceptance Criteria (Section 5)
+- [ ] **1. Tooling Commit on Main:** `scripts/db_header.js` created and committed to `main`; `package.json` `test:db` script runs `db_header.js` before `vitest`; merged into `feat/phase12-1-outbox`.
+- [ ] **2. Test Config & Safeguards:** Query logging silenced; `tests/safeguards.test.ts` uses `postgres.exampleref`; S-8 pool-count and snapshot assertions added; S-7 permission and zero-rows assertions added.
+- [ ] **3. Hosted Tripwire Execution:** `scripts/run_hosted_tripwire.js` implemented with Inverse Guard rejecting localhost and requiring Supabase; password/URL redacted; negative control fails with exit 1; real run succeeds against hosted database.
+- [ ] **4. 12.1 Design Note:** Created `docs/design/12.1.md` with files to add (`outbox.ts`, `inbox.ts`, `drain.ts`, `reminder.ts`), lock-resolver extraction plan, scheduler trigger mechanism, and open questions.
+- [ ] **5. Documentation Updates:** Append-only updates added to `ARCHITECTURE.md`, `ROADMAP.md`, and `tasks.md` with 0 deletions against baseline `e41ce72`.
+- [ ] **6. Evidence Generator Hardening:** Generator targets the superseding Appendix A Decision Register block; captures `test:db`, secret scan, reflog, and live repository context.
+- [ ] **7. Pre-Run Cleanliness:** Clean working tree verified before running generator.
+- [ ] **8. Local Binding:** Final evidence bundle bound to `docs/evidence/R-12.2-AG/EVIDENCE_BUNDLE.md` with strictly no remote push.
+
+### R-12.2-AH Acceptance Criteria (Section 7)
+- [ ] **1. Decision #56 Register Addition:** Added Decision #56 to `docs/rulings/appendix-a.md` and superseding register in `ARCHITECTURE.md`; `scripts/ci_check_register.js` positive and negative controls passing.
+- [ ] **2. Documentation Updates:** Append-only updates added to `ARCHITECTURE.md`, `ROADMAP.md`, and `tasks.md` with 0 deletions against baseline `e41ce72`.
+- [ ] **3. S-7 / S-8 Test Assertions Update:** `tests/br5b_routes.test.ts` updated with `poolCountBefore === poolCountAfter`, byte-for-byte snapshot / exact payload comparisons for member and commissioner on S-8 200, zero penalty_media count on denied S-7 attempts; `tests/setup.ts` explicitly contains `log: []` suppression for PrismaClient instantiation.
+- [ ] **4. Complete Hosted Tripwire Script:** `scripts/run_hosted_tripwire.js` strictly enforces inverse guard rejecting localhost and 127.0.0.1 (exit 1); exact read-only SQL block executed via `prisma db execute --stdin`; password and URL redacted.
+- [ ] **5. Evidence Generator Hardening:** `scripts/generate_evidence.js` enforces clean git status at start (exit 1 if dirty); captures `git merge-base --is-ancestor 6c2fb46 HEAD`; reflog captured without `||`; `tests/setup.ts` dumped; tripwire localhost/127.0.0.1 negative controls (exit 1); real hosted tripwire; `npm run test:db`; full verbatim dump of `docs/design/12.1.md`; live repository context.
+- [ ] **6. Pre-Run Git Finalization:** Clean working tree committed locally before running evidence generator.
+- [ ] **7. Evidence Generation & Binding:** Final evidence bundle bound in `docs/evidence/R-12.2-AH/EVIDENCE_BUNDLE.md` with strictly no remote push.
+
+### R-12.2-AH-V2 Acceptance Criteria (Section 7)
+- [ ] **1. Update S-7 / S-8 Tests with Explicit Console Logs:** `tests/br5b_routes.test.ts` updated with explicit console logs for pool count before/after, pool count invariant PASS, member/commissioner response byte equality PASS, and penalty_media row count = 0.
+- [ ] **2. Fix Hosted Tripwire Script Query Streaming:** `scripts/run_hosted_tripwire.js` uses Node `pg` client to stream and print all exact rows (database, user, version, 11 table counts, `to_regclass`, migrations, triggers, RLS 12/12); inverse guards reject localhost/127.0.0.1; credentials redacted.
+- [ ] **3. Update Evidence Generator:** `scripts/generate_evidence.js` enforces clean pre-generation workspace hygiene via `git status --porcelain` at start (fails closed if dirty); records ancestry confirmation; captures tripwire negative and real runs; captures `npm run test:db -- --reporter=verbose`; dumps `docs/design/12.1.md` and `# LIVE REPOSITORY CONTEXT`.
+- [ ] **4. Documentation Updates:** Append-only updates added to `ARCHITECTURE.md`, `ROADMAP.md`, and `tasks.md` with 0 deletions against baseline `e41ce72`.
+- [ ] **5. Pre-Run Git Finalization:** All changes committed cleanly before evidence run; `git status --porcelain` verified empty.
+- [ ] **6. Evidence Generation & Binding:** Final evidence bundle bound to `docs/evidence/R-12.2-AH-V2/EVIDENCE_BUNDLE.md` with strictly no remote push.
+
+### R-12.2-AH-V2-ACK Acceptance Criteria
+- [ ] Preserve feat/phase12-1-outbox as the implementation branch until the next binding gate is issued.
+- [ ] Do not merge 12.1 work to main under this ruling.
+- [ ] Do not execute hosted DDL or hosted schema mutation under this ruling.
+- [ ] Keep the V2 hosted tripwire raw-output contract intact for subsequent evidence runs.
+- [ ] Preserve the explicit S-7/S-8 invariant console assertions.
+- [ ] Preserve Decision #50 DB-header and query-log suppression controls.
+- [ ] Preserve Decision #56 byte-for-byte register enforcement.
+- [ ] Treat INV-6 and all actual 12.1 runtime behavior as deferred until implementation evidence is separately adjudicated.
+
+### R-12.2-AI Acceptance Criteria
+- [ ] 12.1 Core schema (`inbox_messages`, `outbox_events`, `notification_preferences`, `job_runs`) applied with RLS & Revoke.
+- [ ] `enqueueNotification` implemented with transactional isolation and zero network I/O.
+
+### R-12.2-AJ Acceptance Criteria (Section 8)
+- [ ] Schema amendment applied to `prisma/schema.prisma` and migration `20261001160000_12_1_a_outbox_inbox_core`: `dedupe_key` added to `inbox_messages`, `UNIQUE(user_id, dedupe_key)` index created, check constraints on `outbox_events.attempts` and `notification_preferences.reminder_offsets_hours` verified.
+- [ ] `enqueueNotification` helper implemented in `src/services/notifications.ts` with channel routing (`IN_APP`, `EMAIL`), `skipDuplicates: true`, zero transport/network imports, and payload allow-list stripping with warnings.
+- [ ] All 8 unit/integration tests in `tests/notifications.test.ts` passing cleanly.
+- [ ] Design note `docs/design/12.1.md` updated with Section 3 corrections (concept scope, replace `POST /api/admin/jobs/run`, lifecycle statuses/backoff, lock resolver pure extraction, open questions answered).
+- [ ] Working tree hygiene maintained (`vitest.json` in `.gitignore`, `feat/phase12-migrations` merged with `main` to carry `db_header.js`).
+- [ ] Push history log (25 commits) and secret scan over `origin/main` captured and verified clean.
+- [ ] Decision #57 registered in `docs/rulings/appendix-a.md` and `ARCHITECTURE.md`, byte-for-byte CI check verified.
+- [ ] Complete evidence bundle generated and bound in `docs/evidence/R-12.2-AJ/EVIDENCE_BUNDLE.md`.
+
+### R-12.2-AK Acceptance Criteria (Section 7)
+- [✅] **B0 — Step A Amendments:** FKs enforce `onDelete: Restrict, onUpdate: Restrict`; `reminder_offsets_hours` defaults to `[24, 2]` with check constraint; `OutboxStatus` contains `SUPPRESSED`; `sanitizePayload` operates default-deny; `enqueueNotification` rejects non-tx clients; email disabled preference respected; tests passing.
+- [✅] **B1 — Concurrency Stability:** BR-4b failures resolved with transaction options (`maxWait: 15000, timeout: 30000`) and `fileParallelism: false`; 3 consecutive clean-room runs on `feat/phase12-migrations` and 3 on `feat/phase12-1-outbox` all passing.
+- [✅] **B2 — Transport, Drain Worker, Runners:** `MailTransport` interface, `ConsoleMailTransport`, `SmtpMailTransport`; `scrubErrorMessage` (max 200 chars, strips URLs and secrets); outbox drain worker (`FOR UPDATE SKIP LOCKED`, 60s lease, discrete backoff `[60, 300, 1800, 7200, 43200]`, DEAD at 5, SUPPRESSED check, dedupe key Message-ID); `withJobRun`, `runOutboxDrain`, `runReminderScan`; Section 3.6 tests passing.
+- [✅] **Documentation & Register Updates:** Section 8 supersession added to `docs/design/12.1.md`; Decisions #58 and #59 registered in `docs/rulings/appendix-a.md` and `ARCHITECTURE.md`; `ci_check_register.js` passing byte-for-byte.
+- [✅] **History Scan & Hygiene:** Negative control and scan against `origin/main` executed.
+- [✅] **Evidence Generation:** Evidence-light bundle generated at `docs/evidence/R-12.2-AK/EVIDENCE_BUNDLE.md`.
+
+### R-12.2-AL Acceptance Criteria (Section 6)
+- [ ] B3.1: runReminderScan and its tests removed from src/jobs/, src/workers/, and tests/ in their own commit.
+- [ ] B3.2: Schema and migration updated (reminderOffsetsHours Int[] @default([24, 2]), check function returns false for NULL, REVOKE ALL ON FUNCTION check_reminder_offsets), ci_check_functions.sh script passing, zero migration drift.
+- [ ] B3.3: Drain worker defect fixes (claim counting for expired PROCESSING leases, transition to DEAD at 5 attempts, default batchSize 10, conditional renewal before each send, WHERE id = $1 AND status = 'PROCESSING' on status updates, HTML escaping for interpolated values, absolute deepLink URLs from APP_BASE_URL, SHA256 dedupe key Message-IDs with X-Dedupe-Key header), SmtpMailTransport timeouts (8000ms) and required SMTP_FROM, scrubErrorMessage with capturing groups and ECONNREFUSED pattern handling, withJobRun DB write error resilience and PARTIAL status transition, .env.example updated.
+- [ ] B3.4: Test coverage for drain worker crashing lifecycle, concurrent non-duplication conditional renewal, hanging SMTP timeout, HTML escaping, Message-ID SHA256 stability, withJobRun error resilience and PARTIAL transition, scrubber key preservation and ECONNREFUSED handling.
+- [ ] B3.5: Documentation & reporting (report.txt created, Section 9 appended to docs/design/12.1.md, ARCHITECTURE.md and ROADMAP.md updated, Decision #60 synchronized).
+- [ ] B3.6: Evidence bundle bound at docs/evidence/R-12.2-AL/EVIDENCE_BUNDLE.md.
+
+### B3 Acceptance Matrix
+- [x] B3.1 (Scanner Deferral): PASS — Commit fba6a81
+- [x] B3.2 (Schema/Security & Function Revocation): PASS — Migration 12_1_a + scripts/ci_check_functions.sh
+- [x] B3.3 (Worker, Leases, Attempts, SMTP, Scrubber): PASS — src/workers/drain.ts, src/services/transport.ts
+- [x] B3.4 (Test Coverage & Suite Health): PASS — 97/97 tests passing across 35 suites
+- [x] B3.5 (Documentation, Reports, Decision #60): PASS — Append-only design notes, report.txt, Decision #60 synced
+- [x] B3.6 (Closure Hygiene): PASS — Addressed in this close-out commit
+
+### R-12.1-RESTORE-01 Verification Tasks
+- [ ] Item 1: Git identity and ancestry.
+- [ ] Item 2: Merge-base and diff stat.
+- [ ] Item 3: Full raw test:db output (135/135 tests).
+- [ ] Item 4: CI register check.
+- [ ] Item 5: Tripwire execution with negative control.
+- [ ] Item 6: Git reflog / remote verification.
+- [ ] Item 7: Targeted test outputs (Dec #54, #55, Tier Separation).
+- [ ] Item 8: Diff of ARCHITECTURE.md showing amend protocol.
+- [ ] Item 9: Scope confirmation (no hosted DDL).
 

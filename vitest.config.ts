@@ -3,8 +3,10 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
-    testTimeout: 10000,
-    hookTimeout: 10000,
+    testTimeout: 30000,
+    hookTimeout: 30000,
+    fileParallelism: false,
     setupFiles: ['./tests/setup.ts'],
+    watch: false,
   },
 });

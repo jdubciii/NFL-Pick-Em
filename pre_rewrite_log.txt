@@ -1,0 +1,2 @@
+﻿874fd5d docs: generate evidence bundle and append R-12.2-AC rulings
+89b7e7b fix: claim code fail-closed, S-7 Shot-Cam roles, BR-5b UI

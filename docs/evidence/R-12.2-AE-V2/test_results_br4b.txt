@@ -1,0 +1,16 @@
+﻿
+[1m[30m[46m RUN [49m[39m[22m [36mv5.0.2 [39m[90mC:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em[39m
+
+ [32mΓ£ô[39m tests/br4b.test.ts[2m > [22mBR-4b: Weekly Wrap-Up Service Lifecycle, Concurrency & Invariants[2m > [22m1. Apply once, second call returns ALREADY_WRAPPED_UP[32m 278[2mms[22m[39m
+ [32mΓ£ô[39m tests/br4b.test.ts[2m > [22mBR-4b: Weekly Wrap-Up Service Lifecycle, Concurrency & Invariants[2m > [22m2. Concurrent calls on final week: exactly one applies, other receives ALREADY_WRAPPED_UP[32m 61[2mms[22m[39m
+ [32mΓ£ô[39m tests/br4b.test.ts[2m > [22mBR-4b: Weekly Wrap-Up Service Lifecycle, Concurrency & Invariants[2m > [22m3. Concurrent calls on non-final week: both return WEEK_NOT_FINAL with zero rows written[32m 53[2mms[22m[39m
+ [32mΓ£ô[39m tests/br4b.test.ts[2m > [22mBR-4b: Weekly Wrap-Up Service Lifecycle, Concurrency & Invariants[2m > [22m4. NO_GAMES_FOR_WEEK returned when week has no scheduled games in pool[32m 6[2mms[22m[39m
+ [32mΓ£ô[39m tests/br4b.test.ts[2m > [22mBR-4b: Weekly Wrap-Up Service Lifecycle, Concurrency & Invariants[2m > [22m5. Marker UPDATE/DELETE/TRUNCATE throws append-only SQLSTATE P0001[32m 27[2mms[22m[39m
+ [32mΓ£ô[39m tests/br4b.test.ts[2m > [22mBR-4b: Weekly Wrap-Up Service Lifecycle, Concurrency & Invariants[2m > [22m6. anon and authenticated roles receive 42501 on SELECT from weekly_wrapups[32m 11[2mms[22m[39m
+ [32mΓ£ô[39m tests/br4b.test.ts[2m > [22mBR-4b: Weekly Wrap-Up Service Lifecycle, Concurrency & Invariants[2m > [22m7. Backfill INSERT...SELECT in rolled-back transaction asserts 1 marker created[32m 7[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m7 passed[39m[22m[90m (7)[39m
+[2m   Start at [22m 22:59:55
+[2m   Duration [22m 1.84s[2m (tests 75%, transform 17%, import 4%, setup 2%, worker 1%)[22m
+
