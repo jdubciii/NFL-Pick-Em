@@ -3,7 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { assertDisposableUrl } from '../src/db/safeguards';
 import { runWeeklyWrapUp } from '../src/services/weeklyWrapUp';
 
-const localRehearsalUrl = process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/pickem_rehearsal';
+const localRehearsalUrl = process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgrespassword@127.0.0.1:5432/pickem_rehearsal';
 
 describe('BR-4b: Fail-Closed Claim Store Invariant (Decision #52)', () => {
   let prisma: PrismaClient;
