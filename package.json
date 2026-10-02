@@ -20,6 +20,8 @@
     "test": "vitest run",
     "test:db": "npm run db:reset && npx prisma migrate deploy && npx prisma generate && node scripts/db_header.js && vitest --no-color",
     "worker:sync": "tsx src/workers/syncWorker.ts",
+    "jobs:drain": "tsx src/jobs/cli.ts drain",
+    "jobs:remind": "tsx src/jobs/cli.ts remind",
     "client:dev": "npm --prefix client run dev",
     "client:build": "npm --prefix client run build"
   },
