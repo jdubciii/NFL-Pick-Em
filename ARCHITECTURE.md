@@ -636,13 +636,17 @@ R-12.2-AK: 12.1 Step B GO. Decisions #58/#59 applied.
 
 R-12.2-AL: B3 fixes applied. Scanner deferred to step E. Decision #60 applied.
 
+### Operational Standard: Single-Commit Atomic Amend Evidence Protocol & Tier Separation
 
+1. **Atomic Amend Protocol:**
+   - Evidence generation must execute via the single-commit amend cycle to eliminate SHA discrepancies between execution baselines and binding commits:
+     1. `git commit -m "chore: prepare <step> evidence baseline"`
+     2. `node scripts/generate_evidence_<step>.js > docs/evidence/<step>/EVIDENCE_BUNDLE.md`
+     3. `git commit --amend --no-edit`
+   - Generated evidence bundles must record and display exclusively the single authoritative commit SHA.
 
-
-
-
-
-
-
+2. **Strict API Tier Separation:**
+   - Endpoints under `/api/pools/:pool_id/*` are Pool-Tier only. Cross-tenant leakage is strictly forbidden (Decision #20).
+   - Worker runs, engine cycles, and system-tier tasks (such as `JobRun`) operate at the System Tier and must never be exposed or returned in pool-scoped routes.
 
 

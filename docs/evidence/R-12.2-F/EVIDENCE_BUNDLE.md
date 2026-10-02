@@ -1,7 +1,7 @@
 # R-12.2-F V2 EVIDENCE BUNDLE
-**Execution Timestamp:** 2026-10-02T21:37:33.156Z
+**Execution Timestamp:** 2026-10-02T21:57:12.569Z
 **Target Branch:** `feat/phase12-1-outbox`
-**Authoritative Commit SHA:** a9e2bd3a8c403f15e0925fa5c488c73c44fb8eb5
+**Authoritative Commit SHA:** 532becb70364da31d4d26afe77197b93a5219b41
 **Generator Exit Code:** 0
 
 ---
@@ -103,15 +103,15 @@ Applied Migrations:
 ┌─────────┬─────────────────────────────────────────────────────────────┬──────────────────────────┐
 │ (index) │ migration_name                                              │ finished_at              │
 ├─────────┼─────────────────────────────────────────────────────────────┼──────────────────────────┤
-│ 0       │ '20260927000000_init'                                       │ 2026-10-02T21:37:41.741Z │
-│ 1       │ '20260928051824_add_pool_member_stats_and_penalty_ledger'   │ 2026-10-02T21:37:41.776Z │
-│ 2       │ '20260928124900_precision_and_weekly_submissions'           │ 2026-10-02T21:37:41.821Z │
-│ 3       │ '20260928170000_weekly_submission_finalized_and_game_notes' │ 2026-10-02T21:37:41.829Z │
-│ 4       │ '20260928180000_shot_cam_penalty_media_and_rls'             │ 2026-10-02T21:37:41.854Z │
-│ 5       │ '20260929144500_br_1_ledger_append_only'                    │ 2026-10-02T21:37:41.862Z │
-│ 6       │ '20260930010000_br_2b_ledger_api_lockdown'                  │ 2026-10-02T21:37:41.870Z │
-│ 7       │ '20260930020000_br_2c_public_tables_api_lockdown'           │ 2026-10-02T21:37:41.881Z │
-│ 8       │ '20261001160000_12_1_a_outbox_inbox_core'                   │ 2026-10-02T21:37:41.959Z │
+│ 0       │ '20260927000000_init'                                       │ 2026-10-02T21:57:26.180Z │
+│ 1       │ '20260928051824_add_pool_member_stats_and_penalty_ledger'   │ 2026-10-02T21:57:26.215Z │
+│ 2       │ '20260928124900_precision_and_weekly_submissions'           │ 2026-10-02T21:57:26.270Z │
+│ 3       │ '20260928170000_weekly_submission_finalized_and_game_notes' │ 2026-10-02T21:57:26.280Z │
+│ 4       │ '20260928180000_shot_cam_penalty_media_and_rls'             │ 2026-10-02T21:57:26.308Z │
+│ 5       │ '20260929144500_br_1_ledger_append_only'                    │ 2026-10-02T21:57:26.320Z │
+│ 6       │ '20260930010000_br_2b_ledger_api_lockdown'                  │ 2026-10-02T21:57:26.326Z │
+│ 7       │ '20260930020000_br_2c_public_tables_api_lockdown'           │ 2026-10-02T21:57:26.339Z │
+│ 8       │ '20261001160000_12_1_a_outbox_inbox_core'                   │ 2026-10-02T21:57:26.427Z │
 └─────────┴─────────────────────────────────────────────────────────────┴──────────────────────────┘
 weekly_wrapups exists in public: false (Expected: false)
 Environment variables loaded from .env
@@ -125,11 +125,11 @@ No pending migrations to apply.
 Environment variables loaded from .env
 Prisma schema loaded from prisma\schema.prisma
 
-✔ Generated Prisma Client (v5.22.0) to .\node_modules\@prisma\client in 314ms
+✔ Generated Prisma Client (v5.22.0) to .\node_modules\@prisma\client in 218ms
 
 Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
 
-Tip: Want to turn off tips and other hints? https://pris.ly/tip-4-nohints
+Tip: Want to react to database changes in your app as they happen? Discover how with Pulse: https://pris.ly/tip-1-pulse
 
 === DB Header & Rehearsal Verification ===
 
@@ -147,56 +147,56 @@ Tip: Want to turn off tips and other hints? https://pris.ly/tip-4-nohints
 [
   {
     "migration_name": "20260927000000_init",
-    "started_at": "2026-10-02T21:37:41.652Z",
-    "finished_at": "2026-10-02T21:37:41.741Z",
+    "started_at": "2026-10-02T21:57:26.086Z",
+    "finished_at": "2026-10-02T21:57:26.180Z",
     "applied_steps_count": 1
   },
   {
     "migration_name": "20260928051824_add_pool_member_stats_and_penalty_ledger",
-    "started_at": "2026-10-02T21:37:41.743Z",
-    "finished_at": "2026-10-02T21:37:41.776Z",
+    "started_at": "2026-10-02T21:57:26.182Z",
+    "finished_at": "2026-10-02T21:57:26.215Z",
     "applied_steps_count": 1
   },
   {
     "migration_name": "20260928124900_precision_and_weekly_submissions",
-    "started_at": "2026-10-02T21:37:41.778Z",
-    "finished_at": "2026-10-02T21:37:41.821Z",
+    "started_at": "2026-10-02T21:57:26.223Z",
+    "finished_at": "2026-10-02T21:57:26.270Z",
     "applied_steps_count": 1
   },
   {
     "migration_name": "20260928170000_weekly_submission_finalized_and_game_notes",
-    "started_at": "2026-10-02T21:37:41.822Z",
-    "finished_at": "2026-10-02T21:37:41.829Z",
+    "started_at": "2026-10-02T21:57:26.271Z",
+    "finished_at": "2026-10-02T21:57:26.280Z",
     "applied_steps_count": 1
   },
   {
     "migration_name": "20260928180000_shot_cam_penalty_media_and_rls",
-    "started_at": "2026-10-02T21:37:41.831Z",
-    "finished_at": "2026-10-02T21:37:41.854Z",
+    "started_at": "2026-10-02T21:57:26.283Z",
+    "finished_at": "2026-10-02T21:57:26.308Z",
     "applied_steps_count": 1
   },
   {
     "migration_name": "20260929144500_br_1_ledger_append_only",
-    "started_at": "2026-10-02T21:37:41.855Z",
-    "finished_at": "2026-10-02T21:37:41.862Z",
+    "started_at": "2026-10-02T21:57:26.309Z",
+    "finished_at": "2026-10-02T21:57:26.320Z",
     "applied_steps_count": 1
   },
   {
     "migration_name": "20260930010000_br_2b_ledger_api_lockdown",
-    "started_at": "2026-10-02T21:37:41.864Z",
-    "finished_at": "2026-10-02T21:37:41.870Z",
+    "started_at": "2026-10-02T21:57:26.321Z",
+    "finished_at": "2026-10-02T21:57:26.326Z",
     "applied_steps_count": 1
   },
   {
     "migration_name": "20260930020000_br_2c_public_tables_api_lockdown",
-    "started_at": "2026-10-02T21:37:41.871Z",
-    "finished_at": "2026-10-02T21:37:41.881Z",
+    "started_at": "2026-10-02T21:57:26.328Z",
+    "finished_at": "2026-10-02T21:57:26.339Z",
     "applied_steps_count": 1
   },
   {
     "migration_name": "20261001160000_12_1_a_outbox_inbox_core",
-    "started_at": "2026-10-02T21:37:41.883Z",
-    "finished_at": "2026-10-02T21:37:41.959Z",
+    "started_at": "2026-10-02T21:57:26.341Z",
+    "finished_at": "2026-10-02T21:57:26.427Z",
     "applied_steps_count": 1
   }
 ]
@@ -212,6 +212,8 @@ Database schema is up to date!
 
  RUN  v5.0.2 C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em
 
+ ✓ tests/outbox_drain.test.ts (20 tests) 479ms
+ ✓ tests/ops_routes.test.ts (9 tests) 547ms
 stdout | tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > S-7: Shot-Cam Media Routes Scoping (No Global Admin Bypass) > POST /api/pools/:pool_id/penalties/:id/media: global ADMIN who is neither owner nor commissioner -> 403
 penalty_media row count = 0
 
@@ -225,55 +227,54 @@ stdout | tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decisio
 penalty_media row count = 0
 
 stdout | tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > S-8: GET /api/games Pool Scoping (No Pool Auto-Creation / Write-on-GET) > returns 404 POOL_NOT_FOUND when user is not member/commissioner of any pool and pool_id is omitted (no pool write)
-pool count before = 1
-pool count after = 1
+pool count before = 23
+pool count after = 23
 pool count invariant = PASS
 
 stdout | tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > S-8: GET /api/games Pool Scoping (No Pool Auto-Creation / Write-on-GET) > returns 404 POOL_NOT_FOUND when explicit pool_id does not exist (no pool write)
-pool count before = 1
-pool count after = 1
+pool count before = 23
+pool count after = 23
 pool count invariant = PASS
 
 stdout | tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > S-8: GET /api/games Pool Scoping (No Pool Auto-Creation / Write-on-GET) > returns 400 when explicit pool_id is not a valid UUID (no pool write)
-pool count before = 1
-pool count after = 1
+pool count before = 23
+pool count after = 23
 pool count invariant = PASS
 
 stdout | tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > S-8: GET /api/games Pool Scoping (No Pool Auto-Creation / Write-on-GET) > returns 403 when user is not a member or commissioner of the requested pool (no pool write)
-pool count before = 1
-pool count after = 1
+pool count before = 23
+pool count after = 23
 pool count invariant = PASS
 
 stdout | tests/br5b_routes.test.ts > BR-5b: Admin Picks Routes Scoping & Decision #49 CI Route Scan > S-8: GET /api/games Pool Scoping (No Pool Auto-Creation / Write-on-GET) > returns 200 with pool and games when pool_id is valid, with zero pool writes and identical schema snapshot
-pool count before = 1
-pool count after = 1
+pool count before = 23
+pool count after = 23
 pool count invariant = PASS
 member response byte equality = PASS
 commissioner response byte equality = PASS
 
- ✓ tests/br5b_routes.test.ts (22 tests) 591ms
- ✓ tests/me_routes.test.ts (15 tests) 582ms
- ✓ tests/ops_routes.test.ts (9 tests) 602ms
- ✓ tests/br2.test.ts (5 tests) 429ms
- ✓ tests/outbox_drain.test.ts (20 tests) 753ms
- ✓ tests/br4b.test.ts (1 test) 552ms
- ✓ tests/br1.test.ts (6 tests) 216ms
- ✓ tests/notifications.test.ts (10 tests) 237ms
- ✓ tests/authMiddleware.test.ts (21 tests) 22ms
- ✓ tests/characterization.test.ts (6 tests) 14ms
- ✓ tests/lock_resolver.characterization.test.ts (14 tests) 19ms
- ✓ tests/safeguards.test.ts (6 tests) 14ms
+ ✓ tests/br5b_routes.test.ts (22 tests) 771ms
+ ✓ tests/me_routes.test.ts (15 tests) 618ms
+ ✓ tests/br4b.test.ts (1 test) 370ms
+ ✓ tests/br2.test.ts (5 tests) 391ms
+ ✓ tests/notifications.test.ts (10 tests) 364ms
+ ✓ tests/br1.test.ts (6 tests) 203ms
+ ✓ tests/authMiddleware.test.ts (21 tests) 21ms
+ ✓ tests/lock_resolver.characterization.test.ts (14 tests) 12ms
+ ✓ tests/safeguards.test.ts (6 tests) 10ms
+ ✓ tests/characterization.test.ts (6 tests) 17ms
 
  Test Files  12 passed (12)
       Tests  135 passed (135)
-   Start at  14:37:57
-   Duration  10.07s (tests 56%, import 22%, setup 10%, transform 10%, worker 1%)
+   Start at  14:57:40
+   Duration  10.61s (tests 50%, import 28%, transform 11%, setup 10%, worker 1%)
 
-    Isolate  12 workers spawned · ~232ms startup each (spawn + environment, per file)
-             at least ~2.56s faster with isolate: false — reuses workers across files instead of one per file
+     Import  37 modules were evaluated 76 times · 2.11s total, 28% of tracked time
+             ~1.08s faster with isolate: false — shared modules are evaluated once per worker instead of once per file
+             learn more: https://vitest.dev/guide/improving-performance#test-isolation
 
 
-(node:17824) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/kacone/Documents/AI%20and%20Tech/Antigravity/NFL%20Pick%20Em/scripts/db_header.js is not specified and it doesn't parse as CommonJS.
+(node:15204) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/kacone/Documents/AI%20and%20Tech/Antigravity/NFL%20Pick%20Em/scripts/db_header.js is not specified and it doesn't parse as CommonJS.
 Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
 To eliminate this warning, add "type": "module" to \\?\C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\package.json.
 (Use `node --trace-warnings ...` to show where the warning was created)
@@ -304,11 +305,11 @@ stderr | tests/notifications.test.ts > 12.1 Core Schema & enqueueNotification He
 
 ### 4.1 Git Recent Log (5 Commits)
 ```
-a9e2bd3 chore: prepare Step F authoritative evidence baseline
+532becb chore: prepare Step F authoritative evidence baseline and tier standard
+bf65c53 chore: prepare Step F authoritative evidence baseline
 9c5ebc4 docs: bind reconciled Step F final evidence bundle
 88d19cc chore: prepare Step F final evidence baseline
 ff58c0e docs: bind dedicated Step F V2 evidence bundle
-45590c6 chore: add Step F V2 evidence generator and placeholder
 ```
 
 ### 4.2 Pool Ops Routes Module (`src/routes/ops.ts`)
@@ -1098,4 +1099,17 @@ R-12.2-AJ: I-1/I-2 CLOSED; 12.1 step A accepted with amendment. Authoritative re
 R-12.2-AK: 12.1 Step B GO. Decisions #58/#59 applied.
 
 R-12.2-AL: B3 fixes applied. Scanner deferred to step E. Decision #60 applied.
+
+### Operational Standard: Single-Commit Atomic Amend Evidence Protocol & Tier Separation
+
+1. **Atomic Amend Protocol:**
+   - Evidence generation must execute via the single-commit amend cycle to eliminate SHA discrepancies between execution baselines and binding commits:
+     1. `git commit -m "chore: prepare <step> evidence baseline"`
+     2. `node scripts/generate_evidence_<step>.js > docs/evidence/<step>/EVIDENCE_BUNDLE.md`
+     3. `git commit --amend --no-edit`
+   - Generated evidence bundles must record and display exclusively the single authoritative commit SHA.
+
+2. **Strict API Tier Separation:**
+   - Endpoints under `/api/pools/:pool_id/*` are Pool-Tier only. Cross-tenant leakage is strictly forbidden (Decision #20).
+   - Worker runs, engine cycles, and system-tier tasks (such as `JobRun`) operate at the System Tier and must never be exposed or returned in pool-scoped routes.
 ```
