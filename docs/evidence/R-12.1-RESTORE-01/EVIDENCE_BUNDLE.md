@@ -1,3 +1,11 @@
+# TWO-STAGE EVIDENCE BINDING RECORD (PATH B — GOVERNED)
+- **Binding Container SHA:** 3c8e419d048ad17e3c9f8a5396f6f6fe8d924cd1
+- **Execution Baseline SHA:** 010610eccc0b4ec88731f11205636e24a19153ba
+- **Lineage Verification:** PARENT_VERIFIED (git rev-parse 3c8e419d048ad17e3c9f8a5396f6f6fe8d924cd1~1 === 010610eccc0b4ec88731f11205636e24a19153ba)
+- **Working Tree State at Baseline:** 100% CLEAN
+- **Governing Protocol:** ARCHITECTURE.md (Two-Stage Forward-Binding Model)
+--------------------------------------------------------------------------------
+
 # R-12.1-RESTORE-01 EVIDENCE BUNDLE
 **Execution Timestamp:** 2026-10-02T23:07:15.948Z
 **Target Branch:** `feat/phase12-1-outbox`
