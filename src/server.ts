@@ -11,6 +11,7 @@ import { picksRouter } from './routes/picks';
 import { adminRouter } from './routes/admin';
 import { meRouter } from './routes/me';
 import { notificationsRouter } from './routes/notifications';
+import { opsRouter } from './routes/ops';
 import type {
   PoolSettings,
   MatrixResponsePayload,
@@ -32,6 +33,8 @@ app.use('/api/picks', picksRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/me', meRouter);
 app.use('/api/notifications', notificationsRouter);
+app.use('/api/pools', opsRouter);
+
 
 
 // Health check endpoint
