@@ -71,8 +71,7 @@ const gitLog5 = run('git log -n 5 --oneline').stdout;
 const md = `# R-12.2-F V2 EVIDENCE BUNDLE
 **Execution Timestamp:** ${timestamp}
 **Target Branch:** \`${branch}\`
-**Stamped Execution HEAD:** ${commitSha}
-**Head Commit:** \`${commitSha}\`
+**Authoritative Commit SHA:** ${commitSha}
 **Generator Exit Code:** 0
 
 ---

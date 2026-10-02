@@ -1,8 +1,7 @@
 # R-12.2-F V2 EVIDENCE BUNDLE
-**Execution Timestamp:** 2026-10-02T21:29:03.826Z
+**Execution Timestamp:** 2026-10-02T21:37:33.156Z
 **Target Branch:** `feat/phase12-1-outbox`
-**Stamped Execution HEAD:** 88d19cc6a72469431037ccd4b571980be7fe427e
-**Head Commit:** `88d19cc6a72469431037ccd4b571980be7fe427e`
+**Authoritative Commit SHA:** a9e2bd3a8c403f15e0925fa5c488c73c44fb8eb5
 **Generator Exit Code:** 0
 
 ---
@@ -104,15 +103,15 @@ Applied Migrations:
 ┌─────────┬─────────────────────────────────────────────────────────────┬──────────────────────────┐
 │ (index) │ migration_name                                              │ finished_at              │
 ├─────────┼─────────────────────────────────────────────────────────────┼──────────────────────────┤
-│ 0       │ '20260927000000_init'                                       │ 2026-10-02T21:29:13.599Z │
-│ 1       │ '20260928051824_add_pool_member_stats_and_penalty_ledger'   │ 2026-10-02T21:29:13.621Z │
-│ 2       │ '20260928124900_precision_and_weekly_submissions'           │ 2026-10-02T21:29:13.660Z │
-│ 3       │ '20260928170000_weekly_submission_finalized_and_game_notes' │ 2026-10-02T21:29:13.668Z │
-│ 4       │ '20260928180000_shot_cam_penalty_media_and_rls'             │ 2026-10-02T21:29:13.689Z │
-│ 5       │ '20260929144500_br_1_ledger_append_only'                    │ 2026-10-02T21:29:13.696Z │
-│ 6       │ '20260930010000_br_2b_ledger_api_lockdown'                  │ 2026-10-02T21:29:13.702Z │
-│ 7       │ '20260930020000_br_2c_public_tables_api_lockdown'           │ 2026-10-02T21:29:13.711Z │
-│ 8       │ '20261001160000_12_1_a_outbox_inbox_core'                   │ 2026-10-02T21:29:13.765Z │
+│ 0       │ '20260927000000_init'                                       │ 2026-10-02T21:37:41.741Z │
+│ 1       │ '20260928051824_add_pool_member_stats_and_penalty_ledger'   │ 2026-10-02T21:37:41.776Z │
+│ 2       │ '20260928124900_precision_and_weekly_submissions'           │ 2026-10-02T21:37:41.821Z │
+│ 3       │ '20260928170000_weekly_submission_finalized_and_game_notes' │ 2026-10-02T21:37:41.829Z │
+│ 4       │ '20260928180000_shot_cam_penalty_media_and_rls'             │ 2026-10-02T21:37:41.854Z │
+│ 5       │ '20260929144500_br_1_ledger_append_only'                    │ 2026-10-02T21:37:41.862Z │
+│ 6       │ '20260930010000_br_2b_ledger_api_lockdown'                  │ 2026-10-02T21:37:41.870Z │
+│ 7       │ '20260930020000_br_2c_public_tables_api_lockdown'           │ 2026-10-02T21:37:41.881Z │
+│ 8       │ '20261001160000_12_1_a_outbox_inbox_core'                   │ 2026-10-02T21:37:41.959Z │
 └─────────┴─────────────────────────────────────────────────────────────┴──────────────────────────┘
 weekly_wrapups exists in public: false (Expected: false)
 Environment variables loaded from .env
@@ -126,11 +125,11 @@ No pending migrations to apply.
 Environment variables loaded from .env
 Prisma schema loaded from prisma\schema.prisma
 
-✔ Generated Prisma Client (v5.22.0) to .\node_modules\@prisma\client in 209ms
+✔ Generated Prisma Client (v5.22.0) to .\node_modules\@prisma\client in 314ms
 
 Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
 
-Tip: Easily identify and fix slow SQL queries in your app. Optimize helps you enhance your visibility: https://pris.ly/--optimize
+Tip: Want to turn off tips and other hints? https://pris.ly/tip-4-nohints
 
 === DB Header & Rehearsal Verification ===
 
@@ -148,56 +147,56 @@ Tip: Easily identify and fix slow SQL queries in your app. Optimize helps you en
 [
   {
     "migration_name": "20260927000000_init",
-    "started_at": "2026-10-02T21:29:13.531Z",
-    "finished_at": "2026-10-02T21:29:13.599Z",
+    "started_at": "2026-10-02T21:37:41.652Z",
+    "finished_at": "2026-10-02T21:37:41.741Z",
     "applied_steps_count": 1
   },
   {
     "migration_name": "20260928051824_add_pool_member_stats_and_penalty_ledger",
-    "started_at": "2026-10-02T21:29:13.600Z",
-    "finished_at": "2026-10-02T21:29:13.621Z",
+    "started_at": "2026-10-02T21:37:41.743Z",
+    "finished_at": "2026-10-02T21:37:41.776Z",
     "applied_steps_count": 1
   },
   {
     "migration_name": "20260928124900_precision_and_weekly_submissions",
-    "started_at": "2026-10-02T21:29:13.622Z",
-    "finished_at": "2026-10-02T21:29:13.660Z",
+    "started_at": "2026-10-02T21:37:41.778Z",
+    "finished_at": "2026-10-02T21:37:41.821Z",
     "applied_steps_count": 1
   },
   {
     "migration_name": "20260928170000_weekly_submission_finalized_and_game_notes",
-    "started_at": "2026-10-02T21:29:13.661Z",
-    "finished_at": "2026-10-02T21:29:13.668Z",
+    "started_at": "2026-10-02T21:37:41.822Z",
+    "finished_at": "2026-10-02T21:37:41.829Z",
     "applied_steps_count": 1
   },
   {
     "migration_name": "20260928180000_shot_cam_penalty_media_and_rls",
-    "started_at": "2026-10-02T21:29:13.669Z",
-    "finished_at": "2026-10-02T21:29:13.689Z",
+    "started_at": "2026-10-02T21:37:41.831Z",
+    "finished_at": "2026-10-02T21:37:41.854Z",
     "applied_steps_count": 1
   },
   {
     "migration_name": "20260929144500_br_1_ledger_append_only",
-    "started_at": "2026-10-02T21:29:13.690Z",
-    "finished_at": "2026-10-02T21:29:13.696Z",
+    "started_at": "2026-10-02T21:37:41.855Z",
+    "finished_at": "2026-10-02T21:37:41.862Z",
     "applied_steps_count": 1
   },
   {
     "migration_name": "20260930010000_br_2b_ledger_api_lockdown",
-    "started_at": "2026-10-02T21:29:13.698Z",
-    "finished_at": "2026-10-02T21:29:13.702Z",
+    "started_at": "2026-10-02T21:37:41.864Z",
+    "finished_at": "2026-10-02T21:37:41.870Z",
     "applied_steps_count": 1
   },
   {
     "migration_name": "20260930020000_br_2c_public_tables_api_lockdown",
-    "started_at": "2026-10-02T21:29:13.704Z",
-    "finished_at": "2026-10-02T21:29:13.711Z",
+    "started_at": "2026-10-02T21:37:41.871Z",
+    "finished_at": "2026-10-02T21:37:41.881Z",
     "applied_steps_count": 1
   },
   {
     "migration_name": "20261001160000_12_1_a_outbox_inbox_core",
-    "started_at": "2026-10-02T21:29:13.713Z",
-    "finished_at": "2026-10-02T21:29:13.765Z",
+    "started_at": "2026-10-02T21:37:41.883Z",
+    "finished_at": "2026-10-02T21:37:41.959Z",
     "applied_steps_count": 1
   }
 ]
@@ -252,29 +251,29 @@ pool count invariant = PASS
 member response byte equality = PASS
 commissioner response byte equality = PASS
 
- ✓ tests/br5b_routes.test.ts (22 tests) 584ms
- ✓ tests/ops_routes.test.ts (9 tests) 443ms
- ✓ tests/me_routes.test.ts (15 tests) 483ms
- ✓ tests/outbox_drain.test.ts (20 tests) 379ms
- ✓ tests/br2.test.ts (5 tests) 406ms
- ✓ tests/br4b.test.ts (1 test) 210ms
- ✓ tests/notifications.test.ts (10 tests) 182ms
- ✓ tests/br1.test.ts (6 tests) 191ms
- ✓ tests/authMiddleware.test.ts (21 tests) 16ms
- ✓ tests/safeguards.test.ts (6 tests) 8ms
- ✓ tests/lock_resolver.characterization.test.ts (14 tests) 11ms
- ✓ tests/characterization.test.ts (6 tests) 11ms
+ ✓ tests/br5b_routes.test.ts (22 tests) 591ms
+ ✓ tests/me_routes.test.ts (15 tests) 582ms
+ ✓ tests/ops_routes.test.ts (9 tests) 602ms
+ ✓ tests/br2.test.ts (5 tests) 429ms
+ ✓ tests/outbox_drain.test.ts (20 tests) 753ms
+ ✓ tests/br4b.test.ts (1 test) 552ms
+ ✓ tests/br1.test.ts (6 tests) 216ms
+ ✓ tests/notifications.test.ts (10 tests) 237ms
+ ✓ tests/authMiddleware.test.ts (21 tests) 22ms
+ ✓ tests/characterization.test.ts (6 tests) 14ms
+ ✓ tests/lock_resolver.characterization.test.ts (14 tests) 19ms
+ ✓ tests/safeguards.test.ts (6 tests) 14ms
 
  Test Files  12 passed (12)
       Tests  135 passed (135)
-   Start at  14:29:23
-   Duration  8.17s (tests 52%, import 25%, transform 11%, setup 10%, worker 1%)
+   Start at  14:37:57
+   Duration  10.07s (tests 56%, import 22%, setup 10%, transform 10%, worker 1%)
 
-    Isolate  12 workers spawned · ~200ms startup each (spawn + environment, per file)
-             at least ~2.19s faster with isolate: false — reuses workers across files instead of one per file
+    Isolate  12 workers spawned · ~232ms startup each (spawn + environment, per file)
+             at least ~2.56s faster with isolate: false — reuses workers across files instead of one per file
 
 
-(node:11564) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/kacone/Documents/AI%20and%20Tech/Antigravity/NFL%20Pick%20Em/scripts/db_header.js is not specified and it doesn't parse as CommonJS.
+(node:17824) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/kacone/Documents/AI%20and%20Tech/Antigravity/NFL%20Pick%20Em/scripts/db_header.js is not specified and it doesn't parse as CommonJS.
 Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
 To eliminate this warning, add "type": "module" to \\?\C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\package.json.
 (Use `node --trace-warnings ...` to show where the warning was created)
@@ -305,11 +304,11 @@ stderr | tests/notifications.test.ts > 12.1 Core Schema & enqueueNotification He
 
 ### 4.1 Git Recent Log (5 Commits)
 ```
+a9e2bd3 chore: prepare Step F authoritative evidence baseline
+9c5ebc4 docs: bind reconciled Step F final evidence bundle
 88d19cc chore: prepare Step F final evidence baseline
 ff58c0e docs: bind dedicated Step F V2 evidence bundle
 45590c6 chore: add Step F V2 evidence generator and placeholder
-0a7cf42 fix(ops): strictly pool-scope ops health telemetry and clarify retry scope
-e43f77d docs: bind dedicated Step F evidence bundle
 ```
 
 ### 4.2 Pool Ops Routes Module (`src/routes/ops.ts`)
