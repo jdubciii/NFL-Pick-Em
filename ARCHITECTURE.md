@@ -652,4 +652,14 @@ R-12.2-AL: B3 fixes applied. Scanner deferred to step E. Decision #60 applied.
 ### Amend Protocol Constraint & Operational Boundaries (R-12.1-RESTORE-01)
 - **Amend Constraint:** Absolutely ZERO `git commit --amend` or history rewriting is permitted on branches already pushed to origin (Decision #53).
 - **Scheduled Producer Rule:** Scheduled outbox producers (including Reminder Scanner and Wrap-Up Engine) operate at the System Tier, are idempotent at the store level, honor user notification preferences, fail closed per Decision #55, and are never triggered by GET requests.
+
+### Operational Standard: Two-Stage Forward-Binding Evidence Protocol (Published Branches)
+When an evidence bundle is produced on a branch that has already been published to a remote (where `git commit --amend` is strictly prohibited by Decision #53), the Two-Stage Forward-Binding Model governs:
+1. **Stage 1 (Execution Baseline):** The test suite, regression controls, CI checks, and live telemetry execute against a clean execution baseline commit `E_SHA`.
+2. **Stage 2 (Binding Container):** The resulting bundle is committed forward as `B_SHA`. The evidence bundle MUST contain an explicit `# TWO-STAGE EVIDENCE BINDING RECORD` section establishing the cryptographic lineage:
+   - `Execution Baseline SHA: <E_SHA>`
+   - `Binding Container SHA: <B_SHA>`
+   - `Lineage Parent Assertion: git rev-parse <B_SHA>~1 == <E_SHA>`
+   - `Working Tree at Generation: 100% CLEAN`
+
 
