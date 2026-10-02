@@ -66,7 +66,6 @@ const remoteVer = run('git remote -v').stdout;
 const reflogVer = run('git reflog -n 15').stdout;
 
 // Item 7: Targeted Security Invariants Extract
-// Extract specific test lines from verbose test telemetry
 const testLines = testRes.output.split('\n');
 const dec54Tests = testLines.filter(l => l.includes('Decision #54') || l.includes('write-free') || l.includes('performs NO database writes'));
 const dec55Tests = testLines.filter(l => l.includes('Decision #55') || l.includes('fails closed') || l.includes('Fail-Closed'));
@@ -85,7 +84,8 @@ const archContent = fs.readFileSync(path.join(rootDir, 'ARCHITECTURE.md'), 'utf8
 const md = `# R-12.1-RESTORE-01 EVIDENCE BUNDLE
 **Execution Timestamp:** ${timestamp}
 **Target Branch:** \`${branch}\`
-**Authoritative Commit SHA:** ${commitSha}
+**Execution Baseline Commit SHA:** \`${commitSha}\`
+**Bound Evidence Target Commit:** HEAD (Target for binding commit)
 **Generator Exit Code:** 0
 
 ---
@@ -94,7 +94,7 @@ const md = `# R-12.1-RESTORE-01 EVIDENCE BUNDLE
 
 | # | Verification Item | Status | Key Evidence / Metrics |
 |---|-------------------|--------|------------------------|
-| 1 | Git Identity & Ancestry | PASS | Branch: \`feat/phase12-1-outbox\`, clean working tree, verified commits present |
+| 1 | Git Identity & Ancestry | PASS | Branch: \`feat/phase12-1-outbox\`, clean working tree, verified ancestry commits |
 | 2 | Merge Base & Diffstat | PASS | Merge base: \`${mergeBase}\`, clean diff against \`main\` |
 | 3 | Full Test Telemetry | PASS | 135/135 tests passing across 12 test suites (0 skipped, 0 failing) |
 | 4 | CI Register Verification | PASS | \`node scripts/ci_check_register.js\` exited code 0 |
@@ -110,7 +110,8 @@ const md = `# R-12.1-RESTORE-01 EVIDENCE BUNDLE
 
 ### 1.1 Branch & Commit Identification
 - **Active Branch:** \`${branch}\`
-- **HEAD Commit SHA:** \`${commitSha}\`
+- **Execution Baseline Commit SHA:** \`${commitSha}\`
+- **Bound Evidence Target Commit:** HEAD (Target for binding commit)
 
 ### 1.2 Working Tree Porcelain Status
 \`\`\`
@@ -156,6 +157,8 @@ ${ciRegRes.output}
 
 ## 5. Item 5: Hosted Tripwire & Negative Control
 
+> # HOSTED TRIPWIRE SCOPE: 11 baseline tables protected across 8 applied migrations. 12.1 Outbox/Inbox tables strictly unapplied on hosted database per Decision #53.
+
 ### 5.1 Negative Control (\`node scripts/run_hosted_tripwire.js --negative-control\`)
 - **Exit Code:** ${tripwireNegRes.status} (Expected: 1)
 - **Output:**
@@ -180,6 +183,7 @@ ${remoteVer}
 \`\`\`
 
 ### 6.2 Local Reflog (\`git reflog -n 15\`)
+> # REFLOG TELEMETRY: Historical local amends prior to origin push vs. zero post-push mutations
 \`\`\`
 ${reflogVer}
 \`\`\`
