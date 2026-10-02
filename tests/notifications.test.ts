@@ -275,7 +275,7 @@ describe('12.1 Core Schema & enqueueNotification Helper (INV-6 Compliant)', () =
         dedupeKey,
         channels: ['IN_APP', 'EMAIL'],
       })
-    ).rejects.toThrow('enqueueNotification must be called within an interactive transaction client');
+    ).rejects.toThrow('Transaction client required; received root client');
   });
 
   it('skips EMAIL channel if emailEnabled is false in NotificationPreference', async () => {

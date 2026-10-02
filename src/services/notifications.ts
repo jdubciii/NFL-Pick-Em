@@ -67,8 +67,8 @@ export async function enqueueNotification(
   input: EnqueueNotificationInput
 ): Promise<EnqueueNotificationResult> {
   // Reject non-transaction or missing clients
-  if (!tx || typeof (tx as any).$transaction === 'function' || !(tx as any).inboxMessage) {
-    throw new Error('enqueueNotification must be called within an interactive transaction client');
+  if (!tx || '$transaction' in (tx as object) || !(tx as any).inboxMessage) {
+    throw new Error('Transaction client required; received root client');
   }
 
   const { poolId, userId, type, payload, dedupeKey, channels = ['IN_APP', 'EMAIL'] } = input;
