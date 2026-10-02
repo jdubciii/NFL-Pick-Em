@@ -9,6 +9,8 @@ import prisma from './db/client';
 import { JWT_SECRET, UUID_REGEX, requireAuth, requireAdmin, requirePoolCommissioner, requirePoolMember } from './middleware/auth';
 import { picksRouter } from './routes/picks';
 import { adminRouter } from './routes/admin';
+import { meRouter } from './routes/me';
+import { notificationsRouter } from './routes/notifications';
 import type {
   PoolSettings,
   MatrixResponsePayload,
@@ -28,6 +30,9 @@ app.use(express.json());
 // Routes
 app.use('/api/picks', picksRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/me', meRouter);
+app.use('/api/notifications', notificationsRouter);
+
 
 // Health check endpoint
 app.get('/api/health', (_req: Request, res: Response) => {
