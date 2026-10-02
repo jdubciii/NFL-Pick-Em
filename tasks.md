@@ -387,6 +387,14 @@
 - [ ] Decision #57 registered in `docs/rulings/appendix-a.md` and `ARCHITECTURE.md`, byte-for-byte CI check verified.
 - [ ] Complete evidence bundle generated and bound in `docs/evidence/R-12.2-AJ/EVIDENCE_BUNDLE.md`.
 
+### R-12.2-AK Acceptance Criteria (Section 7)
+- [✅] **B0 — Step A Amendments:** FKs enforce `onDelete: Restrict, onUpdate: Restrict`; `reminder_offsets_hours` defaults to `[24, 2]` with check constraint; `OutboxStatus` contains `SUPPRESSED`; `sanitizePayload` operates default-deny; `enqueueNotification` rejects non-tx clients; email disabled preference respected; tests passing.
+- [✅] **B1 — Concurrency Stability:** BR-4b failures resolved with transaction options (`maxWait: 15000, timeout: 30000`) and `fileParallelism: false`; 3 consecutive clean-room runs on `feat/phase12-migrations` and 3 on `feat/phase12-1-outbox` all passing.
+- [✅] **B2 — Transport, Drain Worker, Runners:** `MailTransport` interface, `ConsoleMailTransport`, `SmtpMailTransport`; `scrubErrorMessage` (max 200 chars, strips URLs and secrets); outbox drain worker (`FOR UPDATE SKIP LOCKED`, 60s lease, discrete backoff `[60, 300, 1800, 7200, 43200]`, DEAD at 5, SUPPRESSED check, dedupe key Message-ID); `withJobRun`, `runOutboxDrain`, `runReminderScan`; Section 3.6 tests passing.
+- [✅] **Documentation & Register Updates:** Section 8 supersession added to `docs/design/12.1.md`; Decisions #58 and #59 registered in `docs/rulings/appendix-a.md` and `ARCHITECTURE.md`; `ci_check_register.js` passing byte-for-byte.
+- [✅] **History Scan & Hygiene:** Negative control and scan against `origin/main` executed.
+- [✅] **Evidence Generation:** Evidence-light bundle generated at `docs/evidence/R-12.2-AK/EVIDENCE_BUNDLE.md`.
+
 
 
 

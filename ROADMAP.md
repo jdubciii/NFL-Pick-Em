@@ -122,6 +122,7 @@
 - R-12.2-AH-V2: Evidence gate cleared. Milestone 12.1 conditional start active on feat/phase12-1-outbox.
 - R-12.2-AI: 12.1 Core Schema & Outbox models applied to rehearsal DB.
 - R-12.2-AJ: I-1/I-2 closed; 12.1 step A accepted with amendment.
+- R-12.2-AK: 12.1 Step B GO; concurrency stabilization.
 
 
 

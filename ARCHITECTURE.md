@@ -614,6 +614,8 @@ Before enabling `LEDGER_TYPED_WRITES`, a read-path parity test must pass. Every 
 55 A guard is never bypassed by a conditional when its dependency is missing.
 56 Rulings are stored verbatim under docs/rulings/. The Decision Register in ARCHITECTURE.md is a byte-for-byte copy of docs/rulings/appendix-a.md, and CI diffs the two.
 57 Every table written by a re-running job carries a database-enforced dedupe key.
+58 Outbound payload sanitization is default-deny against an explicit per-type registry.
+59 Outbox drain workers claim via FOR UPDATE SKIP LOCKED with explicit lease timeouts and discrete backoff.
 
 V4: APPROVED by Fallback; RATIFIED IN PART by the Arbiter.
 
@@ -628,6 +630,8 @@ R-12.2-AH-V2: Evidence gate cleared. Hosted tripwire now provides raw hosted ide
 R-12.2-AI: Step 1 (Core Schema & Migration) implemented on rehearsal DB. Revoke/RLS applied.
 
 R-12.2-AJ: I-1/I-2 CLOSED; 12.1 step A accepted with amendment. Authoritative register pointer updated.
+
+R-12.2-AK: 12.1 Step B GO. Decisions #58/#59 applied.
 
 
 
