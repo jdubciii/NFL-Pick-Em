@@ -94,7 +94,7 @@ describe('Step F: Pool Ops Health & Outbox Retry Routes Tests', () => {
       },
     });
 
-    // Create separate pool B owned by someone else
+    // Create separate pool B owned by nonMemberUser
     poolB = await prisma.pool.create({
       data: {
         name: `Ops Pool B ${Date.now()}`,
@@ -228,11 +228,46 @@ describe('Step F: Pool Ops Health & Outbox Retry Routes Tests', () => {
       expect(data.deadEvents.some((e: any) => e.lastErrorCode === 'SMTP_TIMEOUT')).toBe(true);
       expect(data.status).toBe('DEGRADED');
 
+      // Verify global JobRun rows are NOT returned (leakage prevention)
+      expect(data.recentJobRuns).toBeUndefined();
+      expect(data.recentOutboxActivity).toBeInstanceOf(Array);
+
       // Verify Decision #54 write-free invariant: zero mutations occurred on GET
       const countAfter = await prisma.outboxEvent.count();
       const eventsAfter = await prisma.outboxEvent.findMany({ select: { id: true, status: true, attempts: true } });
       expect(countAfter).toBe(countBefore);
       expect(eventsAfter).toEqual(eventsBefore);
+    });
+
+    it('strictly isolates pool telemetry with zero cross-pool leakage', async () => {
+      // Create distinctive outbox event in Pool B
+      const poolBEvent = await prisma.outboxEvent.create({
+        data: {
+          poolId: poolB.id,
+          recipientUserId: nonMemberUser.id,
+          type: 'REMINDER',
+          payload: { secret: 'poolB-sensitive-data' },
+          dedupeKey: `ops-leak-check-b-${Date.now()}`,
+          status: 'DEAD',
+          lastErrorCode: 'POOL_B_SPECIFIC_ERROR',
+        },
+      });
+
+      // Query Pool A as commissioner of Pool A
+      const res = await fetch(`${baseUrl}/api/pools/${poolA.id}/ops/health`, {
+        headers: { Authorization: `Bearer ${commissionerToken}` },
+      });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      // Ensure Pool B's dead event is not in Pool A's deadEvents
+      const leakedDead = data.deadEvents.find((e: any) => e.id === poolBEvent.id);
+      expect(leakedDead).toBeUndefined();
+
+      // Ensure Pool B's event is not in Pool A's recentOutboxActivity
+      const leakedActivity = data.recentOutboxActivity.find((e: any) => e.id === poolBEvent.id);
+      expect(leakedActivity).toBeUndefined();
     });
   });
 

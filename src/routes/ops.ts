@@ -4,11 +4,14 @@ import { requireAuth, requirePoolCommissioner, UUID_REGEX } from '../middleware/
 
 export const opsRouter = Router({ mergeParams: true });
 
+// JobRun-level re-execution is out-of-scope for pool-scoped APIs. Job worker runs operate at the system/service tier.
+
 /**
  * GET /api/pools/:pool_id/ops/health
  * Protected route for pool commissioner.
- * Observational health telemetry: outbox queue depth, dead events, and recent job runs.
+ * Observational health telemetry: strictly pool-scoped outbox queue depth, dead events, and recent activity.
  * Strictly read-only (Decision #54 compliant).
+ * NOTE: Global JobRun records are excluded to prevent cross-pool telemetry leakage.
  */
 opsRouter.get('/:pool_id/ops/health', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {
   const pool = req.pool;
@@ -24,7 +27,7 @@ opsRouter.get('/:pool_id/ops/health', requireAuth, requirePoolCommissioner, asyn
       suppressedCount,
       totalCount,
       deadEvents,
-      recentJobRuns,
+      recentOutboxActivity,
     ] = await Promise.all([
       prisma.outboxEvent.count({ where: { poolId, status: 'PENDING' } }),
       prisma.outboxEvent.count({ where: { poolId, status: 'PROCESSING' } }),
@@ -51,9 +54,20 @@ opsRouter.get('/:pool_id/ops/health', requireAuth, requirePoolCommissioner, asyn
           retriedBy: true,
         },
       }),
-      prisma.jobRun.findMany({
-        orderBy: { startedAt: 'desc' },
-        take: 10,
+      prisma.outboxEvent.findMany({
+        where: { poolId },
+        orderBy: { createdAt: 'desc' },
+        take: 15,
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          attempts: true,
+          lastErrorCode: true,
+          createdAt: true,
+          sentAt: true,
+          retriedAt: true,
+        },
       }),
     ]);
 
@@ -74,7 +88,7 @@ opsRouter.get('/:pool_id/ops/health', requireAuth, requirePoolCommissioner, asyn
         total: totalCount,
       },
       deadEvents,
-      recentJobRuns,
+      recentOutboxActivity,
     });
   } catch (error) {
     console.error('Error fetching pool ops health:', error);
@@ -88,6 +102,7 @@ opsRouter.get('/:pool_id/ops/health', requireAuth, requirePoolCommissioner, asyn
  * Re-queues DEAD or FAILED outbox events for the pool.
  * Resets status to PENDING, attempts to 0, clears leaseExpiresAt, sets nextAttemptAt to now,
  * and stamps retriedBy/retriedAt.
+ * Strictly scoped to OutboxEvent records belonging to poolId.
  */
 opsRouter.post('/:pool_id/ops/outbox/retry', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {
   const pool = req.pool;
