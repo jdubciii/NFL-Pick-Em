@@ -123,6 +123,8 @@
 - R-12.2-AI: 12.1 Core Schema & Outbox models applied to rehearsal DB.
 - R-12.2-AJ: I-1/I-2 closed; 12.1 step A accepted with amendment.
 - R-12.2-AK: 12.1 Step B GO; concurrency stabilization.
+- R-12.2-AL: B3 fixes; scanner deferred to step E.
+
 
 
 

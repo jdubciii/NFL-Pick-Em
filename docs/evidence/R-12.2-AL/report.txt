@@ -1,0 +1,12 @@
+=== R-12.2-AL Implementation Report ===
+
+1. package.json script entry for jobs:drain:
+"jobs:drain": "tsx src/jobs/cli.ts drain"
+
+2. Scheduler file structure:
+- Controlled by environment flag: INTERNAL_JOBS_ENABLED=true (default: false).
+- File structure: src/jobs/scheduler.ts initializing background outbox drain intervals.
+- Graceful shutdown details: SIGTERM / SIGINT process hooks clear active setInterval / setTimeout timers, await in-flight batch drain executions, and release uncompleted worker leases back to PostgreSQL.
+
+3. Sync and scoring instrumentation status with withJobRun:
+Deferred to Step B4 under INV-5 characterization tests.

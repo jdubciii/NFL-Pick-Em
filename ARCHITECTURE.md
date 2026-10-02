@@ -634,6 +634,9 @@ R-12.2-AJ: I-1/I-2 CLOSED; 12.1 step A accepted with amendment. Authoritative re
 
 R-12.2-AK: 12.1 Step B GO. Decisions #58/#59 applied.
 
+R-12.2-AL: B3 fixes applied. Scanner deferred to step E. Decision #60 applied.
+
+
 
 
 

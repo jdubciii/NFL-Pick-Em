@@ -395,6 +395,15 @@
 - [✅] **History Scan & Hygiene:** Negative control and scan against `origin/main` executed.
 - [✅] **Evidence Generation:** Evidence-light bundle generated at `docs/evidence/R-12.2-AK/EVIDENCE_BUNDLE.md`.
 
+### R-12.2-AL Acceptance Criteria (Section 6)
+- [ ] B3.1: runReminderScan and its tests removed from src/jobs/, src/workers/, and tests/ in their own commit.
+- [ ] B3.2: Schema and migration updated (reminderOffsetsHours Int[] @default([24, 2]), check function returns false for NULL, REVOKE ALL ON FUNCTION check_reminder_offsets), ci_check_functions.sh script passing, zero migration drift.
+- [ ] B3.3: Drain worker defect fixes (claim counting for expired PROCESSING leases, transition to DEAD at 5 attempts, default batchSize 10, conditional renewal before each send, WHERE id = $1 AND status = 'PROCESSING' on status updates, HTML escaping for interpolated values, absolute deepLink URLs from APP_BASE_URL, SHA256 dedupe key Message-IDs with X-Dedupe-Key header), SmtpMailTransport timeouts (8000ms) and required SMTP_FROM, scrubErrorMessage with capturing groups and ECONNREFUSED pattern handling, withJobRun DB write error resilience and PARTIAL status transition, .env.example updated.
+- [ ] B3.4: Test coverage for drain worker crashing lifecycle, concurrent non-duplication conditional renewal, hanging SMTP timeout, HTML escaping, Message-ID SHA256 stability, withJobRun error resilience and PARTIAL transition, scrubber key preservation and ECONNREFUSED handling.
+- [ ] B3.5: Documentation & reporting (report.txt created, Section 9 appended to docs/design/12.1.md, ARCHITECTURE.md and ROADMAP.md updated, Decision #60 synchronized).
+- [ ] B3.6: Evidence bundle bound at docs/evidence/R-12.2-AL/EVIDENCE_BUNDLE.md.
+
+
 
 
 
