@@ -224,6 +224,9 @@ describe('12.1 Core Schema & enqueueNotification Helper (INV-6 Compliant)', () =
       });
     });
 
+    const expectedBase = process.env.APP_BASE_URL || 'http://localhost:3000';
+    const expectedDeepLink = `${expectedBase.replace(/\/+$/, '')}/pools/123/picks`;
+
     const inboxMsg = await prisma.inboxMessage.findFirst({
       where: { userId: testUser.id, dedupeKey },
     });
@@ -233,7 +236,7 @@ describe('12.1 Core Schema & enqueueNotification Helper (INV-6 Compliant)', () =
       poolName: 'Allowlist Pool',
       windowLabel: 'Sunday Early',
       lockAtUtc: '2026-10-04T17:00:00Z',
-      deepLink: '/pools/123/picks',
+      deepLink: expectedDeepLink,
     });
     expect(inboxPayload.unauthorizedField).toBeUndefined();
     expect(inboxPayload.extraBogusData).toBeUndefined();
@@ -247,7 +250,7 @@ describe('12.1 Core Schema & enqueueNotification Helper (INV-6 Compliant)', () =
       poolName: 'Allowlist Pool',
       windowLabel: 'Sunday Early',
       lockAtUtc: '2026-10-04T17:00:00Z',
-      deepLink: '/pools/123/picks',
+      deepLink: expectedDeepLink,
     });
     expect(outboxPayload.unauthorizedField).toBeUndefined();
     expect(outboxPayload.extraBogusData).toBeUndefined();
