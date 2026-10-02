@@ -225,6 +225,7 @@ enum OutboxStatus {
   SENT
   FAILED
   DEAD
+  SUPPRESSED
 }
 
 enum JobStatus {
@@ -244,8 +245,8 @@ model InboxMessage {
   readAt    DateTime? @map("read_at") @db.Timestamp(3)
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamp(3)
 
-  pool Pool @relation(fields: [poolId], references: [id], onDelete: Restrict)
-  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  pool Pool @relation(fields: [poolId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([userId, dedupeKey])
   @@index([userId, readAt, createdAt])
@@ -269,9 +270,9 @@ model OutboxEvent {
   retriedAt       DateTime?    @map("retried_at") @db.Timestamp(3)
   createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamp(3)
 
-  pool      Pool  @relation(fields: [poolId], references: [id], onDelete: Restrict)
-  recipient User  @relation("OutboxEventRecipient", fields: [recipientUserId], references: [id], onDelete: Restrict)
-  retrier   User? @relation("OutboxEventRetrier", fields: [retriedBy], references: [id], onDelete: Restrict)
+  pool      Pool  @relation(fields: [poolId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  recipient User  @relation("OutboxEventRecipient", fields: [recipientUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  retrier   User? @relation("OutboxEventRetrier", fields: [retriedBy], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([status, nextAttemptAt])
   @@map("outbox_events")
@@ -284,7 +285,7 @@ model NotificationPreference {
   unsubscribeToken     String   @unique @default(uuid()) @map("unsubscribe_token")
   updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamp(3)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@map("notification_preferences")
 }

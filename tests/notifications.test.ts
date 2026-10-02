@@ -262,6 +262,54 @@ describe('12.1 Core Schema & enqueueNotification Helper (INV-6 Compliant)', () =
     ]);
   });
 
+  it('rejects non-transaction client or root prisma instance', async () => {
+    const dedupeKey = `non-tx-${testPool.id}-${testUser.id}`;
+
+    // Pass root prisma client instead of interactive transaction client
+    await expect(
+      enqueueNotification(prisma, {
+        poolId: testPool.id,
+        userId: testUser.id,
+        type: 'REMINDER',
+        payload: { poolName: 'Test' },
+        dedupeKey,
+        channels: ['IN_APP', 'EMAIL'],
+      })
+    ).rejects.toThrow('enqueueNotification must be called within an interactive transaction client');
+  });
+
+  it('skips EMAIL channel if emailEnabled is false in NotificationPreference', async () => {
+    const dedupeKey = `email-disabled-${testPool.id}-${testUser.id}`;
+
+    // Set user email preference to disabled
+    await prisma.notificationPreference.create({
+      data: {
+        userId: testUser.id,
+        emailEnabled: false,
+        reminderOffsetsHours: [24, 2],
+      },
+    });
+
+    const res = await prisma.$transaction(async (tx) => {
+      return enqueueNotification(tx, {
+        poolId: testPool.id,
+        userId: testUser.id,
+        type: 'PICK_REMINDER',
+        payload: { poolName: 'Test Pool', windowLabel: 'TNF', lockAtUtc: '2026-10-01T20:00:00Z', deepLink: '/picks' },
+        dedupeKey,
+        channels: ['IN_APP', 'EMAIL'],
+      });
+    });
+
+    expect(res.inboxMessageCreated).toBe(true);
+    expect(res.outboxEventCreated).toBe(false);
+
+    const outboxEvents = await prisma.outboxEvent.findMany({
+      where: { dedupeKey },
+    });
+    expect(outboxEvents).toHaveLength(0);
+  });
+
   it('static test fails if the module imports nodemailer, net, http(s) or fetch', () => {
     const serviceFilePath = path.resolve(__dirname, '../src/services/notifications.ts');
     const fileContent = fs.readFileSync(serviceFilePath, 'utf8');

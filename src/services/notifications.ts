@@ -25,18 +25,20 @@ export interface EnqueueNotificationResult {
   dedupeKey: string;
 }
 
+/**
+ * DEFAULT-DENY payload sanitizer.
+ * Only keys explicitly declared in the registry for the given notification type are allowed.
+ * Unregistered types or keys are stripped and logged as errors (does not throw).
+ */
 export function sanitizePayload(type: string, payload: any): Record<string, any> {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return {};
   }
 
-  let allowedKeys: readonly string[] | undefined = ALLOWED_PAYLOAD_KEYS_BY_TYPE[type];
-  if (!allowedKeys && type.toUpperCase().includes('REMINDER')) {
-    allowedKeys = REMINDER_PAYLOAD_KEYS;
-  }
-
+  const allowedKeys = ALLOWED_PAYLOAD_KEYS_BY_TYPE[type];
   if (!allowedKeys) {
-    return { ...payload };
+    console.error(`[notifications] DEFAULT-DENY: Unregistered notification type '${type}', payload stripped`);
+    return {};
   }
 
   const sanitized: Record<string, any> = {};
@@ -44,7 +46,7 @@ export function sanitizePayload(type: string, payload: any): Record<string, any>
     if (allowedKeys.includes(key)) {
       sanitized[key] = value;
     } else {
-      console.warn(`[notifications] Stripped disallowed payload key '${key}' for notification type '${type}'`);
+      console.error(`[notifications] Stripped unregistered payload key '${key}' for notification type '${type}'`);
     }
   }
   return sanitized;
@@ -53,6 +55,7 @@ export function sanitizePayload(type: string, payload: any): Record<string, any>
 /**
  * Enqueues an in-app inbox message and/or an outbox event transactionally.
  * Conforms to Decision #5 (Inbox is the source of truth; email is best-effort),
+ * Decision #54 (No writes on GET),
  * Decision #57 (Every table written by a re-running job carries a database-enforced dedupe key),
  * and INV-6 (Non-blocking outbound: Zero network calls, DB transaction only).
  *
@@ -63,6 +66,11 @@ export async function enqueueNotification(
   tx: Prisma.TransactionClient | any,
   input: EnqueueNotificationInput
 ): Promise<EnqueueNotificationResult> {
+  // Reject non-transaction or missing clients
+  if (!tx || typeof (tx as any).$transaction === 'function' || !(tx as any).inboxMessage) {
+    throw new Error('enqueueNotification must be called within an interactive transaction client');
+  }
+
   const { poolId, userId, type, payload, dedupeKey, channels = ['IN_APP', 'EMAIL'] } = input;
 
   if (!poolId || !userId || !type || !dedupeKey) {
@@ -90,21 +98,29 @@ export async function enqueueNotification(
 
   let outboxEventCreated = false;
   if (channels.includes('EMAIL')) {
-    const outboxResult = await tx.outboxEvent.createMany({
-      data: [
-        {
-          poolId,
-          recipientUserId: userId,
-          type,
-          payload: cleanPayload,
-          dedupeKey,
-          status: 'PENDING',
-          attempts: 0,
-        },
-      ],
-      skipDuplicates: true,
+    const pref = await tx.notificationPreference.findUnique({
+      where: { userId },
+      select: { emailEnabled: true },
     });
-    outboxEventCreated = outboxResult.count > 0;
+
+    // Skip EMAIL channel if user preference emailEnabled === false
+    if (pref === null || pref.emailEnabled !== false) {
+      const outboxResult = await tx.outboxEvent.createMany({
+        data: [
+          {
+            poolId,
+            recipientUserId: userId,
+            type,
+            payload: cleanPayload,
+            dedupeKey,
+            status: 'PENDING',
+            attempts: 0,
+          },
+        ],
+        skipDuplicates: true,
+      });
+      outboxEventCreated = outboxResult.count > 0;
+    }
   }
 
   return {

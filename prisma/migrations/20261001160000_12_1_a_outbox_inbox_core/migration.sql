@@ -1,5 +1,5 @@
 -- CreateEnum
-CREATE TYPE "OutboxStatus" AS ENUM ('PENDING', 'PROCESSING', 'SENT', 'FAILED', 'DEAD');
+CREATE TYPE "OutboxStatus" AS ENUM ('PENDING', 'PROCESSING', 'SENT', 'FAILED', 'DEAD', 'SUPPRESSED');
 
 -- CreateEnum
 CREATE TYPE "JobStatus" AS ENUM ('RUNNING', 'OK', 'PARTIAL', 'FAILED');
@@ -83,22 +83,22 @@ CREATE UNIQUE INDEX "notification_preferences_unsubscribe_token_key" ON "notific
 CREATE INDEX "job_runs_job_name_started_at_idx" ON "job_runs"("job_name", "started_at");
 
 -- AddForeignKey
-ALTER TABLE "inbox_messages" ADD CONSTRAINT "inbox_messages_pool_id_fkey" FOREIGN KEY ("pool_id") REFERENCES "pools"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "inbox_messages" ADD CONSTRAINT "inbox_messages_pool_id_fkey" FOREIGN KEY ("pool_id") REFERENCES "pools"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
-ALTER TABLE "inbox_messages" ADD CONSTRAINT "inbox_messages_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "inbox_messages" ADD CONSTRAINT "inbox_messages_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
-ALTER TABLE "outbox_events" ADD CONSTRAINT "outbox_events_pool_id_fkey" FOREIGN KEY ("pool_id") REFERENCES "pools"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "outbox_events" ADD CONSTRAINT "outbox_events_pool_id_fkey" FOREIGN KEY ("pool_id") REFERENCES "pools"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
-ALTER TABLE "outbox_events" ADD CONSTRAINT "outbox_events_recipient_user_id_fkey" FOREIGN KEY ("recipient_user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "outbox_events" ADD CONSTRAINT "outbox_events_recipient_user_id_fkey" FOREIGN KEY ("recipient_user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
-ALTER TABLE "outbox_events" ADD CONSTRAINT "outbox_events_retried_by_fkey" FOREIGN KEY ("retried_by") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "outbox_events" ADD CONSTRAINT "outbox_events_retried_by_fkey" FOREIGN KEY ("retried_by") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- AddForeignKey
-ALTER TABLE "notification_preferences" ADD CONSTRAINT "notification_preferences_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "notification_preferences" ADD CONSTRAINT "notification_preferences_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
 
 -- Decision #15: Deny-by-default Data API access
 REVOKE ALL ON inbox_messages FROM anon, authenticated;
@@ -113,6 +113,21 @@ ALTER TABLE notification_preferences ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON job_runs FROM anon, authenticated;
 ALTER TABLE job_runs ENABLE ROW LEVEL SECURITY;
 
--- Enforce constraints per Directive 4.2
+-- Enforce constraints per Directive 4.2 and R-12.2-AK
 ALTER TABLE outbox_events ADD CONSTRAINT outbox_events_attempts_check CHECK (attempts >= 0);
-ALTER TABLE notification_preferences ADD CONSTRAINT notification_preferences_offsets_cardinality_check CHECK (cardinality(reminder_offsets_hours) <= 5);
+
+CREATE OR REPLACE FUNCTION check_reminder_offsets(offsets integer[])
+RETURNS boolean AS $$
+BEGIN
+    IF offsets IS NULL THEN
+        RETURN true;
+    END IF;
+    IF cardinality(offsets) > 5 THEN
+        RETURN false;
+    END IF;
+    RETURN (SELECT COALESCE(bool_and(x BETWEEN 1 AND 168), true) FROM unnest(offsets) x);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+ALTER TABLE notification_preferences ADD CONSTRAINT notification_preferences_offsets_check CHECK (check_reminder_offsets(reminder_offsets_hours));
+
