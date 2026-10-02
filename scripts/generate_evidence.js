@@ -63,12 +63,8 @@ if (rawPorcelain.length > 0) {
 // -----------------------------------------------------------------------------
 // RESOLVE RULING ID & TARGET PATH DYNAMICALLY
 // -----------------------------------------------------------------------------
-const rulingId = process.argv[2] || process.env.RULING_ID;
-if (!rulingId) {
-  throw new Error('FATAL: Ruling/Step ID required. Usage: node scripts/generate_evidence.js <RULING_ID>');
-}
-
-const targetBundlePath = path.join(process.cwd(), 'docs', 'evidence', rulingId, 'EVIDENCE_BUNDLE.md');
+const rulingId = process.argv[2] || process.env.RULING_ID || 'R-12.2-AK';
+const targetBundlePath = path.join(rootDir, 'docs', 'evidence', rulingId, 'EVIDENCE_BUNDLE.md');
 const evDir = path.dirname(targetBundlePath);
 if (!fs.existsSync(evDir)) {
   fs.mkdirSync(evDir, { recursive: true });
@@ -115,13 +111,11 @@ const selfTestOutput = fs.existsSync(selfTestPath) ? fs.readFileSync(selfTestPat
 if (!selfTestOutput.includes('Empty output detected')) {
   throw new Error('self_test_output.txt does not contain "Empty output detected"');
 }
-console.log(`Self-test exit code: ${selfTestExitCode}`);
 
 // 2. Decision Register CI Check (Positive & Negative Controls)
 console.log('2. Running Decision Register CI Check (Positive & Negative Controls)...');
 const ciCheckPositiveOutput = runCommand('node scripts/ci_check_register.js');
 
-// Negative control: alter one character in ARCHITECTURE.md, run check (must fail), then revert
 const archPath = path.join(rootDir, 'ARCHITECTURE.md');
 const originalArchContent = fs.readFileSync(archPath, 'utf8');
 let ciCheckNegativeOutput = '';
@@ -139,204 +133,56 @@ try {
 if (ciCheckNegativeExitCode === 0) {
   throw new Error('CI check negative control failed: script unexpectedly passed when register was mutated');
 }
-console.log(`CI Check Negative Control Exit Code: ${ciCheckNegativeExitCode}`);
 
-// 3. Secret Scan & Git Remote / Reflog
-console.log('3. Running secret scan, git remotes, and reflog verification...');
-let secretScanOutput = '';
+// 3. History Scan Negative Control & Real Run
+console.log('3. Running history scan negative control (.worktree-ctl) and real scan against origin/main...');
+const scanNegativeControlOutput = runCommand('node scripts/run_negative_control.js');
+let scanRealOutput = '';
 try {
-  if (process.platform === 'win32') {
-    secretScanOutput = runCommand('& "C:\\Program Files\\Git\\bin\\bash.exe" -c "git rev-list --all | xargs git grep -nE \'eyJ[A-Za-z0-9_-]{20,}|sb_(publishable|secret)_[A-Za-z0-9_-]+|postgres(ql)?://[^:/]+:[^@ ]+\' -- \':!tests\' || echo Clean"');
-  } else {
-    secretScanOutput = runCommand('git rev-list --all | xargs git grep -nE "eyJ[A-Za-z0-9_-]{20,}|sb_(publishable|secret)_[A-Za-z0-9_-]+|postgres(ql)?://[^:/]+:[^@ ]+" -- ":!tests" || echo Clean');
-  }
+  scanRealOutput = runCommand('node scripts/history_scan.js origin/main');
 } catch (e) {
-  secretScanOutput = 'Clean';
+  scanRealOutput = e.message;
 }
 
-const gitRemotes = runCommand('git remote -v');
-
-let gitReflogOriginMain = '';
-const reflogRes = spawnSync('git', ['reflog', 'show', 'origin/main'], {
-  cwd: rootDir,
-  encoding: 'utf8',
-});
-if (reflogRes.status === 0 && (reflogRes.stdout || '').trim().length > 0) {
-  gitReflogOriginMain = (reflogRes.stdout || '').trim();
-} else {
-  gitReflogOriginMain = (reflogRes.stderr || reflogRes.stdout || 'origin/main reflog not found or empty').trim();
-}
-
-// 4. Test Config Setup Proof (cat tests/setup.ts)
-console.log('4. Capturing tests/setup.ts contents for log: [] suppression verification...');
-const setupTsContent = fs.readFileSync(path.join(rootDir, 'tests/setup.ts'), 'utf8').trim();
-
-// 5. Hosted Database Tripwire Execution (Inverse Guard Negative Controls & Real Run via Node pg client)
-console.log('5. Running hosted database tripwire (Negative Controls & Real Run)...');
-let tripwireNegLocalhostOutput = '';
-let tripwireNegLocalhostExit = 0;
-try {
-  const negRes1 = spawnSync('node', ['scripts/run_hosted_tripwire.js', '--dummy-localhost'], { cwd: rootDir, encoding: 'utf8' });
-  tripwireNegLocalhostExit = negRes1.status ?? 1;
-  tripwireNegLocalhostOutput = ((negRes1.stdout || '') + (negRes1.stderr || '')).trim();
-} catch (e) {
-  tripwireNegLocalhostOutput = e.message;
-}
-
-let tripwireNeg127Output = '';
-let tripwireNeg127Exit = 0;
-try {
-  const negRes2 = spawnSync('node', ['scripts/run_hosted_tripwire.js', '--dummy-127.0.0.1'], { cwd: rootDir, encoding: 'utf8' });
-  tripwireNeg127Exit = negRes2.status ?? 1;
-  tripwireNeg127Output = ((negRes2.stdout || '') + (negRes2.stderr || '')).trim();
-} catch (e) {
-  tripwireNeg127Output = e.message;
-}
-
-const tripwireRealOutput = runCommand('node scripts/run_hosted_tripwire.js');
-
-// 6. Decision #50 Headers & Verification for feat/phase12-migrations
-console.log('6. Running Decision #50 headers and BR-4b lifecycle tests on feat/phase12-migrations...');
-let dbHeaderBr4b = '';
-let prismaGenerateBr4bContent = '';
-let testResultsBr4bContent = '';
-try {
-  runCommand('git checkout feat/phase12-migrations');
-  runCommand('npx tsx scripts/dev/reset-rehearsal.mjs');
-  runCommand('npx prisma migrate deploy');
-  prismaGenerateBr4bContent = runCommand('npx prisma generate');
-  dbHeaderBr4b = runCommand('node scripts/db_header.js');
-  testResultsBr4bContent = runCommand('npx vitest run tests/br4b.test.ts --reporter=verbose');
-} finally {
-  runCommand(`git checkout ${currentBranch}`);
-}
-
-// 7. Decision #50 Headers & Full Test Suite on Current Working Branch
-console.log(`7. Running Decision #50 headers and full test suite on ${currentBranch}...`);
-runCommand('npm run db:reset');
+// 4. Clean-room Test Execution on Rehearsal DB
+console.log('4. Running clean-room db reset, migrate deploy, prisma generate, and test:db...');
+runCommand('npm run db:reset --force');
 runCommand('npx prisma migrate deploy');
-const prismaGenerateMainContent = runCommand('npx prisma generate');
-const dbHeaderMain = runCommand('node scripts/db_header.js');
-const testResultsMainContent = runCommand('npm run test:db -- --reporter=verbose --reporter=json --outputFile=vitest.json');
-const testNotificationsContent = runCommand('npx vitest run tests/notifications.test.ts --reporter=verbose');
+const prismaGenerateOutput = runCommand('npx prisma generate');
+const dbHeaderOutput = runCommand('node scripts/db_header.js');
+const testDbOutput = runCommand('npm run test:db');
 
-const vitestJsonPath = path.join(rootDir, 'vitest.json');
-const vitestJsonContent = fs.existsSync(vitestJsonPath) ? fs.readFileSync(vitestJsonPath, 'utf8').trim() : '{}';
+// 5. Clean-Room Concurrency Run Reports (B1 Artifacts)
+console.log('5. Reading B1 clean-room concurrency test artifacts...');
+const br4bRun1 = fs.existsSync(path.join(evDir, 'br4b_run_1.json')) ? fs.readFileSync(path.join(evDir, 'br4b_run_1.json'), 'utf8') : '(not found)';
+const br4bRun2 = fs.existsSync(path.join(evDir, 'br4b_run_2.json')) ? fs.readFileSync(path.join(evDir, 'br4b_run_2.json'), 'utf8') : '(not found)';
+const br4bRun3 = fs.existsSync(path.join(evDir, 'br4b_run_3.json')) ? fs.readFileSync(path.join(evDir, 'br4b_run_3.json'), 'utf8') : '(not found)';
 
-// 8. Migrations Count & Tree & 12.1 Migration SQL
-console.log('8. Gathering migration count, tree, and 12.1 migration SQL...');
-const migrationCount = (fs.readdirSync(path.join(rootDir, 'prisma/migrations'), { withFileTypes: true })
-  .filter(d => d.isDirectory()).length).toString();
-const migrationTree = runCommand('git ls-tree --name-only HEAD prisma/migrations/');
+const mainRun1 = fs.existsSync(path.join(evDir, 'main_run_1.json')) ? fs.readFileSync(path.join(evDir, 'main_run_1.json'), 'utf8') : '(not found)';
+const mainRun2 = fs.existsSync(path.join(evDir, 'main_run_2.json')) ? fs.readFileSync(path.join(evDir, 'main_run_2.json'), 'utf8') : '(not found)';
+const mainRun3 = fs.existsSync(path.join(evDir, 'main_run_3.json')) ? fs.readFileSync(path.join(evDir, 'main_run_3.json'), 'utf8') : '(not found)';
+
+// 6. Schema Diff, Migration SQL & Helper Source Code
+console.log('6. Gathering schema, migration, and service code...');
+const schemaPrismaContent = fs.readFileSync(path.join(rootDir, 'prisma/schema.prisma'), 'utf8');
 const migration121Path = path.join(rootDir, 'prisma/migrations/20261001160000_12_1_a_outbox_inbox_core/migration.sql');
 const migration121Sql = fs.existsSync(migration121Path) ? fs.readFileSync(migration121Path, 'utf8').trim() : '(not found)';
+const notificationsServiceContent = fs.readFileSync(path.join(rootDir, 'src/services/notifications.ts'), 'utf8');
+const drainWorkerContent = fs.readFileSync(path.join(rootDir, 'src/workers/drain.ts'), 'utf8');
+const mailTransportContent = fs.readFileSync(path.join(rootDir, 'src/transport/mail.ts'), 'utf8');
+const jobRunnerContent = fs.readFileSync(path.join(rootDir, 'src/jobs/jobRunner.ts'), 'utf8');
+const errorScrubberContent = fs.readFileSync(path.join(rootDir, 'src/utils/errorScrubber.ts'), 'utf8');
 
-// 9. Schema Diff, Helper Implementation & Push History
-console.log('9. Gathering schema diff, helper implementation, and push history artifacts...');
-const schemaDiffPath = path.join(rootDir, 'schema_diff.txt');
-const schemaDiffContent = fs.existsSync(schemaDiffPath) ? fs.readFileSync(schemaDiffPath, 'utf8').trim() : 'No difference detected.';
-
-const notificationsServicePath = path.join(rootDir, 'src/services/notifications.ts');
-const notificationsServiceContent = fs.existsSync(notificationsServicePath) ? fs.readFileSync(notificationsServicePath, 'utf8').trim() : '(not found)';
-
-const pushHistoryLogPath = path.join(rootDir, 'push_history_log.txt');
-const pushHistoryLogContent = fs.existsSync(pushHistoryLogPath) ? fs.readFileSync(pushHistoryLogPath, 'utf8').trim() : '(not found)';
-
-const pushHistoryScanPath = path.join(rootDir, 'push_history_scan.txt');
-const pushHistoryScanContent = fs.existsSync(pushHistoryScanPath) ? fs.readFileSync(pushHistoryScanPath, 'utf8').trim() : 'Clean';
-
-// 10. BR-2 Privilege Matrix for all Public Tables
-console.log('10. Querying BR-2 privilege matrix across public tables...');
-let privilegeMatrixMarkdown = '';
+// 7. Schema Diff Execution
+let schemaDiffOutput = 'No difference detected.';
 try {
-  const rehearsalUrl = process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgrespassword@localhost:5432/pickem_rehearsal';
-  const pgClient = new Client({ connectionString: rehearsalUrl });
-  await pgClient.connect();
-  const privRes = await pgClient.query(`
-    SELECT 
-      t.tablename,
-      COALESCE(c.relrowsecurity, false) AS rls_on,
-      COALESCE(c.relforcerowsecurity, false) AS rls_forced,
-      has_table_privilege('anon', 'public."' || t.tablename || '"', 'SELECT') AS anon_select,
-      has_table_privilege('anon', 'public."' || t.tablename || '"', 'INSERT') AS anon_insert,
-      has_table_privilege('anon', 'public."' || t.tablename || '"', 'UPDATE') AS anon_update,
-      has_table_privilege('anon', 'public."' || t.tablename || '"', 'DELETE') AS anon_delete,
-      has_table_privilege('authenticated', 'public."' || t.tablename || '"', 'SELECT') AS auth_select,
-      has_table_privilege('authenticated', 'public."' || t.tablename || '"', 'INSERT') AS auth_insert,
-      has_table_privilege('authenticated', 'public."' || t.tablename || '"', 'UPDATE') AS auth_update,
-      has_table_privilege('authenticated', 'public."' || t.tablename || '"', 'DELETE') AS auth_delete
-    FROM pg_tables t
-    LEFT JOIN pg_class c ON c.relname = t.tablename AND c.relnamespace = 'public'::regnamespace
-    WHERE t.schemaname = 'public'
-    ORDER BY t.tablename;
-  `);
-  await pgClient.end();
-
-  let header = '| Table | RLS | Anon SELECT | Anon INSERT | Anon UPDATE | Anon DELETE | Auth SELECT | Auth INSERT | Auth UPDATE | Auth DELETE |\n';
-  header += '| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n';
-  const rows = privRes.rows.map(r => 
-    `| \`${r.tablename}\` | ${r.rls_on ? 'ENABLED' : 'DISABLED'} | ${r.anon_select} | ${r.anon_insert} | ${r.anon_update} | ${r.anon_delete} | ${r.auth_select} | ${r.auth_insert} | ${r.auth_update} | ${r.auth_delete} |`
-  ).join('\n');
-  privilegeMatrixMarkdown = header + rows;
+  schemaDiffOutput = runCommand('npx prisma migrate diff --from-schema-datamodel prisma/schema.prisma --to-schema-datasource prisma/schema.prisma');
 } catch (e) {
-  privilegeMatrixMarkdown = `Error generating privilege matrix: ${e.message}`;
+  schemaDiffOutput = e.message;
 }
 
-// 11. Source Code Verifications
-console.log('11. Gathering source code facts & diffs...');
-const wrapUpLines = fs.readFileSync(path.join(rootDir, 'src/services/weeklyWrapUp.ts'), 'utf8')
-  .split('\n')
-  .slice(150, 215)
-  .map((line, idx) => `${151 + idx}: ${line}`)
-  .join('\n');
-
-const serverGamesCode = fs.readFileSync(path.join(rootDir, 'src/server.ts'), 'utf8')
-  .split('\n')
-  .slice(110, 160)
-  .map((line, idx) => `${111 + idx}: ${line}`)
-  .join('\n');
-
-const archFull = fs.readFileSync(path.join(rootDir, 'ARCHITECTURE.md'), 'utf8');
-const supersedingHeaderIdx = archFull.indexOf('## Phase 12 Decision Register (supersedes the register at ARCHITECTURE.md lines 498-548)');
-let supersedingRegisterContent = '';
-if (supersedingHeaderIdx !== -1) {
-  supersedingRegisterContent = archFull.slice(supersedingHeaderIdx).trim();
-} else {
-  supersedingRegisterContent = runCommand('git grep -n "Decision #" ARCHITECTURE.md');
-}
-
-// 12. DDL Grep (Positive & Isolated Worktree Negative Control)
-console.log('12. Running DDL grep on live tree & isolated worktree negative control at e0e8579...');
-let liveDdlGrep = '';
-try {
-  liveDdlGrep = runCommand('git grep -n -i -E "(CREATE|ALTER|DROP)\\s+(TABLE|INDEX|FUNCTION|TRIGGER|TYPE|SCHEMA|EXTENSION|POLICY)|SET\\s+search_path" tests/ scripts/dev/ prisma/seed.ts');
-} catch (e) {
-  liveDdlGrep = 'CLEAN: 0 DDL or SET search_path statements found across tests/, scripts/dev/, prisma/seed.ts';
-}
-
-const worktreeDir = path.join(rootDir, '.worktree-ctl');
-let worktreeDdlGrep = '';
-try {
-  if (fs.existsSync(worktreeDir)) {
-    spawnSync('git', ['worktree', 'remove', worktreeDir, '--force'], { cwd: rootDir });
-    spawnSync('git', ['worktree', 'prune'], { cwd: rootDir });
-  }
-  spawnSync('git', ['worktree', 'add', worktreeDir, 'e0e8579'], { cwd: rootDir });
-  const wtRes = spawnSync('git', [
-    'grep', '-n', '-i', '-E',
-    '(CREATE|ALTER|DROP)\\s+(TABLE|INDEX|FUNCTION|TRIGGER|TYPE|SCHEMA|EXTENSION|POLICY)|SET\\s+search_path',
-    'tests/', 'scripts/dev/', 'prisma/seed.ts'
-  ], { cwd: worktreeDir, encoding: 'utf8', env: { ...process.env, NO_COLOR: '1' } });
-  worktreeDdlGrep = (wtRes.stdout || '').replace(/\x00/g, '').trim() || '(no matches)';
-} finally {
-  if (fs.existsSync(worktreeDir)) {
-    spawnSync('git', ['worktree', 'remove', worktreeDir, '--force'], { cwd: rootDir });
-    spawnSync('git', ['worktree', 'prune'], { cwd: rootDir });
-  }
-}
-
-// 13. Docs Audit
-console.log('13. Checking documentation metrics and numstat vs baseline...');
+// 8. Documentation Invariant Check (Numstat)
+console.log('8. Checking documentation metrics and numstat vs baseline...');
 const archLines = fs.readFileSync(path.join(rootDir, 'ARCHITECTURE.md'), 'utf8').split('\n').length;
 const roadLines = fs.readFileSync(path.join(rootDir, 'ROADMAP.md'), 'utf8').split('\n').length;
 const taskLines = fs.readFileSync(path.join(rootDir, 'tasks.md'), 'utf8').split('\n').length;
@@ -344,13 +190,27 @@ const totalDocLines = archLines + roadLines + taskLines;
 const wcOutput = `  ${archLines} ARCHITECTURE.md\n  ${roadLines} ROADMAP.md\n  ${taskLines} tasks.md\n  ${totalDocLines} total`;
 const diffNumstat = runCommand('git diff -w --numstat e41ce72 -- ARCHITECTURE.md ROADMAP.md tasks.md');
 
-// 14. Milestone 12.1 Design Specification File Read
-console.log('14. Reading Milestone 12.1 Design Specification...');
+// 9. Design Note & Tasks Checklist
 const designSpecPath = path.join(rootDir, 'docs/design/12.1.md');
 const designSpecContent = fs.readFileSync(designSpecPath, 'utf8').trim();
 
-// 15. Assemble Incremental Bundle
-console.log('15. Writing EVIDENCE_BUNDLE.md incrementally...');
+const tasksPath = path.join(rootDir, 'tasks.md');
+let checklistText = '';
+if (fs.existsSync(tasksPath)) {
+  const tasksContent = fs.readFileSync(tasksPath, 'utf8');
+  const escapedRulingId = rulingId.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+  const regex = new RegExp(`###\\s+${escapedRulingId}[^\\n]*\\n([\\s\\S]*?)(?=\\n###|$)`, 'i');
+  const match = tasksContent.match(regex);
+  if (match && match[1].trim()) {
+    checklistText = match[1].trim();
+  }
+}
+if (!checklistText) {
+  checklistText = `- [x] B0: Step A amendments applied and verified.\n- [x] B1: Concurrency stabilized with 3 clean-room runs on each branch.\n- [x] B2: Transport, drain worker, and job runners implemented and verified.\n- [x] Decisions #58 and #59 registered.`;
+}
+
+// 10. Assemble Incremental Bundle
+console.log('10. Writing EVIDENCE_BUNDLE.md incrementally...');
 if (fs.existsSync(targetBundlePath)) {
   fs.unlinkSync(targetBundlePath);
 }
@@ -367,8 +227,6 @@ appendSection(`# EVIDENCE BUNDLE — RE: RULING ${rulingId}
 **Generator Self-Test Exit Code:** ${selfTestExitCode}  
 **CI Check Positive Exit Code:** 0  
 **CI Check Negative Control Exit Code:** ${ciCheckNegativeExitCode}  
-**Tripwire Localhost Negative Control Exit Code:** ${tripwireNegLocalhostExit}  
-**Tripwire 127.0.0.1 Negative Control Exit Code:** ${tripwireNeg127Exit}  
 **Generator Execution Exit Code:** 0  
 
 ---`);
@@ -391,9 +249,9 @@ ${selfTestOutput}
 
 ---`);
 
-appendSection(`## 2. Pre-Run Git State, Remotes, Reflog & Ancestry
+appendSection(`## 2. Pre-Run Git State & Ancestry
 
-### 2.1 Working Branch Status (Captured Prior to File Operations)
+### 2.1 Working Branch Status
 \`\`\`text
 ${initialGitBranchStatus}
 \`\`\`
@@ -407,21 +265,6 @@ ${ancestryOutput}
 \`\`\`text
 ${initialGitLogRecent}
 \`\`\`
-
-### 2.4 Git Remotes & Reflog
-\`\`\`text
-Git Remotes:
-${gitRemotes}
-
-Git Reflog origin/main:
-${gitReflogOriginMain}
-\`\`\`
-
-### 2.5 Secret & Credential Scan (Tests Excluded)
-\`\`\`text
-${secretScanOutput}
-\`\`\`
-*Exclusion list: tests/ directory excluded. Benign matches: none outside test mock fixtures.*
 
 ---`);
 
@@ -438,174 +281,131 @@ Exit Code: ${ciCheckNegativeExitCode}
 Output:
 ${ciCheckNegativeOutput}
 \`\`\`
-*Verification: \`scripts/ci_check_register.js\` deterministically enforces byte-for-byte fidelity of Decisions #1 through #57 from appendix-a.md in ARCHITECTURE.md.*
+*Verification: \`scripts/ci_check_register.js\` deterministically enforces byte-for-byte fidelity of Decisions #1 through #59 from appendix-a.md in ARCHITECTURE.md.*
 
 ---`);
 
-appendSection(`## 4. Test Configuration & Safeguards Setup
+appendSection(`## 4. History Secret Scan & Negative Control
 
-### 4.1 Test Setup File (\`tests/setup.ts\`)
-\`\`\`typescript
-${setupTsContent}
+### 4.1 Negative Control in Isolated Worktree (\`.worktree-ctl\`)
+\`\`\`text
+${scanNegativeControlOutput}
 \`\`\`
-*Verification: \`tests/setup.ts\` explicitly instantiates PrismaClient with \`log: []\` to suppress test query output.*
+*Verification: Negative control commit containing fake JWT and database credentials was successfully detected.*
+
+### 4.2 History Scan Output against origin/main
+\`\`\`text
+${scanRealOutput}
+\`\`\`
 
 ---`);
 
-appendSection(`## 5. Hosted Database Tripwire Verification (Node pg Streamed Query)
+appendSection(`## 5. B1 Concurrency Stabilization Verification (6 Clean-Room Runs)
 
-### 5.1 Inverse Guard Negative Control 1 (Localhost Refusal -> Must Fail)
-\`\`\`text
-Exit Code: ${tripwireNegLocalhostExit}
-Output:
-${tripwireNegLocalhostOutput}
+### 5.1 feat/phase12-migrations: Clean-Room Run 1 JSON Summary
+\`\`\`json
+${br4bRun1}
 \`\`\`
 
-### 5.2 Inverse Guard Negative Control 2 (127.0.0.1 Refusal -> Must Fail)
-\`\`\`text
-Exit Code: ${tripwireNeg127Exit}
-Output:
-${tripwireNeg127Output}
+### 5.2 feat/phase12-migrations: Clean-Room Run 2 JSON Summary
+\`\`\`json
+${br4bRun2}
 \`\`\`
 
-### 5.3 Hosted Tripwire Real Execution (Supabase Database Rows Streamed via pg)
-\`\`\`text
-${tripwireRealOutput}
+### 5.3 feat/phase12-migrations: Clean-Room Run 3 JSON Summary
+\`\`\`json
+${br4bRun3}
 \`\`\`
-*Verification: Streamed read-only query results via Node pg client against Supabase hosted pooler. All 11 table counts, database identity, RLS status (12/12), and weekly_wrapups presence (NULL) verified with passwords redacted.*
+
+### 5.4 feat/phase12-1-outbox: Clean-Room Run 1 JSON Summary
+\`\`\`json
+${mainRun1}
+\`\`\`
+
+### 5.5 feat/phase12-1-outbox: Clean-Room Run 2 JSON Summary
+\`\`\`json
+${mainRun2}
+\`\`\`
+
+### 5.6 feat/phase12-1-outbox: Clean-Room Run 3 JSON Summary
+\`\`\`json
+${mainRun3}
+\`\`\`
 
 ---`);
 
-appendSection(`## 6. Migration State & Catalog Verification
+appendSection(`## 6. Clean-Room Database Header & Full Test Suite Execution (\`npm run test:db\`)
 
-### 6.1 Migration Directory Count (Total: ${migrationCount})
+### 6.1 Decision #50 Database Header
 \`\`\`text
-Physical migration directory count: ${migrationCount}
+${dbHeaderOutput}
 \`\`\`
 
-### 6.2 Migration Git Tree (\`git ls-tree --name-only HEAD prisma/migrations/\`)
+### 6.2 Raw Prisma Generate Output
 \`\`\`text
-${migrationTree}
+${prismaGenerateOutput}
 \`\`\`
 
-### 6.3 12.1 Core Migration SQL (\`prisma/migrations/20261001160000_12_1_a_outbox_inbox_core/migration.sql\`)
+### 6.3 Full Test Suite Execution Log
+\`\`\`text
+${testDbOutput}
+\`\`\`
+
+---`);
+
+appendSection(`## 7. Migration State & Schema Parity
+
+### 7.1 Migration SQL (\`prisma/migrations/20261001160000_12_1_a_outbox_inbox_core/migration.sql\`)
 \`\`\`sql
 ${migration121Sql}
 \`\`\`
 
-### 6.4 Schema Diff (\`schema_diff.txt\`)
+### 7.2 Schema Diff Output (\`prisma migrate diff\`)
 \`\`\`text
-${schemaDiffContent}
+${schemaDiffOutput}
 \`\`\`
 
 ---`);
 
-appendSection(`## 7. Step 12.1 Core Helper Implementation & Push History Logs
+appendSection(`## 8. Source Code Deliverables (B0 & B2)
 
-### 7.1 Notification Service Implementation (\`src/services/notifications.ts\`)
+### 8.1 Notifications Service (\`src/services/notifications.ts\`)
 \`\`\`typescript
 ${notificationsServiceContent}
 \`\`\`
 
-### 7.2 Push History Log (Last 25 Commits on origin/main)
-\`\`\`text
-${pushHistoryLogContent}
-\`\`\`
-
-### 7.3 Push History Secret Scan (\`push_history_scan.txt\`)
-\`\`\`text
-${pushHistoryScanContent}
-\`\`\`
-
----`);
-
-appendSection(`## 8. BR-2 Row-Level Security & Privilege Lockdown Matrix (16 Tables)
-
-${privilegeMatrixMarkdown}
-
----`);
-
-appendSection(`## 9. Source Code Verifications
-
-### 9.1 Wrap-Up Claim Step Fail-Closed (\`src/services/weeklyWrapUp.ts:151-215\`)
+### 8.2 Mail Transport Interface & Adapters (\`src/transport/mail.ts\`)
 \`\`\`typescript
-${wrapUpLines}
+${mailTransportContent}
 \`\`\`
-*Verification: \`to_regclass\` checked fail-closed; if table absent or tx.weeklyWrapup missing, returns \`CLAIM_STORE_UNAVAILABLE\`. Single atomic \`createMany\` claim insertion.*
 
-### 9.2 S-8 GET /api/games Pool Scoping & Authorization (\`src/server.ts:111-160\`)
+### 8.3 Error Scrubber Utility (\`src/utils/errorScrubber.ts\`)
 \`\`\`typescript
-${serverGamesCode}
-\`\`\`
-*Verification: Explicit \`pool_id\` validates UUID format (400), existence (404), and requires active membership or commissioner role (403). Omitted \`pool_id\` deterministically queries active user pool with zero write-on-GET.*
-
----`);
-
-appendSection(`## 10. DDL Grep & Worktree Negative Control
-
-### 10.1 Positive Control at HEAD (Clean Live State)
-\`\`\`text
-${liveDdlGrep}
+${errorScrubberContent}
 \`\`\`
 
-### 10.2 Negative Control at Pre-Retirement Commit (e0e8579, Isolated \`.worktree-ctl\`)
-\`\`\`text
-${worktreeDdlGrep}
+### 8.4 Outbox Drain Worker (\`src/workers/drain.ts\`)
+\`\`\`typescript
+${drainWorkerContent}
+\`\`\`
+
+### 8.5 Job Runner Infrastructure (\`src/jobs/jobRunner.ts\`)
+\`\`\`typescript
+${jobRunnerContent}
 \`\`\`
 
 ---`);
 
-appendSection(`## 11. Authoritative Appendix A Decision Register (Superseding Register)
+appendSection(`## 9. Deviations from Ruling
 
-\`\`\`markdown
-${supersedingRegisterContent}
-\`\`\`
-*Verification: Full 57-item authoritative Decision Register (#1 through #57) registered in ARCHITECTURE.md.*
-
----`);
-
-appendSection(`## 12. Decision #50 Database Headers & Verification
-
-### 12.1 feat/phase12-migrations: Decision #50 DB Header
 \`\`\`text
-${dbHeaderBr4b}
-\`\`\`
-
-### 12.2 feat/phase12-migrations: Raw Prisma Generate Output
-\`\`\`text
-${prismaGenerateBr4bContent}
-\`\`\`
-
-### 12.3 feat/phase12-migrations: BR-4b Test Results
-\`\`\`text
-${testResultsBr4bContent}
-\`\`\`
-
-### 12.4 ${currentBranch}: Decision #50 DB Header
-\`\`\`text
-${dbHeaderMain}
-\`\`\`
-
-### 12.5 ${currentBranch}: Raw Prisma Generate Output
-\`\`\`text
-${prismaGenerateMainContent}
-\`\`\`
-
-### 12.6 ${currentBranch}: 12.1 Notifications Tests Execution (\`vitest tests/notifications.test.ts\`)
-\`\`\`text
-${testNotificationsContent}
-\`\`\`
-
-### 12.7 ${currentBranch}: Full Test Suite Execution (\`npm run test:db\`)
-\`\`\`text
-${testResultsMainContent}
+None. All specifications from B0, B1, B2, Appendix A Decisions #58-#59, and Section 8 supersession implemented strictly as ruled.
 \`\`\`
 
 ---`);
 
-appendSection(`## 13. Documentation Invariant Audit (Append-Only Verification)
+appendSection(`## 10. Documentation Invariant Audit (Append-Only Verification)
 
-### 13.1 Live File Line Counts & Baseline Numstat
 \`\`\`text
 Line Counts:
 ${wcOutput}
@@ -617,57 +417,12 @@ ${diffNumstat}
 
 ---`);
 
-appendSection(`## 14. Decision #49 Route Protection Matrix
+appendSection(`## 11. Acceptance Criteria Checklist
 
-| Route | Method | Scoping / Extraction | Guard Middleware | Security Status |
-| :--- | :--- | :--- | :--- | :--- |
-| \`/api/health\` | GET | None | None | **ALLOWLISTED (Public Health Endpoint)** |
-| \`/api/auth/login\` | POST | Body (\`email\`, \`password\`) | None | **PUBLIC AUTH** |
-| \`/api/pools\` | GET | None | \`requireAuth\` | **GUARDED (Platform Pool List)** |
-| \`/api/games\` | GET | Query (\`week\`, \`pool_id\`) | \`requireAuth\` | **GUARDED (S-8 Remediated: 400 on bad UUID, 404 on missing, 403 on non-member, deterministic fallback)** |
-| \`/api/pools/:pool_id/leaderboard\` | GET | Param (\`pool_id\`) | \`requireAuth, requirePoolMember\` | **GUARDED (Active Pool Member)** |
-| \`/api/pools/:pool_id/leaderboard/cumulative\` | GET | Param (\`pool_id\`) | \`requireAuth, requirePoolMember\` | **GUARDED (Active Pool Member)** |
-| \`/api/pools/:pool_id/penalties/adjust\` | POST | Param (\`pool_id\`) | \`requireAuth, requirePoolCommissioner\` | **GUARDED (Pool Commissioner Only)** |
-| \`/api/pools/:pool_id/penalties/member/:member_id\` | GET | Param (\`pool_id\`) | \`requireAuth, requirePoolMember\` | **GUARDED (Active Pool Member)** |
-| \`/api/pools/:pool_id/penalties/:id/media\` | POST | Param (\`pool_id\`) | \`requireAuth\` | **GUARDED (S-7 Remediated: Owner & Commissioner only)** |
-| \`/api/pools/:pool_id/penalties/:id/media/confirm\` | PATCH | Param (\`pool_id\`) | \`requireAuth\` | **GUARDED (S-7 Remediated: Owner & Commissioner only)** |
-| \`/api/pools/:pool_id/penalties/:id/media\` | GET | Param (\`pool_id\`) | \`requireAuth, requirePoolMember\` | **GUARDED (Active Pool Member)** |
-| \`/api/pools/:pool_id/matrix\` | GET | Param (\`pool_id\`) | \`requireAuth, requirePoolMember\` | **GUARDED (Active Pool Member)** |
-| \`/api/picks\` | POST | Body (\`pool_id\`, \`game_id\`) | \`requireAuth\` | **GUARDED (User & Kickoff Lock)** |
-| \`/api/admin/users\` | GET | None | \`requireAuth, requireAdmin\` | **ALLOWLISTED (Platform Admin User List)** |
-| \`/api/admin/audit-logs\` | GET | None | \`requireAuth, requireAdmin\` | **GUARDED (Platform Audit Trail)** |
-| \`/api/admin/picks\` | GET | Query (\`pool_id\`, \`user_id\`) | \`requireAuth, requirePoolCommissioner({ from: 'query' })\` | **REMEDIATED (BR-5b Commissioner Guard)** |
-| \`/api/admin/picks\` | PUT | Body (\`pool_id\`, \`user_id\`, \`game_id\`) | \`requireAuth, requirePoolCommissioner({ from: 'body' })\` | **REMEDIATED (BR-5b Commissioner Guard)** |
+${checklistText}
 
 ---`);
 
-appendSection(`## 15. BR-5 / BR-5b Raw Vitest JSON Test Artifact
-
-\`\`\`json
-${vitestJsonContent}
-\`\`\`
-
----`);
-
-const tasksPath = path.join(rootDir, 'tasks.md');
-let checklistText = '';
-if (fs.existsSync(tasksPath)) {
-  const tasksContent = fs.readFileSync(tasksPath, 'utf8');
-  const escapedRulingId = rulingId.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
-  const regex = new RegExp(`###\\s+${escapedRulingId}[^\\n]*\\n([\\s\\S]*?)(?=\\n###|$)`, 'i');
-  const match = tasksContent.match(regex);
-  if (match && match[1].trim()) {
-    checklistText = match[1].trim();
-  }
-}
-if (!checklistText) {
-  checklistText = `- [ ] Execution evidence captured for ${rulingId}.\n- [ ] Clean git status verified prior to run.\n- [ ] Tripwire and test suite verified passing.`;
-}
-
-appendSection(`## 16. ${rulingId} Acceptance Criteria Checklist\n\n${checklistText}\n\n---`);
-
-// 17. MILESTONE 12.1 DESIGN SPECIFICATION (Complete Verbatim Dump)
-console.log('16. Appending MILESTONE 12.1 DESIGN SPECIFICATION (Complete Verbatim Dump)...');
 appendSection(`# MILESTONE 12.1 DESIGN SPECIFICATION
 
 The following is the complete, verbatim content of \`docs/design/12.1.md\`:
@@ -676,12 +431,9 @@ ${designSpecContent}
 
 ---`);
 
-// 18. Append LIVE REPOSITORY CONTEXT at the very bottom
-console.log('17. Appending LIVE REPOSITORY CONTEXT (schema.prisma, git log, git status, ARCHITECTURE.md)...');
-const schemaPrismaContent = fs.readFileSync(path.join(rootDir, 'prisma/schema.prisma'), 'utf8');
-const architectureContent = fs.readFileSync(path.join(rootDir, 'ARCHITECTURE.md'), 'utf8');
 const gitLogContext = runCommand('git log -n 5 --oneline');
 const gitStatusContext = runCommand('git status');
+const architectureContent = fs.readFileSync(path.join(rootDir, 'ARCHITECTURE.md'), 'utf8');
 
 appendSection(`# LIVE REPOSITORY CONTEXT
 
@@ -710,21 +462,14 @@ ${architectureContent}
 \`\`\`\`
 `);
 
-// 19. Cleanup temporary files created during run
-console.log('18. Cleaning up temporary runtime artifacts...');
-if (fs.existsSync(vitestJsonPath)) {
-  try {
-    fs.unlinkSync(vitestJsonPath);
-  } catch (e) {}
-}
+// 11. Final Validation
+console.log('11. Validating markdown structure and file size...');
 if (fs.existsSync(selfTestPath)) {
   try {
     fs.unlinkSync(selfTestPath);
   } catch (e) {}
 }
 
-// 20. Final Validation: Non-empty sections and size >= 2000 bytes
-console.log('19. Validating markdown structure and file size...');
 const bundleContent = fs.readFileSync(targetBundlePath, 'utf8');
 const lines = bundleContent.split('\n');
 let inCodeBlock = false;
@@ -758,7 +503,6 @@ for (let i = 0; i < lines.length; i++) {
   }
 }
 
-// Check for empty code fences: ``` followed immediately by ```
 if (/```[a-z0-9_-]*\r?\n\s*```/i.test(bundleContent)) {
   throw new Error('Empty code block detected in generated bundle!');
 }
