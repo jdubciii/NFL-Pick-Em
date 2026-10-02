@@ -8,16 +8,12 @@ function clean(str) {
   return (str || '').replace(/\x00/g, '').trim();
 }
 
-function run(cmd, args = [], opts = {}) {
+function run(cmd, opts = {}) {
   const isWindows = process.platform === 'win32';
-  let execCmd = cmd;
-  let execArgs = args;
-  
-  if (isWindows && (cmd === 'npm' || cmd === 'npx')) {
-    execCmd = `${cmd}.cmd`;
-  }
+  const shellCmd = isWindows ? 'powershell' : '/bin/sh';
+  const shellArgs = isWindows ? ['-NoProfile', '-Command', cmd] : ['-c', cmd];
 
-  const res = spawnSync(execCmd, execArgs, {
+  const res = spawnSync(shellCmd, shellArgs, {
     cwd: rootDir,
     encoding: 'utf8',
     env: { ...process.env, NO_COLOR: '1', CI: '1' },
@@ -25,17 +21,21 @@ function run(cmd, args = [], opts = {}) {
     ...opts,
   });
 
+  const stdout = clean(res.stdout);
+  const stderr = clean(res.stderr);
+  const combined = clean((res.stdout || '') + '\n' + (res.stderr || ''));
+
   return {
-    stdout: clean(res.stdout),
-    stderr: clean(res.stderr),
+    stdout,
+    stderr,
     status: res.status !== null ? res.status : 1,
-    output: clean((res.stdout || '') + '\n' + (res.stderr || ''))
+    output: combined,
   };
 }
 
 // 1. Commit SHA & Branch
-const commitSha = run('git', ['rev-parse', 'HEAD']).stdout;
-const branch = run('git', ['branch', '--show-current']).stdout;
+const commitSha = run('git rev-parse HEAD').stdout;
+const branch = run('git branch --show-current').stdout;
 const timestamp = new Date().toISOString();
 
 // 2. Acceptance Matrix
@@ -49,13 +49,13 @@ const acceptanceMatrix = `### Step C Acceptance Matrix
 - C.7 (Clean Repository State at Stamped Commit): PASS`;
 
 // 3. CI Check Register
-const ciRegRes = run('node', ['scripts/ci_check_register.js']);
+const ciRegRes = run('node scripts/ci_check_register.js');
 
 // 4. Test Suite Execution (Full 112/112 tests)
-const testRes = run('npm', ['run', 'test:db']);
+const testRes = run('npm run test:db');
 
 // 5. In-memory porcelain check
-const statusRes = run('git', ['status', '--porcelain']);
+const statusRes = run('git status --porcelain');
 const rawStatusLines = statusRes.stdout.split('\n').map(l => l.trim()).filter(Boolean);
 const relevantStatusLines = rawStatusLines.filter(line => 
   !line.includes('docs/evidence/R-12.2-C') &&
@@ -66,7 +66,7 @@ const porcelainClean = relevantStatusLines.length === 0;
 // 6. Context files
 const schemaPrisma = fs.readFileSync(path.join(rootDir, 'prisma/schema.prisma'), 'utf8');
 const archFileContent = fs.readFileSync(path.join(rootDir, 'ARCHITECTURE.md'), 'utf8');
-const gitLog5 = run('git', ['log', '-n', '5', '--oneline']).stdout;
+const gitLog5 = run('git log -n 5 --oneline').stdout;
 
 const md = `# R-12.2-C EVIDENCE BUNDLE
 **Execution Timestamp:** ${timestamp}
