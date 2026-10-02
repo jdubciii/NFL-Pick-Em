@@ -616,6 +616,7 @@ Before enabling `LEDGER_TYPED_WRITES`, a read-path parity test must pass. Every 
 57 Every table written by a re-running job carries a database-enforced dedupe key.
 58 Outbound payload sanitization is default-deny against an explicit per-type registry.
 59 Outbox drain workers claim via FOR UPDATE SKIP LOCKED with explicit lease timeouts and discrete backoff.
+60 Every claim of a leased job item counts as an attempt; the lease is verified before each send and when the result is recorded.
 
 V4: APPROVED by Fallback; RATIFIED IN PART by the Arbiter.
 
