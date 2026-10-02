@@ -345,7 +345,7 @@ export async function executeWeeklyWrapUp(poolId: string, weekNumber: number): P
       targetGameId: targetGame?.id ?? null,
       targetGameScore: actualTiebreakerTotal,
     };
-  });
+  }, { maxWait: 15000, timeout: 30000 });
 }
 
 export const runWeeklyWrapUp = executeWeeklyWrapUp;
