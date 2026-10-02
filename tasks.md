@@ -403,6 +403,15 @@
 - [ ] B3.5: Documentation & reporting (report.txt created, Section 9 appended to docs/design/12.1.md, ARCHITECTURE.md and ROADMAP.md updated, Decision #60 synchronized).
 - [ ] B3.6: Evidence bundle bound at docs/evidence/R-12.2-AL/EVIDENCE_BUNDLE.md.
 
+### B3 Acceptance Matrix
+- [x] B3.1 (Scanner Deferral): PASS — Commit fba6a81
+- [x] B3.2 (Schema/Security & Function Revocation): PASS — Migration 12_1_a + scripts/ci_check_functions.sh
+- [x] B3.3 (Worker, Leases, Attempts, SMTP, Scrubber): PASS — src/workers/drain.ts, src/services/transport.ts
+- [x] B3.4 (Test Coverage & Suite Health): PASS — 97/97 tests passing across 35 suites
+- [x] B3.5 (Documentation, Reports, Decision #60): PASS — Append-only design notes, report.txt, Decision #60 synced
+- [x] B3.6 (Closure Hygiene): PASS — Addressed in this close-out commit
+
+
 
 
 

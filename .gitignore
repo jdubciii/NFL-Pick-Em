@@ -30,6 +30,8 @@ Thumbs.db
 
 # Test artifacts
 vitest.json
+self_test_output.txt
+test_summary.json
 
 # Audit, diagnostic, and history scan dumps
 *_diff.txt
