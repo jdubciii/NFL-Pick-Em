@@ -613,6 +613,7 @@ Before enabling `LEDGER_TYPED_WRITES`, a read-path parity test must pass. Every 
 54 GET handlers perform no writes.
 55 A guard is never bypassed by a conditional when its dependency is missing.
 56 Rulings are stored verbatim under docs/rulings/. The Decision Register in ARCHITECTURE.md is a byte-for-byte copy of docs/rulings/appendix-a.md, and CI diffs the two.
+57 Every table written by a re-running job carries a database-enforced dedupe key.
 
 V4: APPROVED by Fallback; RATIFIED IN PART by the Arbiter.
 
@@ -625,6 +626,9 @@ R-12.2-AH-V2: Hosted tripwire query streaming corrected. S-7/S-8 explicit consol
 R-12.2-AH-V2: Evidence gate cleared. Hosted tripwire now provides raw hosted identity, all 11 required table counts, migration state, trigger state, and rls_on 12/12; localhost inverse controls fail closed. S-7/S-8 required invariant and byte-equality assertions are explicitly logged. Pre-generation workspace hygiene is directly evidenced as clean. Milestone 12.1 remains CONDITIONAL START on feat/phase12-1-outbox; hosted DDL and merges to main remain blocked pending separate implementation gates.
 
 R-12.2-AI: Step 1 (Core Schema & Migration) implemented on rehearsal DB. Revoke/RLS applied.
+
+R-12.2-AJ: I-1/I-2 CLOSED; 12.1 step A accepted with amendment. Authoritative register pointer updated.
+
 
 
 

@@ -28,3 +28,6 @@ Thumbs.db
 # Worktrees
 .worktree-ctl/
 
+# Test artifacts
+vitest.json
+

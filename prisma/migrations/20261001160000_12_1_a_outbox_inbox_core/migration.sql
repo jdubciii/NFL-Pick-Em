@@ -11,6 +11,7 @@ CREATE TABLE "inbox_messages" (
     "user_id" UUID NOT NULL,
     "type" TEXT NOT NULL,
     "payload" JSONB NOT NULL,
+    "dedupe_key" TEXT NOT NULL,
     "read_at" TIMESTAMP(3),
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -65,6 +66,9 @@ CREATE TABLE "job_runs" (
 
 -- CreateIndex
 CREATE INDEX "inbox_messages_user_id_read_at_created_at_idx" ON "inbox_messages"("user_id", "read_at", "created_at");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "inbox_messages_user_id_dedupe_key_key" ON "inbox_messages"("user_id", "dedupe_key");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "outbox_events_dedupe_key_key" ON "outbox_events"("dedupe_key");

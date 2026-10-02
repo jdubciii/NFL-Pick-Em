@@ -377,6 +377,17 @@
 - [ ] 12.1 Core schema (`inbox_messages`, `outbox_events`, `notification_preferences`, `job_runs`) applied with RLS & Revoke.
 - [ ] `enqueueNotification` implemented with transactional isolation and zero network I/O.
 
+### R-12.2-AJ Acceptance Criteria (Section 8)
+- [ ] Schema amendment applied to `prisma/schema.prisma` and migration `20261001160000_12_1_a_outbox_inbox_core`: `dedupe_key` added to `inbox_messages`, `UNIQUE(user_id, dedupe_key)` index created, check constraints on `outbox_events.attempts` and `notification_preferences.reminder_offsets_hours` verified.
+- [ ] `enqueueNotification` helper implemented in `src/services/notifications.ts` with channel routing (`IN_APP`, `EMAIL`), `skipDuplicates: true`, zero transport/network imports, and payload allow-list stripping with warnings.
+- [ ] All 8 unit/integration tests in `tests/notifications.test.ts` passing cleanly.
+- [ ] Design note `docs/design/12.1.md` updated with Section 3 corrections (concept scope, replace `POST /api/admin/jobs/run`, lifecycle statuses/backoff, lock resolver pure extraction, open questions answered).
+- [ ] Working tree hygiene maintained (`vitest.json` in `.gitignore`, `feat/phase12-migrations` merged with `main` to carry `db_header.js`).
+- [ ] Push history log (25 commits) and secret scan over `origin/main` captured and verified clean.
+- [ ] Decision #57 registered in `docs/rulings/appendix-a.md` and `ARCHITECTURE.md`, byte-for-byte CI check verified.
+- [ ] Complete evidence bundle generated and bound in `docs/evidence/R-12.2-AJ/EVIDENCE_BUNDLE.md`.
+
+
 
 
 

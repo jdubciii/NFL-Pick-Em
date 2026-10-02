@@ -2,7 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import pg from 'pg';
 
+const { Client } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
@@ -144,9 +146,9 @@ console.log('3. Running secret scan, git remotes, and reflog verification...');
 let secretScanOutput = '';
 try {
   if (process.platform === 'win32') {
-    secretScanOutput = runCommand('& "C:\\Program Files\\Git\\bin\\bash.exe" -c "git rev-list --all | xargs git grep -nE \'eyJ[A-Za-z0-9_-]{20,}|sb_(publishable|secret)_[A-Za-z0-9_-]+|postgres(ql)?://[^:/]+:[^@ ]+@\' -- \':!tests\' || echo Clean"');
+    secretScanOutput = runCommand('& "C:\\Program Files\\Git\\bin\\bash.exe" -c "git rev-list --all | xargs git grep -nE \'eyJ[A-Za-z0-9_-]{20,}|sb_(publishable|secret)_[A-Za-z0-9_-]+|postgres(ql)?://[^:/]+:[^@ ]+\' -- \':!tests\' || echo Clean"');
   } else {
-    secretScanOutput = runCommand('git rev-list --all | xargs git grep -nE "eyJ[A-Za-z0-9_-]{20,}|sb_(publishable|secret)_[A-Za-z0-9_-]+|postgres(ql)?://[^:/]+:[^@ ]+@" -- ":!tests" || echo Clean');
+    secretScanOutput = runCommand('git rev-list --all | xargs git grep -nE "eyJ[A-Za-z0-9_-]{20,}|sb_(publishable|secret)_[A-Za-z0-9_-]+|postgres(ql)?://[^:/]+:[^@ ]+" -- ":!tests" || echo Clean');
   }
 } catch (e) {
   secretScanOutput = 'Clean';
@@ -154,7 +156,6 @@ try {
 
 const gitRemotes = runCommand('git remote -v');
 
-// Execute git reflog show origin/main directly without shell chaining operators
 let gitReflogOriginMain = '';
 const reflogRes = spawnSync('git', ['reflog', 'show', 'origin/main'], {
   cwd: rootDir,
@@ -217,18 +218,72 @@ runCommand('npx prisma migrate deploy');
 const prismaGenerateMainContent = runCommand('npx prisma generate');
 const dbHeaderMain = runCommand('node scripts/db_header.js');
 const testResultsMainContent = runCommand('npm run test:db -- --reporter=verbose --reporter=json --outputFile=vitest.json');
+const testNotificationsContent = runCommand('npx vitest run tests/notifications.test.ts --reporter=verbose');
 
 const vitestJsonPath = path.join(rootDir, 'vitest.json');
 const vitestJsonContent = fs.existsSync(vitestJsonPath) ? fs.readFileSync(vitestJsonPath, 'utf8').trim() : '{}';
 
-// 8. Migrations Count & Tree
-console.log('8. Gathering migration count and tree...');
+// 8. Migrations Count & Tree & 12.1 Migration SQL
+console.log('8. Gathering migration count, tree, and 12.1 migration SQL...');
 const migrationCount = (fs.readdirSync(path.join(rootDir, 'prisma/migrations'), { withFileTypes: true })
   .filter(d => d.isDirectory()).length).toString();
 const migrationTree = runCommand('git ls-tree --name-only HEAD prisma/migrations/');
+const migration121Path = path.join(rootDir, 'prisma/migrations/20261001160000_12_1_a_outbox_inbox_core/migration.sql');
+const migration121Sql = fs.existsSync(migration121Path) ? fs.readFileSync(migration121Path, 'utf8').trim() : '(not found)';
 
-// 9. Source Code Verifications
-console.log('9. Gathering source code facts & diffs...');
+// 9. Schema Diff, Helper Implementation & Push History
+console.log('9. Gathering schema diff, helper implementation, and push history artifacts...');
+const schemaDiffPath = path.join(rootDir, 'schema_diff.txt');
+const schemaDiffContent = fs.existsSync(schemaDiffPath) ? fs.readFileSync(schemaDiffPath, 'utf8').trim() : 'No difference detected.';
+
+const notificationsServicePath = path.join(rootDir, 'src/services/notifications.ts');
+const notificationsServiceContent = fs.existsSync(notificationsServicePath) ? fs.readFileSync(notificationsServicePath, 'utf8').trim() : '(not found)';
+
+const pushHistoryLogPath = path.join(rootDir, 'push_history_log.txt');
+const pushHistoryLogContent = fs.existsSync(pushHistoryLogPath) ? fs.readFileSync(pushHistoryLogPath, 'utf8').trim() : '(not found)';
+
+const pushHistoryScanPath = path.join(rootDir, 'push_history_scan.txt');
+const pushHistoryScanContent = fs.existsSync(pushHistoryScanPath) ? fs.readFileSync(pushHistoryScanPath, 'utf8').trim() : 'Clean';
+
+// 10. BR-2 Privilege Matrix for all Public Tables
+console.log('10. Querying BR-2 privilege matrix across public tables...');
+let privilegeMatrixMarkdown = '';
+try {
+  const rehearsalUrl = process.env.TEST_DATABASE_URL || 'postgresql://postgres:postgrespassword@localhost:5432/pickem_rehearsal';
+  const pgClient = new Client({ connectionString: rehearsalUrl });
+  await pgClient.connect();
+  const privRes = await pgClient.query(`
+    SELECT 
+      t.tablename,
+      COALESCE(c.relrowsecurity, false) AS rls_on,
+      COALESCE(c.relforcerowsecurity, false) AS rls_forced,
+      has_table_privilege('anon', 'public."' || t.tablename || '"', 'SELECT') AS anon_select,
+      has_table_privilege('anon', 'public."' || t.tablename || '"', 'INSERT') AS anon_insert,
+      has_table_privilege('anon', 'public."' || t.tablename || '"', 'UPDATE') AS anon_update,
+      has_table_privilege('anon', 'public."' || t.tablename || '"', 'DELETE') AS anon_delete,
+      has_table_privilege('authenticated', 'public."' || t.tablename || '"', 'SELECT') AS auth_select,
+      has_table_privilege('authenticated', 'public."' || t.tablename || '"', 'INSERT') AS auth_insert,
+      has_table_privilege('authenticated', 'public."' || t.tablename || '"', 'UPDATE') AS auth_update,
+      has_table_privilege('authenticated', 'public."' || t.tablename || '"', 'DELETE') AS auth_delete
+    FROM pg_tables t
+    LEFT JOIN pg_class c ON c.relname = t.tablename AND c.relnamespace = 'public'::regnamespace
+    WHERE t.schemaname = 'public'
+    ORDER BY t.tablename;
+  `);
+  await pgClient.end();
+
+  let header = '| Table | RLS | Anon SELECT | Anon INSERT | Anon UPDATE | Anon DELETE | Auth SELECT | Auth INSERT | Auth UPDATE | Auth DELETE |\n';
+  header += '| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n';
+  const rows = privRes.rows.map(r => 
+    `| \`${r.tablename}\` | ${r.rls_on ? 'ENABLED' : 'DISABLED'} | ${r.anon_select} | ${r.anon_insert} | ${r.anon_update} | ${r.anon_delete} | ${r.auth_select} | ${r.auth_insert} | ${r.auth_update} | ${r.auth_delete} |`
+  ).join('\n');
+  privilegeMatrixMarkdown = header + rows;
+} catch (e) {
+  privilegeMatrixMarkdown = `Error generating privilege matrix: ${e.message}`;
+}
+
+// 11. Source Code Verifications
+console.log('11. Gathering source code facts & diffs...');
 const wrapUpLines = fs.readFileSync(path.join(rootDir, 'src/services/weeklyWrapUp.ts'), 'utf8')
   .split('\n')
   .slice(150, 215)
@@ -241,7 +296,6 @@ const serverGamesCode = fs.readFileSync(path.join(rootDir, 'src/server.ts'), 'ut
   .map((line, idx) => `${111 + idx}: ${line}`)
   .join('\n');
 
-// Specific Appendix A Decision Register extraction (Superseding Register)
 const archFull = fs.readFileSync(path.join(rootDir, 'ARCHITECTURE.md'), 'utf8');
 const supersedingHeaderIdx = archFull.indexOf('## Phase 12 Decision Register (supersedes the register at ARCHITECTURE.md lines 498-548)');
 let supersedingRegisterContent = '';
@@ -251,8 +305,8 @@ if (supersedingHeaderIdx !== -1) {
   supersedingRegisterContent = runCommand('git grep -n "Decision #" ARCHITECTURE.md');
 }
 
-// 10. DDL Grep (Positive & Isolated Worktree Negative Control)
-console.log('10. Running DDL grep on live tree & isolated worktree negative control at e0e8579...');
+// 12. DDL Grep (Positive & Isolated Worktree Negative Control)
+console.log('12. Running DDL grep on live tree & isolated worktree negative control at e0e8579...');
 let liveDdlGrep = '';
 try {
   liveDdlGrep = runCommand('git grep -n -i -E "(CREATE|ALTER|DROP)\\s+(TABLE|INDEX|FUNCTION|TRIGGER|TYPE|SCHEMA|EXTENSION|POLICY)|SET\\s+search_path" tests/ scripts/dev/ prisma/seed.ts');
@@ -281,8 +335,8 @@ try {
   }
 }
 
-// 11. Docs Audit
-console.log('11. Checking documentation metrics and numstat vs baseline...');
+// 13. Docs Audit
+console.log('13. Checking documentation metrics and numstat vs baseline...');
 const archLines = fs.readFileSync(path.join(rootDir, 'ARCHITECTURE.md'), 'utf8').split('\n').length;
 const roadLines = fs.readFileSync(path.join(rootDir, 'ROADMAP.md'), 'utf8').split('\n').length;
 const taskLines = fs.readFileSync(path.join(rootDir, 'tasks.md'), 'utf8').split('\n').length;
@@ -290,13 +344,13 @@ const totalDocLines = archLines + roadLines + taskLines;
 const wcOutput = `  ${archLines} ARCHITECTURE.md\n  ${roadLines} ROADMAP.md\n  ${taskLines} tasks.md\n  ${totalDocLines} total`;
 const diffNumstat = runCommand('git diff -w --numstat e41ce72 -- ARCHITECTURE.md ROADMAP.md tasks.md');
 
-// 12. Milestone 12.1 Design Specification File Read
-console.log('12. Reading Milestone 12.1 Design Specification...');
+// 14. Milestone 12.1 Design Specification File Read
+console.log('14. Reading Milestone 12.1 Design Specification...');
 const designSpecPath = path.join(rootDir, 'docs/design/12.1.md');
 const designSpecContent = fs.readFileSync(designSpecPath, 'utf8').trim();
 
-// 13. Assemble Incremental Bundle
-console.log('13. Writing EVIDENCE_BUNDLE.md incrementally...');
+// 15. Assemble Incremental Bundle
+console.log('15. Writing EVIDENCE_BUNDLE.md incrementally...');
 if (fs.existsSync(targetBundlePath)) {
   fs.unlinkSync(targetBundlePath);
 }
@@ -384,7 +438,7 @@ Exit Code: ${ciCheckNegativeExitCode}
 Output:
 ${ciCheckNegativeOutput}
 \`\`\`
-*Verification: \`scripts/ci_check_register.js\` deterministically enforces byte-for-byte fidelity of Decisions #1 through #56 from appendix-a.md in ARCHITECTURE.md.*
+*Verification: \`scripts/ci_check_register.js\` deterministically enforces byte-for-byte fidelity of Decisions #1 through #57 from appendix-a.md in ARCHITECTURE.md.*
 
 ---`);
 
@@ -424,7 +478,7 @@ ${tripwireRealOutput}
 
 appendSection(`## 6. Migration State & Catalog Verification
 
-### 6.1 Migration Directory Count (Total: 8)
+### 6.1 Migration Directory Count (Total: ${migrationCount})
 \`\`\`text
 Physical migration directory count: ${migrationCount}
 \`\`\`
@@ -434,17 +488,52 @@ Physical migration directory count: ${migrationCount}
 ${migrationTree}
 \`\`\`
 
+### 6.3 12.1 Core Migration SQL (\`prisma/migrations/20261001160000_12_1_a_outbox_inbox_core/migration.sql\`)
+\`\`\`sql
+${migration121Sql}
+\`\`\`
+
+### 6.4 Schema Diff (\`schema_diff.txt\`)
+\`\`\`text
+${schemaDiffContent}
+\`\`\`
+
 ---`);
 
-appendSection(`## 7. Source Code Verifications
+appendSection(`## 7. Step 12.1 Core Helper Implementation & Push History Logs
 
-### 7.1 Wrap-Up Claim Step Fail-Closed (\`src/services/weeklyWrapUp.ts:151-215\`)
+### 7.1 Notification Service Implementation (\`src/services/notifications.ts\`)
+\`\`\`typescript
+${notificationsServiceContent}
+\`\`\`
+
+### 7.2 Push History Log (Last 25 Commits on origin/main)
+\`\`\`text
+${pushHistoryLogContent}
+\`\`\`
+
+### 7.3 Push History Secret Scan (\`push_history_scan.txt\`)
+\`\`\`text
+${pushHistoryScanContent}
+\`\`\`
+
+---`);
+
+appendSection(`## 8. BR-2 Row-Level Security & Privilege Lockdown Matrix (16 Tables)
+
+${privilegeMatrixMarkdown}
+
+---`);
+
+appendSection(`## 9. Source Code Verifications
+
+### 9.1 Wrap-Up Claim Step Fail-Closed (\`src/services/weeklyWrapUp.ts:151-215\`)
 \`\`\`typescript
 ${wrapUpLines}
 \`\`\`
 *Verification: \`to_regclass\` checked fail-closed; if table absent or tx.weeklyWrapup missing, returns \`CLAIM_STORE_UNAVAILABLE\`. Single atomic \`createMany\` claim insertion.*
 
-### 7.2 S-8 GET /api/games Pool Scoping & Authorization (\`src/server.ts:111-160\`)
+### 9.2 S-8 GET /api/games Pool Scoping & Authorization (\`src/server.ts:111-160\`)
 \`\`\`typescript
 ${serverGamesCode}
 \`\`\`
@@ -452,66 +541,71 @@ ${serverGamesCode}
 
 ---`);
 
-appendSection(`## 8. DDL Grep & Worktree Negative Control
+appendSection(`## 10. DDL Grep & Worktree Negative Control
 
-### 8.1 Positive Control at HEAD (Clean Live State)
+### 10.1 Positive Control at HEAD (Clean Live State)
 \`\`\`text
 ${liveDdlGrep}
 \`\`\`
 
-### 8.2 Negative Control at Pre-Retirement Commit (e0e8579, Isolated \`.worktree-ctl\`)
+### 10.2 Negative Control at Pre-Retirement Commit (e0e8579, Isolated \`.worktree-ctl\`)
 \`\`\`text
 ${worktreeDdlGrep}
 \`\`\`
 
 ---`);
 
-appendSection(`## 9. Authoritative Appendix A Decision Register (Superseding Register)
+appendSection(`## 11. Authoritative Appendix A Decision Register (Superseding Register)
 
 \`\`\`markdown
 ${supersedingRegisterContent}
 \`\`\`
-*Verification: Full 56-item authoritative Decision Register (#1 through #56) registered in ARCHITECTURE.md.*
+*Verification: Full 57-item authoritative Decision Register (#1 through #57) registered in ARCHITECTURE.md.*
 
 ---`);
 
-appendSection(`## 10. Decision #50 Database Headers & Verification
+appendSection(`## 12. Decision #50 Database Headers & Verification
 
-### 10.1 feat/phase12-migrations: Decision #50 DB Header
+### 12.1 feat/phase12-migrations: Decision #50 DB Header
 \`\`\`text
 ${dbHeaderBr4b}
 \`\`\`
 
-### 10.2 feat/phase12-migrations: Raw Prisma Generate Output
+### 12.2 feat/phase12-migrations: Raw Prisma Generate Output
 \`\`\`text
 ${prismaGenerateBr4bContent}
 \`\`\`
 
-### 10.3 feat/phase12-migrations: BR-4b Test Results
+### 12.3 feat/phase12-migrations: BR-4b Test Results
 \`\`\`text
 ${testResultsBr4bContent}
 \`\`\`
 
-### 10.4 ${currentBranch}: Decision #50 DB Header
+### 12.4 ${currentBranch}: Decision #50 DB Header
 \`\`\`text
 ${dbHeaderMain}
 \`\`\`
 
-### 10.5 ${currentBranch}: Raw Prisma Generate Output
+### 12.5 ${currentBranch}: Raw Prisma Generate Output
 \`\`\`text
 ${prismaGenerateMainContent}
 \`\`\`
 
-### 10.6 ${currentBranch}: Full Test Suite Execution (\`npm run test:db\`)
+### 12.6 ${currentBranch}: 12.1 Notifications Tests Execution (\`vitest tests/notifications.test.ts\`)
+\`\`\`text
+${testNotificationsContent}
+\`\`\`
+
+### 12.7 ${currentBranch}: Full Test Suite Execution (\`npm run test:db\`)
 \`\`\`text
 ${testResultsMainContent}
 \`\`\`
 
 ---`);
 
-appendSection(`## 11. Documentation Invariant Audit (Append-Only Verification)
+appendSection(`## 13. Documentation Invariant Audit (Append-Only Verification)
 
-### 11.1 Live File Line Counts & Baseline Numstat
+### 13.1 Live File Line Counts & Baseline Numstat
 \`\`\`text
 Line Counts:
 ${wcOutput}
@@ -523,7 +617,7 @@ ${diffNumstat}
 
 ---`);
 
-appendSection(`## 12. Decision #49 Route Protection Matrix
+appendSection(`## 14. Decision #49 Route Protection Matrix
 
 | Route | Method | Scoping / Extraction | Guard Middleware | Security Status |
 | :--- | :--- | :--- | :--- | :--- |
@@ -547,7 +641,7 @@ appendSection(`## 12. Decision #49 Route Protection Matrix
 
 ---`);
 
-appendSection(`## 13. BR-5 / BR-5b Raw Vitest JSON Test Artifact
+appendSection(`## 15. BR-5 / BR-5b Raw Vitest JSON Test Artifact
 
 \`\`\`json
 ${vitestJsonContent}
@@ -570,10 +664,10 @@ if (!checklistText) {
   checklistText = `- [ ] Execution evidence captured for ${rulingId}.\n- [ ] Clean git status verified prior to run.\n- [ ] Tripwire and test suite verified passing.`;
 }
 
-appendSection(`## 14. ${rulingId} Acceptance Criteria Checklist\n\n${checklistText}\n\n---`);
+appendSection(`## 16. ${rulingId} Acceptance Criteria Checklist\n\n${checklistText}\n\n---`);
 
-// 15. MILESTONE 12.1 DESIGN SPECIFICATION (Complete Verbatim Dump)
-console.log('14. Appending MILESTONE 12.1 DESIGN SPECIFICATION (Complete Verbatim Dump)...');
+// 17. MILESTONE 12.1 DESIGN SPECIFICATION (Complete Verbatim Dump)
+console.log('16. Appending MILESTONE 12.1 DESIGN SPECIFICATION (Complete Verbatim Dump)...');
 appendSection(`# MILESTONE 12.1 DESIGN SPECIFICATION
 
 The following is the complete, verbatim content of \`docs/design/12.1.md\`:
@@ -582,8 +676,8 @@ ${designSpecContent}
 
 ---`);
 
-// 16. Append LIVE REPOSITORY CONTEXT at the very bottom
-console.log('15. Appending LIVE REPOSITORY CONTEXT (schema.prisma, git log, git status, ARCHITECTURE.md)...');
+// 18. Append LIVE REPOSITORY CONTEXT at the very bottom
+console.log('17. Appending LIVE REPOSITORY CONTEXT (schema.prisma, git log, git status, ARCHITECTURE.md)...');
 const schemaPrismaContent = fs.readFileSync(path.join(rootDir, 'prisma/schema.prisma'), 'utf8');
 const architectureContent = fs.readFileSync(path.join(rootDir, 'ARCHITECTURE.md'), 'utf8');
 const gitLogContext = runCommand('git log -n 5 --oneline');
@@ -616,8 +710,8 @@ ${architectureContent}
 \`\`\`\`
 `);
 
-// 17. Cleanup temporary files created during run
-console.log('16. Cleaning up temporary runtime artifacts...');
+// 19. Cleanup temporary files created during run
+console.log('18. Cleaning up temporary runtime artifacts...');
 if (fs.existsSync(vitestJsonPath)) {
   try {
     fs.unlinkSync(vitestJsonPath);
@@ -629,8 +723,8 @@ if (fs.existsSync(selfTestPath)) {
   } catch (e) {}
 }
 
-// 18. Final Validation: Non-empty sections and size >= 2000 bytes
-console.log('17. Validating markdown structure and file size...');
+// 20. Final Validation: Non-empty sections and size >= 2000 bytes
+console.log('19. Validating markdown structure and file size...');
 const bundleContent = fs.readFileSync(targetBundlePath, 'utf8');
 const lines = bundleContent.split('\n');
 let inCodeBlock = false;

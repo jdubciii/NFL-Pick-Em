@@ -240,12 +240,14 @@ model InboxMessage {
   userId    String    @map("user_id") @db.Uuid
   type      String
   payload   Json
+  dedupeKey String    @map("dedupe_key")
   readAt    DateTime? @map("read_at") @db.Timestamp(3)
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamp(3)
 
   pool Pool @relation(fields: [poolId], references: [id], onDelete: Restrict)
   user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
+  @@unique([userId, dedupeKey])
   @@index([userId, readAt, createdAt])
   @@map("inbox_messages")
 }

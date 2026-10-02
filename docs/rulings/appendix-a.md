@@ -54,3 +54,5 @@
 54 GET handlers perform no writes.
 55 A guard is never bypassed by a conditional when its dependency is missing.
 56 Rulings are stored verbatim under docs/rulings/. The Decision Register in ARCHITECTURE.md is a byte-for-byte copy of docs/rulings/appendix-a.md, and CI diffs the two.
+57 Every table written by a re-running job carries a database-enforced dedupe key.
+
