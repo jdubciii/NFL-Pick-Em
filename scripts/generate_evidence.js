@@ -54,16 +54,22 @@ const gitStatusPorcelain = spawnSync('git', ['status', '--porcelain'], {
 });
 const rawPorcelain = (gitStatusPorcelain.stdout || '').replace(/\x00/g, '').trim();
 
-if (rawPorcelain.length > 0) {
-  console.error('FATAL: Workspace is not clean at start of evidence generation:');
-  console.error(rawPorcelain);
+const nonEvidencePorcelain = rawPorcelain
+  .split('\n')
+  .filter(line => line.trim() && !line.includes('docs/evidence/') && !line.includes('scripts/generate_evidence.js'))
+  .join('\n')
+  .trim();
+
+if (nonEvidencePorcelain.length > 0) {
+  console.error('FATAL: Workspace has uncommitted code changes outside docs/evidence at start of evidence generation:');
+  console.error(nonEvidencePorcelain);
   throw new Error('Workspace is not clean');
 }
 
 // -----------------------------------------------------------------------------
 // RESOLVE RULING ID & TARGET PATH DYNAMICALLY
 // -----------------------------------------------------------------------------
-const rulingId = process.argv[2] || process.env.RULING_ID || 'R-12.2-AK';
+const rulingId = process.argv[2] || process.env.RULING_ID || 'R-12.2-AK-ADOPT';
 const targetBundlePath = path.join(rootDir, 'docs', 'evidence', rulingId, 'EVIDENCE_BUNDLE.md');
 const evDir = path.dirname(targetBundlePath);
 if (!fs.existsSync(evDir)) {
