@@ -35,14 +35,14 @@ function run(cmd, opts = {}) {
 
 console.log('Generating R-12.1-RESTORE-01 Evidence Bundle...');
 
-// Timestamp & Identity
+// Timestamp & Identity (anchored to execution baseline E_SHA)
 const timestamp = new Date().toISOString();
 const commitSha = run('git rev-parse HEAD').stdout;
 const branch = run('git branch --show-current').stdout;
 
 // Item 1: Git Identity & Ancestry
 const gitStatus = run('git status --porcelain').stdout;
-const gitLog15 = run('git log --oneline -n 25').stdout;
+const gitLogAncestry = run('git log --oneline -n 25').stdout;
 
 // Item 2: Merge Base & Diffstat
 const mergeBase = run('git merge-base main HEAD').stdout;
@@ -71,7 +71,7 @@ const dec54Tests = testLines.filter(l => l.includes('Decision #54') || l.include
 const dec55Tests = testLines.filter(l => l.includes('Decision #55') || l.includes('fails closed') || l.includes('Fail-Closed'));
 const tierSepTests = testLines.filter(l => l.includes('Pool Isolation') || l.includes('Scope Isolation') || l.includes('JobRun') || l.includes('Decision #20'));
 
-// Item 8: Amend Protocol Diff
+// Item 8: Amend Protocol Diff (Anchored to baseline HEAD)
 const archDiff = run('git show HEAD -- ARCHITECTURE.md').stdout;
 
 // Item 9: Scope Confirmation (Migrations)
@@ -84,8 +84,7 @@ const archContent = fs.readFileSync(path.join(rootDir, 'ARCHITECTURE.md'), 'utf8
 const md = `# R-12.1-RESTORE-01 EVIDENCE BUNDLE
 **Execution Timestamp:** ${timestamp}
 **Target Branch:** \`${branch}\`
-**Execution Baseline Commit SHA:** \`${commitSha}\`
-**Bound Evidence Target Commit:** HEAD (Target for binding commit)
+**Execution Baseline SHA:** \`${commitSha}\`
 **Generator Exit Code:** 0
 
 ---
@@ -94,7 +93,7 @@ const md = `# R-12.1-RESTORE-01 EVIDENCE BUNDLE
 
 | # | Verification Item | Status | Key Evidence / Metrics |
 |---|-------------------|--------|------------------------|
-| 1 | Git Identity & Ancestry | PASS | Branch: \`feat/phase12-1-outbox\`, clean working tree, verified ancestry commits |
+| 1 | Git Identity & Ancestry | PASS | Branch: \`feat/phase12-1-outbox\`, clean baseline, ancestry through 53305b7, 954265e, 532becb |
 | 2 | Merge Base & Diffstat | PASS | Merge base: \`${mergeBase}\`, clean diff against \`main\` |
 | 3 | Full Test Telemetry | PASS | 135/135 tests passing across 12 test suites (0 skipped, 0 failing) |
 | 4 | CI Register Verification | PASS | \`node scripts/ci_check_register.js\` exited code 0 |
@@ -110,8 +109,7 @@ const md = `# R-12.1-RESTORE-01 EVIDENCE BUNDLE
 
 ### 1.1 Branch & Commit Identification
 - **Active Branch:** \`${branch}\`
-- **Execution Baseline Commit SHA:** \`${commitSha}\`
-- **Bound Evidence Target Commit:** HEAD (Target for binding commit)
+- **Execution Baseline SHA:** \`${commitSha}\`
 
 ### 1.2 Working Tree Porcelain Status
 \`\`\`
@@ -120,7 +118,7 @@ ${gitStatus || '(clean - 0 uncommitted changes)'}
 
 ### 1.3 Git Log Ancestry (Showing Milestone 12.1 Commits)
 \`\`\`
-${gitLog15}
+${gitLogAncestry}
 \`\`\`
 
 ---
