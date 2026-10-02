@@ -43,7 +43,7 @@ CREATE TABLE "outbox_events" (
 CREATE TABLE "notification_preferences" (
     "user_id" UUID NOT NULL,
     "email_enabled" BOOLEAN NOT NULL DEFAULT true,
-    "reminder_offsets_hours" INTEGER[] DEFAULT ARRAY[24, 2]::INTEGER[],
+    "reminder_offsets_hours" integer[] NOT NULL DEFAULT ARRAY[24,2],
     "unsubscribe_token" TEXT NOT NULL,
     "updated_at" TIMESTAMP(3) NOT NULL,
 
@@ -120,7 +120,7 @@ CREATE OR REPLACE FUNCTION check_reminder_offsets(offsets integer[])
 RETURNS boolean AS $$
 BEGIN
     IF offsets IS NULL THEN
-        RETURN true;
+        RETURN false;
     END IF;
     IF cardinality(offsets) > 5 THEN
         RETURN false;
@@ -129,5 +129,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
+REVOKE ALL ON FUNCTION check_reminder_offsets(integer[]) FROM PUBLIC, anon, authenticated;
+
 ALTER TABLE notification_preferences ADD CONSTRAINT notification_preferences_offsets_check CHECK (check_reminder_offsets(reminder_offsets_hours));
+
 

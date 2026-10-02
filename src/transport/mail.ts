@@ -67,6 +67,10 @@ export class SmtpMailTransport implements MailTransport {
     if (transporter) {
       this.transporter = transporter;
     } else {
+      if (!process.env.SMTP_FROM) {
+        throw new Error('SMTP_FROM is required when MAIL_TRANSPORT=smtp');
+      }
+
       this.transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST || 'localhost',
         port: parseInt(process.env.SMTP_PORT || '587', 10),
@@ -77,13 +81,20 @@ export class SmtpMailTransport implements MailTransport {
               pass: process.env.SMTP_PASS,
             }
           : undefined,
+        connectionTimeout: 8000,
+        greetingTimeout: 8000,
+        socketTimeout: 8000,
       });
     }
   }
 
   async sendMail(options: SendMailOptions): Promise<SendMailResult> {
     try {
-      const from = process.env.SMTP_FROM || 'noreply@nflpickem.com';
+      const from = process.env.SMTP_FROM;
+      if (!from) {
+        throw new Error('SMTP_FROM is required');
+      }
+
       const info = await this.transporter.sendMail({
         from,
         to: options.to,

@@ -1,4 +1,5 @@
-import { OutboxStatus, Prisma } from '@prisma/client';
+import crypto from 'crypto';
+import { OutboxStatus } from '@prisma/client';
 import prisma from '../db/client';
 import { MailTransport, getMailTransport } from '../transport/mail';
 import { scrubErrorMessage } from '../utils/errorScrubber';
@@ -20,23 +21,37 @@ export interface DrainResult {
   suppressed: number;
 }
 
+export function escapeHtml(str: string): string {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 /**
- * Renders simple subject and body content from an outbox event.
+ * Renders subject, plain text, and HTML-escaped body content from an outbox event.
  */
 export function formatEmailContent(event: { type: string; payload: any }): { subject: string; text: string; html: string } {
   const payload = event.payload || {};
-  const poolName = payload.poolName || 'NFL Pick Em';
-  const windowLabel = payload.windowLabel || 'Upcoming Games';
-  const lockAtUtc = payload.lockAtUtc ? new Date(payload.lockAtUtc).toUTCString() : '';
-  const deepLink = payload.deepLink || '/';
+  const rawPoolName = payload.poolName || 'NFL Pick Em';
+  const rawWindowLabel = payload.windowLabel || 'Upcoming Games';
+  const rawLockAtUtc = payload.lockAtUtc ? new Date(payload.lockAtUtc).toUTCString() : '';
+  const rawDeepLink = payload.deepLink || '/';
 
-  let subject = `[${poolName}] Reminder: ${windowLabel}`;
-  let text = `Hello,\n\nThis is a reminder for ${poolName} (${windowLabel}). Picks lock at ${lockAtUtc}.\n\nMake your picks here: ${deepLink}\n`;
+  const poolName = escapeHtml(rawPoolName);
+  const windowLabel = escapeHtml(rawWindowLabel);
+  const lockAtUtc = escapeHtml(rawLockAtUtc);
+  const deepLink = escapeHtml(rawDeepLink);
+
+  let subject = `[${rawPoolName}] Reminder: ${rawWindowLabel}`;
+  let text = `Hello,\n\nThis is a reminder for ${rawPoolName} (${rawWindowLabel}). Picks lock at ${rawLockAtUtc}.\n\nMake your picks here: ${rawDeepLink}\n`;
   let html = `<p>Hello,</p><p>This is a reminder for <strong>${poolName}</strong> (<em>${windowLabel}</em>). Picks lock at <strong>${lockAtUtc}</strong>.</p><p><a href="${deepLink}">Make your picks here</a></p>`;
 
   if (event.type === 'WRAPUP_REMINDER') {
-    subject = `[${poolName}] Weekly Wrap-up Available: ${windowLabel}`;
-    text = `Hello,\n\nThe weekly results and penalty standings for ${poolName} are now finalized for ${windowLabel}.\n\nView standings: ${deepLink}\n`;
+    subject = `[${rawPoolName}] Weekly Wrap-up Available: ${rawWindowLabel}`;
+    text = `Hello,\n\nThe weekly results and penalty standings for ${rawPoolName} are now finalized for ${rawWindowLabel}.\n\nView standings: ${rawDeepLink}\n`;
     html = `<p>Hello,</p><p>The weekly results and penalty standings for <strong>${poolName}</strong> are now finalized for <em>${windowLabel}</em>.</p><p><a href="${deepLink}">View standings here</a></p>`;
   }
 
@@ -45,12 +60,14 @@ export function formatEmailContent(event: { type: string; payload: any }): { sub
 
 /**
  * Claims and processes a batch of pending outbox events using PostgreSQL FOR UPDATE SKIP LOCKED.
- * Conforms to Decision #5 (Outbox is best-effort dispatch),
- * Decision #57 (Dedupe key used as provider Message-ID),
- * and 60s lease reclamation.
+ * Conforms to:
+ * - Decision #5: Outbox is best-effort dispatch
+ * - Decision #57: Dedupe key used as basis for provider Message-ID
+ * - Decision #59: FOR UPDATE SKIP LOCKED with explicit lease timeouts and discrete backoff
+ * - Decision #60: Every claim of a leased job item counts as an attempt; verified before send and when recorded
  */
 export async function drainOutbox(options: DrainOptions = {}): Promise<DrainResult> {
-  const batchSize = options.batchSize || 50;
+  const batchSize = options.batchSize || 10;
   const transport = options.transport || getMailTransport();
 
   const stats: DrainResult = {
@@ -61,12 +78,11 @@ export async function drainOutbox(options: DrainOptions = {}): Promise<DrainResu
     suppressed: 0,
   };
 
-  // Step 1: Claim batch of pending / expired-lease events with FOR UPDATE SKIP LOCKED
-  const claimedEvents = await prisma.$transaction(async (tx) => {
+  // Step 1: Claim batch with FOR UPDATE SKIP LOCKED and increment attempts on expired leases
+  const { eventsToProcess, deadCount } = await prisma.$transaction(async (tx) => {
     const now = new Date();
     const leaseExpiresAt = new Date(now.getTime() + LEASE_DURATION_MS);
 
-    // Query pending events ready for dispatch
     const rows = await tx.$queryRaw<
       Array<{
         id: string;
@@ -94,29 +110,57 @@ export async function drainOutbox(options: DrainOptions = {}): Promise<DrainResu
     `;
 
     if (rows.length === 0) {
-      return [];
+      return { eventsToProcess: [], deadCount: 0 };
     }
 
-    const eventIds = rows.map((r) => r.id);
+    let deadCount = 0;
+    const eventsToProcess: typeof rows = [];
 
-    // Acquire 60-second lease
-    await tx.outboxEvent.updateMany({
-      where: { id: { in: eventIds } },
-      data: {
-        status: 'PROCESSING',
-        leaseExpiresAt,
-      },
-    });
+    for (const row of rows) {
+      if (row.status === 'PROCESSING') {
+        const newAttempts = row.attempts + 1;
+        if (newAttempts >= MAX_ATTEMPTS) {
+          await tx.$executeRaw`
+            UPDATE outbox_events
+            SET status = 'DEAD'::"OutboxStatus",
+                attempts = ${newAttempts},
+                lease_expires_at = NULL
+            WHERE id = ${row.id}::uuid
+          `;
+          deadCount++;
+        } else {
+          await tx.$executeRaw`
+            UPDATE outbox_events
+            SET status = 'PROCESSING'::"OutboxStatus",
+                attempts = ${newAttempts},
+                lease_expires_at = ${leaseExpiresAt}
+            WHERE id = ${row.id}::uuid
+          `;
+          eventsToProcess.push({ ...row, attempts: newAttempts });
+        }
+      } else {
+        await tx.$executeRaw`
+          UPDATE outbox_events
+          SET status = 'PROCESSING'::"OutboxStatus",
+              lease_expires_at = ${leaseExpiresAt}
+          WHERE id = ${row.id}::uuid
+        `;
+        eventsToProcess.push(row);
+      }
+    }
 
-    return rows;
+    return { eventsToProcess, deadCount };
   });
 
-  if (claimedEvents.length === 0) {
+  stats.processed += deadCount;
+  stats.dead += deadCount;
+
+  if (eventsToProcess.length === 0) {
     return stats;
   }
 
   // Step 2: Process each claimed event
-  for (const event of claimedEvents) {
+  for (const event of eventsToProcess) {
     stats.processed++;
 
     try {
@@ -126,16 +170,17 @@ export async function drainOutbox(options: DrainOptions = {}): Promise<DrainResu
       });
 
       if (pref && pref.emailEnabled === false) {
-        // Suppress email dispatch
-        await prisma.outboxEvent.update({
-          where: { id: event.id },
-          data: {
-            status: 'SUPPRESSED',
-            leaseExpiresAt: null,
-            lastErrorCode: null,
-          },
-        });
-        stats.suppressed++;
+        // Suppress email dispatch - Must include WHERE id = $1 AND status = 'PROCESSING'
+        const updated = await prisma.$executeRaw`
+          UPDATE outbox_events
+          SET status = 'SUPPRESSED'::"OutboxStatus",
+              lease_expires_at = NULL,
+              last_error_code = NULL
+          WHERE id = ${event.id}::uuid AND status = 'PROCESSING'::"OutboxStatus"
+        `;
+        if (updated > 0) {
+          stats.suppressed++;
+        }
         continue;
       }
 
@@ -149,15 +194,31 @@ export async function drainOutbox(options: DrainOptions = {}): Promise<DrainResu
         throw new Error(`Recipient user ${event.recipient_user_id} has no valid email`);
       }
 
+      // Lease safety check: conditional renewal before each send
+      const renewed = await prisma.$executeRaw`
+        UPDATE outbox_events
+        SET lease_expires_at = now() + interval '60 seconds'
+        WHERE id = ${event.id}::uuid AND status = 'PROCESSING'::"OutboxStatus" AND lease_expires_at > now()
+      `;
+
+      if (renewed === 0) {
+        // Lease lost or expired; skip sending
+        continue;
+      }
+
       const { subject, text, html } = formatEmailContent(event);
 
-      // Send mail with dedupeKey as Message-ID for provider deduplication
+      // Format Message-ID as <sha256(dedupe_key)@MAIL_DOMAIN> with raw key in X-Dedupe-Key
+      const mailDomain = process.env.MAIL_DOMAIN || 'localhost';
+      const hashedKey = crypto.createHash('sha256').update(event.dedupe_key).digest('hex');
+      const messageId = `<${hashedKey}@${mailDomain}>`;
+
       const sendResult = await transport.sendMail({
         to: user.email,
         subject,
         text,
         html,
-        messageId: `<${event.dedupe_key}@nflpickem.local>`,
+        messageId,
         headers: {
           'X-Dedupe-Key': event.dedupe_key,
         },
@@ -167,17 +228,19 @@ export async function drainOutbox(options: DrainOptions = {}): Promise<DrainResu
         throw new Error(sendResult.error || 'Mail transport reported failure');
       }
 
-      // Mark SENT on success
-      await prisma.outboxEvent.update({
-        where: { id: event.id },
-        data: {
-          status: 'SENT',
-          sentAt: new Date(),
-          leaseExpiresAt: null,
-          lastErrorCode: null,
-        },
-      });
-      stats.succeeded++;
+      // Mark SENT on success - Must include WHERE id = $1 AND status = 'PROCESSING'
+      const updated = await prisma.$executeRaw`
+        UPDATE outbox_events
+        SET status = 'SENT'::"OutboxStatus",
+            sent_at = NOW(),
+            lease_expires_at = NULL,
+            last_error_code = NULL
+        WHERE id = ${event.id}::uuid AND status = 'PROCESSING'::"OutboxStatus"
+      `;
+
+      if (updated > 0) {
+        stats.succeeded++;
+      }
     } catch (err: any) {
       const scrubbed = scrubErrorMessage(err);
       const nextAttempts = event.attempts + 1;
@@ -188,21 +251,23 @@ export async function drainOutbox(options: DrainOptions = {}): Promise<DrainResu
       const backoffSec = BACKOFF_SCHEDULE_SECONDS[Math.min(nextAttempts - 1, BACKOFF_SCHEDULE_SECONDS.length - 1)];
       const nextAttemptAt = new Date(Date.now() + backoffSec * 1000);
 
-      await prisma.outboxEvent.update({
-        where: { id: event.id },
-        data: {
-          status: nextStatus,
-          attempts: nextAttempts,
-          nextAttemptAt,
-          leaseExpiresAt: null,
-          lastErrorCode: scrubbed,
-        },
-      });
+      // Record result - Must include WHERE id = $1 AND status = 'PROCESSING'
+      const updated = await prisma.$executeRaw`
+        UPDATE outbox_events
+        SET status = ${nextStatus}::"OutboxStatus",
+            attempts = ${nextAttempts},
+            next_attempt_at = ${nextAttemptAt},
+            lease_expires_at = NULL,
+            last_error_code = ${scrubbed}
+        WHERE id = ${event.id}::uuid AND status = 'PROCESSING'::"OutboxStatus"
+      `;
 
-      if (isDead) {
-        stats.dead++;
-      } else {
-        stats.failed++;
+      if (updated > 0) {
+        if (isDead) {
+          stats.dead++;
+        } else {
+          stats.failed++;
+        }
       }
     }
   }

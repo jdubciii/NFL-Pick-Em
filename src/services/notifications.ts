@@ -44,7 +44,12 @@ export function sanitizePayload(type: string, payload: any): Record<string, any>
   const sanitized: Record<string, any> = {};
   for (const [key, value] of Object.entries(payload)) {
     if (allowedKeys.includes(key)) {
-      sanitized[key] = value;
+      if (key === 'deepLink' && typeof value === 'string' && !/^https?:\/\//i.test(value)) {
+        const baseUrl = process.env.APP_BASE_URL || 'http://localhost:3000';
+        sanitized[key] = `${baseUrl.replace(/\/+$/, '')}/${value.replace(/^\/+/, '')}`;
+      } else {
+        sanitized[key] = value;
+      }
     } else {
       console.error(`[notifications] Stripped unregistered payload key '${key}' for notification type '${type}'`);
     }

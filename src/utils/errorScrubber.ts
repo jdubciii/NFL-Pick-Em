@@ -1,6 +1,8 @@
 /**
  * Error scrubber utility for background jobs and outbox events.
  * Strips URLs, tokens, passwords, and sensitive credentials.
+ * Preserves key names (e.g. password=[REDACTED]).
+ * Scrubs connection failures (e.g. ECONNREFUSED host:port).
  * Enforces a maximum length of 200 characters.
  */
 export function scrubErrorMessage(error: unknown): string {
@@ -13,8 +15,11 @@ export function scrubErrorMessage(error: unknown): string {
   // Strip database / connection URLs: postgresql://..., postgres://..., mongodb://..., etc.
   message = message.replace(/(?:postgresql|postgres|mysql|mongodb|redis|smtp|smtps|https?):\/\/[^\s"'<>]+/gi, '[REDACTED_URL]');
 
-  // Strip credentials in query strings / key-value patterns: password=..., token=..., secret=..., key=...
-  message = message.replace(/(?:password|passwd|pwd|token|secret|api_?key|auth_?token|authorization)=[^&\s]+/gi, '$1=[REDACTED]');
+  // Strip credentials in query strings / key-value patterns while preserving key names: password=..., token=...
+  message = message.replace(/(password|passwd|pwd|token|secret|api_?key|auth_?token|authorization)=[^&\s]+/gi, '$1=[REDACTED]');
+
+  // Strip ECONNREFUSED host:port or IP:port patterns
+  message = message.replace(/ECONNREFUSED\s+[^\s:]+:\d+/gi, 'ECONNREFUSED [REDACTED_HOST]:[REDACTED_PORT]');
 
   // Strip Bearer tokens and Basic auth headers
   message = message.replace(/Bearer\s+[A-Za-z0-9\-_.]+/gi, 'Bearer [REDACTED]');
