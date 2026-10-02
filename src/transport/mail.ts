@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import nodemailer from 'nodemailer';
+import nodemailer, { Transporter } from 'nodemailer';
 
 export interface SendMailOptions {
   to: string;
@@ -61,9 +61,9 @@ export class ConsoleMailTransport implements MailTransport {
  * Production SMTP mail transport using nodemailer.
  */
 export class SmtpMailTransport implements MailTransport {
-  private transporter: nodemailer.Transporter;
+  private transporter: Transporter;
 
-  constructor(transporter?: nodemailer.Transporter) {
+  constructor(transporter?: Transporter) {
     if (transporter) {
       this.transporter = transporter;
     } else {

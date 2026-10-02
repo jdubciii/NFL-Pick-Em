@@ -58,12 +58,13 @@ meRouter.get('/inbox', requireAuth, async (req: Request, res: Response): Promise
  */
 meRouter.post('/inbox/:id/read', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = req.user!.id;
-  const messageId = req.params.id;
+  const messageId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
 
-  if (!UUID_REGEX.test(messageId)) {
+  if (!messageId || !UUID_REGEX.test(messageId)) {
     res.status(404).json({ error: 'Inbox message not found.' });
     return;
   }
+
 
   try {
     const message = await prisma.inboxMessage.findFirst({
@@ -101,7 +102,8 @@ meRouter.post('/inbox/:id/read', requireAuth, async (req: Request, res: Response
  */
 meRouter.post('/inbox/read-all', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const userId = req.user!.id;
-  const poolId = req.body?.poolId || req.body?.pool_id;
+  const rawPoolId = req.body?.poolId || req.body?.pool_id;
+  const poolId = typeof rawPoolId === 'string' ? rawPoolId : undefined;
 
   try {
     const where: any = {
@@ -112,6 +114,7 @@ meRouter.post('/inbox/read-all', requireAuth, async (req: Request, res: Response
     if (poolId && UUID_REGEX.test(poolId)) {
       where.poolId = poolId;
     }
+
 
     const result = await prisma.inboxMessage.updateMany({
       where,
