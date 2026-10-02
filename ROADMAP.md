@@ -125,15 +125,8 @@
 - R-12.2-AK: 12.1 Step B GO; concurrency stabilization.
 - R-12.2-AL: B3 fixes; scanner deferred to step E.
 
-
-
-
-
-
-
-
-
-
-
-
+### Milestone Status (R-12.1-RESTORE-01)
+- **Milestone 12.1:** CLOSED provisionally, CONDITIONAL on R-12.1-RESTORE-01 verification. Merge to main strictly BLOCKED pending explicit authorization.
+- **Milestone 12.1-E (Reminder Scanner):** OPEN as a distinct follow-on milestone cut from main post-merge. Sequenced before Milestone 12.2 implementation.
+- **Milestone 12.2 (Weekly Wrap-up Engine & Distribution):** Paper scope only. Implementation BLOCKED.
 

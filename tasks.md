@@ -411,16 +411,14 @@
 - [x] B3.5 (Documentation, Reports, Decision #60): PASS — Append-only design notes, report.txt, Decision #60 synced
 - [x] B3.6 (Closure Hygiene): PASS — Addressed in this close-out commit
 
-
-
-
-
-
-
-
-
-
-
-
-
+### R-12.1-RESTORE-01 Verification Tasks
+- [ ] Item 1: Git identity and ancestry.
+- [ ] Item 2: Merge-base and diff stat.
+- [ ] Item 3: Full raw test:db output (135/135 tests).
+- [ ] Item 4: CI register check.
+- [ ] Item 5: Tripwire execution with negative control.
+- [ ] Item 6: Git reflog / remote verification.
+- [ ] Item 7: Targeted test outputs (Dec #54, #55, Tier Separation).
+- [ ] Item 8: Diff of ARCHITECTURE.md showing amend protocol.
+- [ ] Item 9: Scope confirmation (no hosted DDL).
 

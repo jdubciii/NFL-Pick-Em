@@ -649,4 +649,7 @@ R-12.2-AL: B3 fixes applied. Scanner deferred to step E. Decision #60 applied.
    - Endpoints under `/api/pools/:pool_id/*` are Pool-Tier only. Cross-tenant leakage is strictly forbidden (Decision #20).
    - Worker runs, engine cycles, and system-tier tasks (such as `JobRun`) operate at the System Tier and must never be exposed or returned in pool-scoped routes.
 
+### Amend Protocol Constraint & Operational Boundaries (R-12.1-RESTORE-01)
+- **Amend Constraint:** Absolutely ZERO `git commit --amend` or history rewriting is permitted on branches already pushed to origin (Decision #53).
+- **Scheduled Producer Rule:** Scheduled outbox producers (including Reminder Scanner and Wrap-Up Engine) operate at the System Tier, are idempotent at the store level, honor user notification preferences, fail closed per Decision #55, and are never triggered by GET requests.
 
