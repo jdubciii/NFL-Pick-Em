@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db/client';
 import { requireAuth, requirePoolCommissioner, UUID_REGEX } from '../middleware/auth';
+import { createOverrideProposal, applyOverride, listProposals } from '../services/overrideService';
 
 export const opsRouter = Router({ mergeParams: true });
 
@@ -140,5 +141,107 @@ opsRouter.post('/:pool_id/ops/outbox/retry', requireAuth, requirePoolCommissione
   } catch (error) {
     console.error('Error retrying outbox events:', error);
     res.status(500).json({ error: 'Failed to retry outbox events.' });
+  }
+});
+
+/**
+ * POST /api/pools/:pool_id/proposals
+ * Pool-tier endpoint to create a commissioner override proposal.
+ * Protected by requireAuth & requirePoolCommissioner (Decision #20: No global admin override bypass).
+ * Decision #54 compliant (Mutations occur via POST).
+ */
+opsRouter.post('/:pool_id/proposals', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {
+  const poolId = req.pool.id;
+  const commissionerId = req.user!.id;
+  const { type, targetEntityId, data, reason } = req.body || {};
+
+  if (!type || !targetEntityId) {
+    res.status(400).json({ error: 'type and targetEntityId are required fields.' });
+    return;
+  }
+
+  try {
+    const proposal = await createOverrideProposal({
+      poolId,
+      commissionerId,
+      type,
+      targetEntityId,
+      data: data || {},
+      reason: reason || 'Commissioner proposal',
+    });
+
+    res.status(201).json({
+      message: 'Override proposal recorded successfully',
+      proposal,
+    });
+  } catch (error: any) {
+    console.error('Error creating override proposal:', error);
+    res.status(500).json({
+      error: 'Failed to create override proposal',
+      details: error.message,
+    });
+  }
+});
+
+/**
+ * POST /api/pools/:pool_id/overrides
+ * Pool-tier endpoint to directly apply a commissioner override in a serializable transaction.
+ * Protected by requireAuth & requirePoolCommissioner (Decision #20).
+ * Decision #54 compliant (Mutations occur via POST).
+ */
+opsRouter.post('/:pool_id/overrides', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {
+  const poolId = req.pool.id;
+  const commissionerId = req.user!.id;
+  const { type, targetEntityId, data, reason } = req.body || {};
+
+  if (!type || !targetEntityId) {
+    res.status(400).json({ error: 'type and targetEntityId are required fields.' });
+    return;
+  }
+
+  try {
+    const result = await applyOverride({
+      poolId,
+      commissionerId,
+      type,
+      targetEntityId,
+      data: data || {},
+      reason: reason || 'Commissioner override execution',
+    });
+
+    res.status(200).json({
+      message: 'Override applied successfully',
+      ...result,
+    });
+  } catch (error: any) {
+    console.error('Error applying override:', error);
+    res.status(500).json({
+      error: 'Failed to apply override',
+      details: error.message,
+    });
+  }
+});
+
+/**
+ * GET /api/pools/:pool_id/proposals
+ * Pool-tier read-only endpoint listing override proposals and commissioner history.
+ * Protected by requireAuth & requirePoolCommissioner.
+ * Strict adherence to Decision #54 (NO WRITES ON GET: zero state mutation).
+ */
+opsRouter.get('/:pool_id/proposals', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {
+  const poolId = req.pool.id;
+
+  try {
+    const proposals = await listProposals(poolId);
+    res.status(200).json({
+      poolId,
+      proposals,
+    });
+  } catch (error: any) {
+    console.error('Error listing proposals:', error);
+    res.status(500).json({
+      error: 'Failed to list proposals',
+      details: error.message,
+    });
   }
 });
