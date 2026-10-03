@@ -30,6 +30,8 @@ async function main() {
         encoding: 'utf8',
         env: { ...process.env, NO_COLOR: '1' },
         stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 5000,
+        shell: true,
       });
       console.log(statusOutput.replace(/\x00/g, '').trim());
     } catch (e) {
