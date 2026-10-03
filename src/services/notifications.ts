@@ -3,11 +3,15 @@ import { Prisma } from '@prisma/client';
 export type NotificationChannel = 'IN_APP' | 'EMAIL';
 
 export const REMINDER_PAYLOAD_KEYS = ['poolName', 'windowLabel', 'lockAtUtc', 'deepLink'] as const;
+export const WRAPUP_PAYLOAD_KEYS = ['poolName', 'weekNumber', 'highScorer', 'penaltySummary', 'deepLink'] as const;
 
 export const ALLOWED_PAYLOAD_KEYS_BY_TYPE: Record<string, readonly string[]> = {
   REMINDER: REMINDER_PAYLOAD_KEYS,
   PICK_REMINDER: REMINDER_PAYLOAD_KEYS,
   WRAPUP_REMINDER: REMINDER_PAYLOAD_KEYS,
+  WRAPUP: WRAPUP_PAYLOAD_KEYS,
+  WRAP_UP: WRAPUP_PAYLOAD_KEYS,
+  WEEKLY_WRAPUP: WRAPUP_PAYLOAD_KEYS,
 };
 
 export interface EnqueueNotificationInput {
