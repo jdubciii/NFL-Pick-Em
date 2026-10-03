@@ -5,6 +5,7 @@ import { runReminderScan } from '../services/reminderScanner';
 import { runWrapUpEngine } from '../services/wrapUpEngine';
 import { sealSeason, getSeasonSealStatus } from '../services/seasonSeal';
 import { processTransportsBatch, getTransportsQueueStatus } from '../services/transports';
+import { runRetentionPruning, getRetentionStatus } from '../services/retentionService';
 
 export const adminOpsRouter = Router();
 
@@ -226,4 +227,68 @@ adminOpsRouter.get('/transports/status', requireAuth, requireAdmin, async (_req:
     });
   }
 });
+
+/**
+ * POST /api/admin/ops/retention/prune
+ * System-tier endpoint to trigger the Notification Retention & Pruning execution sweep.
+ * Protected strictly by requireAuth & requireAdmin (Decision #20).
+ * Enforces Decision #54 (Mutations occur strictly via POST).
+ */
+adminOpsRouter.post('/retention/prune', requireAuth, requireAdmin, async (req: Request, res: Response): Promise<void> => {
+  const { sentRetentionDays, deadRetentionDays, suppressedRetentionDays, inboxRetentionDays, batchSize, maxBatches } = req.body || {};
+
+  try {
+    const result = await runRetentionPruning({
+      sentRetentionDays: sentRetentionDays !== undefined ? Number(sentRetentionDays) : undefined,
+      deadRetentionDays: deadRetentionDays !== undefined ? Number(deadRetentionDays) : undefined,
+      suppressedRetentionDays: suppressedRetentionDays !== undefined ? Number(suppressedRetentionDays) : undefined,
+      inboxRetentionDays: inboxRetentionDays !== undefined ? Number(inboxRetentionDays) : undefined,
+      batchSize: batchSize !== undefined ? Number(batchSize) : undefined,
+      maxBatches: maxBatches !== undefined ? Number(maxBatches) : undefined,
+    });
+
+    res.status(200).json({
+      message: 'Notification retention pruning executed successfully',
+      result,
+    });
+  } catch (error: any) {
+    console.error('Error executing retention pruning:', error);
+    res.status(500).json({
+      error: 'Failed to execute retention pruning',
+      details: error.message,
+    });
+  }
+});
+
+/**
+ * GET /api/admin/ops/retention/status
+ * Read-only health, terminal queue depths, and prunable records query.
+ * Strict adherence to Decision #54 (NO WRITES ON GET: zero state mutation or side effects).
+ * Protected strictly by requireAuth & requireAdmin.
+ */
+adminOpsRouter.get('/retention/status', requireAuth, requireAdmin, async (req: Request, res: Response): Promise<void> => {
+  const { sentRetentionDays, deadRetentionDays, suppressedRetentionDays, inboxRetentionDays } = req.query || {};
+
+  try {
+    const status = await getRetentionStatus({
+      sentRetentionDays: sentRetentionDays !== undefined ? Number(sentRetentionDays) : undefined,
+      deadRetentionDays: deadRetentionDays !== undefined ? Number(deadRetentionDays) : undefined,
+      suppressedRetentionDays: suppressedRetentionDays !== undefined ? Number(suppressedRetentionDays) : undefined,
+      inboxRetentionDays: inboxRetentionDays !== undefined ? Number(inboxRetentionDays) : undefined,
+    });
+
+    res.status(200).json({
+      status: 'ok',
+      service: 'retention_pruning_engine',
+      ...status,
+    });
+  } catch (error: any) {
+    console.error('Error querying retention status:', error);
+    res.status(500).json({
+      error: 'Failed to retrieve retention status',
+      details: error.message,
+    });
+  }
+});
+
 
