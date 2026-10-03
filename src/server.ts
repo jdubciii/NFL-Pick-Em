@@ -12,6 +12,7 @@ import { adminRouter } from './routes/admin';
 import { meRouter } from './routes/me';
 import { notificationsRouter } from './routes/notifications';
 import { opsRouter } from './routes/ops';
+import { adminOpsRouter } from './routes/adminOps';
 import type {
   PoolSettings,
   MatrixResponsePayload,
@@ -31,6 +32,7 @@ app.use(express.json());
 // Routes
 app.use('/api/picks', picksRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/admin/ops', adminOpsRouter);
 app.use('/api/me', meRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/pools', opsRouter);
