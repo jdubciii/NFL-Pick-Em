@@ -127,10 +127,43 @@ async function runHostedTripwire(targetUrl) {
       UNION ALL SELECT 'notification_preferences', count(*) FROM notification_preferences
       UNION ALL SELECT 'job_runs', count(*) FROM job_runs;
     `;
+    const expectedTables = [
+      'users',
+      'pools',
+      'pool_memberships',
+      'games',
+      'picks',
+      'pick_results',
+      'weekly_submissions',
+      'penalty_ledger',
+      'penalty_media',
+      'pool_member_stats',
+      'audit_logs',
+      'inbox_messages',
+      'outbox_events',
+      'notification_preferences',
+      'job_runs',
+    ];
+
     const countsRes = await client.query(countsSql);
     console.log('\n3. All 15 Table Row Counts:');
     for (const row of countsRes.rows) {
       console.log(`  - ${row.t.padEnd(25)}: ${row.count}`);
+    }
+
+    if (args.includes('--omit-table=audit_logs') || args.includes('--negative-control-omission')) {
+      const omittedTable = 'audit_logs';
+      console.log(`\n[NEGATIVE CONTROL] Simulating table omission of '${omittedTable}' from inventory allowlist...`);
+      const foundNames = countsRes.rows.map(r => r.t).filter(t => t !== omittedTable);
+      if (foundNames.length !== expectedTables.length) {
+        console.error(`TRIPWIRE_FAILURE: Expected ${expectedTables.length} tables, but inventory only accounts for ${foundNames.length} tables (missing: ${omittedTable}).`);
+        throw new Error(`Negative control passed: tripwire detected missing table '${omittedTable}'`);
+      }
+    }
+
+    if (countsRes.rows.length !== expectedTables.length) {
+      console.error(`TRIPWIRE_FAILURE: Table count mismatch. Expected ${expectedTables.length}, got ${countsRes.rows.length}.`);
+      throw new Error(`Table count mismatch: ${countsRes.rows.length} vs expected ${expectedTables.length}`);
     }
 
     // 4. public.weekly_wrapups table existence check
