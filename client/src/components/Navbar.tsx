@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Trophy, Shield, LogOut, Menu, X, CheckSquare, User as UserIcon, Skull, Grid } from 'lucide-react';
+import { NotificationBell } from './notifications/NotificationBell';
 
 export const Navbar: React.FC = () => {
   const { user, logout, isAuthenticated, isAdmin } = useAuth();
@@ -67,7 +68,8 @@ export const Navbar: React.FC = () => {
 
           {/* User Profile & Actions */}
           {isAuthenticated ? (
-            <div className="hidden md:flex items-center space-x-4">
+            <div className="hidden md:flex items-center space-x-3">
+              <NotificationBell />
               <div className="flex items-center space-x-2.5 px-3 py-1.5 rounded-full bg-slate-900/90 border border-slate-800 text-xs">
                 <UserIcon className="w-3.5 h-3.5 text-slate-400" />
                 <span className="text-slate-300 font-medium">{user?.email}</span>
@@ -102,7 +104,8 @@ export const Navbar: React.FC = () => {
 
           {/* Mobile menu button */}
           {isAuthenticated && (
-            <div className="md:hidden flex items-center">
+            <div className="md:hidden flex items-center space-x-2">
+              <NotificationBell />
               <button
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
                 className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 focus:outline-none"
