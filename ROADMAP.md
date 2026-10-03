@@ -129,4 +129,15 @@
 - **Milestone 12.1:** CLOSED provisionally, CONDITIONAL on R-12.1-RESTORE-01 verification. Merge to main strictly BLOCKED pending explicit authorization.
 - **Milestone 12.1-E (Reminder Scanner):** OPEN as a distinct follow-on milestone cut from main post-merge. Sequenced before Milestone 12.2 implementation.
 - **Milestone 12.2 (Weekly Wrap-up Engine & Distribution):** Paper scope only. Implementation BLOCKED.
+
+## Phase 14: Foundations & Core Feature Delivery — SEALED
+- Milestones 14.1 through 14.7 ratified and certified closed under Ruling R-14-FINAL-CLOSURE-01.
+- Cumulative test regression: 261/261 tests passing across 29 suites.
+
+## Phase 15: Social Stakes, Faction Mechanics & Risk Telemetry — IN PROGRESS
+- Milestone 15.0: Phase 15 Architectural Intake & Scaffolding
+- Milestone 15.1: Feature 2: Bounty Board Engine
+- Milestone 15.2: Feature 4: Rival Hex Pairwise Challenge Engine
+- Milestone 15.3: Feature 5: Comeback Vault Mechanics
+- Milestone 15.4: Feature 6: Sweat Radar & Divergence Simulator
 
