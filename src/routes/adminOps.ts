@@ -291,4 +291,145 @@ adminOpsRouter.get('/retention/status', requireAuth, requireAdmin, async (req: R
   }
 });
 
+/**
+ * POST /api/admin/ops/reminders/scan
+ * Alias for /scan-reminders.
+ */
+adminOpsRouter.post('/reminders/scan', requireAuth, requireAdmin, async (req: Request, res: Response): Promise<void> => {
+  const { windowsHours, weekId, poolId } = req.body || {};
+
+  try {
+    const { jobRun, scanResult } = await runReminderScan({
+      windowsHours: Array.isArray(windowsHours) ? windowsHours : undefined,
+      weekId: weekId !== undefined ? weekId : undefined,
+      poolId: typeof poolId === 'string' ? poolId : undefined,
+    });
+
+    res.status(200).json({
+      message: 'Reminder scan executed successfully',
+      jobRun,
+      scanResult,
+    });
+  } catch (error: any) {
+    console.error('Error executing reminder scan:', error);
+    res.status(500).json({
+      error: 'Failed to execute reminder scan',
+      details: error.message,
+    });
+  }
+});
+
+/**
+ * GET /api/admin/ops/system/health
+ * System-tier consolidated aggregate telemetry view of daemon health, queue latencies, DLQ, retention, and recent runs.
+ * Protected strictly by requireAuth & requireAdmin (Decision #20: No pool commissioner or standard user bypass).
+ * Strict adherence to Decision #54 (NO WRITES ON GET: zero state mutations or side effects).
+ * Strict adherence to Decision #55 (Fail closed on database or service failure).
+ */
+adminOpsRouter.get('/system/health', requireAuth, requireAdmin, async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const [
+      transportsStatus,
+      retentionStatus,
+      recentJobRuns,
+      dlqRecords,
+    ] = await Promise.all([
+      getTransportsQueueStatus(),
+      getRetentionStatus(),
+      prisma.jobRun.findMany({
+        orderBy: { startedAt: 'desc' },
+        take: 10,
+      }),
+      prisma.outboxEvent.findMany({
+        where: { status: 'DEAD' },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        select: {
+          id: true,
+          poolId: true,
+          recipientUserId: true,
+          type: true,
+          status: true,
+          attempts: true,
+          lastErrorCode: true,
+          createdAt: true,
+          sentAt: true,
+          payload: true,
+        },
+      }),
+    ]);
+
+    const totalOutbox =
+      (retentionStatus.queueDepths.pending || 0) +
+      (retentionStatus.queueDepths.processing || 0) +
+      (retentionStatus.queueDepths.sent || 0) +
+      (retentionStatus.queueDepths.failed || 0) +
+      (retentionStatus.queueDepths.dead || 0) +
+      (retentionStatus.queueDepths.suppressed || 0);
+
+    const terminalOutbox =
+      (retentionStatus.queueDepths.sent || 0) +
+      (retentionStatus.queueDepths.dead || 0) +
+      (retentionStatus.queueDepths.suppressed || 0);
+
+    const activeOutbox =
+      (retentionStatus.queueDepths.pending || 0) +
+      (retentionStatus.queueDepths.processing || 0);
+
+    const totalInbox =
+      (retentionStatus.queueDepths.inboxUnread || 0) +
+      (retentionStatus.queueDepths.inboxRead || 0);
+
+    const hasDeadLetters = (transportsStatus.deadLetterCount || 0) > 0;
+    const hasFailedRecentJobs = recentJobRuns.some((j) => j.status === 'FAILED');
+    const systemStatus = hasDeadLetters || hasFailedRecentJobs ? 'DEGRADED' : 'HEALTHY';
+
+    res.status(200).json({
+      status: systemStatus,
+      timestamp: new Date().toISOString(),
+      service: 'system_admin_ops',
+      queues: {
+        outbox: {
+          pending: transportsStatus.queueDepth.pending,
+          processing: transportsStatus.queueDepth.processing,
+          deadLetters: transportsStatus.queueDepth.dead,
+          sent: transportsStatus.queueDepth.sent,
+          failed: transportsStatus.queueDepth.failed,
+          suppressed: transportsStatus.queueDepth.suppressed,
+          total: totalOutbox,
+        },
+        inbox: {
+          total: totalInbox,
+          unread: retentionStatus.queueDepths.inboxUnread,
+          read: retentionStatus.queueDepths.inboxRead,
+        },
+        dlq: {
+          count: transportsStatus.deadLetterCount,
+          recentFailures: dlqRecords.length > 0 ? dlqRecords : transportsStatus.recentDeadEvents,
+        },
+      },
+      retention: {
+        totalOutbox,
+        terminalOutbox,
+        activeOutbox,
+        prunableOutbox:
+          (retentionStatus.prunableCounts.sent || 0) +
+          (retentionStatus.prunableCounts.dead || 0) +
+          (retentionStatus.prunableCounts.suppressed || 0),
+        totalInbox,
+        prunableInbox: retentionStatus.prunableCounts.inbox || 0,
+        prunableTotal: retentionStatus.prunableCounts.total || 0,
+      },
+      recentJobRuns,
+    });
+  } catch (error: any) {
+    console.error('Error fetching consolidated system health:', error);
+    res.status(500).json({
+      error: 'Failed to retrieve consolidated system health telemetry',
+      details: error.message,
+    });
+  }
+});
+
+
 
