@@ -205,25 +205,56 @@ describe('Milestone 12.1-E: Automated Reminder Scanner Engine Tests', () => {
     });
 
     it('skips members who have already submitted picks for all upcoming games in the window', async () => {
-      // Submit picks for standardUser for both upcoming games
-      await prisma.pick.createMany({
-        data: [
-          { poolId: pool.id, userId: standardUser.id, gameId: game24h.id, selectedTeamId: 'KC', submittedById: standardUser.id },
-          { poolId: pool.id, userId: standardUser.id, gameId: game2h.id, selectedTeamId: 'SF', submittedById: standardUser.id },
-        ],
+      // 1. Create a dedicated isolated user for this assertion
+      const fullyPickedUser = await prisma.user.create({
+        data: {
+          email: `fully_picked_${Date.now()}@example.com`,
+          passwordHash: 'hash123',
+          role: Role.USER,
+        },
       });
 
-      const dedupeKeyWeek2 = `remind:v1:user:${standardUser.id}:week:2:window:24`;
+      await prisma.poolMembership.create({
+        data: { poolId: pool.id, userId: fullyPickedUser.id, status: 'ACTIVE' },
+      });
 
+      await prisma.notificationPreference.create({
+        data: {
+          userId: fullyPickedUser.id,
+          emailEnabled: true,
+          reminderOffsetsHours: [24, 2],
+        },
+      });
+
+      // 2. Submit picks for all scheduled upcoming games in the pool
+      const upcomingGames = await prisma.game.findMany({
+        where: {
+          status: 'SCHEDULED',
+          kickoffTime: { gt: baseTime },
+        },
+      });
+
+      await prisma.pick.createMany({
+        data: upcomingGames.map((g) => ({
+          poolId: pool.id,
+          userId: fullyPickedUser.id,
+          gameId: g.id,
+          selectedTeamId: g.homeTeamId,
+          submittedById: fullyPickedUser.id,
+        })),
+      });
+
+      // 3. Scan the 24h window
       const scanResult = await scanAndEnqueueReminders({
         clock: () => baseTime,
         windowsHours: [24],
-        weekId: 2,
+        weekId: 1,
         poolId: pool.id,
       });
 
+      // 4. Assert 0 outbox events were generated for the fully-picked user
       const userOutbox = await prisma.outboxEvent.findMany({
-        where: { dedupeKey: dedupeKeyWeek2 },
+        where: { recipientUserId: fullyPickedUser.id },
       });
 
       expect(userOutbox.length).toBe(0);
