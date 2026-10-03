@@ -1,7 +1,15 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db/client';
 import { requireAuth, requirePoolCommissioner, UUID_REGEX } from '../middleware/auth';
-import { createOverrideProposal, applyOverride, listProposals } from '../services/overrideService';
+import {
+  createOverrideProposal,
+  recordProposalVote,
+  executeProposal,
+  applyOverride,
+  listProposals,
+  listOverrides,
+  getPoolOpsStatus,
+} from '../services/overrideService';
 
 export const opsRouter = Router({ mergeParams: true });
 
@@ -98,6 +106,24 @@ opsRouter.get('/:pool_id/ops/health', requireAuth, requirePoolCommissioner, asyn
 });
 
 /**
+ * GET /api/pools/:pool_id/ops/status
+ * Protected route for pool commissioner.
+ * Read-only pool wrap-up readiness, member stats, and operational overview.
+ * Strict adherence to Decision #54 (NO WRITES ON GET).
+ */
+opsRouter.get('/:pool_id/ops/status', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {
+  const poolId = req.pool.id;
+
+  try {
+    const statusData = await getPoolOpsStatus(poolId);
+    res.status(200).json(statusData);
+  } catch (error: any) {
+    console.error('Error fetching pool ops status:', error);
+    res.status(500).json({ error: 'Failed to fetch pool ops status', details: error.message });
+  }
+});
+
+/**
  * POST /api/pools/:pool_id/ops/outbox/retry
  * Protected route for pool commissioner.
  * Re-queues DEAD or FAILED outbox events for the pool.
@@ -145,6 +171,30 @@ opsRouter.post('/:pool_id/ops/outbox/retry', requireAuth, requirePoolCommissione
 });
 
 /**
+ * GET /api/pools/:pool_id/proposals
+ * Pool-tier read-only endpoint listing override proposals for the pool.
+ * Protected by requireAuth & requirePoolCommissioner.
+ * Strict adherence to Decision #54 (NO WRITES ON GET: zero state mutation).
+ */
+opsRouter.get('/:pool_id/proposals', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {
+  const poolId = req.pool.id;
+
+  try {
+    const proposals = await listProposals(poolId);
+    res.status(200).json({
+      poolId,
+      proposals,
+    });
+  } catch (error: any) {
+    console.error('Error listing proposals:', error);
+    res.status(500).json({
+      error: 'Failed to list proposals',
+      details: error.message,
+    });
+  }
+});
+
+/**
  * POST /api/pools/:pool_id/proposals
  * Pool-tier endpoint to create a commissioner override proposal.
  * Protected by requireAuth & requirePoolCommissioner (Decision #20: No global admin override bypass).
@@ -184,6 +234,110 @@ opsRouter.post('/:pool_id/proposals', requireAuth, requirePoolCommissioner, asyn
 });
 
 /**
+ * POST /api/pools/:pool_id/proposals/:id/vote
+ * Records commissioner approval or rejection vote on a proposal.
+ * Protected by requireAuth & requirePoolCommissioner (Decision #20).
+ */
+opsRouter.post('/:pool_id/proposals/:id/vote', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {
+  const poolId = req.pool.id;
+  const commissionerId = req.user!.id;
+  const proposalId = req.params.id;
+  const { decision, vote } = req.body || {};
+  const voteDecision = (decision || vote || '').toUpperCase();
+
+  if (!proposalId || !UUID_REGEX.test(proposalId)) {
+    res.status(400).json({ error: 'Invalid proposal ID format.' });
+    return;
+  }
+
+  if (voteDecision !== 'APPROVE' && voteDecision !== 'REJECT') {
+    res.status(400).json({ error: 'decision must be APPROVE or REJECT.' });
+    return;
+  }
+
+  try {
+    const updatedProposal = await recordProposalVote(
+      poolId,
+      proposalId,
+      commissionerId,
+      voteDecision as 'APPROVE' | 'REJECT'
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `Proposal ${voteDecision.toLowerCase()}d successfully`,
+      proposal: updatedProposal,
+    });
+  } catch (error: any) {
+    console.error('Error recording proposal vote:', error);
+    const status = error.message.includes('NOT_FOUND') ? 404 : 400;
+    res.status(status).json({
+      error: 'Failed to record proposal vote',
+      details: error.message,
+    });
+  }
+});
+
+/**
+ * POST /api/pools/:pool_id/proposals/:id/execute
+ * Atomically executes an approved proposal, applying score adjustments via Prisma.Decimal.
+ * Protected by requireAuth & requirePoolCommissioner (Decision #20).
+ * Enforces Decision #27 (fail closed if slate/game is unfinalized) and Decision #55 (atomic rollback).
+ */
+opsRouter.post('/:pool_id/proposals/:id/execute', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {
+  const poolId = req.pool.id;
+  const commissionerId = req.user!.id;
+  const proposalId = req.params.id;
+
+  if (!proposalId || !UUID_REGEX.test(proposalId)) {
+    res.status(400).json({ error: 'Invalid proposal ID format.' });
+    return;
+  }
+
+  try {
+    const result = await executeProposal(poolId, proposalId, commissionerId);
+    res.status(200).json(result);
+  } catch (error: any) {
+    console.error('Error executing proposal:', error);
+    const isClientError =
+      error.message.includes('NOT_FOUND') ||
+      error.message.includes('DECISION_27') ||
+      error.message.includes('FAIL_CLOSED') ||
+      error.message.includes('ALREADY_EXECUTED');
+    const status = error.message.includes('NOT_FOUND') ? 404 : isClientError ? 400 : 500;
+
+    res.status(status).json({
+      error: 'Failed to execute proposal',
+      details: error.message,
+    });
+  }
+});
+
+/**
+ * GET /api/pools/:pool_id/overrides
+ * Pool-tier read-only endpoint listing applied overrides for the pool.
+ * Protected by requireAuth & requirePoolCommissioner.
+ * Strict adherence to Decision #54 (NO WRITES ON GET: zero state mutation).
+ */
+opsRouter.get('/:pool_id/overrides', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {
+  const poolId = req.pool.id;
+
+  try {
+    const overrides = await listOverrides(poolId);
+    res.status(200).json({
+      poolId,
+      overrides,
+    });
+  } catch (error: any) {
+    console.error('Error listing overrides:', error);
+    res.status(500).json({
+      error: 'Failed to list overrides',
+      details: error.message,
+    });
+  }
+});
+
+/**
  * POST /api/pools/:pool_id/overrides
  * Pool-tier endpoint to directly apply a commissioner override in a serializable transaction.
  * Protected by requireAuth & requirePoolCommissioner (Decision #20).
@@ -217,30 +371,6 @@ opsRouter.post('/:pool_id/overrides', requireAuth, requirePoolCommissioner, asyn
     console.error('Error applying override:', error);
     res.status(500).json({
       error: 'Failed to apply override',
-      details: error.message,
-    });
-  }
-});
-
-/**
- * GET /api/pools/:pool_id/proposals
- * Pool-tier read-only endpoint listing override proposals and commissioner history.
- * Protected by requireAuth & requirePoolCommissioner.
- * Strict adherence to Decision #54 (NO WRITES ON GET: zero state mutation).
- */
-opsRouter.get('/:pool_id/proposals', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {
-  const poolId = req.pool.id;
-
-  try {
-    const proposals = await listProposals(poolId);
-    res.status(200).json({
-      poolId,
-      proposals,
-    });
-  } catch (error: any) {
-    console.error('Error listing proposals:', error);
-    res.status(500).json({
-      error: 'Failed to list proposals',
       details: error.message,
     });
   }
