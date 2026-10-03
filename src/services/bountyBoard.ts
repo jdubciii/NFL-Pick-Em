@@ -1,15 +1,23 @@
 import { Prisma } from '@prisma/client';
 
+export type BountyConditionType = 'CORRECT_PICK' | 'UPSET_PICK' | 'SOLO_SURVIVOR' | 'HIGH_SCORE';
+
 export interface BountyOffer {
   id: string;
   poolId: string;
   creatorMembershipId: string;
   targetGameId: string;
-  targetCondition: 'CORRECT_PICK' | 'UPSET_PICK' | 'HIGH_SCORE';
-  escrowAmount: string; // Decimal string
+  targetCondition: BountyConditionType;
+  escrowAmount: string; // Prisma.Decimal string
   isSettled: boolean;
+  claimedByMembershipIds: string[];
   claimedByMembershipId?: string;
   expiresAt: Date;
+}
+
+export interface SplitPayoutResult {
+  membershipId: string;
+  payoutAmount: string;
 }
 
 export class BountyBoardService {
@@ -18,33 +26,41 @@ export class BountyBoardService {
     poolId: string,
     creatorMembershipId: string,
     targetGameId: string,
-    condition: 'CORRECT_PICK' | 'UPSET_PICK' | 'HIGH_SCORE',
+    condition: BountyConditionType,
     amount: string,
-    expiresAt: Date
+    expiresAt: Date,
+    isTargetGameLocked: boolean = false
   ): BountyOffer {
+    // Decision #65: Cannot create/fund a bounty on an already locked game
+    if (isTargetGameLocked) {
+      throw new Error('Cannot fund a bounty on an already locked game');
+    }
+
     const decimalAmount = new Prisma.Decimal(amount);
     if (decimalAmount.lte(0)) {
       throw new Error('Bounty escrow amount must be strictly greater than 0');
     }
 
     return {
-      id: `bounty-${Date.now()}`,
+      id: `bounty-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       poolId,
       creatorMembershipId,
       targetGameId,
       targetCondition: condition,
       escrowAmount: decimalAmount.toFixed(2),
       isSettled: false,
+      claimedByMembershipIds: [],
       expiresAt
     };
   }
 
-  // Pure settlement function enforcing append-only resolution
+  // Multi-claimant settlement with deterministic penny remainder distribution (Decisions #3, #22)
   static settleBounty(
     bounty: BountyOffer,
-    qualifyingMembershipId: string | null
+    qualifyingClaimants: string[] | string | null
   ): {
     settledBounty: BountyOffer;
+    payouts: SplitPayoutResult[];
     payoutAmount: string;
     action: 'CLAIMED' | 'REFUNDED';
   } {
@@ -52,26 +68,58 @@ export class BountyBoardService {
       throw new Error('Bounty has already been settled');
     }
 
-    if (qualifyingMembershipId) {
+    const qualifyingMembershipIds: string[] = Array.isArray(qualifyingClaimants)
+      ? qualifyingClaimants
+      : qualifyingClaimants
+      ? [qualifyingClaimants]
+      : [];
+
+    // Case 1: Unclaimed or zero qualifying claimants -> 100% Refund to creator
+    if (!qualifyingMembershipIds || qualifyingMembershipIds.length === 0) {
       return {
         settledBounty: {
           ...bounty,
           isSettled: true,
-          claimedByMembershipId: qualifyingMembershipId
+          claimedByMembershipIds: [],
+          claimedByMembershipId: undefined
         },
+        payouts: [{
+          membershipId: bounty.creatorMembershipId,
+          payoutAmount: bounty.escrowAmount
+        }],
         payoutAmount: bounty.escrowAmount,
-        action: 'CLAIMED'
+        action: 'REFUNDED'
       };
     }
 
-    // Unclaimed / expired: refund to creator
+    // Case 2: Claimed by 1 or more members -> Even split with remainder penny allocation
+    const totalCents = new Prisma.Decimal(bounty.escrowAmount).mul(100).floor().toNumber();
+    const count = qualifyingMembershipIds.length;
+    const baseCentsPerPerson = Math.floor(totalCents / count);
+    let remainderCents = totalCents % count;
+
+    const payouts: SplitPayoutResult[] = qualifyingMembershipIds.map((memId) => {
+      let centsForUser = baseCentsPerPerson;
+      if (remainderCents > 0) {
+        centsForUser += 1;
+        remainderCents -= 1;
+      }
+      return {
+        membershipId: memId,
+        payoutAmount: new Prisma.Decimal(centsForUser).div(100).toFixed(2)
+      };
+    });
+
     return {
       settledBounty: {
         ...bounty,
-        isSettled: true
+        isSettled: true,
+        claimedByMembershipIds: [...qualifyingMembershipIds],
+        claimedByMembershipId: qualifyingMembershipIds[0]
       },
+      payouts,
       payoutAmount: bounty.escrowAmount,
-      action: 'REFUNDED'
+      action: 'CLAIMED'
     };
   }
 }
