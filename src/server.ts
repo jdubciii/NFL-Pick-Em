@@ -13,6 +13,7 @@ import { meRouter } from './routes/me';
 import { notificationsRouter } from './routes/notifications';
 import { opsRouter } from './routes/ops';
 import { adminOpsRouter } from './routes/adminOps';
+import { webhooksRouter } from './routes/webhooks';
 import type {
   PoolSettings,
   MatrixResponsePayload,
@@ -35,6 +36,7 @@ app.use('/api/admin', adminRouter);
 app.use('/api/admin/ops', adminOpsRouter);
 app.use('/api/me', meRouter);
 app.use('/api/notifications', notificationsRouter);
+app.use('/api/webhooks', webhooksRouter);
 app.use('/api/pools', opsRouter);
 
 

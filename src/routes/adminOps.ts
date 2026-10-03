@@ -4,6 +4,7 @@ import { requireAuth, requireAdmin } from '../middleware/auth';
 import { runReminderScan } from '../services/reminderScanner';
 import { runWrapUpEngine } from '../services/wrapUpEngine';
 import { sealSeason, getSeasonSealStatus } from '../services/seasonSeal';
+import { processTransportsBatch, getTransportsQueueStatus } from '../services/transports';
 
 export const adminOpsRouter = Router();
 
@@ -174,3 +175,55 @@ adminOpsRouter.get('/season-seal/status', requireAuth, requireAdmin, async (req:
     });
   }
 });
+
+/**
+ * POST /api/admin/ops/transports/drain
+ * System-tier endpoint to trigger the Notification Transports dispatch sweep.
+ * Protected strictly by requireAuth & requireAdmin (Decision #20).
+ * Enforces Decision #54 (Mutations occur strictly via POST).
+ */
+adminOpsRouter.post('/transports/drain', requireAuth, requireAdmin, async (req: Request, res: Response): Promise<void> => {
+  const { batchSize } = req.body || {};
+
+  try {
+    const result = await processTransportsBatch({
+      batchSize: batchSize !== undefined ? Number(batchSize) : undefined,
+    });
+
+    res.status(200).json({
+      message: 'Transport sweep executed successfully',
+      result,
+    });
+  } catch (error: any) {
+    console.error('Error executing transport sweep:', error);
+    res.status(500).json({
+      error: 'Failed to execute transport sweep',
+      details: error.message,
+    });
+  }
+});
+
+/**
+ * GET /api/admin/ops/transports/status
+ * Read-only health and queue depth query for Notification Transports & DLQ.
+ * Strict adherence to Decision #54 (NO WRITES ON GET: zero state mutation or side effects).
+ * Protected strictly by requireAuth & requireAdmin.
+ */
+adminOpsRouter.get('/transports/status', requireAuth, requireAdmin, async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const status = await getTransportsQueueStatus();
+
+    res.status(200).json({
+      status: 'ok',
+      service: 'transports_engine',
+      ...status,
+    });
+  } catch (error: any) {
+    console.error('Error querying transports status:', error);
+    res.status(500).json({
+      error: 'Failed to retrieve transports status',
+      details: error.message,
+    });
+  }
+});
+
