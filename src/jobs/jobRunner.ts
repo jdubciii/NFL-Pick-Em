@@ -137,3 +137,11 @@ export async function runOutboxDrain(options: { batchSize?: number } = {}): Prom
 
   return { jobRun, drainResult };
 }
+
+/**
+ * Executes the reminder scanner worker within a tracked JobRun.
+ */
+export async function runReminderScan(options = {}) {
+  const { runReminderScan: scan } = await import('../services/reminderScanner');
+  return scan(options);
+}
