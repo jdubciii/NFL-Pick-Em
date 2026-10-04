@@ -39,3 +39,5 @@ test_summary.json
 *_history*.txt
 scratch/
 
+
+logs/
