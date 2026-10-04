@@ -134,10 +134,15 @@
 - Milestones 14.1 through 14.7 ratified and certified closed under Ruling R-14-FINAL-CLOSURE-01.
 - Cumulative test regression: 261/261 tests passing across 29 suites.
 
-## Phase 15: Social Stakes, Faction Mechanics & Risk Telemetry — IN PROGRESS
-- Milestone 15.0: Phase 15 Architectural Intake & Scaffolding
-- Milestone 15.1: Feature 2: Bounty Board Engine
-- Milestone 15.2: Feature 4: Rival Hex Pairwise Challenge Engine
-- Milestone 15.3: Feature 5: Comeback Vault Mechanics
-- Milestone 15.4: Feature 6: Sweat Radar & Divergence Simulator
+## Phase 15: Social Stakes, Faction Mechanics & Risk Telemetry — SEALED
+- Milestones 15.0 through 15.5 ratified and certified closed under Ruling R-15-FINAL-CLOSURE-01.
+- Cumulative test regression: 299/299 tests passing across 35 suites.
+
+## Phase 16: Syndicates, Dynamic Markets & Engagement Overlays — IN PROGRESS
+- Milestone 16.0: Phase 16 Architectural Intake & Scaffolding
+- Milestone 16.1: Feature 7: Syndicate Portfolios Engine
+- Milestone 16.2: Feature 9: Bad Beat Insurance Protocol
+- Milestone 16.3: Feature 12: Dynamic Spread Adjustment Engine
+- Milestone 16.4: Feature 13: Live In-Game Props Matrix
+- Milestone 16.5: Phase 16 E2E Integration & Final Closure
 

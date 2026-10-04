@@ -9,7 +9,11 @@ export enum FeatureFlagKey {
   LEVERAGE_ALERTS = 'f_leverage_alerts',
   COMMISSIONER_SANDBOX = 'f_commissioner_sandbox',
   DEAD_PLACE_ESCALATION = 'f_dead_place_escalation',
-  LEAGUE_PRESS_BOX = 'f_league_press_box'
+  LEAGUE_PRESS_BOX = 'f_league_press_box',
+  SYNDICATE_PORTFOLIOS = 'f_syndicate_portfolios',
+  BAD_BEAT_INSURANCE = 'f_bad_beat_insurance',
+  DYNAMIC_SPREADS = 'f_dynamic_spreads',
+  LIVE_PROPS = 'f_live_props'
 }
 
 export interface FeatureFlagState {
