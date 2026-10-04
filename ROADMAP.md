@@ -138,11 +138,13 @@
 - Milestones 15.0 through 15.5 ratified and certified closed under Ruling R-15-FINAL-CLOSURE-01.
 - Cumulative test regression: 299/299 tests passing across 35 suites.
 
-## Phase 16: Syndicates, Dynamic Markets & Engagement Overlays — IN PROGRESS
+## Phase 16: Syndicates, Dynamic Markets & Engagement Overlays — SEALED
 - Milestone 16.0: Phase 16 Architectural Intake & Scaffolding
 - Milestone 16.1: Feature 7: Syndicate Portfolios Engine
 - Milestone 16.2: Feature 9: Bad Beat Insurance Protocol
 - Milestone 16.3: Feature 12: Dynamic Spread Adjustment Engine
 - Milestone 16.4: Feature 13: Live In-Game Props Matrix
 - Milestone 16.5: Phase 16 E2E Integration & Final Closure
+- Milestones 16.0 through 16.5 ratified and verified end-to-end.
+- Cumulative test regression: 324/324 tests passing across 41 suites.
 
