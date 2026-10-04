@@ -22,7 +22,20 @@ export interface SyndicatePayoutDistribution {
   payoutAmount: string;
 }
 
+export interface MemberPickVote {
+  membershipId: string;
+  selectedTeam: string;
+}
+
+export interface ConsensusPickResult {
+  gameId: string;
+  winningTeam: string | null;
+  isConsensusReached: boolean;
+  voteWeights: Record<string, string>; // team -> weighted Decimal points
+}
+
 export class SyndicatePortfolioService {
+  // Create syndicate and calculate exact share percentages via Decimal (Decisions #3, #22)
   static createSyndicate(
     poolId: string,
     syndicateName: string,
@@ -69,6 +82,62 @@ export class SyndicatePortfolioService {
     };
   }
 
+  // Resolve consensus pick based on stake-weighted voting (Decisions #3, #22, #65)
+  static resolveStakeWeightedPick(
+    syndicate: SyndicatePortfolio,
+    gameId: string,
+    votes: MemberPickVote[],
+    isGameLocked: boolean = false
+  ): ConsensusPickResult {
+    if (isGameLocked) {
+      throw new Error('Cannot calculate or modify syndicate pick for a locked game');
+    }
+
+    const weightMap: Record<string, Prisma.Decimal> = {};
+    const memberStakeMap: Record<string, Prisma.Decimal> = {};
+
+    for (const member of syndicate.members) {
+      memberStakeMap[member.membershipId] = new Prisma.Decimal(member.contributionAmount);
+    }
+
+    for (const vote of votes) {
+      const stake = memberStakeMap[vote.membershipId];
+      if (!stake) continue; // Ignore non-member votes
+
+      if (!weightMap[vote.selectedTeam]) {
+        weightMap[vote.selectedTeam] = new Prisma.Decimal(0);
+      }
+      weightMap[vote.selectedTeam] = weightMap[vote.selectedTeam].add(stake);
+    }
+
+    let winningTeam: string | null = null;
+    let highestWeight = new Prisma.Decimal(0);
+    let isTie = false;
+
+    for (const [team, weight] of Object.entries(weightMap)) {
+      if (weight.gt(highestWeight)) {
+        highestWeight = weight;
+        winningTeam = team;
+        isTie = false;
+      } else if (weight.eq(highestWeight) && weight.gt(0)) {
+        isTie = true;
+      }
+    }
+
+    const formattedWeights: Record<string, string> = {};
+    for (const [team, weight] of Object.entries(weightMap)) {
+      formattedWeights[team] = weight.toFixed(2);
+    }
+
+    return {
+      gameId,
+      winningTeam: isTie ? null : winningTeam,
+      isConsensusReached: !isTie && winningTeam !== null,
+      voteWeights: formattedWeights
+    };
+  }
+
+  // Distribute total winnings proportionally with exact penny remainder preservation
   static distributeWinnings(
     syndicate: SyndicatePortfolio,
     totalWinnings: string
