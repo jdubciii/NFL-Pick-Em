@@ -109,7 +109,7 @@ async function runHostedTripwire(targetUrl) {
     console.log(`  - DB Server Time: ${timeInfo.db_now}`);
     console.log(`  - Hours Since T0 (2026-09-30T06:14:37Z): ${Number(timeInfo.hours_since_t0).toFixed(4)} hrs`);
 
-    // 3. All 11 Table Counts
+    // 3. All 15 Table Counts
     const countsSql = `
       SELECT 'users' t, count(*) FROM users
       UNION ALL SELECT 'pools', count(*) FROM pools
@@ -121,12 +121,49 @@ async function runHostedTripwire(targetUrl) {
       UNION ALL SELECT 'penalty_ledger', count(*) FROM penalty_ledger
       UNION ALL SELECT 'penalty_media', count(*) FROM penalty_media
       UNION ALL SELECT 'pool_member_stats', count(*) FROM pool_member_stats
-      UNION ALL SELECT 'audit_logs', count(*) FROM audit_logs;
+      UNION ALL SELECT 'audit_logs', count(*) FROM audit_logs
+      UNION ALL SELECT 'inbox_messages', count(*) FROM inbox_messages
+      UNION ALL SELECT 'outbox_events', count(*) FROM outbox_events
+      UNION ALL SELECT 'notification_preferences', count(*) FROM notification_preferences
+      UNION ALL SELECT 'job_runs', count(*) FROM job_runs;
     `;
+    const expectedTables = [
+      'users',
+      'pools',
+      'pool_memberships',
+      'games',
+      'picks',
+      'pick_results',
+      'weekly_submissions',
+      'penalty_ledger',
+      'penalty_media',
+      'pool_member_stats',
+      'audit_logs',
+      'inbox_messages',
+      'outbox_events',
+      'notification_preferences',
+      'job_runs',
+    ];
+
     const countsRes = await client.query(countsSql);
-    console.log('\n3. All 11 Table Row Counts:');
+    console.log('\n3. All 15 Table Row Counts:');
     for (const row of countsRes.rows) {
-      console.log(`  - ${row.t.padEnd(20)}: ${row.count}`);
+      console.log(`  - ${row.t.padEnd(25)}: ${row.count}`);
+    }
+
+    if (args.includes('--omit-table=audit_logs') || args.includes('--negative-control-omission')) {
+      const omittedTable = 'audit_logs';
+      console.log(`\n[NEGATIVE CONTROL] Simulating table omission of '${omittedTable}' from inventory allowlist...`);
+      const foundNames = countsRes.rows.map(r => r.t).filter(t => t !== omittedTable);
+      if (foundNames.length !== expectedTables.length) {
+        console.error(`TRIPWIRE_FAILURE: Expected ${expectedTables.length} tables, but inventory only accounts for ${foundNames.length} tables (missing: ${omittedTable}).`);
+        throw new Error(`Negative control passed: tripwire detected missing table '${omittedTable}'`);
+      }
+    }
+
+    if (countsRes.rows.length !== expectedTables.length) {
+      console.error(`TRIPWIRE_FAILURE: Table count mismatch. Expected ${expectedTables.length}, got ${countsRes.rows.length}.`);
+      throw new Error(`Table count mismatch: ${countsRes.rows.length} vs expected ${expectedTables.length}`);
     }
 
     // 4. public.weekly_wrapups table existence check
