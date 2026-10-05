@@ -152,4 +152,11 @@
 - Status: PHASE_17_SEALED
 - Milestones: M17.0 (Intake & Scaffolding), M17.1 (Social Stakes Core), M17.2 (Telemetry UI), M17.3 (Live Sweat Feed), M17.4 (Audit & Hardening), M17.5 (Phase Closure)
 - Governing Authority: R-16-FINAL-CLOSURE-01
+
+## Phase 18: Season Finale, Global Leaderboards & Historical Archival Engine
+- Status: PHASE_18_SEALED
+- Milestones: M18.0 (Intake & Scaffolding), M18.1 (Leaderboard Aggregations), M18.2 (Achievements Engine), M18.3 (Historical Archival Engine), M18.4 (Next-Season Rollover & Hardening), M18.5 (Phase Closure)
+- Governing Authority: R-18.0-INTAKE-01
+
+
 
