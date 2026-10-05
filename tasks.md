@@ -424,7 +424,7 @@
 
 ## Phase 17 Execution Tasks
 - [x] M17.0: Intake & Pre-Flight Scaffolding (Domain contracts, invariant test suite, telemetry capture)
-- [ ] M17.1: Social Stakes & Escrow Logic
+- [x] M17.1: Social Stakes & Escrow Logic
 - [ ] M17.2: Telemetry UI & Sweat Radar Data Pipelines
 - [ ] M17.3: Live Activity Feed & Cohort Floor Enforcement
 - [ ] M17.4: End-to-End Regression & Tripwire Verification
