@@ -154,8 +154,9 @@
 - Governing Authority: R-16-FINAL-CLOSURE-01
 
 ## Phase 18: Season Finale, Global Leaderboards & Historical Archival Engine
-- Status: IN_EXECUTION
+- Status: PHASE_18_SEALED
 - Milestones: M18.0 (Intake & Scaffolding), M18.1 (Leaderboard Aggregations), M18.2 (Achievements Engine), M18.3 (Historical Archival Engine), M18.4 (Next-Season Rollover & Hardening), M18.5 (Phase Closure)
 - Governing Authority: R-18.0-INTAKE-01
+
 
 
