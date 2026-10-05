@@ -147,4 +147,9 @@
 - Milestone 16.5: Phase 16 E2E Integration & Final Closure
 - Milestones 16.0 through 16.5 ratified and verified end-to-end.
 - Cumulative test regression: 324/324 tests passing across 41 suites.
+
+## Phase 17: Social Stakes & Telemetry UI
+- Status: PHASE_17_SEALED
+- Milestones: M17.0 (Intake & Scaffolding), M17.1 (Social Stakes Core), M17.2 (Telemetry UI), M17.3 (Live Sweat Feed), M17.4 (Audit & Hardening), M17.5 (Phase Closure)
+- Governing Authority: R-16-FINAL-CLOSURE-01
 
