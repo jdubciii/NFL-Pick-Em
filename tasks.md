@@ -428,5 +428,5 @@
 - [x] M17.2: Telemetry UI & Sweat Radar Data Pipelines
 - [x] M17.3: Live Activity Feed & Cohort Floor Enforcement
 - [x] M17.4: End-to-End Regression & Tripwire Verification
-- [ ] M17.5: Final Phase Closure & Ratification
+- [x] M17.5: Final Phase Closure & Ratification
 

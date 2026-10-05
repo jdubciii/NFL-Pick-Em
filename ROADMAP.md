@@ -149,7 +149,7 @@
 - Cumulative test regression: 324/324 tests passing across 41 suites.
 
 ## Phase 17: Social Stakes & Telemetry UI
-- Status: IN_EXECUTION
+- Status: PHASE_17_SEALED
 - Milestones: M17.0 (Intake & Scaffolding), M17.1 (Social Stakes Core), M17.2 (Telemetry UI), M17.3 (Live Sweat Feed), M17.4 (Audit & Hardening), M17.5 (Phase Closure)
 - Governing Authority: R-16-FINAL-CLOSURE-01
 
