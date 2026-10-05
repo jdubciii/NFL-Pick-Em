@@ -432,7 +432,7 @@
 
 ## Phase 18 Execution Tasks
 - [x] M18.0: Intake & Pre-Flight Scaffolding (Domain contracts, circuit breaker registry, invariant suite)
-- [ ] M18.1: Global & Pool-Tier Leaderboards (Read-only aggregations & anonymization)
+- [x] M18.1: Global & Pool-Tier Leaderboards (Read-only aggregations & anonymization)
 - [ ] M18.2: Season-Long Achievements & Badges Engine
 - [ ] M18.3: Historical Archival Engine & Cold-Storage Snapshotting
 - [ ] M18.4: Next-Season Rollover Scaffolding & Integration Hardening
