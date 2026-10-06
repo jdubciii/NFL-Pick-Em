@@ -473,8 +473,8 @@
 - [x] Milestone 22.5: Phase 22 Closure & Cumulative UI Smoke Test Suite (Complete)
 
 ## Phase 23: Production Performance Hardening, Synthetic Load Generation & Edge Caching
-- [x] Milestone 23.0: Phase 23 Intake, Circuit Breaker Registration & Scaffolding (In-Flight)
-- [ ] Milestone 23.1: Edge & In-Memory Projection Read-Through Caching
+- [x] Milestone 23.0: Phase 23 Intake, Circuit Breaker Registration & Scaffolding (Complete)
+- [x] Milestone 23.1: Edge & In-Memory Projection Read-Through Caching (In-Flight)
 - [ ] Milestone 23.2: Synthetic Multi-Tenant Load Generation & Kickoff Spikes
 - [ ] Milestone 23.3: Database Query Optimization & Read Index Audit (Zero DDL)
 - [ ] Milestone 23.4: Stress Testing & Graceful Degradation Failover
