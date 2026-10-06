@@ -469,7 +469,7 @@
 - [x] Milestone 22.1: Consumer Onboarding & Public Templates UI (In-Flight)
 - [x] Milestone 22.2: Custom League Rules Configuration UI (In-Flight)
 - [x] Milestone 22.3: Shot-Cam Review & Punishment Dashboard UI (In-Flight)
-- [ ] Milestone 22.4: Multi-Tenant Leaderboard & Live Sweat Radar UI
+- [x] Milestone 22.4: Multi-Tenant Leaderboard & Live Sweat Radar UI (In-Flight)
 - [ ] Milestone 22.5: Phase 22 Closure & Cumulative UI Smoke Test Dossier
 
 
