@@ -241,7 +241,7 @@ opsRouter.post('/:pool_id/proposals', requireAuth, requirePoolCommissioner, asyn
 opsRouter.post('/:pool_id/proposals/:id/vote', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {
   const poolId = req.pool.id;
   const commissionerId = req.user!.id;
-  const proposalId = req.params.id;
+  const proposalId = Array.isArray(req.params.id) ? req.params.id[0] : (req.params.id || '');
   const { decision, vote } = req.body || {};
   const voteDecision = (decision || vote || '').toUpperCase();
 
@@ -287,7 +287,7 @@ opsRouter.post('/:pool_id/proposals/:id/vote', requireAuth, requirePoolCommissio
 opsRouter.post('/:pool_id/proposals/:id/execute', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {
   const poolId = req.pool.id;
   const commissionerId = req.user!.id;
-  const proposalId = req.params.id;
+  const proposalId = Array.isArray(req.params.id) ? req.params.id[0] : (req.params.id || '');
 
   if (!proposalId || !UUID_REGEX.test(proposalId)) {
     res.status(400).json({ error: 'Invalid proposal ID format.' });

@@ -139,7 +139,7 @@ export async function sealSeason(
           weekNumber,
           sealedAt,
           snapshots,
-        },
+        } as any,
       },
     });
 

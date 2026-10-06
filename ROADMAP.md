@@ -163,6 +163,11 @@
 - Milestones: M19.0 (Intake & Scaffolding), M19.1 (Playoff Bracket Engine & Lock Supremacy), M19.2 (Dynamic Round Multipliers), M19.3 (Playoff Survivor Mode), M19.4 (Super Bowl Prop Matrix & Hardening), M19.5 (Phase Closure)
 - Governing Authority: R-19.0-INTAKE-01
 
+## Phase 20: Private League Gameday Core & Punishment Hub
+- Status: IN_EXECUTION
+- Milestones: M20.0 (Intake & Scaffolding), M20.1 (Dead Place Override & Auto-Loss), M20.2 (Shot-Cam Workflow Engine), M20.3 (Autopilot Presets & SMS Ingest), M20.4 (Gameday E2E Integration), M20.5 (Phase Closure)
+- Governing Authority: R-20.0-INTAKE-01 / Decision #69
+
 
 
 
