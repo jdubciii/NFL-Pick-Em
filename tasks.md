@@ -453,8 +453,8 @@
 - [x] M20.1: Dead Place Rule Override (Decision #69) & Auto-Loss Engine
 - [x] M20.2: Shot-Cam Verification State Machine (Auto-Approve, Audit, 24h Dispute)
 - [x] M20.3: Autopilot Presets & SMS Fallback Ingest
-- [ ] M20.4: E2E Gameday Integration (Sweat Radar, Matrix, Press Box)
-- [ ] M20.5: Final Phase 20 Closure & Ratification
+- [x] M20.4: E2E Gameday Integration (Sweat Radar, Matrix, Press Box)
+- [x] M20.5: Final Phase 20 Closure & Ratification
 
 
 
