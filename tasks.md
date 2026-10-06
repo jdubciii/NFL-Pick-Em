@@ -464,13 +464,13 @@
 - [x] M21.4: Consumer League Dashboard & Onboarding Flow Integration
 - [x] M21.5: Final Phase 21 Closure & Cumulative Audit Dossier
 
-## Phase 22: Full-Stack UI Wiring & Interactive Integration
-- [x] Milestone 22.0: Phase 22 Intake & Routing Scaffolding (In-Flight)
-- [x] Milestone 22.1: Consumer Onboarding & Public Templates UI (In-Flight)
-- [x] Milestone 22.2: Custom League Rules Configuration UI (In-Flight)
-- [x] Milestone 22.3: Shot-Cam Review & Punishment Dashboard UI (In-Flight)
-- [x] Milestone 22.4: Multi-Tenant Leaderboard & Live Sweat Radar UI (In-Flight)
-- [ ] Milestone 22.5: Phase 22 Closure & Cumulative UI Smoke Test Dossier
+## Phase 22: Full-Stack UI Wiring & Interactive Integration (Complete)
+- [x] Milestone 22.0: Phase 22 Intake & Routing Scaffolding (Complete)
+- [x] Milestone 22.1: Consumer Onboarding & Public Templates UI (Complete)
+- [x] Milestone 22.2: Custom League Rules Configuration UI (Complete)
+- [x] Milestone 22.3: Shot-Cam Review & Punishment Dashboard UI (Complete)
+- [x] Milestone 22.4: Multi-Tenant Leaderboard & Live Sweat Radar UI (Complete)
+- [x] Milestone 22.5: Phase 22 Closure & Cumulative UI Smoke Test Suite (Complete)
 
 
 
