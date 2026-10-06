@@ -9,6 +9,7 @@ export enum FeatureFlagKey {
   CUSTOM_LEAGUE_RULES = 'CUSTOM_LEAGUE_RULES',
   GLOBAL_TENANT_PARTITIONING = 'GLOBAL_TENANT_PARTITIONING',
   PRD_PHASE_21_CORE = 'PRD_PHASE_21_CORE',
+  PRD_PHASE_22_UI_WIRING = 'PRD_PHASE_22_UI_WIRING',
 }
 
 export const DEFAULT_FEATURE_FLAGS: Record<FeatureFlagKey, boolean> = {
@@ -22,6 +23,7 @@ export const DEFAULT_FEATURE_FLAGS: Record<FeatureFlagKey, boolean> = {
   [FeatureFlagKey.CUSTOM_LEAGUE_RULES]: false,
   [FeatureFlagKey.GLOBAL_TENANT_PARTITIONING]: false,
   [FeatureFlagKey.PRD_PHASE_21_CORE]: false,
+  [FeatureFlagKey.PRD_PHASE_22_UI_WIRING]: false,
 };
 
 export const featureFlags = DEFAULT_FEATURE_FLAGS;
