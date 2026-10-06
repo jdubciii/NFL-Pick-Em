@@ -461,7 +461,7 @@
 - [x] M21.1: Public Pool Templates & Tiered Entry Configurations
 - [x] M21.2: Rule Configuration Engine (Dead Place vs. BR-4 Split vs. Flat Penalty)
 - [x] M21.3: Scaled Multi-Tenant Partitioning & Anonymization Engine
-- [ ] M21.4: Consumer League Dashboard & Onboarding Flow Integration
+- [x] M21.4: Consumer League Dashboard & Onboarding Flow Integration
 - [ ] M21.5: Final Phase 21 Closure & Cumulative Audit Dossier
 
 
