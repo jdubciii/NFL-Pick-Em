@@ -11,6 +11,7 @@ export enum FeatureFlagKey {
   PRD_PHASE_21_CORE = 'PRD_PHASE_21_CORE',
   PRD_PHASE_22_UI_WIRING = 'PRD_PHASE_22_UI_WIRING',
   PRD_PHASE_23_PERF_HARDENING = 'PRD_PHASE_23_PERF_HARDENING',
+  PRD_PHASE_24_OBSERVABILITY = 'PRD_PHASE_24_OBSERVABILITY',
 }
 
 export const DEFAULT_FEATURE_FLAGS: Record<FeatureFlagKey, boolean> = {
@@ -26,6 +27,7 @@ export const DEFAULT_FEATURE_FLAGS: Record<FeatureFlagKey, boolean> = {
   [FeatureFlagKey.PRD_PHASE_21_CORE]: false,
   [FeatureFlagKey.PRD_PHASE_22_UI_WIRING]: false,
   [FeatureFlagKey.PRD_PHASE_23_PERF_HARDENING]: false,
+  [FeatureFlagKey.PRD_PHASE_24_OBSERVABILITY]: false,
 };
 
 export const featureFlags = DEFAULT_FEATURE_FLAGS;
