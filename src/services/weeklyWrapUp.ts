@@ -2,6 +2,7 @@ import { Prisma, GameStatus } from '@prisma/client';
 import prisma from '../db/client';
 import type { PoolSettings, TiebreakerSettings, PenaltySettings } from '../types/pool';
 import { isGameInExcludedWindow } from './scoringEngine';
+import { Phase20CoreService, FeatureFlagKey, WeeklyScoreEntry } from './phase20CoreService';
 
 export interface ScoredMember {
   userId: string;
@@ -66,7 +67,7 @@ export function resolveTiebreakerGame(games: any[], gameTargetSetting?: string):
  * 2. READ (Game Resolver & Non-Excluded Set): Resolve non-excluded games for the week via the shared scoring resolver.
  * 3. READ (Status Check): Verify that every resolved game has status === 'FINAL'.
  * 4. WRITE (Claim): Create the weekly_wrapups claim via createMany({ skipDuplicates: true }).
- * 5. WRITE (Effects): Execute BR-4 Decimal split penalty ledger entries and pool_member_stats updates.
+ * 5. WRITE (Effects): Execute BR-4 / Decision #69 penalty ledger entries and pool_member_stats updates.
  */
 export async function executeWeeklyWrapUp(poolId: string, weekNumber: number): Promise<WeeklyWrapUpResult> {
   return await prisma.$transaction(async (tx: any) => {
@@ -100,7 +101,6 @@ export async function executeWeeklyWrapUp(poolId: string, weekNumber: number): P
     }
 
     const settings = (pool.settings as PoolSettings) || {};
-    const penaltiesConfig = settings.penalties || {};
     const tiebreakerConfig = settings.tiebreaker || {};
     const gameTargetSetting = tiebreakerConfig.game_target || tiebreakerConfig.gameTarget || 'MONDAY_NIGHT';
 
@@ -250,40 +250,69 @@ export async function executeWeeklyWrapUp(poolId: string, weekNumber: number): P
     const topScorers = memberEntries.filter(
       (m) => m.score === bestScore && m.tiebreakerDistance === bestDistance
     );
+    const topScorerUserIds = new Set(topScorers.map((m) => m.userId));
 
-    const worstMember = memberEntries[memberEntries.length - 1];
-    const worstScore = worstMember.score;
-    const worstDistance = worstMember.tiebreakerDistance;
-    const deadPlaceMembers = memberEntries.filter(
-      (m) => m.score === worstScore && m.tiebreakerDistance === worstDistance
+    // Decision #69: Evaluate Dead Place Penalties via Phase20CoreService
+    const isPrdDeadPlaceRulesOn = Phase20CoreService.isFlagEnabled(
+      FeatureFlagKey.PRD_DEAD_PLACE_RULES,
+      settings.featureFlags || (settings as any).feature_flags || {}
     );
 
-    const topScorerUserIds = new Set(topScorers.map((m) => m.userId));
-    const deadPlaceUserIds = new Set(deadPlaceMembers.map((m) => m.userId));
+    const scoreEntries: WeeklyScoreEntry[] = pool.memberships.map((membership: any) => {
+      const userId = membership.userId;
+      const score = memberScoresMap.get(userId) || 0;
+      const userPicks = picks.filter(
+        (p: any) => p.userId === userId && (!p.game || !isGameInExcludedWindow(p.game.kickoffTime, excludedWindows))
+      );
+      return {
+        userId,
+        membershipId: membership.id,
+        poolId: pool.id,
+        totalPoints: new Prisma.Decimal(score.toString()),
+        picksCount: userPicks.length,
+      };
+    });
 
-    // Calculate split penalty using pure Prisma.Decimal math
-    const penaltyConfigVal = penaltiesConfig.dead_place_penalty ?? penaltiesConfig.deadPlacePenalty ?? 1;
-    const deadPlacePenalty = new Prisma.Decimal(penaltyConfigVal.toString());
-    const memberCount = new Prisma.Decimal(deadPlaceMembers.length);
-    const splitPenalty = deadPlaceMembers.length > 0
-      ? deadPlacePenalty.dividedBy(memberCount).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
-      : new Prisma.Decimal(0);
+    const deadPlaceResults = Phase20CoreService.evaluateDeadPlacePenalties(
+      scoreEntries,
+      isPrdDeadPlaceRulesOn,
+      true // week is finalized
+    );
 
-    // Insert PenaltyLedger records (bypassing if share is 0.00)
-    if (splitPenalty.greaterThan(0)) {
-      for (const deadMember of deadPlaceMembers) {
+    const deadPlaceUserIds = new Set(
+      deadPlaceResults.filter((r) => r.isDeadPlace).map((r) => r.userId)
+    );
+    const deadPlaceMembers = memberEntries.filter((m) => deadPlaceUserIds.has(m.userId));
+
+    // Insert PenaltyLedger records
+    for (const r of deadPlaceResults) {
+      if (r.penaltyShotsOwed.greaterThan(0)) {
         await tx.penaltyLedger.create({
           data: {
             poolId: pool.id,
-            userId: deadMember.userId,
+            userId: r.userId,
             weekNumber,
-            delta: splitPenalty,
+            delta: r.penaltyShotsOwed,
             reason: 'WEEKLY_DEAD_PLACE',
             createdById: pool.adminId,
           },
         });
       }
+      if (r.flatFineOwed.greaterThan(0)) {
+        await tx.penaltyLedger.create({
+          data: {
+            poolId: pool.id,
+            userId: r.userId,
+            weekNumber,
+            delta: r.flatFineOwed,
+            reason: 'NO_SHOW_FINE',
+            createdById: pool.adminId,
+          },
+        });
+      }
     }
+
+    const assignedPenalty = deadPlaceResults.find((r) => r.isDeadPlace)?.penaltyShotsOwed ?? new Prisma.Decimal(0);
 
     // Update/Upsert PoolMemberStat for all pool members & recalculate total_shots_drank
     for (const membership of pool.memberships) {
@@ -340,7 +369,7 @@ export async function executeWeeklyWrapUp(poolId: string, weekNumber: number): P
         score: d.score,
         tiebreakerDistance: d.tiebreakerDistance,
       })),
-      penaltyAssigned: splitPenalty,
+      penaltyAssigned: assignedPenalty,
       processedMembers: pool.memberships.length,
       targetGameId: targetGame?.id ?? null,
       targetGameScore: actualTiebreakerTotal,
