@@ -474,8 +474,8 @@
 
 ## Phase 23: Production Performance Hardening, Synthetic Load Generation & Edge Caching
 - [x] Milestone 23.0: Phase 23 Intake, Circuit Breaker Registration & Scaffolding (Complete)
-- [x] Milestone 23.1: Edge & In-Memory Projection Read-Through Caching (In-Flight)
-- [ ] Milestone 23.2: Synthetic Multi-Tenant Load Generation & Kickoff Spikes
+- [x] Milestone 23.1: Edge & In-Memory Projection Read-Through Caching (Complete)
+- [x] Milestone 23.2: Synthetic Multi-Tenant Load Generation & Kickoff Spikes (In-Flight)
 - [ ] Milestone 23.3: Database Query Optimization & Read Index Audit (Zero DDL)
 - [ ] Milestone 23.4: Stress Testing & Graceful Degradation Failover
 - [ ] Milestone 23.5: Phase 23 Cumulative Performance Dossier & Ratification
