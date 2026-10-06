@@ -459,7 +459,7 @@
 ## Phase 21 Execution Tasks: Consumer-Facing Expansion & Multi-Tenant Hardening
 - [x] M21.0: Intake & Pre-Flight Scaffolding (docs/evidence/M21.0/EVIDENCE_BUNDLE.md)
 - [x] M21.1: Public Pool Templates & Tiered Entry Configurations
-- [ ] M21.2: Rule Configuration Engine (Dead Place vs. BR-4 Split vs. Flat Penalty)
+- [x] M21.2: Rule Configuration Engine (Dead Place vs. BR-4 Split vs. Flat Penalty)
 - [ ] M21.3: Scaled Multi-Tenant Partitioning & Anonymization Engine
 - [ ] M21.4: Consumer League Dashboard & Onboarding Flow Integration
 - [ ] M21.5: Final Phase 21 Closure & Cumulative Audit Dossier
