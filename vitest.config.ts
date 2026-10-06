@@ -1,6 +1,14 @@
 import { defineConfig } from 'vitest/config';
+import path from 'path';
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      'react': path.resolve(__dirname, 'client/node_modules/react'),
+      'react-dom': path.resolve(__dirname, 'client/node_modules/react-dom'),
+      'lucide-react': path.resolve(__dirname, 'client/node_modules/lucide-react'),
+    },
+  },
   test: {
     environment: 'node',
     testTimeout: 30000,
