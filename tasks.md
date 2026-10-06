@@ -452,7 +452,7 @@
 - [x] M20.0: tests/m20_0_intake.test.ts passing with default-OFF and Decimal assertions
 - [x] M20.1: Dead Place Rule Override (Decision #69) & Auto-Loss Engine
 - [x] M20.2: Shot-Cam Verification State Machine (Auto-Approve, Audit, 24h Dispute)
-- [ ] M20.3: Autopilot Presets & SMS Fallback Ingest
+- [x] M20.3: Autopilot Presets & SMS Fallback Ingest
 - [ ] M20.4: E2E Gameday Integration (Sweat Radar, Matrix, Press Box)
 - [ ] M20.5: Final Phase 20 Closure & Ratification
 

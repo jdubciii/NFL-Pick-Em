@@ -75,7 +75,7 @@ export async function executeWeeklyWrapUp(poolId: string, weekNumber: number): P
     // Step 1: READ (Claim Check) - Fail-closed check if claim store exists
     // -------------------------------------------------------------------------
     const tableExists: any = await tx.$queryRaw`SELECT to_regclass('public.weekly_wrapups')::text as to_regclass;`;
-    if (!tableExists || !tableExists[0] || !tableExists[0].to_regclass || !tx.weeklyWrapup) {
+    if (!tableExists || !tableExists[0] || !tableExists[0].to_regclass) {
       return { applied: false, reason: 'CLAIM_STORE_UNAVAILABLE', poolId, weekNumber, weekNo: weekNumber };
     }
 
@@ -164,14 +164,29 @@ export async function executeWeeklyWrapUp(poolId: string, weekNumber: number): P
     }
 
     // -------------------------------------------------------------------------
-    // Step 4: WRITE (Claim) - Atomic claim insertion via createMany
+    // Step 4: WRITE (Claim) - Atomic claim insertion via raw query or createMany
     // -------------------------------------------------------------------------
-    const claim = await tx.weeklyWrapup.createMany({
-      data: [{ poolId, weekNumber }],
-      skipDuplicates: true,
-    });
-    if (claim.count === 0) {
-      return { applied: false, reason: 'ALREADY_WRAPPED_UP', poolId, weekNumber, weekNo: weekNumber };
+    const claimModel = (tx as any).weeklyWrapup || (tx as any).weekly_wrapup || (tx as any).weekly_wrapups;
+    if (claimModel) {
+      const claim = await claimModel.createMany({
+        data: [{ poolId, weekNumber }],
+        skipDuplicates: true,
+      });
+      if (claim && claim.count === 0) {
+        return { applied: false, reason: 'ALREADY_WRAPPED_UP', poolId, weekNumber, weekNo: weekNumber };
+      }
+    } else {
+      const claimResult: any[] = await tx.$queryRawUnsafe(
+        `INSERT INTO public.weekly_wrapups (pool_id, week_number)
+         VALUES ($1::uuid, $2::int)
+         ON CONFLICT (pool_id, week_number) DO NOTHING
+         RETURNING pool_id, week_number;`,
+        poolId,
+        weekNumber
+      );
+      if (!claimResult || claimResult.length === 0) {
+        return { applied: false, reason: 'ALREADY_WRAPPED_UP', poolId, weekNumber, weekNo: weekNumber };
+      }
     }
 
     // -------------------------------------------------------------------------
