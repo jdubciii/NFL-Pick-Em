@@ -5,6 +5,10 @@ export enum FeatureFlagKey {
   PRD_DEAD_PLACE_RULES = 'PRD_DEAD_PLACE_RULES',
   SHOT_CAM_WORKFLOW = 'SHOT_CAM_WORKFLOW',
   SMS_FALLBACK_INGEST = 'SMS_FALLBACK_INGEST',
+  PUBLIC_POOL_TEMPLATES = 'PUBLIC_POOL_TEMPLATES',
+  CUSTOM_LEAGUE_RULES = 'CUSTOM_LEAGUE_RULES',
+  GLOBAL_TENANT_PARTITIONING = 'GLOBAL_TENANT_PARTITIONING',
+  PRD_PHASE_21_CORE = 'PRD_PHASE_21_CORE',
 }
 
 export const DEFAULT_FEATURE_FLAGS: Record<FeatureFlagKey, boolean> = {
@@ -14,7 +18,13 @@ export const DEFAULT_FEATURE_FLAGS: Record<FeatureFlagKey, boolean> = {
   [FeatureFlagKey.PRD_DEAD_PLACE_RULES]: false,
   [FeatureFlagKey.SHOT_CAM_WORKFLOW]: false,
   [FeatureFlagKey.SMS_FALLBACK_INGEST]: false,
+  [FeatureFlagKey.PUBLIC_POOL_TEMPLATES]: false,
+  [FeatureFlagKey.CUSTOM_LEAGUE_RULES]: false,
+  [FeatureFlagKey.GLOBAL_TENANT_PARTITIONING]: false,
+  [FeatureFlagKey.PRD_PHASE_21_CORE]: false,
 };
+
+export const featureFlags = DEFAULT_FEATURE_FLAGS;
 
 export class FeatureRegistry {
   public static isEnabled(key: FeatureFlagKey, store?: Record<string, boolean>): boolean {

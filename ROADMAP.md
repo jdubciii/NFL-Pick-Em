@@ -168,6 +168,11 @@
 - Milestones: M20.0 (Intake & Scaffolding), M20.1 (Dead Place Override & Auto-Loss), M20.2 (Shot-Cam Workflow Engine), M20.3 (Autopilot Presets & SMS Ingest), M20.4 (Gameday E2E Integration), M20.5 (Phase Closure)
 - Governing Authority: R-20.0-INTAKE-01 / Decision #69
 
+## Phase 21: Consumer-Facing Expansion & Multi-Tenant Hardening
+- Status: IN_EXECUTION
+- Milestones: M21.0 (Intake & Scaffolding), M21.1 (Public Templates), M21.2 (Rule Configurator), M21.3 (Tenant Scaling), M21.4 (Consumer Dashboard), M21.5 (Closure)
+- Governing Authority: R-20.5-CLOSURE-01
+
 
 
 
