@@ -16,6 +16,29 @@ export interface PoolSummary {
   name: string;
 }
 
+const MEMBER_DISPLAY_MAP: Record<string, string> = {
+  'jack@nflpickem.com': 'Jack (You)',
+  'matt.c@nflpickem.com': 'Matt Cone',
+  'matt.b@nflpickem.com': 'Matt Brickner',
+  'justin.b@nflpickem.com': 'Justin Brickner',
+  'adam.b@nflpickem.com': 'Adam Brickner',
+  'rich.b@nflpickem.com': 'Rich Brickner',
+  'mike.c@nflpickem.com': 'Mike Cone',
+  'nick.s@nflpickem.com': 'Nick Santos',
+  'mark.b@nflpickem.com': 'Mark Brickner',
+  'bigjack@nflpickem.com': 'Big Jack',
+};
+
+function formatDisplayName(email: string): string {
+  if (!email) return 'Unknown';
+  const lower = email.toLowerCase();
+  if (MEMBER_DISPLAY_MAP[lower]) {
+    return MEMBER_DISPLAY_MAP[lower];
+  }
+  const username = email.split('@')[0];
+  return username.charAt(0).toUpperCase() + username.slice(1);
+}
+
 export const Leaderboard: React.FC = () => {
   const { token, user: currentUser } = useAuth();
   const [pools, setPools] = useState<PoolSummary[]>([]);
@@ -36,7 +59,8 @@ export const Leaderboard: React.FC = () => {
           const data: PoolSummary[] = await res.json();
           setPools(data);
           if (data.length > 0 && !selectedPoolId) {
-            setSelectedPoolId(data[0].id);
+            const mainPool = data.find((p) => p.name === 'Main League') || data[0];
+            if (mainPool) setSelectedPoolId(mainPool.id);
           }
         }
       } catch (err) {
@@ -168,10 +192,10 @@ export const Leaderboard: React.FC = () => {
                 Current Pool Leader
               </div>
               <div className="text-sm font-extrabold text-white truncate max-w-[180px]">
-                {topScorer?.email || 'N/A'}
+                {topScorer ? formatDisplayName(topScorer.email) : 'N/A'}
               </div>
               <div className="text-xs text-amber-300/80 font-bold mt-0.5">
-                {topScorer?.total_points || 0} Total Points
+                {Math.round(topScorer?.total_points || 0)} Total Points
               </div>
             </div>
           </div>
@@ -201,10 +225,10 @@ export const Leaderboard: React.FC = () => {
                 <span>🚨 Weekly Loser</span>
               </div>
               <div className="text-sm font-extrabold text-rose-200 truncate max-w-[180px]">
-                {weeklyLoser?.email || 'None yet'}
+                {weeklyLoser ? formatDisplayName(weeklyLoser.email) : 'None yet'}
               </div>
               <div className="text-xs text-rose-400/80 font-bold mt-0.5">
-                {weeklyLoser ? `${weeklyLoser.total_points} Points (Penalty Due)` : 'All tied'}
+                {weeklyLoser ? `${Math.round(weeklyLoser.total_points)} Points (2.5 Shots Due)` : 'All tied'}
               </div>
             </div>
           </div>
@@ -255,6 +279,7 @@ export const Leaderboard: React.FC = () => {
                   const accuracy = entry.total_picks > 0 
                     ? Math.round((entry.correct_picks / entry.total_picks) * 100) 
                     : 0;
+                  const displayName = formatDisplayName(entry.email);
 
                   return (
                     <tr
@@ -276,21 +301,28 @@ export const Leaderboard: React.FC = () => {
 
                       {/* Participant & Badges */}
                       <td className="py-4 px-6">
-                        <div className="flex items-center space-x-2.5 flex-wrap gap-y-1">
-                          <span className={`font-semibold ${isLoser ? 'text-rose-200' : 'text-white'}`}>
-                            {entry.email}
-                          </span>
-
-                          {isCurrent && (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                              YOU
+                        <div className="flex flex-col">
+                          <div className="flex items-center space-x-2.5 flex-wrap gap-y-1">
+                            <span className={`font-semibold ${isLoser ? 'text-rose-200' : 'text-white'}`}>
+                              {displayName}
                             </span>
-                          )}
 
-                          {isLoser && (
-                            <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse shadow-sm shadow-rose-500/20">
-                              <span>🚨</span>
-                              <span>PENALTY</span>
+                            {isCurrent && (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                                YOU
+                              </span>
+                            )}
+
+                            {isLoser && (
+                              <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse shadow-sm shadow-rose-500/20">
+                                <span>🚨</span>
+                                <span>2.5 SHOTS DUE</span>
+                              </span>
+                            )}
+                          </div>
+                          {entry.email && displayName !== entry.email && !displayName.includes(entry.email) && (
+                            <span className="text-[11px] text-slate-500 font-mono mt-0.5">
+                              {entry.email}
                             </span>
                           )}
                         </div>
@@ -325,7 +357,7 @@ export const Leaderboard: React.FC = () => {
                             ? 'text-amber-400'
                             : 'text-white'
                         }`}>
-                          {entry.total_points} <span className="text-xs font-normal text-slate-500">PTS</span>
+                          {Math.round(entry.total_points)} <span className="text-xs font-normal text-slate-500">PTS</span>
                         </span>
                       </td>
                     </tr>

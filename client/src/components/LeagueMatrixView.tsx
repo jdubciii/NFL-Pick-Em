@@ -17,6 +17,33 @@ import {
   Check,
   Printer,
 } from 'lucide-react';
+import { formatGameKickoff } from '../utils/dateUtils';
+
+const MEMBER_DISPLAY_MAP: Record<string, { name: string; initials: string }> = {
+  'jack@nflpickem.com': { name: 'Jack (You)', initials: 'JC' },
+  'matt.c@nflpickem.com': { name: 'Matt Cone', initials: 'MC' },
+  'matt.b@nflpickem.com': { name: 'Matt Brickner', initials: 'MB' },
+  'justin.b@nflpickem.com': { name: 'Justin Brickner', initials: 'JB' },
+  'adam.b@nflpickem.com': { name: 'Adam Brickner', initials: 'AB' },
+  'rich.b@nflpickem.com': { name: 'Rich Brickner', initials: 'RB' },
+  'mike.c@nflpickem.com': { name: 'Mike Cone', initials: 'MK' },
+  'nick.s@nflpickem.com': { name: 'Nick Santos', initials: 'NS' },
+  'mark.b@nflpickem.com': { name: 'Mark Brickner', initials: 'MR' },
+  'bigjack@nflpickem.com': { name: 'Big Jack', initials: 'BJ' },
+};
+
+function getMemberDetails(email: string, displayName?: string) {
+  const lower = email.toLowerCase();
+  if (MEMBER_DISPLAY_MAP[lower]) {
+    return MEMBER_DISPLAY_MAP[lower];
+  }
+  const cleanName = displayName || email.split('@')[0];
+  const parts = cleanName.split(/[\s._-]+/);
+  const initials = parts.length > 1
+    ? (parts[0][0] + parts[1][0]).toUpperCase()
+    : cleanName.slice(0, 2).toUpperCase();
+  return { name: cleanName, initials };
+}
 
 export interface MatrixMemberColumn {
   user_id: string;
@@ -54,7 +81,7 @@ export interface MatrixMemberSummary {
 export interface MatrixResponsePayload {
   metadata: {
     pool_id: string;
-    week_number: number;
+    week_number: number | string;
     picking_mode: string;
     hide_picks_until_kickoff: boolean;
   };
@@ -69,11 +96,16 @@ export interface PoolSummary {
   name: string;
 }
 
-export const LeagueMatrixView: React.FC = () => {
+export interface LeagueMatrixViewProps {
+  hideHeader?: boolean;
+  initialWeek?: number | string;
+}
+
+export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader = false, initialWeek = 5 }) => {
   const { token, user: currentUser } = useAuth();
   const [pools, setPools] = useState<PoolSummary[]>([]);
   const [selectedPoolId, setSelectedPoolId] = useState<string>('');
-  const [selectedWeek, setSelectedWeek] = useState<number>(1);
+  const [selectedWeek, setSelectedWeek] = useState<number | string>(initialWeek);
   const [matrixData, setMatrixData] = useState<MatrixResponsePayload | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -90,7 +122,8 @@ export const LeagueMatrixView: React.FC = () => {
           const data: PoolSummary[] = await res.json();
           setPools(data);
           if (data.length > 0 && !selectedPoolId) {
-            setSelectedPoolId(data[0].id);
+            const mainPool = data.find(p => p.name === 'Main League') || data[0];
+            if (mainPool) setSelectedPoolId(mainPool.id);
           }
         }
       } catch (err) {
@@ -101,7 +134,7 @@ export const LeagueMatrixView: React.FC = () => {
     if (token) {
       fetchPools();
     }
-  }, [token]);
+  }, [token, selectedPoolId]);
 
   // Fetch Matrix data
   const fetchMatrix = useCallback(async () => {
@@ -140,16 +173,7 @@ export const LeagueMatrixView: React.FC = () => {
     }
   }, [selectedPoolId, selectedWeek, fetchMatrix]);
 
-  const formatKickoff = (isoString: string) => {
-    const date = new Date(isoString);
-    return date.toLocaleDateString('en-US', {
-      weekday: 'short',
-      month: 'numeric',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-  };
+  const formatKickoff = (isoString: string) => formatGameKickoff(isoString);
 
   // Generate plaintext clipboard dispatch summary block
   const handleGenerateDispatch = async () => {
@@ -159,8 +183,9 @@ export const LeagueMatrixView: React.FC = () => {
     const poolName = currentPool ? currentPool.name : 'NFL Pick \'Em Pool';
     const timestamp = new Date().toLocaleString();
 
+    const weekLabel = matrixData.metadata.week_number === 'all' ? 'ALL WEEKS' : `WEEK ${matrixData.metadata.week_number}`;
     let text = `====================================================\n`;
-    text += `🏈 NFL PICK 'EM MATRIX DISPATCH — WEEK ${matrixData.metadata.week_number}\n`;
+    text += `🏈 NFL PICK 'EM MATRIX DISPATCH — ${weekLabel}\n`;
     text += `====================================================\n`;
     text += `Pool: ${poolName}\n`;
     text += `Mode: ${matrixData.metadata.picking_mode}\n`;
@@ -169,8 +194,8 @@ export const LeagueMatrixView: React.FC = () => {
 
     // Columns Header
     const colHeaders = matrixData.columns.map((col) => {
-      const name = col.displayName || col.email.split('@')[0];
-      return name.padEnd(12).slice(0, 12);
+      const details = getMemberDetails(col.email, col.displayName);
+      return details.name.padEnd(12).slice(0, 12);
     });
     text += `${'MATCHUP'.padEnd(24)} | ${colHeaders.join(' | ')}\n`;
     text += `${'-'.repeat(24)}-+-${colHeaders.map(() => '-'.repeat(12)).join('-+-')}\n`;
@@ -261,7 +286,7 @@ export const LeagueMatrixView: React.FC = () => {
           <div className="flex justify-between items-center">
             <div>
               <h1 className="text-xl font-extrabold text-black">
-                NFL PICK 'EM MATRIX — WEEK {selectedWeek} ({matrixData.metadata.picking_mode})
+                NFL PICK 'EM MATRIX — {selectedWeek === 'all' ? 'ALL WEEKS' : `WEEK ${selectedWeek}`} ({matrixData.metadata.picking_mode})
               </h1>
               <p className="text-xs text-gray-700">
                 Pool: {pools.find((p) => p.id === selectedPoolId)?.name || 'Main League'} | Generated: {new Date().toLocaleString()}
@@ -275,103 +300,200 @@ export const LeagueMatrixView: React.FC = () => {
       )}
 
       {/* Header & Controls Toolbar (Hidden in Print) */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-6 rounded-2xl bg-slate-900/80 border border-slate-800 backdrop-blur-xl shadow-xl shadow-black/40 print:hidden">
-        <div className="space-y-1">
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-indigo-500 flex items-center justify-center shadow-lg shadow-cyan-500/20">
-              <Grid className="w-5 h-5 text-slate-950 stroke-[2.5]" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2">
-                Square Sheet Matrix
-                <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
-                  Week {selectedWeek}
-                </span>
-              </h1>
-              <p className="text-xs text-slate-400">
-                Full league spreadsheet with live anti-peeking masking & precision scoring
-              </p>
+      {!hideHeader ? (
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-6 rounded-2xl bg-slate-900/80 border border-slate-800 backdrop-blur-xl shadow-xl shadow-black/40 print:hidden">
+          <div className="space-y-1">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-indigo-500 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+                <Grid className="w-5 h-5 text-slate-950 stroke-[2.5]" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2">
+                  Square Sheet Matrix
+                  <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
+                    {selectedWeek === 'all' ? 'All Weeks' : `Week ${selectedWeek}`}
+                  </span>
+                </h1>
+                <p className="text-xs text-slate-400">
+                  Full league spreadsheet with live anti-peeking masking & precision scoring
+                </p>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Pool Selector */}
-          {pools.length > 1 && (
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Pool Selector */}
+            {pools.length > 1 && (
+              <div className="relative">
+                <select
+                  value={selectedPoolId}
+                  onChange={(e) => setSelectedPoolId(e.target.value)}
+                  className="appearance-none bg-slate-800/90 border border-slate-700 text-slate-200 text-xs font-semibold rounded-xl pl-3.5 pr-8 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500 transition-all cursor-pointer"
+                >
+                  {pools.map((p) => (
+                    <option key={p.id} value={p.id} className="bg-slate-900 text-white">
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+            )}
+
+            {/* Week Selector */}
             <div className="relative">
               <select
-                value={selectedPoolId}
-                onChange={(e) => setSelectedPoolId(e.target.value)}
+                value={selectedWeek}
+                onChange={(e) => setSelectedWeek(e.target.value === 'all' ? 'all' : Number(e.target.value))}
                 className="appearance-none bg-slate-800/90 border border-slate-700 text-slate-200 text-xs font-semibold rounded-xl pl-3.5 pr-8 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500 transition-all cursor-pointer"
               >
-                {pools.map((p) => (
-                  <option key={p.id} value={p.id} className="bg-slate-900 text-white">
-                    {p.name}
+                <option value="all" className="bg-slate-900 text-white font-bold">
+                  All Weeks (Full Season)
+                </option>
+                {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
+                  <option key={w} value={w} className="bg-slate-900 text-white">
+                    Week {w}
                   </option>
                 ))}
               </select>
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
-          )}
 
-          {/* Week Selector */}
-          <div className="relative">
-            <select
-              value={selectedWeek}
-              onChange={(e) => setSelectedWeek(Number(e.target.value))}
-              className="appearance-none bg-slate-800/90 border border-slate-700 text-slate-200 text-xs font-semibold rounded-xl pl-3.5 pr-8 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500 transition-all cursor-pointer"
+            {/* Generate Dispatch Button */}
+            <button
+              onClick={handleGenerateDispatch}
+              disabled={loading || !matrixData}
+              className="flex items-center space-x-1.5 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-bold transition-all shadow-md shadow-cyan-500/20 disabled:opacity-50"
+              title="Copy plaintext summary block to clipboard"
             >
-              {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
-                <option key={w} value={w} className="bg-slate-900 text-white">
-                  Week {w}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              {copiedDispatch ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>Copied Dispatch!</span>
+                </>
+              ) : (
+                <>
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Generate Dispatch</span>
+                </>
+              )}
+            </button>
+
+            {/* Print Button */}
+            <button
+              onClick={() => window.print()}
+              disabled={loading || !matrixData}
+              className="flex items-center space-x-1.5 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 hover:text-white transition-all shadow-sm disabled:opacity-50"
+              title="Print or Export PDF in landscape letter format"
+            >
+              <Printer className="w-3.5 h-3.5 text-slate-400" />
+              <span>Print</span>
+            </button>
+
+            {/* Refresh Button */}
+            <button
+              onClick={fetchMatrix}
+              disabled={loading}
+              className="flex items-center space-x-1.5 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 hover:text-white transition-all shadow-sm disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-cyan-400' : ''}`} />
+              <span>Refresh</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl bg-slate-900/80 border border-slate-800 backdrop-blur-md shadow-lg print:hidden">
+          <div className="flex items-center space-x-2">
+            <Grid className="w-4 h-4 text-cyan-400" />
+            <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+              Matrix View:
+            </span>
+            <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
+              {selectedWeek === 'all' ? 'All Weeks' : `Week ${selectedWeek}`}
+            </span>
           </div>
 
-          {/* Generate Dispatch Button */}
-          <button
-            onClick={handleGenerateDispatch}
-            disabled={loading || !matrixData}
-            className="flex items-center space-x-1.5 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-bold transition-all shadow-md shadow-cyan-500/20 disabled:opacity-50"
-            title="Copy plaintext summary block to clipboard"
-          >
-            {copiedDispatch ? (
-              <>
-                <Check className="w-3.5 h-3.5 text-emerald-300" />
-                <span>Copied Dispatch!</span>
-              </>
-            ) : (
-              <>
-                <FileText className="w-3.5 h-3.5" />
-                <span>Generate Dispatch</span>
-              </>
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Pool Selector */}
+            {pools.length > 1 && (
+              <div className="relative">
+                <select
+                  value={selectedPoolId}
+                  onChange={(e) => setSelectedPoolId(e.target.value)}
+                  className="appearance-none bg-slate-800/90 border border-slate-700 text-slate-200 text-xs font-semibold rounded-xl pl-3.5 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-500 transition-all cursor-pointer"
+                >
+                  {pools.map((p) => (
+                    <option key={p.id} value={p.id} className="bg-slate-900 text-white">
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
             )}
-          </button>
 
-          {/* Print Button */}
-          <button
-            onClick={() => window.print()}
-            disabled={loading || !matrixData}
-            className="flex items-center space-x-1.5 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 hover:text-white transition-all shadow-sm disabled:opacity-50"
-            title="Print or Export PDF in landscape letter format"
-          >
-            <Printer className="w-3.5 h-3.5 text-slate-400" />
-            <span>Print</span>
-          </button>
+            {/* Week Selector */}
+            <div className="relative">
+              <select
+                value={selectedWeek}
+                onChange={(e) => setSelectedWeek(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                className="appearance-none bg-slate-800/90 border border-slate-700 text-slate-200 text-xs font-semibold rounded-xl pl-3.5 pr-8 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-500 transition-all cursor-pointer"
+              >
+                <option value="all" className="bg-slate-900 text-white font-bold">
+                  All Weeks (Full Season)
+                </option>
+                {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
+                  <option key={w} value={w} className="bg-slate-900 text-white">
+                    Week {w}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
 
-          {/* Refresh Button */}
-          <button
-            onClick={fetchMatrix}
-            disabled={loading}
-            className="flex items-center space-x-1.5 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 hover:text-white transition-all shadow-sm disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-cyan-400' : ''}`} />
-            <span>Refresh</span>
-          </button>
+            {/* Generate Dispatch Button */}
+            <button
+              onClick={handleGenerateDispatch}
+              disabled={loading || !matrixData}
+              className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-bold transition-all shadow-md shadow-cyan-500/20 disabled:opacity-50"
+              title="Copy plaintext summary block to clipboard"
+            >
+              {copiedDispatch ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>Copied!</span>
+                </>
+              ) : (
+                <>
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Dispatch</span>
+                </>
+              )}
+            </button>
+
+            {/* Print Button */}
+            <button
+              onClick={() => window.print()}
+              disabled={loading || !matrixData}
+              className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 hover:text-white transition-all shadow-sm disabled:opacity-50"
+              title="Print or Export PDF in landscape letter format"
+            >
+              <Printer className="w-3.5 h-3.5 text-slate-400" />
+              <span>Print</span>
+            </button>
+
+            {/* Refresh Button */}
+            <button
+              onClick={fetchMatrix}
+              disabled={loading}
+              className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 hover:text-white transition-all shadow-sm disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-cyan-400' : ''}`} />
+              <span>Refresh</span>
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Anti-Peeking / Rules Banner (Hidden in Print) */}
       {matrixData?.metadata?.hide_picks_until_kickoff ? (
@@ -427,8 +549,8 @@ export const LeagueMatrixView: React.FC = () => {
 
                   {/* Member Column Headers (Sticky Top) */}
                   {matrixData.columns.map((col) => {
-                    const isSelf = col.user_id === currentUser?.id;
-                    const displayName = col.displayName || col.email.split('@')[0];
+                    const isSelf = col.user_id === currentUser?.id || col.email.toLowerCase() === 'jack@nflpickem.com';
+                    const details = getMemberDetails(col.email, col.displayName);
 
                     return (
                       <th
@@ -446,10 +568,10 @@ export const LeagueMatrixView: React.FC = () => {
                                 : 'bg-slate-800 text-slate-300 border border-slate-700'
                             }`}
                           >
-                            {displayName.charAt(0)}
+                            {details.initials}
                           </div>
                           <span className="text-xs font-bold truncate max-w-[110px] print:max-w-none print:text-black" title={col.email}>
-                            {displayName}
+                            {details.name}
                           </span>
                           {isSelf && (
                             <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 print:hidden">
@@ -465,7 +587,17 @@ export const LeagueMatrixView: React.FC = () => {
 
               {/* Table Body: Games (Rows) */}
               <tbody className="divide-y divide-slate-800/60 font-medium print:divide-black">
-                {matrixData.rows.map((game, rowIdx) => {
+                {matrixData.rows.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={matrixData.columns.length + 1}
+                      className="px-6 py-12 text-center text-slate-400 text-sm italic"
+                    >
+                      No games scheduled or found for this week.
+                    </td>
+                  </tr>
+                ) : (
+                  matrixData.rows.map((game, rowIdx) => {
                   const isFinal = game.status === 'FINAL';
                   const isInProgress = game.status === 'IN_PROGRESS';
 
@@ -572,7 +704,7 @@ export const LeagueMatrixView: React.FC = () => {
                       })}
                     </tr>
                   );
-                })}
+                }))}
               </tbody>
 
               {/* Table Footer: Summary Rows (Sticky Bottom) */}

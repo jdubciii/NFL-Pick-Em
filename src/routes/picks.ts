@@ -98,3 +98,81 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
     res.status(500).json({ error: 'Failed to save pick.' });
   }
 });
+
+/**
+ * POST /api/picks/batch
+ * Submits or updates multiple picks in bulk for a pool.
+ * Accepts: { pool_id, picks: Array<{ game_id, selected_team_id }> }
+ */
+picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const poolId = req.body.pool_id || req.body.poolId;
+  const picksList = req.body.picks || [];
+
+  if (!poolId || !Array.isArray(picksList)) {
+    res.status(400).json({ error: 'pool_id and picks array are required.' });
+    return;
+  }
+
+  const userId = req.user!.id;
+
+  try {
+    const pool = await prisma.pool.findUnique({ where: { id: poolId } });
+    if (!pool) {
+      res.status(404).json({ error: 'Pool not found.' });
+      return;
+    }
+
+    const settings = (pool.settings as PoolSettings) || {};
+    const lockOffsetMinutes = Number(settings.lock_offset ?? settings.lockOffset ?? 0);
+
+    const savedPicks = [];
+    for (const item of picksList) {
+      const gameId = item.game_id || item.gameId;
+      const rawSelected = item.selected_team_id !== undefined ? item.selected_team_id : item.selectedTeamId;
+      const selectedTeamId = rawSelected && String(rawSelected).trim().length > 0
+        ? String(rawSelected).trim()
+        : null;
+
+      if (!gameId) continue;
+
+      const game = await prisma.game.findUnique({ where: { id: gameId } });
+      if (!game) continue;
+
+      if (isGameLocked(game.kickoffTime, lockOffsetMinutes)) {
+        continue;
+      }
+
+      const pick = await prisma.pick.upsert({
+        where: {
+          poolId_userId_gameId: {
+            poolId,
+            userId,
+            gameId,
+          },
+        },
+        update: {
+          selectedTeamId,
+          submittedById: userId,
+        },
+        create: {
+          poolId,
+          userId,
+          gameId,
+          selectedTeamId,
+          submittedById: userId,
+        },
+      });
+      savedPicks.push(pick);
+    }
+
+    res.status(200).json({
+      message: `Batch processed ${savedPicks.length} picks successfully.`,
+      count: savedPicks.length,
+      picks: savedPicks,
+    });
+  } catch (error: any) {
+    console.error('Error in batch picks:', error);
+    res.status(500).json({ error: 'Failed to process batch picks.' });
+  }
+});
+

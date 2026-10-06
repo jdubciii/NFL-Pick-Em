@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { Navbar } from './components/Navbar';
@@ -9,6 +9,10 @@ import { LeaderboardPage } from './pages/LeaderboardPage';
 import { WallOfShamePage } from './pages/WallOfShamePage';
 import { MatrixPage } from './pages/MatrixPage';
 import { AdminPage } from './pages/AdminPage';
+import { ShotCamPage } from './pages/ShotCamPage';
+import { RulesPage } from './pages/RulesPage';
+import { SweatRadarPage } from './pages/SweatRadarPage';
+import { OpsDashboardPage } from './pages/OpsDashboardPage';
 
 export const App: React.FC = () => {
   return (
@@ -27,6 +31,9 @@ export const App: React.FC = () => {
                 <Route path="/picks" element={<PicksPage />} />
                 <Route path="/matrix" element={<MatrixPage />} />
                 <Route path="/leaderboard" element={<LeaderboardPage />} />
+                <Route path="/radar" element={<SweatRadarPage />} />
+                <Route path="/shot-cam" element={<ShotCamPage />} />
+                <Route path="/rules" element={<RulesPage />} />
                 <Route path="/shame" element={<WallOfShamePage />} />
                 <Route path="/wall-of-shame" element={<WallOfShamePage />} />
               </Route>
@@ -34,6 +41,7 @@ export const App: React.FC = () => {
               {/* Protected admin-only routes */}
               <Route element={<ProtectedRoute requireAdmin={true} />}>
                 <Route path="/admin" element={<AdminPage />} />
+                <Route path="/admin/ops" element={<OpsDashboardPage />} />
               </Route>
 
               {/* Fallback */}

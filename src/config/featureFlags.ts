@@ -40,3 +40,6 @@ export class FeatureRegistry {
     return store[key] === true;
   }
 }
+
+export const isFeatureEnabled = (key: FeatureFlagKey): boolean => featureFlags[key] ?? false;
+export default featureFlags;

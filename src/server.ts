@@ -23,6 +23,7 @@ import type {
   MatrixMemberSummary,
   PickingMode,
 } from './types/pool';
+import { startLiveScheduleDaemon } from './services/liveScheduleDaemon';
 
 export const app = express();
 const PORT = process.env.PORT || 3000;
@@ -186,7 +187,15 @@ app.get('/api/games', requireAuth, async (req: Request, res: Response): Promise<
       return;
     }
 
-    const games = await prisma.game.findMany({
+    const settings = (pool.settings as any) || {};
+    const defaultWeek = Number(settings.week_number ?? settings.current_week ?? 5);
+    const requestedWeek = req.query.week || req.query.week_no || req.query.weekNumber;
+    const isAllWeeks = String(requestedWeek).toLowerCase() === 'all';
+    const weekNum = requestedWeek !== undefined && requestedWeek !== null && requestedWeek !== ''
+      ? (isAllWeeks ? 0 : parseInt(String(requestedWeek), 10) || defaultWeek)
+      : defaultWeek;
+
+    const allGames = await prisma.game.findMany({
       orderBy: { kickoffTime: 'asc' },
       include: {
         picks: {
@@ -198,7 +207,18 @@ app.get('/api/games', requireAuth, async (req: Request, res: Response): Promise<
       },
     });
 
-    const settings = (pool.settings as any) || {};
+    let games = allGames;
+    if (!isAllWeeks && weekNum > 0) {
+      const padded = weekNum < 10 ? `_w0${weekNum}_` : `_w${weekNum}_`;
+      const unpadded = `_w${weekNum}_`;
+      games = allGames.filter((g) =>
+        g.externalGameId && (
+          g.externalGameId.toLowerCase().includes(padded.toLowerCase()) ||
+          g.externalGameId.toLowerCase().includes(unpadded.toLowerCase())
+        )
+      );
+    }
+
     const lockOffset = Number(settings.lock_offset ?? settings.lockOffset ?? 0);
 
     res.json({
@@ -207,6 +227,7 @@ app.get('/api/games', requireAuth, async (req: Request, res: Response): Promise<
         name: pool.name,
         lock_offset: lockOffset,
         settings: pool.settings,
+        current_week: defaultWeek,
       },
       games: games.map((game) => ({
         id: game.id,
@@ -273,6 +294,7 @@ app.get('/api/pools/:pool_id/leaderboard', requireAuth, requirePoolMember, async
               },
             },
             result: true,
+            game: true,
           },
         },
       },
@@ -300,7 +322,7 @@ app.get('/api/pools/:pool_id/leaderboard', requireAuth, requirePoolMember, async
       }
     }
 
-    // Include users with picks and accumulate graded points from PickResult
+    // Include users with picks and accumulate dynamically evaluated points
     for (const pick of pool.picks) {
       let entry = userMap.get(pick.userId);
       if (!entry) {
@@ -317,11 +339,28 @@ app.get('/api/pools/:pool_id/leaderboard', requireAuth, requirePoolMember, async
 
       entry.total_picks += 1;
 
-      if (pick.result) {
-        entry.total_points += Number(pick.result.pointsAwarded);
-        if (pick.result.isCorrect) {
-          entry.correct_picks += 1;
+      const game = (pick as any).game;
+      const isGameFinished = game && (game.status === 'FINAL' || (game.homeScore !== null && game.awayScore !== null));
+
+      let isCorrect = false;
+      let pointsAwarded = 0;
+
+      if (isGameFinished) {
+        let winner: string | null = null;
+        if (game.homeScore !== null && game.awayScore !== null) {
+          if (game.homeScore > game.awayScore) winner = game.homeTeamId;
+          else if (game.awayScore > game.homeScore) winner = game.awayTeamId;
         }
+        isCorrect = Boolean(winner && pick.selectedTeamId && pick.selectedTeamId === winner);
+        pointsAwarded = isCorrect ? 1.0 : 0.0;
+      } else if (pick.result) {
+        isCorrect = pick.result.isCorrect;
+        pointsAwarded = Number(pick.result.pointsAwarded);
+      }
+
+      entry.total_points += pointsAwarded;
+      if (isCorrect) {
+        entry.correct_picks += 1;
       }
     }
 
@@ -857,8 +896,8 @@ app.get('/api/pools/:pool_id/penalties/:id/media', requireAuth, requirePoolMembe
  */
 app.get('/api/pools/:pool_id/matrix', requireAuth, requirePoolMember, async (req: Request, res: Response): Promise<void> => {
   const poolId = String(req.params.pool_id);
-  const rawWeekNo = req.query.week_no || req.query.weekNumber || req.query.week || '1';
-  const weekNumber = parseInt(String(rawWeekNo), 10) || 1;
+  const requestedWeek = req.query.week_no || req.query.week || req.query.weekNumber;
+  const isAllWeeks = String(requestedWeek).toLowerCase() === 'all';
 
   if (!poolId) {
     res.status(400).json({ error: 'pool_id is required.' });
@@ -896,15 +935,31 @@ app.get('/api/pools/:pool_id/matrix', requireAuth, requirePoolMember, async (req
     }
 
     const settings = (pool.settings as PoolSettings) || {};
+    const defaultWeek = Number(settings.week_number ?? (settings as any).current_week ?? 5);
+    const weekNum = requestedWeek !== undefined && requestedWeek !== null && requestedWeek !== ''
+      ? (isAllWeeks ? 0 : parseInt(String(requestedWeek), 10) || defaultWeek)
+      : defaultWeek;
     const pickingMode: PickingMode = settings.picking_mode ?? settings.pickingMode ?? 'STRAIGHT_UP';
     const hidePicksUntilKickoff = Boolean(
       settings.hide_picks_until_kickoff ?? settings.hidePicksUntilKickoff ?? true
     );
 
     // 2. Fetch all games ordered chronologically by kickoffTime
-    const games = await db.game.findMany({
+    const allGames = await db.game.findMany({
       orderBy: { kickoffTime: 'asc' },
     });
+
+    let games = allGames;
+    if (!isAllWeeks && weekNum > 0) {
+      const padded = weekNum < 10 ? `_w0${weekNum}_` : `_w${weekNum}_`;
+      const unpadded = `_w${weekNum}_`;
+      games = allGames.filter((g: any) =>
+        g.externalGameId && (
+          g.externalGameId.toLowerCase().includes(padded.toLowerCase()) ||
+          g.externalGameId.toLowerCase().includes(unpadded.toLowerCase())
+        )
+      );
+    }
 
     const gameIds = games.map((g: any) => g.id);
 
@@ -920,11 +975,12 @@ app.get('/api/pools/:pool_id/matrix', requireAuth, requirePoolMember, async (req
     });
 
     // 4. Fetch weekly submissions for tiebreaker predictions and finalization status for this week
+    const weeklySubmissionsWhere: any = { poolId: pool.id };
+    if (!isAllWeeks) {
+      weeklySubmissionsWhere.weekNumber = weekNum;
+    }
     const weeklySubmissions = await db.weeklySubmission.findMany({
-      where: {
-        poolId: pool.id,
-        weekNumber,
-      },
+      where: weeklySubmissionsWhere,
     });
 
     const tiebreakerMap = new Map<string, number | null>();
@@ -1056,7 +1112,7 @@ app.get('/api/pools/:pool_id/matrix', requireAuth, requirePoolMember, async (req
     const responsePayload: MatrixResponsePayload = {
       metadata: {
         pool_id: pool.id,
-        week_number: weekNumber,
+        week_number: isAllWeeks ? 'all' : weekNum,
         picking_mode: pickingMode,
         hide_picks_until_kickoff: hidePicksUntilKickoff,
       },
@@ -1077,5 +1133,6 @@ app.get('/api/pools/:pool_id/matrix', requireAuth, requirePoolMember, async (req
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    startLiveScheduleDaemon();
   });
 }

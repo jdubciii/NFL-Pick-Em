@@ -33,10 +33,17 @@ adminRouter.get('/users', requireAuth, requireAdmin, async (_req: Request, res: 
  */
 adminRouter.get('/picks', requireAuth, requirePoolCommissioner({ from: 'query' }), async (req: Request, res: Response): Promise<void> => {
   const targetUserId = req.query.user_id ? String(req.query.user_id) : undefined;
+  const requestedWeek = req.query.week || req.query.week_no || req.query.weekNumber;
   const pool = req.pool!;
+  const settings = (pool.settings as any) || {};
+  const defaultWeek = Number(settings.week_number ?? settings.current_week ?? 5);
+  const isAllWeeks = String(requestedWeek).toLowerCase() === 'all';
+  const weekNum = requestedWeek !== undefined && requestedWeek !== null && requestedWeek !== ''
+    ? (isAllWeeks ? 0 : parseInt(String(requestedWeek), 10) || defaultWeek)
+    : defaultWeek;
 
   try {
-    const games = await prisma.game.findMany({
+    const allGames = await prisma.game.findMany({
       orderBy: { kickoffTime: 'asc' },
       include: {
         picks: targetUserId
@@ -49,6 +56,21 @@ adminRouter.get('/picks', requireAuth, requirePoolCommissioner({ from: 'query' }
           : false,
       },
     });
+
+    let games = allGames;
+    if (!isAllWeeks && weekNum > 0 && allGames.length > 0) {
+      const padded = weekNum < 10 ? `_w0${weekNum}_` : `_w${weekNum}_`;
+      const unpadded = `_w${weekNum}_`;
+      const patternMatched = allGames.filter((g) =>
+        g.externalGameId && (
+          g.externalGameId.toLowerCase().includes(padded.toLowerCase()) ||
+          g.externalGameId.toLowerCase().includes(unpadded.toLowerCase())
+        )
+      );
+      if (patternMatched.length > 0) {
+        games = patternMatched;
+      }
+    }
 
     res.json({
       pool: {
@@ -102,13 +124,15 @@ adminRouter.get('/audit-logs', requireAuth, requireAdmin, async (_req: Request, 
 
 /**
  * PUT /api/admin/picks
+ * POST /api/admin/picks/override
+ * POST /api/admin/pools/:pool_id/picks/override
  * Commissioner override route for modifying or creating picks for any user.
  * Protected by requirePoolCommissioner({ from: 'body' }).
- * Captures previous state and writes an audit log atomically via $transaction.
+ * Captures previous state, updates pick, immediately re-grades if game is final, and writes an audit log.
  */
-adminRouter.put('/picks', requireAuth, requirePoolCommissioner({ from: 'body' }), async (req: Request, res: Response): Promise<void> => {
+const handleAdminPickOverride = async (req: Request, res: Response): Promise<void> => {
   const userId = req.body.user_id || req.body.userId;
-  const poolId = req.pool!.id;
+  const poolId = req.pool?.id || req.body.pool_id || req.body.poolId || req.params.pool_id;
   const gameId = req.body.game_id || req.body.gameId;
   const rawSelectedTeamId = req.body.selected_team_id !== undefined
     ? req.body.selected_team_id
@@ -138,7 +162,12 @@ adminRouter.put('/picks', requireAuth, requirePoolCommissioner({ from: 'body' })
       },
     });
 
-    // 2. Execute transaction: Upsert pick with admin submitted_by & create AuditLog record
+    // 2. Fetch game details to verify if already finalized
+    const game = await prisma.game.findUnique({
+      where: { id: gameId },
+    });
+
+    // 3. Execute transaction: Upsert pick, upsert PickResult if finalized, and create AuditLog
     const result = await prisma.$transaction(async (tx) => {
       const pick = await tx.pick.upsert({
         where: {
@@ -160,6 +189,31 @@ adminRouter.put('/picks', requireAuth, requirePoolCommissioner({ from: 'body' })
           submittedById: adminId,
         },
       });
+
+      // If the targeted game is FINAL or has scores, immediately re-grade and upsert PickResult
+      if (game && (game.status === 'FINAL' || (game.homeScore !== null && game.awayScore !== null))) {
+        let winner: string | null = null;
+        if (game.homeScore !== null && game.awayScore !== null) {
+          if (game.homeScore > game.awayScore) winner = game.homeTeamId;
+          else if (game.awayScore > game.homeScore) winner = game.awayTeamId;
+        }
+
+        const isCorrect = Boolean(winner && selectedTeamId && selectedTeamId === winner);
+        const pointsAwarded = isCorrect ? 1.0 : 0.0;
+
+        await tx.pickResult.upsert({
+          where: { pickId: pick.id },
+          update: {
+            isCorrect,
+            pointsAwarded,
+          },
+          create: {
+            pickId: pick.id,
+            isCorrect,
+            pointsAwarded,
+          },
+        });
+      }
 
       const auditLog = await tx.auditLog.create({
         data: {
@@ -189,4 +243,9 @@ adminRouter.put('/picks', requireAuth, requirePoolCommissioner({ from: 'body' })
 
     res.status(500).json({ error: 'Failed to perform admin pick override.' });
   }
-});
+};
+
+adminRouter.put('/picks', requireAuth, requirePoolCommissioner({ from: 'body' }), handleAdminPickOverride);
+adminRouter.post('/picks/override', requireAuth, requirePoolCommissioner({ from: 'body' }), handleAdminPickOverride);
+adminRouter.post('/pools/:pool_id/picks/override', requireAuth, requirePoolCommissioner({ from: 'param' }), handleAdminPickOverride);
+

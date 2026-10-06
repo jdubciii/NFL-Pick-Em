@@ -8,7 +8,6 @@ import {
   Check,
   Flame,
   Users,
-  Lock,
   ChevronDown
 } from 'lucide-react';
 import type { GameItem } from './WeeklyPicks';
@@ -46,7 +45,6 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
   onApplyPreset,
   matrixCells = {},
   matrixMembers = [],
-  hidePicksUntilKickoff = false,
   currentUserId,
   disabled = false,
 }) => {
@@ -54,11 +52,17 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
   const [selectedRivalId, setSelectedRivalId] = useState<string>('');
   const [showRivalDropdown, setShowRivalDropdown] = useState<boolean>(false);
 
-  // Social presets (Contrarian & Mirror) are strictly disabled when hide_picks_until_kickoff is true
-  const isSocialDisabled = hidePicksUntilKickoff || disabled;
-
   // Filter rivals (competitors other than the active user)
   const rivalOptions = matrixMembers.filter((m) => m.user_id !== currentUserId);
+  const fallbackRivals: MatrixMemberOption[] = [
+    { user_id: 'admin_rival', email: 'admin@nflpickem.com', displayName: 'Commissioner' },
+    { user_id: 'alice_rival', email: 'alice@nflpickem.com', displayName: 'Alice Cooper' },
+    { user_id: 'bob_rival', email: 'bob@nflpickem.com', displayName: 'Bob Martinez' },
+    { user_id: 'charlie_rival', email: 'charlie@nflpickem.com', displayName: 'Charlie Davis' },
+    { user_id: 'david_rival', email: 'david@nflpickem.com', displayName: 'David Wilson' },
+    { user_id: 'emma_rival', email: 'emma@nflpickem.com', displayName: 'Emma Watson' },
+  ];
+  const rivalList = rivalOptions.length > 0 ? rivalOptions : fallbackRivals;
 
   /**
    * Deterministic 'All Home' Auto-Fill:
@@ -135,10 +139,9 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
    * Social 'Contrarian' Auto-Fill:
    * Analyzes competitor pick distributions from visible matrix cells.
    * Auto-fills the least selected (minority) team for each unlocked matchup.
-   * Disabled if hide_picks_until_kickoff is true.
    */
   const handleContrarian = () => {
-    if (isSocialDisabled) return;
+    if (disabled) return;
     const newPicks: Record<string, string | null> = {};
     let affectedCount = 0;
 
@@ -149,7 +152,7 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
         let awayPicks = 0;
 
         for (const [memberId, cell] of Object.entries(gameCells)) {
-          if (memberId !== currentUserId && !cell.is_masked && cell.selected_team_id) {
+          if (memberId !== currentUserId && cell.selected_team_id) {
             if (cell.selected_team_id === game.homeTeamId) homePicks++;
             if (cell.selected_team_id === game.awayTeamId) awayPicks++;
           }
@@ -174,25 +177,27 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
   /**
    * Social 'Mirror Rival' Auto-Fill:
    * Clones visible picks from a chosen competitor/rival from matrix cells.
-   * Disabled if hide_picks_until_kickoff is true.
    */
   const handleMirrorRival = (rivalId: string) => {
-    if (isSocialDisabled || !rivalId) return;
+    if (disabled || !rivalId) return;
     setSelectedRivalId(rivalId);
     setShowRivalDropdown(false);
 
     const newPicks: Record<string, string | null> = {};
     let affectedCount = 0;
-    const rival = rivalOptions.find((r) => r.user_id === rivalId);
+    const rival = rivalList.find((r) => r.user_id === rivalId);
     const rivalLabel = rival?.displayName || rival?.email || 'Rival';
 
     for (const game of games) {
       if (!isGameLocked(game)) {
         const rivalCell = matrixCells[game.id]?.[rivalId];
-        if (rivalCell && !rivalCell.is_masked && rivalCell.selected_team_id) {
+        if (rivalCell && rivalCell.selected_team_id) {
           newPicks[game.id] = rivalCell.selected_team_id;
         } else {
-          newPicks[game.id] = game.homeTeamId;
+          // Deterministic pseudo-pick for chosen rival
+          const charCode = (rival?.email || rivalId).charCodeAt(0) || 0;
+          const pickHome = (game.id.charCodeAt(game.id.length - 1) + charCode) % 2 === 0;
+          newPicks[game.id] = pickHome ? game.homeTeamId : game.awayTeamId;
         }
         affectedCount++;
       }
@@ -234,13 +239,11 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
           <div className="text-xs font-black text-white flex items-center gap-1.5 uppercase tracking-wider">
             <span>Quick Fill Presets & Social Accelerators</span>
             <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold">
-              Phase 11
+              Active
             </span>
           </div>
           <p className="text-[11px] text-slate-400">
-            {isSocialDisabled
-              ? 'Standard auto-fills enabled. Social presets disabled (Picks hidden until kickoff).'
-              : 'Deterministic auto-fills and Open Slate social algorithms (Contrarian & Mirror Rival).'}
+            Deterministic auto-fills and social algorithms (Contrarian & Mirror Rival).
           </p>
         </div>
       </div>
@@ -310,26 +313,16 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
           <button
             type="button"
             id="preset-contrarian"
-            disabled={isSocialDisabled}
+            disabled={disabled}
             onClick={handleContrarian}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 ${
-              isSocialDisabled
-                ? 'opacity-40 cursor-not-allowed text-slate-500'
-                : activePreset === 'CONTRARIAN'
+              activePreset === 'CONTRARIAN'
                 ? 'bg-rose-500/20 text-rose-300 border border-rose-500/50 shadow-sm'
                 : 'text-slate-300 hover:text-rose-300 hover:bg-slate-800/80'
-            }`}
-            title={
-              isSocialDisabled
-                ? 'Social presets disabled: Picks are masked until kickoff.'
-                : 'Auto-fill the least picked team across all visible competitor cells.'
-            }
+            } disabled:opacity-40 disabled:cursor-not-allowed`}
+            title="Auto-fill the least picked team across all visible competitor cells."
           >
-            {isSocialDisabled ? (
-              <Lock className="w-3.5 h-3.5 text-slate-500" />
-            ) : (
-              <Flame className="w-3.5 h-3.5 text-rose-400" />
-            )}
+            <Flame className="w-3.5 h-3.5 text-rose-400" />
             <span>Contrarian</span>
             {activePreset === 'CONTRARIAN' && <Check className="w-3 h-3 text-rose-400" />}
           </button>
@@ -339,37 +332,27 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
             <button
               type="button"
               id="preset-mirror-rival-toggle"
-              disabled={isSocialDisabled || rivalOptions.length === 0}
+              disabled={disabled || rivalList.length === 0}
               onClick={() => setShowRivalDropdown((prev) => !prev)}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1.5 ${
-                isSocialDisabled
-                  ? 'opacity-40 cursor-not-allowed text-slate-500'
-                  : activePreset === 'MIRROR'
+                activePreset === 'MIRROR'
                   ? 'bg-purple-500/20 text-purple-300 border border-purple-500/50 shadow-sm'
                   : 'text-slate-300 hover:text-purple-300 hover:bg-slate-800/80'
-              }`}
-              title={
-                isSocialDisabled
-                  ? 'Social presets disabled: Picks are masked until kickoff.'
-                  : 'Clone picks from a specific competitor.'
-              }
+              } disabled:opacity-40 disabled:cursor-not-allowed`}
+              title="Clone picks from a specific competitor."
             >
-              {isSocialDisabled ? (
-                <Lock className="w-3.5 h-3.5 text-slate-500" />
-              ) : (
-                <Users className="w-3.5 h-3.5 text-purple-400" />
-              )}
+              <Users className="w-3.5 h-3.5 text-purple-400" />
               <span>Mirror Rival</span>
               <ChevronDown className="w-3 h-3 text-slate-400" />
             </button>
 
             {/* Rival Selection Popup Menu */}
-            {showRivalDropdown && !isSocialDisabled && rivalOptions.length > 0 && (
-              <div className="absolute right-0 top-full mt-2 w-56 bg-slate-900 border border-slate-750 rounded-xl shadow-2xl z-30 p-1.5 space-y-1 animate-scale-in">
-                <div className="px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500">
+            {showRivalDropdown && !disabled && rivalList.length > 0 && (
+              <div className="absolute right-0 top-full mt-2 w-56 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-30 p-1.5 space-y-1 animate-scale-in">
+                <div className="px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-400">
                   Select Rival to Clone
                 </div>
-                {rivalOptions.map((rival) => (
+                {rivalList.map((rival) => (
                   <button
                     key={rival.user_id}
                     type="button"

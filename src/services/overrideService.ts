@@ -386,6 +386,10 @@ export async function applyOverride(
         });
         oldValue = existingPick ? JSON.parse(JSON.stringify(existingPick)) : null;
 
+        const game = await tx.game.findUnique({
+          where: { id: gameId },
+        });
+
         result = await tx.pick.upsert({
           where: {
             poolId_userId_gameId: {
@@ -406,6 +410,31 @@ export async function applyOverride(
             submittedById: commissionerId,
           },
         });
+
+        // Re-grade finalized game if applicable
+        if (game && (game.status === 'FINAL' || (game.homeScore !== null && game.awayScore !== null))) {
+          let winner: string | null = null;
+          if (game.homeScore !== null && game.awayScore !== null) {
+            if (game.homeScore > game.awayScore) winner = game.homeTeamId;
+            else if (game.awayScore > game.homeScore) winner = game.awayTeamId;
+          }
+
+          const isCorrect = Boolean(winner && selectedTeamId && selectedTeamId === winner);
+          const pointsAwarded = isCorrect ? 1.0 : 0.0;
+
+          await tx.pickResult.upsert({
+            where: { pickId: result.id },
+            update: {
+              isCorrect,
+              pointsAwarded,
+            },
+            create: {
+              pickId: result.id,
+              isCorrect,
+              pointsAwarded,
+            },
+          });
+        }
       } else if (type === 'PENALTY' || type === 'SCORE_ADJUSTMENT') {
         const userId = data.userId || targetEntityId;
         const delta = new Prisma.Decimal(data.delta?.toString() || data.points?.toString() || '1');

@@ -39,39 +39,41 @@ const MOCK_HISTORICAL_GAMES = [
 ];
 
 export async function main() {
-  console.log('🌱 Starting database seed (Phase 6: League Simulation & Leaderboard Population)...');
+  console.log('🌱 Starting database seed (Safe Idempotent Mode)...');
 
-  // 1. Clean existing records in correct foreign key deletion order
-  console.log('🧹 Cleaning existing tables...');
-  await prisma.pickResult.deleteMany();
-  await prisma.auditLog.deleteMany();
-  await prisma.pick.deleteMany();
-  await prisma.poolMembership.deleteMany();
-  await prisma.pool.deleteMany();
-  await prisma.game.deleteMany();
-  await prisma.user.deleteMany();
-  console.log('✅ Cleaned up old records.');
+  // 1. Clean non-restricted transactional tables without cascading into append-only penalty_ledger
+  console.log('🧹 Purging transactional tables (preserving penalty_ledger & memberships)...');
+  try {
+    await prisma.pickResult.deleteMany();
+    await prisma.pick.deleteMany();
+  } catch (err) {
+    console.log('⚠️️ Notice: Skipped partial deletion due to constraints.');
+  }
 
   // 2. Hash default password
   const passwordHash = await bcrypt.hash(DEFAULT_PASSWORD, 10);
 
-  // 3. Create Primary Admin User
-  console.log('👤 Creating primary admin user...');
-  const admin = await prisma.user.create({
-    data: {
+  // 3. Upsert Primary Admin User
+  console.log('👤 Upserting primary admin user...');
+  const admin = await prisma.user.upsert({
+    where: { email: 'admin@nflpickem.com' },
+    update: { passwordHash, role: Role.ADMIN },
+    create: {
       email: 'admin@nflpickem.com',
       passwordHash,
       role: Role.ADMIN,
     },
   });
-  console.log(`✅ Admin created: ${admin.email} (ID: ${admin.id})`);
+  console.log(`✅ Admin verified: ${admin.email} (ID: ${admin.id})`);
 
-  // 4. Create 9 Dummy Users
-  console.log('👥 Creating 9 mock users...');
+  // 4. Upsert 9 Dummy Users
+  console.log('👥 Upserting 9 mock users...');
   const createdUsers: typeof admin[] = [];
   for (const mock of MOCK_USERS) {
-    const user = await prisma.user.create({
-      data: {
+    const user = await prisma.user.upsert({
+      where: { email: mock.email },
+      update: { passwordHash, role: Role.USER },
+      create: {
         email: mock.email,
         passwordHash,
         role: Role.USER,
@@ -79,60 +81,81 @@ export async function main() {
     });
     createdUsers.push(user);
   }
-  console.log(`✅ Created ${createdUsers.length} mock users.`);
+  console.log(`✅ Verified ${createdUsers.length} mock users.`);
 
-  // 5. Create 'Main League' Pool assigned to Admin
-  console.log('🏆 Creating "Main League" Pool...');
-  const pool = await prisma.pool.create({
-    data: {
-      name: 'Main League',
-      adminId: admin.id,
-      settings: {
-        lock_offset: 0,
-        points_per_win: 1,
+  // 5. Upsert 'Main League' Pool assigned to Admin
+  console.log('🏆 Finding or creating "Main League" Pool...');
+  let pool = await prisma.pool.findFirst({
+    where: { name: 'Main League' },
+  });
+
+  if (!pool) {
+    pool = await prisma.pool.create({
+      data: {
+        name: 'Main League',
+        adminId: admin.id,
+        settings: {
+          lock_offset: 0,
+          points_per_win: 1,
+        },
+        status: Status.ACTIVE,
       },
-      status: Status.ACTIVE,
-    },
-  });
-  console.log(`✅ Created pool: "${pool.name}" (ID: ${pool.id})`);
+    });
+  }
+  console.log(`✅ Pool active: "${pool.name}" (ID: ${pool.id})`);
 
-  // 6. Insert PoolMembership records for Admin + all 9 users
-  console.log('📋 Enrolling admin and 9 users into pool memberships...');
+  // 6. Idempotently ensure PoolMembership records for Admin + 9 users
+  console.log('📋 Ensuring pool memberships...');
   const allLeagueUsers = [admin, ...createdUsers];
-  
-  await prisma.poolMembership.createMany({
-    data: allLeagueUsers.map((user) => ({
-      poolId: pool.id,
-      userId: user.id,
-      status: Status.ACTIVE,
-    })),
-  });
-  console.log(`✅ Enrolled all ${allLeagueUsers.length} users into "${pool.name}".`);
 
-  // 7. Insert 16 Historical NFL Games with FINAL status and past kickoffs
-  console.log('🏈 Seeding 16 historical completed NFL games...');
-  const now = Date.now();
-  const createdGames = await prisma.$transaction(
-    MOCK_HISTORICAL_GAMES.map((gameData) => {
-      const kickoffTime = new Date(now - gameData.hoursAgo * 60 * 60 * 1000);
-      return prisma.game.create({
+  for (const user of allLeagueUsers) {
+    const existingMembership = await prisma.poolMembership.findFirst({
+      where: { poolId: pool.id, userId: user.id },
+    });
+
+    if (!existingMembership) {
+      await prisma.poolMembership.create({
         data: {
-          externalGameId: gameData.externalGameId,
-          homeTeamId: gameData.homeTeamId,
-          awayTeamId: gameData.awayTeamId,
-          kickoffTime,
-          status: GameStatus.FINAL,
-          homeScore: gameData.homeScore,
-          awayScore: gameData.awayScore,
+          poolId: pool.id,
+          userId: user.id,
+          status: Status.ACTIVE,
         },
       });
-    })
-  );
+    }
+  }
+  console.log(`✅ Enrolled ${allLeagueUsers.length} users into "${pool.name}".`);
 
-  const seededGameIds = createdGames.map((g) => g.id);
-  console.log(`✅ Seeded ${createdGames.length} historical games with FINAL scores.`);
+  // 7. Upsert 16 Historical NFL Games with FINAL status
+  console.log('🏈 Upserting 16 historical completed NFL games...');
+  const now = Date.now();
+  const seededGameIds: string[] = [];
 
-  // 8. Generate Randomized Picks for each user across all 16 games
+  for (const gameData of MOCK_HISTORICAL_GAMES) {
+    const kickoffTime = new Date(now - gameData.hoursAgo * 60 * 60 * 1000);
+
+    const game = await prisma.game.upsert({
+      where: { externalGameId: gameData.externalGameId },
+      update: {
+        homeScore: gameData.homeScore,
+        awayScore: gameData.awayScore,
+        status: GameStatus.FINAL,
+        kickoffTime,
+      },
+      create: {
+        externalGameId: gameData.externalGameId,
+        homeTeamId: gameData.homeTeamId,
+        awayTeamId: gameData.awayTeamId,
+        kickoffTime,
+        status: GameStatus.FINAL,
+        homeScore: gameData.homeScore,
+        awayScore: gameData.awayScore,
+      },
+    });
+    seededGameIds.push(game.id);
+  }
+  console.log(`✅ Seeded and verified ${seededGameIds.length} historical games.`);
+
+  // 8. Generate Picks for users across games
   console.log('🎲 Simulating weekly picks across all users and games...');
   const picksToInsert: {
     poolId: string;
@@ -143,22 +166,27 @@ export async function main() {
   }[] = [];
 
   for (const user of allLeagueUsers) {
-    for (const game of createdGames) {
+    for (const gameData of MOCK_HISTORICAL_GAMES) {
+      const gameRecord = await prisma.game.findUnique({
+        where: { externalGameId: gameData.externalGameId },
+      });
+      if (!gameRecord) continue;
+
       const rand = Math.random();
       let selectedTeamId: string | null;
 
       if (rand < 0.45) {
-        selectedTeamId = game.homeTeamId;
+        selectedTeamId = gameRecord.homeTeamId;
       } else if (rand < 0.90) {
-        selectedTeamId = game.awayTeamId;
+        selectedTeamId = gameRecord.awayTeamId;
       } else {
-        selectedTeamId = null; // 10% chance of omitted pick
+        selectedTeamId = null;
       }
 
       picksToInsert.push({
         poolId: pool.id,
         userId: user.id,
-        gameId: game.id,
+        gameId: gameRecord.id,
         selectedTeamId,
         submittedById: user.id,
       });
@@ -168,9 +196,9 @@ export async function main() {
   await prisma.pick.createMany({
     data: picksToInsert,
   });
-  console.log(`✅ Created ${picksToInsert.length} picks (${allLeagueUsers.length} users × ${createdGames.length} games).`);
+  console.log(`✅ Created ${picksToInsert.length} picks.`);
 
-  // 9. Execute Scoring Engine to calculate points and commit immutable PickResult records
+  // 9. Execute Scoring Engine to grade and populate PickResult
   console.log('📊 Executing scoring engine across all seeded games...');
   const gradedResults = await gradeFinalizedGames(seededGameIds);
   console.log(`✅ Graded and finalized ${gradedResults.length} pick results in database.`);
@@ -181,7 +209,6 @@ export async function main() {
   console.log('Credentials for Testing:');
   console.log('  Admin User:   admin@nflpickem.com / Password123!');
   console.log('  Regular User: alice@nflpickem.com / Password123!');
-  console.log('  (All 9 mock users share password: Password123!)');
   console.log('==================================================\n');
 }
 

@@ -96,7 +96,7 @@ export interface MatrixMemberSummary {
 export interface MatrixResponsePayload {
   metadata: {
     pool_id: string;
-    week_number: number;
+    week_number: number | string;
     picking_mode: PickingMode;
     hide_picks_until_kickoff: boolean;
   };

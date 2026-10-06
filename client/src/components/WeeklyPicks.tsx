@@ -4,6 +4,7 @@ import { Lock, Clock, CheckCircle2, AlertCircle, RefreshCw, Shield } from 'lucid
 import { ViewportSelector, type ViewportMode } from './ViewportSelector';
 import { LeagueMatrixView, type MatrixResponsePayload } from './LeagueMatrixView';
 import { PickPresetControls } from './PickPresetControls';
+import { formatGameKickoff } from '../utils/dateUtils';
 
 export interface GameItem {
   id: string;
@@ -66,7 +67,9 @@ export const WeeklyPicks: React.FC = () => {
         throw new Error('Failed to load NFL matchups.');
       }
       const data = await response.json();
-      setGames(data.games || []);
+      const allGames: GameItem[] = data.games || [];
+      const upcomingOnly = allGames.filter((g) => g.status === 'SCHEDULED' || new Date(g.kickoffTime) > new Date());
+      setGames(upcomingOnly.length > 0 ? upcomingOnly : allGames);
       setPool(data.pool || null);
 
       if (data.pool?.id) {
@@ -147,7 +150,10 @@ export const WeeklyPicks: React.FC = () => {
     }
   };
 
-  const handleApplyPreset = (updatedPicks: Record<string, string | null>, presetDescription: string) => {
+  const handleApplyPreset = async (updatedPicks: Record<string, string | null>, presetDescription: string) => {
+    if (!pool) return;
+
+    // 1. Optimistically update local state
     setGames((prev) =>
       prev.map((game) => {
         if (Object.prototype.hasOwnProperty.call(updatedPicks, game.id)) {
@@ -158,9 +164,74 @@ export const WeeklyPicks: React.FC = () => {
     );
 
     setFeedbackMessage({
-      text: presetDescription,
+      text: `${presetDescription} (Saving...)`,
       type: 'success',
     });
+
+    try {
+      // 2. Dispatch batch pick submissions
+      const entries = Object.entries(updatedPicks);
+      const batchPayload = entries.map(([gameId, selectedTeamId]) => ({
+        game_id: gameId,
+        selected_team_id: selectedTeamId,
+      }));
+
+      const batchRes = await fetch('/api/picks/batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          pool_id: pool.id,
+          picks: batchPayload,
+        }),
+      });
+
+      if (!batchRes.ok) {
+        // Fallback to concurrent individual pick submissions
+        await Promise.all(
+          entries.map(([gameId, selectedTeamId]) =>
+            fetch('/api/picks', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                pool_id: pool.id,
+                game_id: gameId,
+                selected_team_id: selectedTeamId,
+              }),
+            })
+          )
+        );
+      }
+
+      setFeedbackMessage({
+        text: `${presetDescription} — Saved to pool!`,
+        type: 'success',
+      });
+
+      // 3. Re-fetch matrix data so Square Sheet reflects the picks immediately
+      try {
+        const matrixRes = await fetch(`/api/pools/${pool.id}/matrix`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (matrixRes.ok) {
+          const mData = await matrixRes.json();
+          setMatrixData(mData);
+        }
+      } catch (mErr) {
+        console.warn('Failed to sync matrix:', mErr);
+      }
+    } catch (err: any) {
+      console.error('Error auto-saving preset:', err);
+      setFeedbackMessage({
+        text: `Preset applied locally, but failed to save: ${err.message}`,
+        type: 'error',
+      });
+    }
 
     setTimeout(() => setFeedbackMessage(null), 4000);
   };
@@ -174,17 +245,7 @@ export const WeeklyPicks: React.FC = () => {
     return now.getTime() >= lockTime.getTime();
   };
 
-  const formatKickoff = (isoString: string) => {
-    const date = new Date(isoString);
-    return date.toLocaleString('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
-  };
+  const formatKickoff = (isoString: string) => formatGameKickoff(isoString);
 
   return (
     <div className="space-y-6">
@@ -196,11 +257,14 @@ export const WeeklyPicks: React.FC = () => {
             <span>{pool?.name || 'Active Pool'}</span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-            Weekly Matchup Slate
+            {viewportMode === 'matrix' ? 'Square Sheet Matrix' : 'Weekly Matchup Slate'}
           </h2>
           <p className="text-xs sm:text-sm text-slate-400 mt-1">
-            Select a team to lock in your pick. Games lock automatically{' '}
-            {pool?.lock_offset ? `${pool.lock_offset}m prior to kickoff` : 'at kickoff'}.
+            {viewportMode === 'matrix'
+              ? 'Full league spreadsheet with live anti-peeking masking & precision scoring.'
+              : `Select a team to lock in your pick. Games lock automatically ${
+                  pool?.lock_offset ? `${pool.lock_offset}m prior to kickoff` : 'at kickoff'
+                }.`}
           </p>
         </div>
 
@@ -211,14 +275,16 @@ export const WeeklyPicks: React.FC = () => {
             onChange={handleViewportChange}
           />
 
-          <button
-            onClick={fetchGames}
-            disabled={loading}
-            className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span>Refresh Slate</span>
-          </button>
+          {viewportMode !== 'matrix' && (
+            <button
+              onClick={fetchGames}
+              disabled={loading}
+              className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              <span>Refresh Slate</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -248,7 +314,7 @@ export const WeeklyPicks: React.FC = () => {
       {/* Conditional Viewport Rendering */}
       {viewportMode === 'matrix' ? (
         <div className="animate-fade-in">
-          <LeagueMatrixView />
+          <LeagueMatrixView hideHeader={true} />
         </div>
       ) : loading && games.length === 0 ? (
         <div className="py-20 text-center">

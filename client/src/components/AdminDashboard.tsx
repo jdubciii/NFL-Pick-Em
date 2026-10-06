@@ -41,6 +41,7 @@ export const AdminDashboard: React.FC = () => {
   const [users, setUsers] = useState<UserItem[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [games, setGames] = useState<AdminGameItem[]>([]);
+  const [pools, setPools] = useState<any[]>([]);
   const [poolId, setPoolId] = useState<string>('');
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [loadingPicks, setLoadingPicks] = useState(false);
@@ -58,14 +59,16 @@ export const AdminDashboard: React.FC = () => {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.length > 0 && !poolId) {
-          setPoolId(data[0].id);
+        setPools(data);
+        if (data.length > 0) {
+          const mainPool = data.find((p: any) => p.name === 'Main League') || data[0];
+          setPoolId((prev) => prev || mainPool.id);
         }
       }
     } catch (err) {
       console.error('Failed to load pools:', err);
     }
-  }, [token, poolId]);
+  }, [token]);
 
   // 2. Fetch Users on load
   const fetchUsers = useCallback(async () => {
@@ -77,15 +80,15 @@ export const AdminDashboard: React.FC = () => {
       if (!res.ok) throw new Error('Failed to fetch user directory.');
       const data: UserItem[] = await res.json();
       setUsers(data);
-      if (data.length > 0 && !selectedUserId) {
-        setSelectedUserId(data[0].id);
+      if (data.length > 0) {
+        setSelectedUserId((prev) => prev || data[0].id);
       }
     } catch (err: any) {
       setToast({ message: err.message || 'Error fetching users', type: 'error' });
     } finally {
       setLoadingUsers(false);
     }
-  }, [token, selectedUserId]);
+  }, [token]);
 
   // 3. Fetch User's Picks for the week (with pool_id)
   const fetchUserPicks = useCallback(async (userId: string, targetPoolId?: string) => {
