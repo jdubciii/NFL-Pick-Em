@@ -26,6 +26,8 @@ import {
   TrendingUp,
   Zap,
 } from 'lucide-react';
+import { MechanicalRollingOdometer } from './animations/MechanicalRollingOdometer';
+
 
 export interface CumulativeMember {
   user_id: string;
@@ -625,8 +627,17 @@ export const WallOfShame: React.FC = () => {
             </div>
           </div>
 
-          {/* Odometer Digit Wheels */}
           <div className="my-3">
+            <MechanicalRollingOdometer
+              value={displayedOdometerValue}
+              label={`Active Penalty Debt (${odometerUnit.toUpperCase()})`}
+              sublabel="Season-long league cumulative total"
+            />
+          </div>
+
+          {/* Odometer Digit Wheels */}
+          <div className="my-2">
+
             <div className="inline-flex items-center bg-slate-950 p-2 sm:p-2.5 rounded-2xl border-2 border-amber-500/50 shadow-[0_0_20px_rgba(245,158,11,0.2)]">
               {/* Whole Digits */}
               <div className="flex space-x-1">

@@ -18,6 +18,8 @@ import {
   Printer,
 } from 'lucide-react';
 import { formatGameKickoff } from '../utils/dateUtils';
+import { CompactAntiPeekingBadge } from './mobile/CompactAntiPeekingBadge';
+import { MobileMatrixDrawer } from './mobile/MobileMatrixDrawer';
 
 const MEMBER_DISPLAY_MAP: Record<string, { name: string; initials: string }> = {
   'jack@nflpickem.com': { name: 'Jack (You)', initials: 'JC' },
@@ -507,11 +509,18 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
 
       {/* Anti-Peeking / Rules Banner (Hidden in Print) */}
       {matrixData?.metadata?.hide_picks_until_kickoff ? (
-        <div className="flex items-center space-x-3 px-4 py-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-medium print:hidden">
-          <ShieldCheck className="w-4 h-4 text-indigo-400 shrink-0" />
-          <span>
-            <strong>Anti-Peeking Active (Strict Mode):</strong> Competitor picks remain masked with a lock icon until their respective game kicks off.
-          </span>
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-medium print:hidden">
+          <div className="flex items-center space-x-3">
+            <ShieldCheck className="w-4 h-4 text-indigo-400 shrink-0" />
+            <span>
+              <strong>Anti-Peeking Active (Strict Mode):</strong> Competitor picks remain masked with a lock icon until their respective game kicks off.
+            </span>
+          </div>
+          <CompactAntiPeekingBadge
+            hiddenGameCount={
+              matrixData.rows.filter((g) => g.status === 'SCHEDULED' && new Date(g.kickoff_time) > new Date()).length
+            }
+          />
         </div>
       ) : (
         <div className="flex items-center space-x-3 px-4 py-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs font-medium print:hidden">
@@ -521,6 +530,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
           </span>
         </div>
       )}
+
 
       {/* Error state */}
       {error && (
@@ -780,8 +790,34 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
           </div>
         </div>
       )}
+
+      {matrixData && (
+        <MobileMatrixDrawer
+          distributions={matrixData.rows.map((g) => {
+            let homePicks = 0;
+            let awayPicks = 0;
+            for (const col of matrixData.columns) {
+              const pick = matrixData.cells[g.game_id]?.[col.user_id]?.selected_team_id;
+              if (pick === g.home_team_id) homePicks++;
+              if (pick === g.away_team_id) awayPicks++;
+            }
+            return {
+              gameId: g.game_id,
+              matchup: `${g.away_team_id} @ ${g.home_team_id}`,
+              homeTeam: g.home_team_id,
+              awayTeam: g.away_team_id,
+              homePicks,
+              awayPicks,
+              kickoffTime: g.kickoff_time,
+              isLocked: g.status !== 'SCHEDULED' || new Date(g.kickoff_time) <= new Date(),
+            };
+          })}
+          activePoolId={selectedPoolId}
+        />
+      )}
     </div>
   );
 };
+
 
 export default LeagueMatrixView;

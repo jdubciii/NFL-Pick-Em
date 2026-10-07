@@ -22,6 +22,8 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { formatGameKickoff } from '../utils/dateUtils';
+import { WhatIfSimulationWrapper } from '../components/mobile/WhatIfSimulationWrapper';
+import { LiveMatchupPulse } from '../components/animations/LiveMatchupPulse';
 
 interface MemberPickInfo {
   userId: string;
@@ -57,6 +59,7 @@ interface LeverageMatchup {
   userImpactWin: string;
   userImpactLoss: string;
   rivalLeverage: string;
+  status?: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL';
 }
 
 interface ProjectedMember {
@@ -104,6 +107,7 @@ interface GameSimData {
   kickoffTime: string;
   spread: number;
   impliedHomeWinProb: number;
+  status?: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL';
 }
 
 interface MonteCarloOutput {
@@ -438,6 +442,7 @@ export const SweatRadarPage: React.FC = () => {
           kickoffTime: formatGameKickoff(row.kickoff_time),
           spread: spreadNum,
           impliedHomeWinProb: impliedProb,
+          status: (row.status as any) || 'SCHEDULED',
         };
       });
 
@@ -509,6 +514,7 @@ export const SweatRadarPage: React.FC = () => {
             ? `If ${userPick === g.homeTeamId ? g.awayTeamId : g.homeTeamId} wins: Contenders holding opposite pick gain +1 point.`
             : 'No pick submitted yet.',
           rivalLeverage: `${awayBackers[0]?.name || 'Contender'} gains leverage on an upset.`,
+          status: g.status || 'SCHEDULED',
         };
       });
 
@@ -747,69 +753,72 @@ export const SweatRadarPage: React.FC = () => {
       {/* 2. Interactive Simulator Bar */}
       <div className="p-5 rounded-3xl glass-card border border-slate-800 bg-slate-900/90 shadow-xl space-y-4">
         {activeTab === 'WHAT_IF' ? (
-          <div className="space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div className="flex items-center space-x-2">
-                <Sliders className="w-4 h-4 text-cyan-400" />
-                <span className="text-sm font-black text-white">Interactive Matchup Outcome Toggles</span>
-                <span className="text-xs text-slate-400">(Click a team to force outcome and update live standings)</span>
+          <WhatIfSimulationWrapper isSimulating={forcedCount > 0} onReset={handleResetOutcomes}>
+            <div className="space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center space-x-2">
+                  <Sliders className="w-4 h-4 text-cyan-400" />
+                  <span className="text-sm font-black text-white">Interactive Matchup Outcome Toggles</span>
+                  <span className="text-xs text-slate-400">(Click a team to force outcome and update live standings)</span>
+                </div>
+                {forcedCount > 0 && (
+                  <span className="text-xs text-cyan-300 font-bold bg-cyan-500/10 px-2.5 py-1 rounded-lg border border-cyan-500/20">
+                    ⚡ Simulating {forcedCount} Custom Outcome{forcedCount > 1 ? 's' : ''}
+                  </span>
+                )}
               </div>
-              {forcedCount > 0 && (
-                <span className="text-xs text-cyan-300 font-bold bg-cyan-500/10 px-2.5 py-1 rounded-lg border border-cyan-500/20">
-                  ⚡ Simulating {forcedCount} Custom Outcome{forcedCount > 1 ? 's' : ''}
-                </span>
-              )}
-            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 pt-1">
-              {leverageMatchups.map((game) => {
-                const currentForced = forcedOutcomes[game.id] || 'AUTO';
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 pt-1">
+                {leverageMatchups.map((game) => {
+                  const currentForced = forcedOutcomes[game.id] || 'AUTO';
 
-                return (
-                  <div key={game.id} className="p-3 rounded-2xl bg-slate-950 border border-slate-850 space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold text-slate-300">{game.matchup}</span>
-                      <span className="text-[10px] text-slate-500 font-mono">{game.spread}</span>
+                  return (
+                    <div key={game.id} className="p-3 rounded-2xl bg-slate-950 border border-slate-850 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-slate-300">{game.matchup}</span>
+                        <span className="text-[10px] text-slate-500 font-mono">{game.spread}</span>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs font-bold">
+                        <button
+                          onClick={() => handleToggleOutcome(game.id, 'AWAY')}
+                          className={`py-1 rounded-lg transition-all text-center ${
+                            currentForced === 'AWAY'
+                              ? 'bg-indigo-500 text-white shadow-md font-black'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {game.awayTeam}
+                        </button>
+                        <button
+                          onClick={() => handleToggleOutcome(game.id, 'AUTO')}
+                          className={`py-1 rounded-lg transition-all text-[10px] text-center ${
+                            currentForced === 'AUTO'
+                              ? 'bg-slate-700 text-slate-200 font-bold'
+                              : 'text-slate-500 hover:text-slate-300'
+                          }`}
+                        >
+                          Odds
+                        </button>
+                        <button
+                          onClick={() => handleToggleOutcome(game.id, 'HOME')}
+                          className={`py-1 rounded-lg transition-all text-center ${
+                            currentForced === 'HOME'
+                              ? 'bg-emerald-500 text-slate-950 shadow-md font-black'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {game.homeTeam}
+                        </button>
+                      </div>
                     </div>
-
-                    <div className="grid grid-cols-3 gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs font-bold">
-                      <button
-                        onClick={() => handleToggleOutcome(game.id, 'AWAY')}
-                        className={`py-1 rounded-lg transition-all text-center ${
-                          currentForced === 'AWAY'
-                            ? 'bg-indigo-500 text-white shadow-md font-black'
-                            : 'text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        {game.awayTeam}
-                      </button>
-                      <button
-                        onClick={() => handleToggleOutcome(game.id, 'AUTO')}
-                        className={`py-1 rounded-lg transition-all text-[10px] text-center ${
-                          currentForced === 'AUTO'
-                            ? 'bg-slate-700 text-slate-200 font-bold'
-                            : 'text-slate-500 hover:text-slate-300'
-                        }`}
-                      >
-                        Odds
-                      </button>
-                      <button
-                        onClick={() => handleToggleOutcome(game.id, 'HOME')}
-                        className={`py-1 rounded-lg transition-all text-center ${
-                          currentForced === 'HOME'
-                            ? 'bg-emerald-500 text-slate-950 shadow-md font-black'
-                            : 'text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        {game.homeTeam}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          </WhatIfSimulationWrapper>
         ) : (
+
           /* Monte Carlo Engine Panel */
           <div className="space-y-4">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -902,10 +911,12 @@ export const SweatRadarPage: React.FC = () => {
                         <div>
                           <div className="flex items-center space-x-2">
                             <span className="text-lg font-black text-white">{game.matchup}</span>
+                            <LiveMatchupPulse status={game.status || 'SCHEDULED'} />
                             <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 font-mono">
                               {game.spread}
                             </span>
                           </div>
+
                           <div className="text-xs text-slate-400 mt-0.5">{game.kickoffTime}</div>
                         </div>
 
