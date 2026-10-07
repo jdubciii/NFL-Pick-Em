@@ -51,6 +51,7 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
   const [activePreset, setActivePreset] = useState<PresetType | null>(null);
   const [selectedRivalId, setSelectedRivalId] = useState<string>('');
   const [showRivalDropdown, setShowRivalDropdown] = useState<boolean>(false);
+  const [mobileExpanded, setMobileExpanded] = useState<boolean>(false);
 
   // Filter rivals (competitors other than the active user)
   const rivalOptions = matrixMembers.filter((m) => m.user_id !== currentUserId);
@@ -229,27 +230,40 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
   return (
     <div
       id="pick-preset-controls"
-      className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800/90 backdrop-blur-md shadow-lg flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4 animate-fade-in"
+      className="p-3 sm:p-4 rounded-2xl bg-slate-900/90 border border-slate-800/90 backdrop-blur-md shadow-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-3 sm:gap-4 animate-fade-in"
     >
-      <div className="flex items-center space-x-3">
-        <div className="p-2.5 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-          <Zap className="w-5 h-5" />
-        </div>
-        <div>
-          <div className="text-xs font-black text-white flex items-center gap-1.5 uppercase tracking-wider">
-            <span>Quick Fill Presets & Social Accelerators</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold">
-              Active
-            </span>
+      {/* Accordion Header / Mobile Bar Trigger */}
+      <div
+        onClick={() => setMobileExpanded((prev) => !prev)}
+        className="flex items-center justify-between w-full md:w-auto cursor-pointer md:cursor-default select-none"
+      >
+        <div className="flex items-center space-x-2.5 sm:space-x-3">
+          <div className="p-2 sm:p-2.5 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 flex-shrink-0">
+            <Zap className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
-          <p className="text-[11px] text-slate-400">
-            Deterministic auto-fills and social algorithms (Contrarian & Mirror Rival).
-          </p>
+          <div>
+            <div className="text-xs font-black text-white flex items-center gap-1.5 uppercase tracking-wider">
+              <span className="hidden sm:inline">Quick Fill Presets & Social Accelerators</span>
+              <span className="sm:hidden">⚡ Quick Presets (Home, Away, Favorites)</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold hidden xs:inline">
+                Active
+              </span>
+            </div>
+            <p className="text-[10px] sm:text-[11px] text-slate-400 hidden sm:block">
+              Deterministic auto-fills and social algorithms (Contrarian & Mirror Rival).
+            </p>
+          </div>
+        </div>
+
+        {/* Mobile Accordion Expand/Collapse Indicator */}
+        <div className="md:hidden flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-800/80 border border-slate-700 text-xs font-bold text-slate-300">
+          <span>{mobileExpanded ? 'Hide' : 'Expand'}</span>
+          <ChevronDown className={`w-3.5 h-3.5 text-cyan-400 transition-transform duration-200 ${mobileExpanded ? 'rotate-180' : ''}`} />
         </div>
       </div>
 
-      {/* Preset Action Buttons */}
-      <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
+      {/* Preset Action Buttons (Collapsible on mobile, always visible on md+) */}
+      <div className={`${mobileExpanded ? 'flex' : 'hidden md:flex'} flex-wrap items-center gap-2 w-full md:w-auto pt-2 md:pt-0 border-t md:border-t-0 border-slate-800`}>
         {/* Section 1: Standard Presets */}
         <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-950/80 border border-slate-800">
           {/* All Home */}

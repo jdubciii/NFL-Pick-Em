@@ -248,9 +248,9 @@ export const WeeklyPicks: React.FC = () => {
   const formatKickoff = (isoString: string) => formatGameKickoff(isoString);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Header Banner */}
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 p-6 glass-panel rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 sm:gap-4 p-3.5 sm:p-6 glass-panel rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl">
         <div>
           <div className="flex items-center space-x-2 text-xs font-bold text-cyan-400 uppercase tracking-wider mb-1">
             <Shield className="w-3.5 h-3.5" />
