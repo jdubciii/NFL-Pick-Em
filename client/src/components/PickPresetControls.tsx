@@ -361,7 +361,7 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
 
             {/* Rival Selection Popup Menu */}
             {showRivalDropdown && !disabled && rivalList.length > 0 && (
-              <div className="absolute right-0 top-full mt-2 w-56 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-30 p-1.5 space-y-1 animate-scale-in">
+              <div className="absolute right-0 top-full mt-2 w-56 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 p-1.5 space-y-1 animate-scale-in">
                 <div className="px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-slate-400">
                   Select Rival to Clone
                 </div>

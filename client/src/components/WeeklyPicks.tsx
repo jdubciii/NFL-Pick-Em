@@ -4,7 +4,11 @@ import { Lock, Clock, CheckCircle2, AlertCircle, RefreshCw, Shield } from 'lucid
 import { ViewportSelector, type ViewportMode } from './ViewportSelector';
 import { LeagueMatrixView, type MatrixResponsePayload } from './LeagueMatrixView';
 import { PickPresetControls } from './PickPresetControls';
+import { CompactPicksList } from './picks/CompactPicksList';
+import { UndoSnackbar } from './picks/UndoSnackbar';
+import { quickFillSafetyEngine, SlateGameItem } from '../services/QuickFillSafetyEngine';
 import { formatGameKickoff } from '../utils/dateUtils';
+import { triggerHaptic } from '../utils/haptics';
 
 export interface GameItem {
   id: string;
@@ -36,17 +40,33 @@ export const WeeklyPicks: React.FC = () => {
   const [savingPickForGameId, setSavingPickForGameId] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [now, setNow] = useState(new Date());
+
   const [viewportMode, setViewportMode] = useState<ViewportMode>(() => {
     return (localStorage.getItem('nfl_pickem_viewport') as ViewportMode) || 'cards';
   });
+
+  const [picksViewMode, setPicksViewMode] = useState<'cards' | 'list'>(() => {
+    const saved = localStorage.getItem('picks_view_preference');
+    return (saved === 'list' || saved === 'cards') ? saved : 'cards';
+  });
+
+  const [snackbarState, setSnackbarState] = useState<{ isOpen: boolean; message: string }>({
+    isOpen: false,
+    message: ''
+  });
+
+  const handleTogglePicksView = (mode: 'cards' | 'list') => {
+    setPicksViewMode(mode);
+    try {
+      localStorage.setItem('picks_view_preference', mode);
+    } catch {}
+  };
 
   const handleViewportChange = (mode: ViewportMode) => {
     setViewportMode(mode);
     try {
       localStorage.setItem('nfl_pickem_viewport', mode);
-    } catch {
-      // Ignore localStorage errors
-    }
+    } catch {}
   };
 
   // Update clock every 10 seconds for real-time lock updates
@@ -96,6 +116,13 @@ export const WeeklyPicks: React.FC = () => {
     fetchGames();
   }, [fetchGames]);
 
+  // Flush pending commits on unmount
+  useEffect(() => {
+    return () => {
+      quickFillSafetyEngine.flushCommit();
+    };
+  }, []);
+
   const handlePick = async (game: GameItem, selectedTeamId: string) => {
     if (!pool) return;
 
@@ -137,6 +164,8 @@ export const WeeklyPicks: React.FC = () => {
         prev.map((g) => (g.id === game.id ? { ...g, userPick: teamToSend } : g))
       );
 
+      triggerHaptic('light');
+
       setFeedbackMessage({
         text: teamToSend ? `Selected ${teamToSend} to win!` : 'Pick cleared.',
         type: 'success',
@@ -150,8 +179,21 @@ export const WeeklyPicks: React.FC = () => {
     }
   };
 
-  const handleApplyPreset = async (updatedPicks: Record<string, string | null>, presetDescription: string) => {
+  const handleApplyPreset = (updatedPicks: Record<string, string | null>, presetDescription: string) => {
     if (!pool) return;
+
+    const slateItems: SlateGameItem[] = games.map((g) => ({
+      gameId: g.id,
+      awayTeam: g.awayTeamId,
+      homeTeam: g.homeTeamId,
+      favorite: typeof g.spread === 'number' && g.spread > 0 ? g.awayTeamId : g.homeTeamId,
+      isLocked: isGameLocked(g),
+    }));
+
+    const currentPicksMap: Record<string, string> = {};
+    for (const g of games) {
+      if (g.userPick) currentPicksMap[g.id] = g.userPick;
+    }
 
     // 1. Optimistically update local state
     setGames((prev) =>
@@ -163,77 +205,94 @@ export const WeeklyPicks: React.FC = () => {
       })
     );
 
-    setFeedbackMessage({
-      text: `${presetDescription} (Saving...)`,
-      type: 'success',
+    // 2. Open 7s Undo Snackbar
+    setSnackbarState({
+      isOpen: true,
+      message: `${presetDescription}. Tap Undo to revert.`
     });
 
-    try {
-      // 2. Dispatch batch pick submissions
-      const entries = Object.entries(updatedPicks);
-      const batchPayload = entries.map(([gameId, selectedTeamId]) => ({
-        game_id: gameId,
-        selected_team_id: selectedTeamId,
-      }));
+    // 3. Stage in safety engine with commit callback
+    quickFillSafetyEngine.stagePreset(
+      slateItems,
+      currentPicksMap,
+      'FAVORITES',
+      async (finalPicks) => {
+        try {
+          const entries = Object.entries(finalPicks);
+          const batchPayload = entries.map(([gameId, selectedTeamId]) => ({
+            game_id: gameId,
+            selected_team_id: selectedTeamId,
+          }));
 
-      const batchRes = await fetch('/api/picks/batch', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          pool_id: pool.id,
-          picks: batchPayload,
-        }),
-      });
+          const batchRes = await fetch('/api/picks/batch', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              pool_id: pool.id,
+              picks: batchPayload,
+            }),
+          });
 
-      if (!batchRes.ok) {
-        // Fallback to concurrent individual pick submissions
-        await Promise.all(
-          entries.map(([gameId, selectedTeamId]) =>
-            fetch('/api/picks', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-              },
-              body: JSON.stringify({
-                pool_id: pool.id,
-                game_id: gameId,
-                selected_team_id: selectedTeamId,
-              }),
-            })
-          )
-        );
-      }
+          if (!batchRes.ok) {
+            await Promise.all(
+              entries.map(([gameId, selectedTeamId]) =>
+                fetch('/api/picks', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`,
+                  },
+                  body: JSON.stringify({
+                    pool_id: pool.id,
+                    game_id: gameId,
+                    selected_team_id: selectedTeamId,
+                  }),
+                })
+              )
+            );
+          }
 
-      setFeedbackMessage({
-        text: `${presetDescription} — Saved to pool!`,
-        type: 'success',
-      });
+          triggerHaptic('success');
 
-      // 3. Re-fetch matrix data so Square Sheet reflects the picks immediately
-      try {
-        const matrixRes = await fetch(`/api/pools/${pool.id}/matrix`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (matrixRes.ok) {
-          const mData = await matrixRes.json();
-          setMatrixData(mData);
+          // Sync matrix
+          try {
+            const matrixRes = await fetch(`/api/pools/${pool.id}/matrix`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (matrixRes.ok) {
+              const mData = await matrixRes.json();
+              setMatrixData(mData);
+            }
+          } catch (mErr) {
+            console.warn('Failed to sync matrix:', mErr);
+          }
+        } catch (err: any) {
+          console.error('Error auto-saving preset:', err);
         }
-      } catch (mErr) {
-        console.warn('Failed to sync matrix:', mErr);
       }
-    } catch (err: any) {
-      console.error('Error auto-saving preset:', err);
-      setFeedbackMessage({
-        text: `Preset applied locally, but failed to save: ${err.message}`,
-        type: 'error',
-      });
-    }
+    );
+  };
 
-    setTimeout(() => setFeedbackMessage(null), 4000);
+  const handleUndoPreset = () => {
+    const reverted = quickFillSafetyEngine.triggerUndo();
+    setGames((prev) =>
+      prev.map((g) => ({
+        ...g,
+        userPick: reverted[g.id] ?? null,
+      }))
+    );
+    setSnackbarState({ isOpen: false, message: '' });
+    triggerHaptic('medium');
+    setFeedbackMessage({ text: 'Preset selections reverted.', type: 'success' });
+    setTimeout(() => setFeedbackMessage(null), 3000);
+  };
+
+  const handleSnackbarExpire = () => {
+    quickFillSafetyEngine.flushCommit();
+    setSnackbarState({ isOpen: false, message: '' });
   };
 
   const isGameLocked = (game: GameItem): boolean => {
@@ -249,7 +308,7 @@ export const WeeklyPicks: React.FC = () => {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* Header Banner - Ultra-Compact Single Row on Mobile, Rich Layout on Desktop */}
+      {/* Header Banner */}
       <div className="flex flex-row items-center justify-between gap-2 sm:gap-4 p-2.5 sm:p-6 glass-panel rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl">
         <div>
           <div className="flex items-center space-x-1.5 sm:space-x-2 text-[11px] sm:text-xs font-bold text-cyan-400 uppercase tracking-wider">
@@ -269,6 +328,34 @@ export const WeeklyPicks: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
+          {/* Density Toggle (Cards | List) */}
+          {viewportMode !== 'matrix' && (
+            <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800">
+              <button
+                type="button"
+                onClick={() => handleTogglePicksView('cards')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  picksViewMode === 'cards'
+                    ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Cards
+              </button>
+              <button
+                type="button"
+                onClick={() => handleTogglePicksView('list')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  picksViewMode === 'list'
+                    ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                List
+              </button>
+            </div>
+          )}
+
           {/* Viewport Toggle (Cards / Slate / Matrix) */}
           <ViewportSelector
             activeMode={viewportMode}
@@ -340,259 +427,287 @@ export const WeeklyPicks: React.FC = () => {
             disabled={loading || games.length === 0}
           />
 
-          {viewportMode === 'slate' ? (
+          {picksViewMode === 'list' ? (
+            /* High-Density Compact List View */
+            <CompactPicksList
+              games={games.map((g) => ({
+                gameId: g.id,
+                awayTeam: g.awayTeamId,
+                homeTeam: g.homeTeamId,
+                kickoffTime: formatKickoff(g.kickoffTime),
+                isLocked: isGameLocked(g),
+                spread: typeof g.spread === 'number' ? `${g.spread}` : undefined,
+              }))}
+              selectedPicks={games.reduce((acc, g) => {
+                if (g.userPick) acc[g.id] = g.userPick;
+                return acc;
+              }, {} as Record<string, string>)}
+              onSelectTeam={(gameId, team) => {
+                const targetGame = games.find((g) => g.id === gameId);
+                if (targetGame) handlePick(targetGame, team);
+              }}
+            />
+          ) : viewportMode === 'slate' ? (
             /* High-Density Slate Table View */
             <div className="rounded-2xl border border-slate-800 bg-slate-900/80 backdrop-blur-md overflow-hidden shadow-xl animate-fade-in">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="border-b border-slate-800 bg-slate-950/70 text-slate-400 font-bold uppercase tracking-wider text-[11px]">
-                  <th className="py-3.5 px-4">Matchup</th>
-                  <th className="py-3.5 px-4">Kickoff</th>
-                  <th className="py-3.5 px-4 text-center">Status</th>
-                  <th className="py-3.5 px-4 text-center">Away Team</th>
-                  <th className="py-3.5 px-4 text-center">Home Team</th>
-                  <th className="py-3.5 px-4 text-center">Your Pick</th>
-                  <th className="py-3.5 px-4 text-right">Score</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {games.map((game) => {
-                  const locked = isGameLocked(game);
-                  const isHomeSelected = game.userPick === game.homeTeamId;
-                  const isAwaySelected = game.userPick === game.awayTeamId;
-                  const isSaving = savingPickForGameId === game.id;
-
-                  return (
-                    <tr
-                      key={game.id}
-                      className={`hover:bg-slate-850/50 transition-colors ${
-                        locked ? 'opacity-85' : ''
-                      }`}
-                    >
-                      {/* Matchup */}
-                      <td className="py-3.5 px-4 font-bold text-slate-200">
-                        <span>{game.awayTeamId}</span>
-                        <span className="text-slate-500 mx-1.5 font-normal">@</span>
-                        <span>{game.homeTeamId}</span>
-                      </td>
-
-                      {/* Kickoff */}
-                      <td className="py-3.5 px-4 text-slate-400 font-mono text-[11px]">
-                        {formatKickoff(game.kickoffTime)}
-                      </td>
-
-                      {/* Lock Status */}
-                      <td className="py-3.5 px-4 text-center">
-                        {game.status === 'IN_PROGRESS' ? (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse">
-                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                            <span>LIVE</span>
-                          </span>
-                        ) : locked ? (
-                          <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-amber-400 border border-amber-500/30">
-                            <Lock className="w-3 h-3" />
-                            <span>{game.status === 'FINAL' ? 'FINAL' : 'LOCKED'}</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                            OPEN
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Away Team Pick Button */}
-                      <td className="py-2.5 px-4 text-center">
-                        <button
-                          type="button"
-                          onClick={() => handlePick(game, game.awayTeamId)}
-                          disabled={locked || isSaving}
-                          className={`px-3 py-1.5 rounded-xl font-bold font-mono text-xs transition-all w-24 ${
-                            isAwaySelected
-                              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400 shadow-sm shadow-cyan-950/50 ring-1 ring-cyan-400'
-                              : 'bg-slate-950/70 hover:bg-slate-800 text-slate-300 border border-slate-750'
-                          } ${locked ? 'cursor-not-allowed' : 'cursor-pointer active:scale-95'}`}
-                        >
-                          {game.awayTeamId}
-                        </button>
-                      </td>
-
-                      {/* Home Team Pick Button */}
-                      <td className="py-2.5 px-4 text-center">
-                        <button
-                          type="button"
-                          onClick={() => handlePick(game, game.homeTeamId)}
-                          disabled={locked || isSaving}
-                          className={`px-3 py-1.5 rounded-xl font-bold font-mono text-xs transition-all w-24 ${
-                            isHomeSelected
-                              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400 shadow-sm shadow-cyan-950/50 ring-1 ring-cyan-400'
-                              : 'bg-slate-950/70 hover:bg-slate-800 text-slate-300 border border-slate-750'
-                          } ${locked ? 'cursor-not-allowed' : 'cursor-pointer active:scale-95'}`}
-                        >
-                          {game.homeTeamId}
-                        </button>
-                      </td>
-
-                      {/* Selected Pick */}
-                      <td className="py-3.5 px-4 text-center">
-                        {game.userPick ? (
-                          <span className="inline-flex items-center space-x-1 font-bold text-cyan-400">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>{game.userPick}</span>
-                          </span>
-                        ) : (
-                          <span className="text-slate-500 italic text-[11px]">—</span>
-                        )}
-                      </td>
-
-                      {/* Score / Result */}
-                      <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-300">
-                        {game.awayScore !== null && game.homeScore !== null
-                          ? `${game.awayScore} - ${game.homeScore}`
-                          : '—'}
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-800 bg-slate-950/70 text-slate-400 font-bold uppercase tracking-wider text-[11px]">
+                      <th className="py-3.5 px-4">Matchup</th>
+                      <th className="py-3.5 px-4">Kickoff</th>
+                      <th className="py-3.5 px-4 text-center">Status</th>
+                      <th className="py-3.5 px-4 text-center">Away Team</th>
+                      <th className="py-3.5 px-4 text-center">Home Team</th>
+                      <th className="py-3.5 px-4 text-center">Your Pick</th>
+                      <th className="py-3.5 px-4 text-right">Score</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : (
-        /* Default Interactive Cards Grid View */
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 animate-fade-in">
-          {games.map((game) => {
-            const locked = isGameLocked(game);
-            const isHomeSelected = game.userPick === game.homeTeamId;
-            const isAwaySelected = game.userPick === game.awayTeamId;
-            const isSaving = savingPickForGameId === game.id;
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {games.map((game) => {
+                      const locked = isGameLocked(game);
+                      const isHomeSelected = game.userPick === game.homeTeamId;
+                      const isAwaySelected = game.userPick === game.awayTeamId;
+                      const isSaving = savingPickForGameId === game.id;
 
-            return (
-              <div
-                key={game.id}
-                className={`glass-card rounded-2xl p-5 border transition-all duration-300 relative overflow-hidden flex flex-col justify-between ${
-                  locked
-                    ? 'border-slate-800/80 opacity-90'
-                    : 'border-slate-800 hover:border-slate-700 hover:shadow-xl hover:shadow-cyan-950/20'
-                }`}
-              >
-                {/* Top Status & Lock Badge */}
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center space-x-1.5 text-[11px] font-semibold text-slate-400">
-                    <Clock className="w-3.5 h-3.5 text-slate-500" />
-                    <span>{formatKickoff(game.kickoffTime)}</span>
-                  </div>
+                      return (
+                        <tr
+                          key={game.id}
+                          className={`hover:bg-slate-850/50 transition-colors ${
+                            locked ? 'opacity-85' : ''
+                          }`}
+                        >
+                          {/* Matchup */}
+                          <td className="py-3.5 px-4 font-bold text-slate-200">
+                            <span>{game.awayTeamId}</span>
+                            <span className="text-slate-500 mx-1.5 font-normal">@</span>
+                            <span>{game.homeTeamId}</span>
+                          </td>
 
-                  {game.status === 'IN_PROGRESS' ? (
-                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse">
-                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                      <span>LIVE</span>
-                    </span>
-                  ) : locked ? (
-                    <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800/90 text-amber-400 border border-amber-500/30">
-                      <Lock className="w-3 h-3" />
-                      <span>{game.status === 'FINAL' ? 'FINAL' : 'LOCKED'}</span>
-                    </span>
-                  ) : (
-                    <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      <span>OPEN</span>
-                    </span>
-                  )}
-                </div>
+                          {/* Kickoff */}
+                          <td className="py-3.5 px-4 text-slate-400 font-mono text-[11px]">
+                            {formatKickoff(game.kickoffTime)}
+                          </td>
 
-                {/* Matchup Team Buttons */}
-                <div className="grid grid-cols-2 gap-3 mb-4">
-                  {/* Away Team Option */}
-                  <button
-                    onClick={() => handlePick(game, game.awayTeamId)}
-                    disabled={locked || isSaving}
-                    className={`p-3.5 rounded-xl border text-left flex flex-col justify-between transition-all duration-200 relative group ${
-                      isAwaySelected
-                        ? 'ring-2 ring-cyan-500 bg-cyan-950/40 border-cyan-500/50 shadow-[0_0_15px_rgba(6,182,212,0.25)]'
-                        : Boolean(game.userPick)
-                        ? 'bg-slate-900/80 border-slate-800 opacity-40 grayscale-[30%] hover:opacity-80 transition-opacity duration-200'
-                        : 'bg-slate-900/80 border-slate-800 hover:border-slate-700 hover:bg-slate-800/80 opacity-100'
-                    } ${locked ? 'cursor-not-allowed' : 'cursor-pointer active:scale-[0.98]'}`}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
-                        AWAY
-                      </span>
-                      {isAwaySelected && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 text-[9px] font-extrabold tracking-wider animate-scale-in">
-                          <CheckCircle2 className="w-3 h-3 text-cyan-400" />
-                          <span>SELECTED</span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xl font-extrabold text-white group-hover:text-cyan-300 transition-colors">
-                      {game.awayTeamId}
-                    </div>
-                    {game.awayScore !== null && (
-                      <div className="text-sm font-bold text-slate-300 mt-1">
-                        Score: {game.awayScore}
-                      </div>
-                    )}
-                  </button>
+                          {/* Lock Status */}
+                          <td className="py-3.5 px-4 text-center">
+                            {game.status === 'IN_PROGRESS' ? (
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse">
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                                <span>LIVE</span>
+                              </span>
+                            ) : locked ? (
+                              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-amber-400 border border-amber-500/30">
+                                <Lock className="w-3 h-3" />
+                                <span>{game.status === 'FINAL' ? 'FINAL' : 'LOCKED'}</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                OPEN
+                              </span>
+                            )}
+                          </td>
 
-                  {/* Home Team Option */}
-                  <button
-                    onClick={() => handlePick(game, game.homeTeamId)}
-                    disabled={locked || isSaving}
-                    className={`p-3.5 rounded-xl border text-left flex flex-col justify-between transition-all duration-200 relative group ${
-                      isHomeSelected
-                        ? 'ring-2 ring-cyan-500 bg-cyan-950/40 border-cyan-500/50 shadow-[0_0_15px_rgba(6,182,212,0.25)]'
-                        : Boolean(game.userPick)
-                        ? 'bg-slate-900/80 border-slate-800 opacity-40 grayscale-[30%] hover:opacity-80 transition-opacity duration-200'
-                        : 'bg-slate-900/80 border-slate-800 hover:border-slate-700 hover:bg-slate-800/80 opacity-100'
-                    } ${locked ? 'cursor-not-allowed' : 'cursor-pointer active:scale-[0.98]'}`}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
-                        HOME
-                      </span>
-                      {isHomeSelected && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 text-[9px] font-extrabold tracking-wider animate-scale-in">
-                          <CheckCircle2 className="w-3 h-3 text-cyan-400" />
-                          <span>SELECTED</span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xl font-extrabold text-white group-hover:text-cyan-300 transition-colors">
-                      {game.homeTeamId}
-                    </div>
-                    {game.homeScore !== null && (
-                      <div className="text-sm font-bold text-slate-300 mt-1">
-                        Score: {game.homeScore}
-                      </div>
-                    )}
-                  </button>
-                </div>
+                          {/* Away Team Pick Button */}
+                          <td className="py-2.5 px-4 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handlePick(game, game.awayTeamId)}
+                              disabled={locked || isSaving}
+                              className={`px-3 py-1.5 rounded-xl font-bold font-mono text-xs transition-all w-24 ${
+                                isAwaySelected
+                                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400 shadow-sm shadow-cyan-950/50 ring-1 ring-cyan-400'
+                                  : 'bg-slate-950/70 hover:bg-slate-800 text-slate-300 border border-slate-750'
+                              } ${locked ? 'cursor-not-allowed' : 'cursor-pointer active:scale-95'}`}
+                            >
+                              {game.awayTeamId}
+                            </button>
+                          </td>
 
-                {/* Footer State Info */}
-                <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
-                  <span className="text-slate-500">
-                    {game.userPick ? (
-                      <span className="text-slate-300">
-                        Your Pick: <strong className="text-cyan-400 font-bold">{game.userPick}</strong>
-                      </span>
-                    ) : (
-                      <span className="text-amber-400/80 italic font-medium">No pick submitted</span>
-                    )}
-                  </span>
-                  {isSaving && (
-                    <span className="text-cyan-400 flex items-center space-x-1 animate-pulse font-semibold">
-                      <span>Saving...</span>
-                    </span>
-                  )}
-                </div>
+                          {/* Home Team Pick Button */}
+                          <td className="py-2.5 px-4 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handlePick(game, game.homeTeamId)}
+                              disabled={locked || isSaving}
+                              className={`px-3 py-1.5 rounded-xl font-bold font-mono text-xs transition-all w-24 ${
+                                isHomeSelected
+                                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400 shadow-sm shadow-cyan-950/50 ring-1 ring-cyan-400'
+                                  : 'bg-slate-950/70 hover:bg-slate-800 text-slate-300 border border-slate-750'
+                              } ${locked ? 'cursor-not-allowed' : 'cursor-pointer active:scale-95'}`}
+                            >
+                              {game.homeTeamId}
+                            </button>
+                          </td>
+
+                          {/* Selected Pick */}
+                          <td className="py-3.5 px-4 text-center">
+                            {game.userPick ? (
+                              <span className="inline-flex items-center space-x-1 font-bold text-cyan-400">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>{game.userPick}</span>
+                              </span>
+                            ) : (
+                              <span className="text-slate-500 italic text-[11px]">—</span>
+                            )}
+                          </td>
+
+                          {/* Score / Result */}
+                          <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-300">
+                            {game.awayScore !== null && game.homeScore !== null
+                              ? `${game.awayScore} - ${game.homeScore}`
+                              : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-            );
-          })}
-        </div>
+            </div>
+          ) : (
+            /* Default Interactive Cards Grid View */
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 animate-fade-in pb-20">
+              {games.map((game) => {
+                const locked = isGameLocked(game);
+                const isHomeSelected = game.userPick === game.homeTeamId;
+                const isAwaySelected = game.userPick === game.awayTeamId;
+                const isSaving = savingPickForGameId === game.id;
+
+                return (
+                  <div
+                    key={game.id}
+                    className={`glass-card rounded-2xl p-5 border transition-all duration-300 relative overflow-hidden flex flex-col justify-between ${
+                      locked
+                        ? 'border-slate-800/80 opacity-90'
+                        : 'border-slate-800 hover:border-slate-700 hover:shadow-xl hover:shadow-cyan-950/20'
+                    }`}
+                  >
+                    {/* Top Status & Lock Badge */}
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center space-x-1.5 text-[11px] font-semibold text-slate-400">
+                        <Clock className="w-3.5 h-3.5 text-slate-500" />
+                        <span>{formatKickoff(game.kickoffTime)}</span>
+                      </div>
+
+                      {game.status === 'IN_PROGRESS' ? (
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse">
+                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                          <span>LIVE</span>
+                        </span>
+                      ) : locked ? (
+                        <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800/90 text-amber-400 border border-amber-500/30">
+                          <Lock className="w-3 h-3" />
+                          <span>{game.status === 'FINAL' ? 'FINAL' : 'LOCKED'}</span>
+                        </span>
+                      ) : (
+                        <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                          <span>OPEN</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Matchup Team Buttons */}
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      {/* Away Team Option */}
+                      <button
+                        onClick={() => handlePick(game, game.awayTeamId)}
+                        disabled={locked || isSaving}
+                        className={`p-3.5 rounded-xl border text-left flex flex-col justify-between transition-all duration-200 relative group ${
+                          isAwaySelected
+                            ? 'ring-2 ring-cyan-500 bg-cyan-950/40 border-cyan-500/50 shadow-[0_0_15px_rgba(6,182,212,0.25)]'
+                            : Boolean(game.userPick)
+                            ? 'bg-slate-900/80 border-slate-800 opacity-40 grayscale-[30%] hover:opacity-80 transition-opacity duration-200'
+                            : 'bg-slate-900/80 border-slate-800 hover:border-slate-700 hover:bg-slate-800/80 opacity-100'
+                        } ${locked ? 'cursor-not-allowed' : 'cursor-pointer active:scale-[0.98]'}`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
+                            AWAY
+                          </span>
+                          {isAwaySelected && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 text-[9px] font-extrabold tracking-wider animate-scale-in">
+                              <CheckCircle2 className="w-3 h-3 text-cyan-400" />
+                              <span>SELECTED</span>
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xl font-extrabold text-white group-hover:text-cyan-300 transition-colors">
+                          {game.awayTeamId}
+                        </div>
+                        {game.awayScore !== null && (
+                          <div className="text-sm font-bold text-slate-300 mt-1">
+                            Score: {game.awayScore}
+                          </div>
+                        )}
+                      </button>
+
+                      {/* Home Team Option */}
+                      <button
+                        onClick={() => handlePick(game, game.homeTeamId)}
+                        disabled={locked || isSaving}
+                        className={`p-3.5 rounded-xl border text-left flex flex-col justify-between transition-all duration-200 relative group ${
+                          isHomeSelected
+                            ? 'ring-2 ring-cyan-500 bg-cyan-950/40 border-cyan-500/50 shadow-[0_0_15px_rgba(6,182,212,0.25)]'
+                            : Boolean(game.userPick)
+                            ? 'bg-slate-900/80 border-slate-800 opacity-40 grayscale-[30%] hover:opacity-80 transition-opacity duration-200'
+                            : 'bg-slate-900/80 border-slate-800 hover:border-slate-700 hover:bg-slate-800/80 opacity-100'
+                        } ${locked ? 'cursor-not-allowed' : 'cursor-pointer active:scale-[0.98]'}`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
+                            HOME
+                          </span>
+                          {isHomeSelected && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 text-[9px] font-extrabold tracking-wider animate-scale-in">
+                              <CheckCircle2 className="w-3 h-3 text-cyan-400" />
+                              <span>SELECTED</span>
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xl font-extrabold text-white group-hover:text-cyan-300 transition-colors">
+                          {game.homeTeamId}
+                        </div>
+                        {game.homeScore !== null && (
+                          <div className="text-sm font-bold text-slate-300 mt-1">
+                            Score: {game.homeScore}
+                          </div>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Footer State Info */}
+                    <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
+                      <span className="text-slate-500">
+                        {game.userPick ? (
+                          <span className="text-slate-300">
+                            Your Pick: <strong className="text-cyan-400 font-bold">{game.userPick}</strong>
+                          </span>
+                        ) : (
+                          <span className="text-amber-400/80 italic font-medium">No pick submitted</span>
+                        )}
+                      </span>
+                      {isSaving && (
+                        <span className="text-cyan-400 flex items-center space-x-1 animate-pulse font-semibold">
+                          <span>Saving...</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       )}
+
+      {/* 7-Second Undo Snackbar */}
+      <UndoSnackbar
+        isOpen={snackbarState.isOpen}
+        message={snackbarState.message}
+        onUndo={handleUndoPreset}
+        onExpire={handleSnackbarExpire}
+      />
     </div>
   );
 };
