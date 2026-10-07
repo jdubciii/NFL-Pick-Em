@@ -14,6 +14,7 @@ import { notificationsRouter } from './routes/notifications';
 import { opsRouter } from './routes/ops';
 import { adminOpsRouter } from './routes/adminOps';
 import { webhooksRouter } from './routes/webhooks';
+import { shotCamRouter } from './routes/shotCam';
 import type {
   PoolSettings,
   MatrixResponsePayload,
@@ -39,6 +40,7 @@ app.use('/api/me', meRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/webhooks', webhooksRouter);
 app.use('/api/pools', opsRouter);
+app.use('/api/pools/:pool_id/shot-cam', shotCamRouter);
 
 
 
