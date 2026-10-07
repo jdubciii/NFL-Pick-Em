@@ -467,6 +467,32 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
 
+            {/* View Mode Segmented Control */}
+            <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800 print:hidden">
+              <button
+                type="button"
+                onClick={() => handleToggleMode('cards')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  viewMode === 'cards'
+                    ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Cards
+              </button>
+              <button
+                type="button"
+                onClick={() => handleToggleMode('grid')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  viewMode === 'grid'
+                    ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Grid
+              </button>
+            </div>
+
             {/* Generate Dispatch Button */}
             <button
               onClick={handleGenerateDispatch}
