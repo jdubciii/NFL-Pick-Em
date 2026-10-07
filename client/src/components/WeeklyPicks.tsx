@@ -164,7 +164,7 @@ export const WeeklyPicks: React.FC = () => {
         prev.map((g) => (g.id === game.id ? { ...g, userPick: teamToSend } : g))
       );
 
-      triggerHaptic('light');
+      triggerHaptic('impactLight');
 
       setFeedbackMessage({
         text: teamToSend ? `Selected ${teamToSend} to win!` : 'Pick cleared.',
@@ -255,7 +255,7 @@ export const WeeklyPicks: React.FC = () => {
             );
           }
 
-          triggerHaptic('success');
+          triggerHaptic('selection');
 
           // Sync matrix
           try {
@@ -285,7 +285,7 @@ export const WeeklyPicks: React.FC = () => {
       }))
     );
     setSnackbarState({ isOpen: false, message: '' });
-    triggerHaptic('medium');
+    triggerHaptic('impactMedium');
     setFeedbackMessage({ text: 'Preset selections reverted.', type: 'success' });
     setTimeout(() => setFeedbackMessage(null), 3000);
   };
