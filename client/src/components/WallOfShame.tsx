@@ -27,6 +27,10 @@ import {
   Zap,
 } from 'lucide-react';
 import { MechanicalRollingOdometer } from './animations/MechanicalRollingOdometer';
+import { DisputeCountdownClock } from './shame/DisputeCountdownClock';
+import { EmojiReactionTray } from './shame/EmojiReactionTray';
+import { HallOfInfamyTable } from './shame/HallOfInfamyTable';
+import type { InfamyRecord } from '../services/SocialStakesEngine';
 
 
 export interface CumulativeMember {
@@ -85,6 +89,14 @@ const LEAGUE_MEMBER_CHIPS = [
   { label: 'Mike Cone', value: 'mike.c@nflpickem.com' },
   { label: 'Nick Santos', value: 'nick.s@nflpickem.com' },
   { label: 'Mark Brickner', value: 'mark.b@nflpickem.com' },
+];
+
+const mockInfamyRecords: InfamyRecord[] = [
+  { memberId: 'm1', name: 'Big Jack', shotsDrank: 4, deadPlaceFinishes: 2, maxSingleWeekDebt: 2.5 },
+  { memberId: 'm2', name: 'Matt Brickner', shotsDrank: 8, deadPlaceFinishes: 3, maxSingleWeekDebt: 3 },
+  { memberId: 'm3', name: 'Justin Brickner', shotsDrank: 5, deadPlaceFinishes: 1, maxSingleWeekDebt: 2 },
+  { memberId: 'm4', name: 'Nick S.', shotsDrank: 2, deadPlaceFinishes: 1, maxSingleWeekDebt: 1 },
+  { memberId: 'm5', name: 'Mike C.', shotsDrank: 1, deadPlaceFinishes: 0, maxSingleWeekDebt: 1 },
 ];
 
 /**
@@ -572,8 +584,11 @@ export const WallOfShame: React.FC = () => {
             </div>
           </div>
 
-          <div className="mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
-            <span>Current Punishment Debt: <strong className="text-rose-400 font-mono">2.5 Shots</strong></span>
+          <div className="mt-6 pt-4 border-t border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-400">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <DisputeCountdownClock expiresAt={new Date(Date.now() + 4 * 3600 * 1000 + 5 * 60 * 1000).toISOString()} />
+              <EmojiReactionTray />
+            </div>
             <span className="text-[11px] font-mono">Week 4 Tiebreaker: -14 PTS</span>
           </div>
         </div>
@@ -1211,6 +1226,22 @@ export const WallOfShame: React.FC = () => {
           </div>
         </div>
       )}
+      {/* Hall of Infamy Multi-Criteria Shame Table */}
+      <div className="mt-8">
+        <HallOfInfamyTable
+          records={
+            cumulativeData?.leaderboard && cumulativeData.leaderboard.length > 0
+              ? cumulativeData.leaderboard.map((m) => ({
+                  memberId: m.user_id,
+                  name: m.email.split('@')[0],
+                  shotsDrank: parseFloat(String(m.total_shots_drank || 0)),
+                  deadPlaceFinishes: m.dead_place_finishes || 0,
+                  maxSingleWeekDebt: (m.dead_place_finishes || 0) * 1.0 || 1.0,
+                }))
+              : mockInfamyRecords
+          }
+        />
+      </div>
     </div>
   );
 };
