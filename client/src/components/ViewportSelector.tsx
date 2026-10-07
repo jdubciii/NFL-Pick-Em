@@ -23,7 +23,7 @@ export const ViewportSelector: React.FC<ViewportSelectorProps> = ({
   return (
     <div
       id="picks-viewport-selector"
-      className={`inline-flex items-center p-1 bg-slate-950/90 rounded-2xl border border-slate-800 shadow-inner backdrop-blur-md ${className}`}
+      className={`inline-flex items-center p-0.5 sm:p-1 bg-slate-950/90 rounded-xl sm:rounded-2xl border border-slate-800 shadow-inner backdrop-blur-md ${className}`}
       role="tablist"
       aria-label="Picks Viewport Selection"
     >
@@ -38,18 +38,18 @@ export const ViewportSelector: React.FC<ViewportSelectorProps> = ({
             role="tab"
             aria-selected={isActive}
             onClick={() => onChange(option.mode)}
-            className={`relative flex items-center space-x-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-black transition-all duration-200 focus:outline-none ${
+            className={`relative flex items-center space-x-1 sm:space-x-2 px-2 sm:px-4 py-1 sm:py-2 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-black transition-all duration-200 focus:outline-none ${
               isActive
                 ? 'bg-gradient-to-r from-cyan-500/20 to-emerald-500/20 text-cyan-300 border border-cyan-500/40 shadow-md shadow-cyan-950/50'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60 border border-transparent'
             }`}
           >
             <Icon
-              className={`w-4 h-4 transition-transform duration-200 ${
+              className={`w-3.5 h-3.5 sm:w-4 sm:h-4 transition-transform duration-200 ${
                 isActive ? 'text-cyan-400 scale-110' : 'text-slate-500'
               }`}
             />
-            <span className="tracking-wide">{option.label}</span>
+            <span className="tracking-wide hidden xs:inline">{option.label}</span>
           </button>
         );
       })}

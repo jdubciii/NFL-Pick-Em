@@ -249,17 +249,17 @@ export const WeeklyPicks: React.FC = () => {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* Header Banner */}
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 sm:gap-4 p-3.5 sm:p-6 glass-panel rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl">
+      {/* Header Banner - Ultra-Compact Single Row on Mobile, Rich Layout on Desktop */}
+      <div className="flex flex-row items-center justify-between gap-2 sm:gap-4 p-2.5 sm:p-6 glass-panel rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl">
         <div>
-          <div className="flex items-center space-x-2 text-xs font-bold text-cyan-400 uppercase tracking-wider mb-1">
+          <div className="flex items-center space-x-1.5 sm:space-x-2 text-[11px] sm:text-xs font-bold text-cyan-400 uppercase tracking-wider">
             <Shield className="w-3.5 h-3.5" />
-            <span>{pool?.name || 'Active Pool'}</span>
+            <span>{pool?.name || 'Main League'} • Week 5</span>
           </div>
-          <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+          <h2 className="hidden md:block text-2xl sm:text-3xl font-black text-white tracking-tight mt-1">
             {viewportMode === 'matrix' ? 'Square Sheet Matrix' : 'Weekly Matchup Slate'}
           </h2>
-          <p className="text-xs sm:text-sm text-slate-400 mt-1">
+          <p className="hidden md:block text-xs sm:text-sm text-slate-400 mt-1">
             {viewportMode === 'matrix'
               ? 'Full league spreadsheet with live anti-peeking masking & precision scoring.'
               : `Select a team to lock in your pick. Games lock automatically ${
@@ -268,8 +268,8 @@ export const WeeklyPicks: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto justify-between md:justify-end">
-          {/* Top-Level Viewport Toggle (Cards / Slate / Matrix) */}
+        <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
+          {/* Viewport Toggle (Cards / Slate / Matrix) */}
           <ViewportSelector
             activeMode={viewportMode}
             onChange={handleViewportChange}
@@ -279,10 +279,11 @@ export const WeeklyPicks: React.FC = () => {
             <button
               onClick={fetchGames}
               disabled={loading}
-              className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all disabled:opacity-50"
+              className="flex items-center space-x-1.5 p-2 sm:px-4 sm:py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all disabled:opacity-50"
+              title="Refresh Slate"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-              <span>Refresh Slate</span>
+              <span className="hidden md:inline">Refresh Slate</span>
             </button>
           )}
         </div>

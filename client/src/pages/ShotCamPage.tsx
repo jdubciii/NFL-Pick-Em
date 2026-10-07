@@ -19,6 +19,9 @@ import {
   X,
   MessageSquare,
   Sparkles,
+  Users,
+  Flame,
+  Wine,
 } from 'lucide-react';
 
 export type ShotCamStatus =
@@ -44,10 +47,40 @@ export interface ShotCamActiveRecord {
   reviewedBy: string | null;
 }
 
+export interface ShotRosterMember {
+  userId: string;
+  displayName: string;
+  initials: string;
+  email: string;
+  week4Score: number;
+  rank: number;
+  owedShots: number;
+  defaultShots: number;
+  status: 'SAFE' | 'PENDING' | 'SERVED' | 'WAIVED' | 'DISPUTED';
+  penaltyId?: string | null;
+  isMonarch?: boolean;
+}
+
+const DEFAULT_ROSTER: ShotRosterMember[] = [
+  { userId: 'mb', displayName: 'Matt Brickner', initials: 'MB', email: 'matt.b@nflpickem.com', week4Score: 14, rank: 1, owedShots: 0, defaultShots: 0, status: 'SAFE' },
+  { userId: 'mc', displayName: 'Matt Cone', initials: 'MC', email: 'matt.c@nflpickem.com', week4Score: 14, rank: 1, owedShots: 0, defaultShots: 0, status: 'SAFE' },
+  { userId: 'jc', displayName: 'Jack (You)', initials: 'JC', email: 'jack@nflpickem.com', week4Score: 14, rank: 1, owedShots: 0, defaultShots: 0, status: 'SAFE' },
+  { userId: 'jb', displayName: 'Justin Brickner', initials: 'JB', email: 'justin.b@nflpickem.com', week4Score: 12, rank: 4, owedShots: 1, defaultShots: 1, status: 'PENDING' },
+  { userId: 'ab', displayName: 'Adam Brickner', initials: 'AB', email: 'adam.b@nflpickem.com', week4Score: 12, rank: 4, owedShots: 1, defaultShots: 1, status: 'PENDING' },
+  { userId: 'rb', displayName: 'Rich Brickner', initials: 'RB', email: 'rich.b@nflpickem.com', week4Score: 12, rank: 4, owedShots: 1, defaultShots: 1, status: 'PENDING' },
+  { userId: 'mk', displayName: 'Mike Cone', initials: 'MK', email: 'mike.c@nflpickem.com', week4Score: 10, rank: 7, owedShots: 2, defaultShots: 2, status: 'PENDING' },
+  { userId: 'ns', displayName: 'Nick Santos', initials: 'NS', email: 'nick.s@nflpickem.com', week4Score: 10, rank: 7, owedShots: 2, defaultShots: 2, status: 'PENDING' },
+  { userId: 'mr', displayName: 'Mark Brickner', initials: 'MR', email: 'mark.b@nflpickem.com', week4Score: 10, rank: 7, owedShots: 2, defaultShots: 2, status: 'PENDING' },
+  { userId: 'bj', displayName: 'Big Jack', initials: 'BJ', email: 'bigjack@nflpickem.com', week4Score: 8, rank: 10, owedShots: 2.5, defaultShots: 2.5, status: 'DISPUTED', isMonarch: true },
+];
+
 export const ShotCamPage: React.FC = () => {
   const { token, user } = useAuth();
   const [poolId, setPoolId] = useState<string>('');
   const [activeRecord, setActiveRecord] = useState<ShotCamActiveRecord | null>(null);
+  const [roster, setRoster] = useState<ShotRosterMember[]>(DEFAULT_ROSTER);
+  const [rosterLoading, setRosterLoading] = useState<boolean>(true);
+  const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,9 +153,95 @@ export const ShotCamPage: React.FC = () => {
     }
   }, [poolId, token]);
 
+  // Fetch full 10-member Shot Roster & Tab from API
+  const fetchRoster = useCallback(async () => {
+    setRosterLoading(true);
+    try {
+      const endpoint = poolId
+        ? `/api/pools/${poolId}/shot-cam/roster`
+        : '/api/shot-cam/roster';
+
+      const res = await fetch(endpoint, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.roster && Array.isArray(data.roster) && data.roster.length > 0) {
+          setRoster(data.roster);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load shot roster:', err);
+    } finally {
+      setRosterLoading(false);
+    }
+  }, [poolId, token]);
+
   useEffect(() => {
     fetchActiveRecord();
-  }, [fetchActiveRecord]);
+    fetchRoster();
+  }, [fetchActiveRecord, fetchRoster]);
+
+  const handleRefreshAll = () => {
+    fetchActiveRecord();
+    fetchRoster();
+  };
+
+  // Commissioner Action: Toggle Served Status for any League Member
+  const handleToggleServed = async (member: ShotRosterMember) => {
+    const isJack = user?.email?.toLowerCase() === 'jack@nflpickem.com';
+    const isAdmin = user?.role === 'ADMIN';
+    if (!isJack && !isAdmin) return;
+
+    const newServed = member.status !== 'SERVED';
+    setTogglingUserId(member.userId);
+    setError(null);
+    setSuccessMessage(null);
+
+    try {
+      const endpoint = poolId
+        ? `/api/pools/${poolId}/shot-cam/toggle-served`
+        : '/api/shot-cam/toggle-served';
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          userId: member.userId,
+          email: member.email,
+          served: newServed,
+          shots: member.owedShots,
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to update served status');
+      }
+
+      setRoster((prev) =>
+        prev.map((m) =>
+          m.userId === member.userId || m.email === member.email
+            ? { ...m, status: newServed ? 'SERVED' : 'PENDING' }
+            : m
+        )
+      );
+
+      setSuccessMessage(
+        newServed
+          ? `Marked ${member.displayName}'s ${member.owedShots} penalty shots as SERVED!`
+          : `Marked ${member.displayName}'s penalty as PENDING.`
+      );
+      setTimeout(() => setSuccessMessage(null), 4000);
+    } catch (err: any) {
+      setError(err.message || 'Error updating shot status.');
+    } finally {
+      setTogglingUserId(null);
+    }
+  };
 
   // Handle Commissioner Review Actions
   const handleReview = async (action: 'APPROVE_DISPUTE' | 'REJECT_DISPUTE' | 'VERIFY_VIDEO', notes?: string) => {
@@ -302,11 +421,11 @@ export const ShotCamPage: React.FC = () => {
         </div>
 
         <button
-          onClick={fetchActiveRecord}
-          disabled={loading}
+          onClick={handleRefreshAll}
+          disabled={loading || rosterLoading}
           className="flex items-center space-x-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 shadow-sm transition-all disabled:opacity-50"
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-cyan-400' : ''}`} />
+          <RefreshCw className={`w-3.5 h-3.5 ${loading || rosterLoading ? 'animate-spin text-cyan-400' : ''}`} />
           <span>Refresh</span>
         </button>
       </div>
@@ -462,7 +581,177 @@ export const ShotCamPage: React.FC = () => {
               )}
             </div>
 
-            {/* 3. Video Verification Player */}
+            {/* 3. League Shot Roster & Tab (Week 4) */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-4">
+                <div className="flex items-center space-x-2.5">
+                  <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                    <Beer className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm sm:text-base font-black text-white uppercase tracking-wider">
+                      League Shot Roster & Tab (Week 4)
+                    </h3>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      10-member penalty ladder & persistent tab derived from Week 4 standings.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <span className="text-xs px-2.5 py-1 rounded-full font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 font-mono">
+                    11.5 Total Shots Due
+                  </span>
+                </div>
+              </div>
+
+              {/* Roster List */}
+              <div className="divide-y divide-slate-800/60">
+                {roster.map((member) => {
+                  const isSafe = member.defaultShots === 0;
+                  const isMonarch = member.rank === 10 || member.isMonarch;
+                  const isServed = member.status === 'SERVED';
+                  const isDisputed = member.status === 'DISPUTED';
+                  const isSelf = member.email?.toLowerCase() === 'jack@nflpickem.com' || member.userId === user?.id;
+
+                  // Penalty tier badge styling
+                  let penaltyBadge;
+                  if (isSafe) {
+                    penaltyBadge = (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold tracking-wider uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        Safe (0 Shots)
+                      </span>
+                    );
+                  } else if (member.defaultShots === 1) {
+                    penaltyBadge = (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold tracking-wider uppercase bg-amber-500/10 text-amber-300 border border-amber-500/25">
+                        1 Shot Owed
+                      </span>
+                    );
+                  } else if (member.defaultShots === 2) {
+                    penaltyBadge = (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold tracking-wider uppercase bg-orange-500/15 text-orange-300 border border-orange-500/30">
+                        2 Shots Owed
+                      </span>
+                    );
+                  } else {
+                    penaltyBadge = (
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold tracking-wider uppercase bg-rose-500/20 text-rose-300 border border-rose-500/40 font-mono">
+                        2.5 Shots (Monarch)
+                      </span>
+                    );
+                  }
+
+                  // Avatar styling
+                  let avatarStyle = 'bg-slate-800 text-slate-300 border border-slate-700';
+                  if (isMonarch) {
+                    avatarStyle = 'bg-gradient-to-tr from-amber-500 via-rose-500 to-indigo-600 text-white font-black shadow-md border border-amber-400/50';
+                  } else if (isSafe) {
+                    avatarStyle = 'bg-gradient-to-tr from-emerald-500 to-teal-400 text-slate-950 font-black shadow-md';
+                  } else if (member.defaultShots === 1) {
+                    avatarStyle = 'bg-amber-950/80 text-amber-300 border border-amber-500/40 font-bold';
+                  } else if (member.defaultShots === 2) {
+                    avatarStyle = 'bg-orange-950/80 text-orange-300 border border-orange-500/40 font-bold';
+                  }
+
+                  return (
+                    <div
+                      key={member.email}
+                      className={`py-3 px-2.5 sm:px-3 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 sm:gap-4 transition-colors ${
+                        isMonarch
+                          ? 'bg-rose-500/5 hover:bg-rose-500/10'
+                          : isSelf
+                          ? 'bg-cyan-500/5 hover:bg-cyan-500/10'
+                          : 'hover:bg-slate-850/40'
+                      }`}
+                    >
+                      {/* Left: Avatar & Member Info */}
+                      <div className="flex items-center space-x-3 min-w-0">
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs shrink-0 ${avatarStyle}`}>
+                          {member.initials}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center space-x-2">
+                            <span className="font-bold text-xs sm:text-sm text-white truncate">
+                              {member.displayName}
+                            </span>
+                            {isMonarch && (
+                              <span className="px-1.5 py-0.2 rounded font-mono text-[9px] bg-rose-500/20 text-rose-300 border border-rose-500/30 font-black">
+                                MONARCH
+                              </span>
+                            )}
+                            {isSelf && (
+                              <span className="px-1.5 py-0.2 rounded font-mono text-[9px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold">
+                                YOU
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-slate-400 mt-0.5 flex items-center space-x-2 font-mono">
+                            <span>#{member.rank} in Week 4</span>
+                            <span>•</span>
+                            <span className="text-slate-300 font-semibold">{member.week4Score} PTS</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Shot Badge & Status/Commissioner Toggle */}
+                      <div className="flex items-center justify-between sm:justify-end gap-2.5 w-full sm:w-auto self-stretch sm:self-auto pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-800/60">
+                        {penaltyBadge}
+
+                        {/* Status Label */}
+                        <div className="flex items-center space-x-2">
+                          {isSafe ? (
+                            <span className="text-[10px] font-bold text-slate-500 uppercase">
+                              No Penalty
+                            </span>
+                          ) : isServed ? (
+                            <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                              <span>SERVED</span>
+                            </span>
+                          ) : isDisputed ? (
+                            <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse">
+                              <AlertTriangle className="w-3 h-3 text-rose-400" />
+                              <span>DISPUTED</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                              <Clock className="w-3 h-3 text-amber-400" />
+                              <span>PENDING</span>
+                            </span>
+                          )}
+
+                          {/* Commissioner Quick-Toggle */}
+                          {isCommissioner && !isSafe && (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleServed(member)}
+                              disabled={togglingUserId === member.userId}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all border ${
+                                isServed
+                                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                                  : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white border-emerald-400/40 shadow-sm'
+                              } disabled:opacity-50`}
+                              title={isServed ? 'Mark as Pending' : 'Mark as Downed / Served'}
+                            >
+                              {togglingUserId === member.userId ? (
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                              ) : isServed ? (
+                                'Unmark'
+                              ) : (
+                                'Mark Served'
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 4. Video Verification Player */}
             <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">

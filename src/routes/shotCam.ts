@@ -534,4 +534,223 @@ shotCamRouter.post('/upload', requireAuth, async (req: Request, res: Response): 
   }
 });
 
+const OFFICIAL_WEEK4_ROSTER = [
+  { email: 'matt.b@nflpickem.com', name: 'Matt Brickner', initials: 'MB', score: 14, rank: 1, defaultShots: 0 },
+  { email: 'matt.c@nflpickem.com', name: 'Matt Cone', initials: 'MC', score: 14, rank: 1, defaultShots: 0 },
+  { email: 'jack@nflpickem.com', name: 'Jack (You)', initials: 'JC', score: 14, rank: 1, defaultShots: 0 },
+  { email: 'justin.b@nflpickem.com', name: 'Justin Brickner', initials: 'JB', score: 12, rank: 4, defaultShots: 1 },
+  { email: 'adam.b@nflpickem.com', name: 'Adam Brickner', initials: 'AB', score: 12, rank: 4, defaultShots: 1 },
+  { email: 'rich.b@nflpickem.com', name: 'Rich Brickner', initials: 'RB', score: 12, rank: 4, defaultShots: 1 },
+  { email: 'mike.c@nflpickem.com', name: 'Mike Cone', initials: 'MK', score: 10, rank: 7, defaultShots: 2 },
+  { email: 'nick.s@nflpickem.com', name: 'Nick Santos', initials: 'NS', score: 10, rank: 7, defaultShots: 2 },
+  { email: 'mark.b@nflpickem.com', name: 'Mark Brickner', initials: 'MR', score: 10, rank: 7, defaultShots: 2 },
+  { email: 'bigjack@nflpickem.com', name: 'Big Jack', initials: 'BJ', score: 8, rank: 10, defaultShots: 2.5 },
+];
+
+/**
+ * GET /api/pools/:pool_id/shot-cam/roster AND GET /api/shot-cam/roster
+ * Retrieves the full 10-member Week 4 penalty ledger and current served/pending statuses.
+ */
+shotCamRouter.get('/roster', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const pool = await resolvePool(req.params.pool_id);
+
+    if (!pool) {
+      res.status(404).json({ error: 'Pool not found' });
+      return;
+    }
+
+    const users = await prisma.user.findMany();
+    const userMap = new Map(users.map((u) => [u.email.toLowerCase(), u]));
+
+    const existingPenalties = await prisma.penaltyLedger.findMany({
+      where: {
+        poolId: pool.id,
+        weekNumber: 4,
+      },
+      include: {
+        media: true,
+      },
+    });
+
+    const penaltyMap = new Map(existingPenalties.map((p) => [p.userId, p]));
+
+    const roster = OFFICIAL_WEEK4_ROSTER.map((item) => {
+      const dbUser = userMap.get(item.email.toLowerCase());
+      const userId = dbUser?.id || `user_${item.email}`;
+      const penalty = penaltyMap.get(userId);
+
+      let status: 'SAFE' | 'PENDING' | 'SERVED' | 'WAIVED' | 'DISPUTED' =
+        item.defaultShots === 0 ? 'SAFE' : 'PENDING';
+
+      let penaltyShots = item.defaultShots;
+
+      if (penalty) {
+        penaltyShots = Number(penalty.delta);
+        if (penalty.reason.includes('[SERVED]')) {
+          status = 'SERVED';
+        } else if (penalty.reason.includes('[WAIVED]') || penaltyShots === 0) {
+          status = 'WAIVED';
+        } else if (penalty.reason.includes('[DISPUTED]')) {
+          status = 'DISPUTED';
+        } else if (penalty.media?.status === 'CONFIRMED') {
+          status = 'SERVED';
+        } else if (penaltyShots > 0) {
+          status = 'PENDING';
+        }
+      }
+
+      return {
+        userId,
+        displayName: item.name,
+        initials: item.initials,
+        email: item.email,
+        week4Score: item.score,
+        rank: item.rank,
+        owedShots: penaltyShots,
+        defaultShots: item.defaultShots,
+        status,
+        penaltyId: penalty?.id || null,
+        isMonarch: item.rank === 10,
+      };
+    });
+
+    res.json({
+      weekNumber: 4,
+      poolId: pool.id,
+      roster,
+    });
+  } catch (error) {
+    console.error('Error fetching shot roster:', error);
+    res.status(500).json({ error: 'Failed to fetch shot roster.' });
+  }
+});
+
+/**
+ * POST /api/pools/:pool_id/shot-cam/toggle-served AND POST /api/shot-cam/toggle-served
+ * Commissioner Action: Mark a member's penalty shots as served or pending.
+ */
+shotCamRouter.post('/toggle-served', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { userId, email, served, shots } = req.body;
+  const user = req.user!;
+
+  try {
+    const pool = await resolvePool(req.params.pool_id);
+
+    if (!pool) {
+      res.status(404).json({ error: 'Pool not found' });
+      return;
+    }
+
+    // Commissioner Guard
+    const isJack = user.email?.toLowerCase() === 'jack@nflpickem.com';
+    const isAdmin = user.role === 'ADMIN';
+    const isCommissioner = pool.adminId === user.id;
+
+    if (!isJack && !isAdmin && !isCommissioner) {
+      res.status(403).json({ error: 'Forbidden: Only the Commissioner can mark shots as served.' });
+      return;
+    }
+
+    let targetUser = null;
+    if (userId && UUID_REGEX.test(userId)) {
+      targetUser = await prisma.user.findUnique({ where: { id: userId } });
+    }
+    if (!targetUser && email) {
+      targetUser = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+    }
+
+    if (!targetUser) {
+      res.status(404).json({ error: 'Target league member not found.' });
+      return;
+    }
+
+    // Ensure pool membership exists
+    let membership = await prisma.poolMembership.findUnique({
+      where: {
+        poolId_userId: {
+          poolId: pool.id,
+          userId: targetUser.id,
+        },
+      },
+    });
+
+    if (!membership) {
+      membership = await prisma.poolMembership.create({
+        data: {
+          poolId: pool.id,
+          userId: targetUser.id,
+        },
+      });
+    }
+
+    // Lookup existing PenaltyLedger for Week 4
+    let penalty = await prisma.penaltyLedger.findFirst({
+      where: {
+        poolId: pool.id,
+        userId: targetUser.id,
+        weekNumber: 4,
+      },
+    });
+
+    const defaultRosterItem = OFFICIAL_WEEK4_ROSTER.find(
+      (r) => r.email.toLowerCase() === targetUser!.email.toLowerCase()
+    );
+    const assignedShots = shots !== undefined ? Number(shots) : defaultRosterItem?.defaultShots || 1;
+
+    if (penalty) {
+      const cleanReason = penalty.reason.replace('[SERVED] ', '').replace('[SERVED]', '');
+      const newReason = served ? `[SERVED] ${cleanReason}` : cleanReason;
+
+      penalty = await prisma.penaltyLedger.update({
+        where: { id: penalty.id },
+        data: {
+          reason: newReason,
+          delta: assignedShots,
+        },
+      });
+    } else {
+      penalty = await prisma.penaltyLedger.create({
+        data: {
+          poolId: pool.id,
+          userId: targetUser.id,
+          weekNumber: 4,
+          delta: assignedShots,
+          reason: served ? `[SERVED] Week 4 Penalty (${assignedShots} Shots)` : `Week 4 Penalty (${assignedShots} Shots)`,
+          createdById: user.id,
+        },
+      });
+    }
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: user.id,
+        action: served ? 'MARK_SHOT_PENALTY_SERVED' : 'UNMARK_SHOT_PENALTY_SERVED',
+        targetEntityId: penalty.id,
+        newValue: {
+          poolId: pool.id,
+          targetUserId: targetUser.id,
+          weekNumber: 4,
+          served,
+          shots: assignedShots,
+        },
+      },
+    });
+
+    res.json({
+      success: true,
+      userId: targetUser.id,
+      email: targetUser.email,
+      served,
+      penaltyId: penalty.id,
+      message: served
+        ? `Marked ${assignedShots} shots as SERVED for ${targetUser.email}.`
+        : `Marked penalty as PENDING for ${targetUser.email}.`,
+    });
+  } catch (error) {
+    console.error('Error toggling served status:', error);
+    res.status(500).json({ error: 'Failed to update shot status.' });
+  }
+});
+
 export default shotCamRouter;

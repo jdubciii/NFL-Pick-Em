@@ -531,15 +531,15 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
       {/* Spreadsheet Matrix Table */}
       {matrixData && (
         <div className="relative rounded-2xl bg-slate-900/90 border border-slate-800 shadow-2xl shadow-black/60 overflow-hidden print:border-black print:shadow-none print:bg-white print:rounded-none">
-          <div className="overflow-auto max-h-[75vh] scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900 print:max-h-none print:overflow-visible">
-            <table className="w-full text-left border-collapse min-w-[700px] print:min-w-0 print:text-black">
+          <div className="w-full overflow-x-auto overflow-y-auto max-h-[75vh] scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900 print:max-h-none print:overflow-visible">
+            <table className="w-full text-left border-collapse min-w-[750px] print:min-w-0 print:text-black">
               {/* Table Header: Members (Columns) */}
               <thead>
                 <tr className="border-b border-slate-700/80 bg-slate-950 print:bg-gray-100 print:border-black">
                   {/* Top-Left Sticky Corner Junction Cell */}
                   <th
                     scope="col"
-                    className="sticky top-0 left-0 z-30 bg-slate-950 px-4 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-400 border-r border-b border-slate-700/80 min-w-[220px] max-w-[240px] shadow-md print:static print:bg-gray-100 print:text-black print:border-black"
+                    className="sticky top-0 left-0 z-40 bg-slate-950 px-4 py-4 text-xs font-extrabold uppercase tracking-wider text-slate-400 border-r border-b border-slate-700/80 min-w-[220px] max-w-[240px] shadow-md print:static print:bg-gray-100 print:text-black print:border-black"
                   >
                     <div className="flex items-center justify-between">
                       <span>Game Matchup</span>
@@ -556,7 +556,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
                       <th
                         key={col.user_id}
                         scope="col"
-                        className={`sticky top-0 z-20 bg-slate-900/95 backdrop-blur border-b border-slate-700/80 shadow-md px-3 py-3 text-center min-w-[120px] max-w-[150px] border-r border-slate-700/80 transition-colors print:static print:bg-gray-100 print:text-black print:border-black ${
+                        className={`sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-700/80 shadow-md px-3 py-3 text-center min-w-[120px] max-w-[150px] border-r border-slate-700/80 transition-colors print:static print:bg-gray-100 print:text-black print:border-black ${
                           isSelf ? 'bg-cyan-950/40 text-cyan-300' : 'text-slate-200'
                         }`}
                       >
@@ -609,7 +609,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
                       }`}
                     >
                       {/* Sticky Left Column: Game Info */}
-                      <td className="sticky left-0 z-10 bg-slate-900/95 backdrop-blur border-r border-slate-700/80 px-4 py-3.5 min-w-[220px] max-w-[240px] shadow-sm print:static print:bg-white print:text-black print:border-black">
+                      <td className="sticky left-0 z-20 bg-slate-900/95 backdrop-blur border-r border-slate-700/80 px-4 py-3.5 min-w-[220px] max-w-[240px] shadow-sm print:static print:bg-white print:text-black print:border-black">
                         <div className="flex flex-col space-y-1">
                           <div className="flex items-center justify-between">
                             <span className="font-extrabold text-sm text-white tracking-wide print:text-black">

@@ -230,22 +230,22 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
   return (
     <div
       id="pick-preset-controls"
-      className="p-3 sm:p-4 rounded-2xl bg-slate-900/90 border border-slate-800/90 backdrop-blur-md shadow-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-3 sm:gap-4 animate-fade-in"
+      className="p-1.5 px-3 sm:p-4 rounded-xl sm:rounded-2xl bg-slate-900/90 border border-slate-800/90 backdrop-blur-md shadow-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-2 sm:gap-4 animate-fade-in"
     >
       {/* Accordion Header / Mobile Bar Trigger */}
       <div
         onClick={() => setMobileExpanded((prev) => !prev)}
-        className="flex items-center justify-between w-full md:w-auto cursor-pointer md:cursor-default select-none"
+        className="flex items-center justify-between w-full md:w-auto cursor-pointer md:cursor-default select-none py-0.5 sm:py-0"
       >
-        <div className="flex items-center space-x-2.5 sm:space-x-3">
-          <div className="p-2 sm:p-2.5 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 flex-shrink-0">
-            <Zap className="w-4 h-4 sm:w-5 sm:h-5" />
+        <div className="flex items-center space-x-2 sm:space-x-3">
+          <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 flex-shrink-0">
+            <Zap className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
           </div>
           <div>
-            <div className="text-xs font-black text-white flex items-center gap-1.5 uppercase tracking-wider">
+            <div className="text-[11px] sm:text-xs font-black text-white flex items-center gap-1.5 uppercase tracking-wider">
               <span className="hidden sm:inline">Quick Fill Presets & Social Accelerators</span>
               <span className="sm:hidden">⚡ Quick Presets (Home, Away, Favorites)</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold hidden xs:inline">
+              <span className="text-[9px] sm:text-[10px] px-1.5 py-0.2 rounded font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold hidden xs:inline">
                 Active
               </span>
             </div>
@@ -256,9 +256,8 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
         </div>
 
         {/* Mobile Accordion Expand/Collapse Indicator */}
-        <div className="md:hidden flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-800/80 border border-slate-700 text-xs font-bold text-slate-300">
-          <span>{mobileExpanded ? 'Hide' : 'Expand'}</span>
-          <ChevronDown className={`w-3.5 h-3.5 text-cyan-400 transition-transform duration-200 ${mobileExpanded ? 'rotate-180' : ''}`} />
+        <div className="md:hidden flex items-center space-x-1 px-2 py-0.5 rounded-lg bg-slate-800/80 border border-slate-700 text-[10px] font-bold text-slate-300">
+          <span>{mobileExpanded ? 'Hide' : 'Presets ▾'}</span>
         </div>
       </div>
 
