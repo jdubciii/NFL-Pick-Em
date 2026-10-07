@@ -20,6 +20,9 @@ import {
 import { formatGameKickoff } from '../utils/dateUtils';
 import { CompactAntiPeekingBadge } from './mobile/CompactAntiPeekingBadge';
 import { MobileMatrixDrawer } from './mobile/MobileMatrixDrawer';
+import { MobileGamedayFeed } from './matrix/MobileGamedayFeed';
+import { LiveMatchupProjection } from './matrix/MatchupCard';
+import { MemberPickStatus } from './matrix/CohortChip';
 
 const MEMBER_DISPLAY_MAP: Record<string, { name: string; initials: string }> = {
   'jack@nflpickem.com': { name: 'Jack (You)', initials: 'JC' },
@@ -112,6 +115,100 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [copiedDispatch, setCopiedDispatch] = useState<boolean>(false);
+
+  const [viewMode, setViewMode] = useState<'cards' | 'grid'>(() => {
+    const saved = localStorage.getItem('matrix_view_preference');
+    if (saved === 'cards' || saved === 'grid') return saved;
+    return typeof window !== 'undefined' && window.innerWidth < 768 ? 'cards' : 'grid';
+  });
+
+  const handleToggleMode = (mode: 'cards' | 'grid') => {
+    setViewMode(mode);
+    localStorage.setItem('matrix_view_preference', mode);
+  };
+
+  const deriveMemberMatchState = (
+    selectedTeamId: string | null,
+    homeTeamId: string,
+    awayTeamId: string,
+    homeScore: number,
+    awayScore: number,
+    status: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL'
+  ): 'WINNING' | 'LOSING' | 'TIED' | 'WON' | 'LOST' | 'PENDING' => {
+    if (status === 'SCHEDULED' || !selectedTeamId) return 'PENDING';
+    const isHome = selectedTeamId === homeTeamId;
+    const isLeading = isHome ? homeScore > awayScore : awayScore > homeScore;
+    const isTied = homeScore === awayScore;
+
+    if (status === 'FINAL') {
+      return isLeading ? 'WON' : 'LOST';
+    }
+    if (isTied) return 'TIED';
+    return isLeading ? 'WINNING' : 'LOSING';
+  };
+
+  const liveProjections: LiveMatchupProjection[] = React.useMemo(() => {
+    if (!matrixData) return [];
+    return matrixData.rows.map((game) => {
+      const isLocked =
+        !matrixData.metadata.hide_picks_until_kickoff ||
+        game.status !== 'SCHEDULED' ||
+        new Date(game.kickoff_time) <= new Date();
+
+      const homeCohort: MemberPickStatus[] = [];
+      const awayCohort: MemberPickStatus[] = [];
+
+      for (const col of matrixData.columns) {
+        const cell = matrixData.cells[game.game_id]?.[col.user_id];
+        const details = getMemberDetails(col.email, col.displayName);
+        const matchState = deriveMemberMatchState(
+          cell?.selected_team_id ?? null,
+          game.home_team_id,
+          game.away_team_id,
+          game.home_score ?? 0,
+          game.away_score ?? 0,
+          game.status as any
+        );
+
+        const memberStatus: MemberPickStatus = {
+          memberId: col.user_id,
+          initials: details.initials,
+          matchState,
+        };
+
+        if (cell?.selected_team_id === game.home_team_id) {
+          homeCohort.push(memberStatus);
+        } else if (cell?.selected_team_id === game.away_team_id) {
+          awayCohort.push(memberStatus);
+        }
+      }
+
+      return {
+        gameId: game.game_id,
+        awayTeam: game.away_team_id,
+        homeTeam: game.home_team_id,
+        kickoffUtc: game.kickoff_time,
+        status: (game.status as any) || 'SCHEDULED',
+        liveTelemetry:
+          game.status === 'IN_PROGRESS' || game.status === 'FINAL'
+            ? {
+                homeScore: game.home_score ?? 0,
+                awayScore: game.away_score ?? 0,
+                quarter: game.status === 'FINAL' ? 'FINAL' : 'LIVE',
+                clock: null,
+                possession: null,
+                redzone: false,
+              }
+            : null,
+        distribution: {
+          homeCohort,
+          awayCohort,
+          totalPoolSize: matrixData.columns.length,
+        },
+        isLocked,
+      };
+    });
+  }, [matrixData]);
 
   // Fetch available pools
   useEffect(() => {
@@ -463,6 +560,32 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
               <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
 
+            {/* View Mode Segmented Control */}
+            <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800 print:hidden">
+              <button
+                type="button"
+                onClick={() => handleToggleMode('cards')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  viewMode === 'cards'
+                    ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Cards
+              </button>
+              <button
+                type="button"
+                onClick={() => handleToggleMode('grid')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  viewMode === 'grid'
+                    ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Grid
+              </button>
+            </div>
+
             {/* Generate Dispatch Button */}
             <button
               onClick={handleGenerateDispatch}
@@ -534,8 +657,16 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
         </div>
       )}
 
-      {/* Spreadsheet Matrix Table */}
-      {matrixData && (
+      {/* Cards View Mode: Mobile Matchup Cards Feed */}
+      {matrixData && viewMode === 'cards' && (
+        <MobileGamedayFeed
+          projections={liveProjections}
+          currentUserId={currentUser?.id}
+        />
+      )}
+
+      {/* Grid View Mode: Spreadsheet Matrix Table */}
+      {matrixData && viewMode === 'grid' && (
         <div className="relative rounded-2xl bg-slate-900/90 border border-slate-800 shadow-2xl shadow-black/60 overflow-hidden print:border-black print:shadow-none print:bg-white print:rounded-none">
           <div className="w-full overflow-x-auto pb-20 overflow-y-auto max-h-[75vh] scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900 print:max-h-none print:overflow-visible">
             <table className="w-full text-left border-collapse min-w-[750px] print:min-w-0 print:text-black">
@@ -777,7 +908,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
         </div>
       )}
 
-      {matrixData && (
+      {matrixData && viewMode === 'grid' && (
         <MobileMatrixDrawer
           distributions={matrixData.rows.map((g) => {
             let homePicks = 0;
