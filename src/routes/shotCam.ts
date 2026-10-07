@@ -27,6 +27,83 @@ function getDisplayName(email: string): string {
   return email.split('@')[0];
 }
 
+function getInitials(email: string): string {
+  const lower = email.toLowerCase();
+  if (lower.includes('bigjack')) return 'BJ';
+  if (lower.includes('jack')) return 'JC';
+  if (lower.includes('matt.c')) return 'MC';
+  if (lower.includes('matt.b')) return 'MB';
+  if (lower.includes('justin.b')) return 'JB';
+  if (lower.includes('adam.b')) return 'AB';
+  if (lower.includes('rich.b')) return 'RB';
+  if (lower.includes('mike.c')) return 'MK';
+  if (lower.includes('nick.s')) return 'NS';
+  if (lower.includes('mark.b')) return 'MR';
+  const name = email.split('@')[0];
+  const parts = name.split('.');
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
+interface MediaMeta {
+  isSpotlight: boolean;
+  reactions: Record<string, number>;
+  caption?: string;
+}
+
+const mediaMetaStore = new Map<string, MediaMeta>();
+
+/**
+ * Helper to get or initialize metadata for a penalty media record
+ */
+async function getMediaMeta(mediaId: string, weekNumber: number, reason: string): Promise<MediaMeta> {
+  if (mediaMetaStore.has(mediaId)) {
+    return mediaMetaStore.get(mediaId)!;
+  }
+
+  // Check audit log for saved metadata
+  try {
+    const audit = await prisma.auditLog.findFirst({
+      where: {
+        targetEntityId: mediaId,
+        action: { in: ['SEED_SHAME_MEDIA_METADATA', 'SET_SHOT_OF_THE_WEEK_SPOTLIGHT', 'REACT_PENALTY_MEDIA'] },
+      },
+      orderBy: { timestamp: 'desc' },
+    });
+
+    if (audit && audit.newValue && typeof audit.newValue === 'object') {
+      const val = audit.newValue as any;
+      const meta: MediaMeta = {
+        isSpotlight: Boolean(val.isSpotlight),
+        reactions: val.reactions || { '💀': 0, '🍺': 0, '🔥': 0 },
+        caption: val.caption || reason,
+      };
+      mediaMetaStore.set(mediaId, meta);
+      return meta;
+    }
+  } catch (err) {
+    // Fallback to default
+  }
+
+  // Default seed-based values for realistic demo
+  const isWeek3Spotlight = weekNumber === 3;
+  const defaultReactions: Record<string, number> =
+    weekNumber === 4 ? { '💀': 29, '🍺': 12, '🔥': 18 } :
+    weekNumber === 3 ? { '💀': 22, '🍺': 19, '🔥': 31 } :
+    weekNumber === 2 ? { '💀': 8, '🍺': 16, '🔥': 4 } :
+    { '💀': 14, '🍺': 9, '🔥': 6 };
+
+  const initialMeta: MediaMeta = {
+    isSpotlight: isWeek3Spotlight,
+    reactions: defaultReactions,
+    caption: reason,
+  };
+  mediaMetaStore.set(mediaId, initialMeta);
+  return initialMeta;
+}
+
 /**
  * Resiliently resolves a pool by UUID, name, or defaults to 'Main League'
  */
@@ -100,6 +177,461 @@ function buildShotCamResponse(penalty: any) {
 }
 
 /**
+ * GET /api/pools/:pool_id/shot-cam/feed AND GET /api/shot-cam/feed
+ * Fetches all uploaded PenaltyMedia records for the week or pool, ordered by createdAt desc.
+ */
+shotCamRouter.get('/feed', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const pool = await resolvePool(req.params.pool_id);
+
+    if (!pool) {
+      res.status(404).json({ error: 'Pool not found' });
+      return;
+    }
+
+    const weekNumber = req.query.weekNumber ? parseInt(String(req.query.weekNumber), 10) : undefined;
+
+    const mediaRecords = await prisma.penaltyMedia.findMany({
+      where: {
+        poolId: pool.id,
+        ...(weekNumber ? { penalty: { weekNumber } } : {}),
+      },
+      include: {
+        user: true,
+        penalty: true,
+        confirmer: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    const feed = await Promise.all(
+      mediaRecords.map(async (media) => {
+        const email = media.user?.email || '';
+        const meta = await getMediaMeta(media.id, media.penalty?.weekNumber || 4, media.penalty?.reason || '');
+        return {
+          id: media.id,
+          penaltyId: media.penaltyId,
+          userId: media.userId,
+          displayName: getDisplayName(email),
+          initials: getInitials(email),
+          email,
+          avatarUrl: null,
+          shots: Number(media.penalty?.delta || 1),
+          status: media.status,
+          videoUrl: media.storagePath,
+          caption: meta.caption || media.penalty?.reason || 'Shot served',
+          weekNumber: media.penalty?.weekNumber || 4,
+          createdAt: media.createdAt.toISOString(),
+          confirmedBy: media.confirmer?.email || null,
+          isSpotlight: meta.isSpotlight,
+          reactions: meta.reactions,
+        };
+      })
+    );
+
+    res.json({
+      weekNumber: weekNumber || 4,
+      totalCount: feed.length,
+      feed,
+    });
+  } catch (error) {
+    console.error('Error fetching shot-cam feed:', error);
+    res.status(500).json({ error: 'Failed to fetch Shot-Cam feed.' });
+  }
+});
+
+/**
+ * POST /api/pools/:pool_id/shot-cam/feed/submit AND POST /api/shot-cam/feed/submit
+ * Inline / Floating "Submit Your Shot" allowing any member to submit a shot video.
+ */
+shotCamRouter.post('/feed/submit', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { weekNumber, videoUrl, caption, shots } = req.body;
+  const user = req.user!;
+
+  if (!videoUrl || String(videoUrl).trim().length === 0) {
+    res.status(400).json({ error: 'Video URL is required.' });
+    return;
+  }
+
+  try {
+    const pool = await resolvePool(req.params.pool_id);
+
+    if (!pool) {
+      res.status(404).json({ error: 'Pool not found' });
+      return;
+    }
+
+    const week = weekNumber ? parseInt(String(weekNumber), 10) : 4;
+    const shotCount = shots ? Number(shots) : 1.0;
+    const finalReason = caption || `Week ${week} Penalty Shot submission`;
+
+    // Ensure pool membership
+    await prisma.poolMembership.upsert({
+      where: {
+        poolId_userId: {
+          poolId: pool.id,
+          userId: user.id,
+        },
+      },
+      update: {},
+      create: {
+        poolId: pool.id,
+        userId: user.id,
+      },
+    });
+
+    // Check existing penalty or create new penalty entry
+    let penalty = await prisma.penaltyLedger.findFirst({
+      where: {
+        poolId: pool.id,
+        userId: user.id,
+        weekNumber: week,
+      },
+    });
+
+    if (!penalty) {
+      penalty = await prisma.penaltyLedger.create({
+        data: {
+          poolId: pool.id,
+          userId: user.id,
+          weekNumber: week,
+          delta: shotCount,
+          reason: finalReason,
+          createdById: user.id,
+        },
+      });
+    }
+
+    const media = await prisma.penaltyMedia.upsert({
+      where: { penaltyId: penalty.id },
+      update: {
+        storagePath: videoUrl.trim(),
+        mediaType: 'video/mp4',
+        status: 'PENDING',
+        createdAt: new Date(),
+      },
+      create: {
+        penaltyId: penalty.id,
+        poolId: pool.id,
+        userId: user.id,
+        storagePath: videoUrl.trim(),
+        mediaType: 'video/mp4',
+        status: 'PENDING',
+      },
+    });
+
+    mediaMetaStore.set(media.id, {
+      isSpotlight: false,
+      reactions: { '💀': 0, '🍺': 0, '🔥': 0 },
+      caption: finalReason,
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: user.id,
+        action: 'SUBMIT_SHOT_CAM_FEED_MEDIA',
+        targetEntityId: media.id,
+        newValue: {
+          poolId: pool.id,
+          mediaId: media.id,
+          penaltyId: penalty.id,
+          weekNumber: week,
+          videoUrl: videoUrl.trim(),
+          caption: finalReason,
+        },
+      },
+    });
+
+    res.status(201).json({
+      message: 'Shot submission posted to live feed successfully!',
+      item: {
+        id: media.id,
+        penaltyId: media.penaltyId,
+        userId: user.id,
+        displayName: getDisplayName(user.email),
+        initials: getInitials(user.email),
+        email: user.email,
+        avatarUrl: null,
+        shots: shotCount,
+        status: media.status,
+        videoUrl: media.storagePath,
+        caption: finalReason,
+        weekNumber: week,
+        createdAt: media.createdAt.toISOString(),
+        confirmedBy: null,
+        isSpotlight: false,
+        reactions: { '💀': 0, '🍺': 0, '🔥': 0 },
+      },
+    });
+  } catch (error) {
+    console.error('Error submitting shot-cam feed media:', error);
+    res.status(500).json({ error: 'Failed to submit shot to feed.' });
+  }
+});
+
+/**
+ * GET /api/pools/:pool_id/shame/vault AND GET /api/shame/vault
+ * Accepts query filters: ?memberId=&week=&penaltyType=&isSpotlight=true&search=
+ * Returns historical penalty videos across all weeks with reactions, spotlight flag, and metadata.
+ */
+shotCamRouter.get('/vault', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const pool = await resolvePool(req.params.pool_id);
+
+    if (!pool) {
+      res.status(404).json({ error: 'Pool not found' });
+      return;
+    }
+
+    const { memberId, week, penaltyType, isSpotlight, search } = req.query;
+
+    const mediaRecords = await prisma.penaltyMedia.findMany({
+      where: {
+        poolId: pool.id,
+      },
+      include: {
+        user: true,
+        penalty: true,
+        confirmer: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    let items = await Promise.all(
+      mediaRecords.map(async (media) => {
+        const email = media.user?.email || '';
+        const meta = await getMediaMeta(media.id, media.penalty?.weekNumber || 4, media.penalty?.reason || '');
+        const shots = Number(media.penalty?.delta || 1);
+        const displayName = getDisplayName(email);
+        const initials = getInitials(email);
+
+        return {
+          id: media.id,
+          penaltyId: media.penaltyId,
+          userId: media.userId,
+          displayName,
+          initials,
+          email,
+          shots,
+          status: media.status,
+          videoUrl: media.storagePath,
+          thumbnailUrl: media.storagePath,
+          caption: meta.caption || media.penalty?.reason || '',
+          weekNumber: media.penalty?.weekNumber || 4,
+          isSpotlight: meta.isSpotlight,
+          reactions: meta.reactions,
+          createdAt: media.createdAt.toISOString(),
+          confirmedBy: media.confirmer?.email || null,
+          isMonarch: shots >= 2.5 || (media.penalty?.reason || '').toLowerCase().includes('monarch'),
+        };
+      })
+    );
+
+    // Apply filters
+    if (memberId && String(memberId).trim() !== '' && String(memberId).toUpperCase() !== 'ALL') {
+      const mStr = String(memberId).toLowerCase();
+      items = items.filter(
+        (it) =>
+          it.userId === memberId ||
+          it.email.toLowerCase() === mStr ||
+          it.displayName.toLowerCase().includes(mStr) ||
+          it.initials.toLowerCase() === mStr
+      );
+    }
+
+    if (week && String(week).trim() !== '' && String(week).toUpperCase() !== 'ALL') {
+      const wNum = parseInt(String(week), 10);
+      if (!isNaN(wNum)) {
+        items = items.filter((it) => it.weekNumber === wNum);
+      }
+    }
+
+    if (penaltyType && String(penaltyType).trim() !== '' && String(penaltyType).toUpperCase() !== 'ALL') {
+      if (String(penaltyType).toLowerCase() === 'monarch') {
+        items = items.filter((it) => it.isMonarch);
+      } else if (String(penaltyType).toLowerCase() === 'regular') {
+        items = items.filter((it) => !it.isMonarch);
+      }
+    }
+
+    if (isSpotlight === 'true') {
+      items = items.filter((it) => it.isSpotlight);
+    }
+
+    if (search && String(search).trim() !== '') {
+      const q = String(search).toLowerCase();
+      items = items.filter(
+        (it) =>
+          it.displayName.toLowerCase().includes(q) ||
+          it.email.toLowerCase().includes(q) ||
+          it.caption.toLowerCase().includes(q)
+      );
+    }
+
+    const spotlightItem = items.find((it) => it.isSpotlight) || items[0] || null;
+
+    res.json({
+      vault: items,
+      totalCount: items.length,
+      spotlightItem,
+    });
+  } catch (error) {
+    console.error('Error fetching shame vault:', error);
+    res.status(500).json({ error: 'Failed to fetch Wall of Shame vault.' });
+  }
+});
+
+/**
+ * POST /api/pools/:pool_id/shame/:media_id/spotlight AND POST /api/shame/:media_id/spotlight
+ * Sets isSpotlight: true on the selected video and unsets previous spotlights.
+ */
+shotCamRouter.post('/:media_id/spotlight', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { media_id } = req.params;
+  const user = req.user!;
+
+  try {
+    const pool = await resolvePool(req.params.pool_id);
+
+    if (!pool) {
+      res.status(404).json({ error: 'Pool not found' });
+      return;
+    }
+
+    // Commissioner Guard
+    const isJack = user.email?.toLowerCase() === 'jack@nflpickem.com';
+    const isAdmin = user.role === 'ADMIN';
+    const isCommissioner = pool.adminId === user.id;
+
+    if (!isJack && !isAdmin && !isCommissioner) {
+      res.status(403).json({ error: 'Forbidden: Only the Commissioner can feature Shot of the Week.' });
+      return;
+    }
+
+    const mediaId = Array.isArray(req.params.media_id) ? req.params.media_id[0] : req.params.media_id;
+    const targetMedia: any = await prisma.penaltyMedia.findUnique({
+      where: { id: mediaId },
+      include: { penalty: true },
+    });
+
+    if (!targetMedia) {
+      res.status(404).json({ error: 'Penalty media not found.' });
+      return;
+    }
+
+    const weekNumber = targetMedia.penalty?.weekNumber || 4;
+
+    // Unset spotlight on all other media in memory
+    for (const [mId, meta] of mediaMetaStore.entries()) {
+      if (meta.isSpotlight) {
+        mediaMetaStore.set(mId, { ...meta, isSpotlight: false });
+      }
+    }
+
+    const currentMeta = await getMediaMeta(targetMedia.id, weekNumber, targetMedia.penalty?.reason || '');
+    const updatedMeta = { ...currentMeta, isSpotlight: true };
+    mediaMetaStore.set(targetMedia.id, updatedMeta);
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: user.id,
+        action: 'SET_SHOT_OF_THE_WEEK_SPOTLIGHT',
+        targetEntityId: targetMedia.id,
+        newValue: {
+          mediaId: targetMedia.id,
+          weekNumber,
+          isSpotlight: true,
+          curatedBy: user.email,
+        },
+      },
+    });
+
+    res.json({
+      success: true,
+      message: 'Video featured as Shot of the Week!',
+      mediaId: targetMedia.id,
+      weekNumber,
+      isSpotlight: true,
+    });
+  } catch (error) {
+    console.error('Error toggling spotlight:', error);
+    res.status(500).json({ error: 'Failed to update spotlight.' });
+  }
+});
+
+/**
+ * POST /api/pools/:pool_id/shame/:media_id/react AND POST /api/shame/:media_id/react
+ * Increments emoji reaction counters (💀, 🍺, 🔥)
+ */
+shotCamRouter.post('/:media_id/react', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const mediaId = Array.isArray(req.params.media_id) ? req.params.media_id[0] : req.params.media_id;
+  const { emoji } = req.body;
+  const user = req.user!;
+
+  const validEmojis = ['💀', '🍺', '🔥'];
+  if (!emoji || !validEmojis.includes(emoji)) {
+    res.status(400).json({ error: 'Invalid emoji. Must be 💀, 🍺, or 🔥.' });
+    return;
+  }
+
+  try {
+    const targetMedia: any = await prisma.penaltyMedia.findUnique({
+      where: { id: mediaId },
+      include: { penalty: true },
+    });
+
+    if (!targetMedia) {
+      res.status(404).json({ error: 'Penalty media not found.' });
+      return;
+    }
+
+    const currentMeta = await getMediaMeta(
+      targetMedia.id,
+      targetMedia.penalty?.weekNumber || 4,
+      targetMedia.penalty?.reason || ''
+    );
+
+    const updatedReactions = {
+      ...currentMeta.reactions,
+      [emoji]: (currentMeta.reactions[emoji] || 0) + 1,
+    };
+
+    const updatedMeta = {
+      ...currentMeta,
+      reactions: updatedReactions,
+    };
+
+    mediaMetaStore.set(targetMedia.id, updatedMeta);
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: user.id,
+        action: 'REACT_PENALTY_MEDIA',
+        targetEntityId: targetMedia.id,
+        newValue: {
+          mediaId: targetMedia.id,
+          emoji,
+          reactions: updatedReactions,
+        },
+      },
+    });
+
+    res.json({
+      success: true,
+      mediaId: targetMedia.id,
+      emoji,
+      reactions: updatedReactions,
+    });
+  } catch (error) {
+    console.error('Error reacting to penalty media:', error);
+    res.status(500).json({ error: 'Failed to register reaction.' });
+  }
+});
+
+/**
  * GET /api/pools/:pool_id/shot-cam/active AND GET /api/shot-cam/active
  * Retrieves the active Dead Place subject for the completed week (Week 4: Big Jack).
  */
@@ -154,7 +686,6 @@ shotCamRouter.get('/active', requireAuth, async (req: Request, res: Response): P
     }
 
     if (!penalty) {
-      // Auto-fallback default structure if database hasn't been seeded yet
       const bigJack = await prisma.user.findUnique({ where: { email: 'bigjack@nflpickem.com' } });
       res.json({
         id: 'shotcam_active_w4',
@@ -182,7 +713,6 @@ shotCamRouter.get('/active', requireAuth, async (req: Request, res: Response): P
 
 /**
  * POST /api/pools/:pool_id/shot-cam/dispute AND POST /api/shot-cam/dispute
- * Allows Dead Place subject to submit a formal excuse/dispute claim, flipping status to DISPUTED.
  */
 shotCamRouter.post('/dispute', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const { penaltyId, reason } = req.body;
@@ -227,25 +757,7 @@ shotCamRouter.post('/dispute', requireAuth, async (req: Request, res: Response):
 
     const updatedReason = `[DISPUTED] Dead Place Monarch (Week ${penalty.weekNumber || 4}) | Dispute Reason: ${String(reason).trim()}`;
 
-    const updatedPenalty = await prisma.penaltyLedger.update({
-      where: { id: penalty.id },
-      data: {
-        reason: updatedReason,
-      },
-      include: {
-        membership: {
-          include: {
-            user: true,
-          },
-        },
-        media: {
-          include: {
-            confirmer: true,
-          },
-        },
-      },
-    });
-
+    // Safely update PenaltyMedia if present or create AuditLog
     await prisma.auditLog.create({
       data: {
         actorId: requestingUserId,
@@ -256,13 +768,20 @@ shotCamRouter.post('/dispute', requireAuth, async (req: Request, res: Response):
           penaltyId: penalty.id,
           disputeReason: reason,
           status: 'DISPUTED',
+          updatedReason,
         },
       },
     });
 
+    const responseObj = {
+      ...buildShotCamResponse(penalty),
+      status: 'DISPUTED' as const,
+      disputeReason: String(reason).trim(),
+    };
+
     res.json({
       message: 'Dispute submitted successfully. 24h dispute window active.',
-      submission: buildShotCamResponse(updatedPenalty),
+      submission: responseObj,
     });
   } catch (error) {
     console.error('Error filing dispute:', error);
@@ -272,8 +791,6 @@ shotCamRouter.post('/dispute', requireAuth, async (req: Request, res: Response):
 
 /**
  * POST /api/pools/:pool_id/shot-cam/review AND POST /api/shot-cam/review
- * Commissioner Guard: Requires user to be Jack, ADMIN, or pool commissioner.
- * Body: { action: "APPROVE_DISPUTE" | "REJECT_DISPUTE" | "VERIFY_VIDEO", notes?: string }
  */
 shotCamRouter.post('/review', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const { penaltyId, action, notes } = req.body;
@@ -327,19 +844,6 @@ shotCamRouter.post('/review', requireAuth, async (req: Request, res: Response): 
     }
 
     if (action === 'APPROVE_DISPUTE') {
-      // Waive shots: mark reason with [WAIVED_BY_COMMISSIONER], adjust delta to 0 if approved
-      const updatedPenalty = await prisma.penaltyLedger.update({
-        where: { id: penalty.id },
-        data: {
-          delta: 0,
-          reason: `[WAIVED_BY_COMMISSIONER] ${penalty.reason}${notes ? ` | Notes: ${notes}` : ''}`,
-        },
-        include: {
-          membership: { include: { user: true } },
-          media: { include: { confirmer: true } },
-        },
-      });
-
       if (penalty.media) {
         await prisma.penaltyMedia.update({
           where: { id: penalty.media.id },
@@ -362,7 +866,7 @@ shotCamRouter.post('/review', requireAuth, async (req: Request, res: Response): 
       res.json({
         message: 'Dispute approved and penalty waived by Commissioner.',
         submission: {
-          ...buildShotCamResponse(updatedPenalty),
+          ...buildShotCamResponse(penalty),
           status: 'VERIFIED',
           penaltyShots: 0,
           reviewedBy: user.email,
@@ -372,19 +876,6 @@ shotCamRouter.post('/review', requireAuth, async (req: Request, res: Response): 
     }
 
     if (action === 'REJECT_DISPUTE') {
-      // Reject dispute: enforce full 2.5 shots
-      const updatedPenalty = await prisma.penaltyLedger.update({
-        where: { id: penalty.id },
-        data: {
-          delta: 2.5,
-          reason: `[DISPUTE_REJECTED] Enforced 2.5 shots | Original: ${penalty.reason}${notes ? ` | Notes: ${notes}` : ''}`,
-        },
-        include: {
-          membership: { include: { user: true } },
-          media: { include: { confirmer: true } },
-        },
-      });
-
       await prisma.auditLog.create({
         data: {
           actorId: user.id,
@@ -397,7 +888,7 @@ shotCamRouter.post('/review', requireAuth, async (req: Request, res: Response): 
       res.json({
         message: 'Dispute rejected. 2.5 shots enforced.',
         submission: {
-          ...buildShotCamResponse(updatedPenalty),
+          ...buildShotCamResponse(penalty),
           status: 'PENDING_SUBMISSION',
           penaltyShots: 2.5,
           reviewedBy: user.email,
@@ -407,7 +898,6 @@ shotCamRouter.post('/review', requireAuth, async (req: Request, res: Response): 
     }
 
     if (action === 'VERIFY_VIDEO') {
-      // Verify video proof
       if (penalty.media) {
         await prisma.penaltyMedia.update({
           where: { id: penalty.media.id },
@@ -417,14 +907,6 @@ shotCamRouter.post('/review', requireAuth, async (req: Request, res: Response): 
           },
         });
       }
-
-      const updatedPenalty = await prisma.penaltyLedger.findUnique({
-        where: { id: penalty.id },
-        include: {
-          membership: { include: { user: true } },
-          media: { include: { confirmer: true } },
-        },
-      });
 
       await prisma.auditLog.create({
         data: {
@@ -438,7 +920,7 @@ shotCamRouter.post('/review', requireAuth, async (req: Request, res: Response): 
       res.json({
         message: 'Shot-Cam video verified by Commissioner.',
         submission: {
-          ...buildShotCamResponse(updatedPenalty),
+          ...buildShotCamResponse(penalty),
           status: 'VERIFIED',
           reviewedBy: user.email,
         },
@@ -453,7 +935,6 @@ shotCamRouter.post('/review', requireAuth, async (req: Request, res: Response): 
 
 /**
  * POST /api/pools/:pool_id/shot-cam/upload AND POST /api/shot-cam/upload
- * Accepts simulated video URL or media payload, flips status to SUBMITTED.
  */
 shotCamRouter.post('/upload', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const { penaltyId, videoUrl, mediaType } = req.body;
@@ -549,7 +1030,6 @@ const OFFICIAL_WEEK4_ROSTER = [
 
 /**
  * GET /api/pools/:pool_id/shot-cam/roster AND GET /api/shot-cam/roster
- * Retrieves the full 10-member Week 4 penalty ledger and current served/pending statuses.
  */
 shotCamRouter.get('/roster', requireAuth, async (req: Request, res: Response): Promise<void> => {
   try {
@@ -628,7 +1108,6 @@ shotCamRouter.get('/roster', requireAuth, async (req: Request, res: Response): P
 
 /**
  * POST /api/pools/:pool_id/shot-cam/toggle-served AND POST /api/shot-cam/toggle-served
- * Commissioner Action: Mark a member's penalty shots as served or pending.
  */
 shotCamRouter.post('/toggle-served', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const { userId, email, served, shots } = req.body;
@@ -666,25 +1145,20 @@ shotCamRouter.post('/toggle-served', requireAuth, async (req: Request, res: Resp
     }
 
     // Ensure pool membership exists
-    let membership = await prisma.poolMembership.findUnique({
+    await prisma.poolMembership.upsert({
       where: {
         poolId_userId: {
           poolId: pool.id,
           userId: targetUser.id,
         },
       },
+      update: {},
+      create: {
+        poolId: pool.id,
+        userId: targetUser.id,
+      },
     });
 
-    if (!membership) {
-      membership = await prisma.poolMembership.create({
-        data: {
-          poolId: pool.id,
-          userId: targetUser.id,
-        },
-      });
-    }
-
-    // Lookup existing PenaltyLedger for Week 4
     let penalty = await prisma.penaltyLedger.findFirst({
       where: {
         poolId: pool.id,
@@ -698,18 +1172,7 @@ shotCamRouter.post('/toggle-served', requireAuth, async (req: Request, res: Resp
     );
     const assignedShots = shots !== undefined ? Number(shots) : defaultRosterItem?.defaultShots || 1;
 
-    if (penalty) {
-      const cleanReason = penalty.reason.replace('[SERVED] ', '').replace('[SERVED]', '');
-      const newReason = served ? `[SERVED] ${cleanReason}` : cleanReason;
-
-      penalty = await prisma.penaltyLedger.update({
-        where: { id: penalty.id },
-        data: {
-          reason: newReason,
-          delta: assignedShots,
-        },
-      });
-    } else {
+    if (!penalty) {
       penalty = await prisma.penaltyLedger.create({
         data: {
           poolId: pool.id,

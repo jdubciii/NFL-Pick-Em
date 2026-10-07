@@ -42,6 +42,8 @@ app.use('/api/webhooks', webhooksRouter);
 app.use('/api/pools', opsRouter);
 app.use('/api/pools/:pool_id/shot-cam', shotCamRouter);
 app.use('/api/shot-cam', shotCamRouter);
+app.use('/api/pools/:pool_id/shame', shotCamRouter);
+app.use('/api/shame', shotCamRouter);
 
 
 

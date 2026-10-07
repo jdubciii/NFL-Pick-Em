@@ -297,7 +297,7 @@ function runMonteCarlo(
   const userMember = finalProjected.find((m) => m.isUser) || finalProjected[0];
   const competitors = finalProjected.filter((m) => !m.isUser);
   competitors.sort((a, b) => b.winProbability - a.winProbability);
-  const topChallenger = competitors[0] || { name: 'Commissioner', winProbability: 7.4 };
+  const topChallenger = competitors[0] || { name: 'Commissioner', winProbability: 7.4, projectedPoints: 12 };
 
   const lastPlaceCandidates = [...finalProjected].sort((a, b) => b.deadPlaceProbability - a.deadPlaceProbability);
   const deadPlaceMonarch = lastPlaceCandidates[0] || finalProjected[finalProjected.length - 1];
@@ -580,6 +580,7 @@ export const SweatRadarPage: React.FC = () => {
   const jackProjected = projectedMembers.find((m) => m.isUser) || projectedMembers[0] || {
     projectedRank: 1,
     winProbability: 88,
+    podiumProbability: 95,
     projectedPoints: 26,
     currentPoints: 14,
   };

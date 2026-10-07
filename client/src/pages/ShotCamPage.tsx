@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   Beer,
@@ -22,6 +22,10 @@ import {
   Users,
   Flame,
   Wine,
+  Radio,
+  PlusCircle,
+  Smile,
+  ThumbsUp,
 } from 'lucide-react';
 
 export type ShotCamStatus =
@@ -61,6 +65,25 @@ export interface ShotRosterMember {
   isMonarch?: boolean;
 }
 
+export interface ShotFeedItem {
+  id: string;
+  penaltyId: string;
+  userId: string;
+  displayName: string;
+  initials: string;
+  email: string;
+  avatarUrl?: string | null;
+  shots: number;
+  status: 'PENDING' | 'CONFIRMED' | 'REJECTED';
+  videoUrl: string;
+  caption: string;
+  weekNumber: number;
+  createdAt: string;
+  confirmedBy?: string | null;
+  isSpotlight?: boolean;
+  reactions: Record<string, number>;
+}
+
 const DEFAULT_ROSTER: ShotRosterMember[] = [
   { userId: 'mb', displayName: 'Matt Brickner', initials: 'MB', email: 'matt.b@nflpickem.com', week4Score: 14, rank: 1, owedShots: 0, defaultShots: 0, status: 'SAFE' },
   { userId: 'mc', displayName: 'Matt Cone', initials: 'MC', email: 'matt.c@nflpickem.com', week4Score: 14, rank: 1, owedShots: 0, defaultShots: 0, status: 'SAFE' },
@@ -74,11 +97,24 @@ const DEFAULT_ROSTER: ShotRosterMember[] = [
   { userId: 'bj', displayName: 'Big Jack', initials: 'BJ', email: 'bigjack@nflpickem.com', week4Score: 8, rank: 10, owedShots: 2.5, defaultShots: 2.5, status: 'DISPUTED', isMonarch: true },
 ];
 
+function formatTimestamp(isoString: string): string {
+  try {
+    const d = new Date(isoString);
+    const dayName = d.toLocaleDateString([], { weekday: 'short' });
+    const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+    return `${dayName} ${timeStr}`;
+  } catch {
+    return isoString;
+  }
+}
+
 export const ShotCamPage: React.FC = () => {
   const { token, user } = useAuth();
   const [poolId, setPoolId] = useState<string>('');
   const [activeRecord, setActiveRecord] = useState<ShotCamActiveRecord | null>(null);
   const [roster, setRoster] = useState<ShotRosterMember[]>(DEFAULT_ROSTER);
+  const [feedItems, setFeedItems] = useState<ShotFeedItem[]>([]);
+  const [feedLoading, setFeedLoading] = useState<boolean>(true);
   const [rosterLoading, setRosterLoading] = useState<boolean>(true);
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -93,11 +129,19 @@ export const ShotCamPage: React.FC = () => {
   const [disputeInput, setDisputeInput] = useState<string>('');
   const [showDisputeDrawer, setShowDisputeDrawer] = useState<boolean>(false);
 
-  // Video upload state
+  // Video upload state (Big Jack direct proof)
   const [videoUrlInput, setVideoUrlInput] = useState<string>(
     'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
   );
   const [isUploading, setIsUploading] = useState<boolean>(false);
+
+  // Live Gameday Submit Modal State
+  const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
+  const [modalVideoUrl, setModalVideoUrl] = useState<string>('https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4');
+  const [modalCaption, setModalCaption] = useState<string>('');
+  const [modalShots, setModalShots] = useState<number>(1.0);
+  const [modalWeek, setModalWeek] = useState<number>(4);
+  const [isSubmittingFeed, setIsSubmittingFeed] = useState<boolean>(false);
 
   // Fetch available pools first
   useEffect(() => {
@@ -177,14 +221,40 @@ export const ShotCamPage: React.FC = () => {
     }
   }, [poolId, token]);
 
+  // Fetch Live Gameday Shot Stream Feed
+  const fetchFeed = useCallback(async () => {
+    setFeedLoading(true);
+    try {
+      const endpoint = poolId
+        ? `/api/pools/${poolId}/shot-cam/feed?weekNumber=4`
+        : '/api/shot-cam/feed?weekNumber=4';
+
+      const res = await fetch(endpoint, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.feed && Array.isArray(data.feed)) {
+          setFeedItems(data.feed);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load shot-cam feed:', err);
+    } finally {
+      setFeedLoading(false);
+    }
+  }, [poolId, token]);
+
   useEffect(() => {
     fetchActiveRecord();
     fetchRoster();
-  }, [fetchActiveRecord, fetchRoster]);
+    fetchFeed();
+  }, [fetchActiveRecord, fetchRoster, fetchFeed]);
 
   const handleRefreshAll = () => {
     fetchActiveRecord();
     fetchRoster();
+    fetchFeed();
   };
 
   // Commissioner Action: Toggle Served Status for any League Member
@@ -276,6 +346,7 @@ export const ShotCamPage: React.FC = () => {
       setActiveRecord(result.submission || null);
       setSuccessMessage(result.message || 'Action processed successfully.');
       setTimeout(() => setSuccessMessage(null), 5000);
+      fetchFeed();
     } catch (err: any) {
       setError(err.message || 'Error executing review action.');
     } finally {
@@ -318,6 +389,7 @@ export const ShotCamPage: React.FC = () => {
       setShowDisputeDrawer(false);
       setDisputeInput('');
       setTimeout(() => setSuccessMessage(null), 5000);
+      fetchFeed();
     } catch (err: any) {
       setError(err.message || 'Error filing dispute.');
     } finally {
@@ -359,10 +431,95 @@ export const ShotCamPage: React.FC = () => {
       setActiveRecord(result.submission || null);
       setSuccessMessage('Video proof submitted successfully! Awaiting Commissioner audit.');
       setTimeout(() => setSuccessMessage(null), 5000);
+      fetchFeed();
     } catch (err: any) {
       setError(err.message || 'Error submitting video proof.');
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  // Handle Live Gameday Feed Submission on the fly
+  const handleFeedSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!modalVideoUrl.trim()) return;
+    setIsSubmittingFeed(true);
+    setError(null);
+    setSuccessMessage(null);
+
+    try {
+      const endpoint = poolId
+        ? `/api/pools/${poolId}/shot-cam/feed/submit`
+        : '/api/shot-cam/feed/submit';
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          weekNumber: modalWeek,
+          videoUrl: modalVideoUrl.trim(),
+          caption: modalCaption.trim() || `Week ${modalWeek} Shot Penalty Downed 🍺`,
+          shots: modalShots,
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to submit shot clip');
+      }
+
+      const result = await res.json();
+      if (result.item) {
+        setFeedItems((prev) => [result.item, ...prev]);
+      }
+      setSuccessMessage('Your shot clip was successfully posted to the live feed!');
+      setShowSubmitModal(false);
+      setModalCaption('');
+      setTimeout(() => setSuccessMessage(null), 5000);
+    } catch (err: any) {
+      setError(err.message || 'Error uploading shot to live feed.');
+    } finally {
+      setIsSubmittingFeed(false);
+    }
+  };
+
+  // Handle Reaction Click on any feed video
+  const handleReaction = async (mediaId: string, emoji: '💀' | '🍺' | '🔥') => {
+    // Optimistic update
+    setFeedItems((prev) =>
+      prev.map((it) => {
+        if (it.id === mediaId) {
+          const currentCount = it.reactions?.[emoji] || 0;
+          return {
+            ...it,
+            reactions: {
+              ...it.reactions,
+              [emoji]: currentCount + 1,
+            },
+          };
+        }
+        return it;
+      })
+    );
+
+    try {
+      const endpoint = poolId
+        ? `/api/pools/${poolId}/shame/${mediaId}/react`
+        : `/api/shame/${mediaId}/react`;
+
+      await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ emoji }),
+      });
+    } catch (err) {
+      console.warn('Reaction submission error:', err);
     }
   };
 
@@ -398,8 +555,6 @@ export const ShotCamPage: React.FC = () => {
     user?.email?.toLowerCase() === 'jack@nflpickem.com' ||
     user?.email?.toLowerCase() === 'admin@nflpickem.com';
 
-  const isSubject = user?.email?.toLowerCase() === 'bigjack@nflpickem.com' || user?.id === activeRecord?.userId;
-
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 space-y-8 animate-in fade-in duration-300">
       {/* Page Header */}
@@ -411,23 +566,33 @@ export const ShotCamPage: React.FC = () => {
             </div>
             <div>
               <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-                Shot-Cam Dispute & Verification Portal
+                Shot-Cam Dispute & Live Stream Feed
               </h1>
               <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
-                Tamper-proof Dead Place Monarch penalty execution & 24h dispute lifecycle (Decision #65).
+                Real-time penalty execution, Dead Place Monarch dispute portal & live gameday stream.
               </p>
             </div>
           </div>
         </div>
 
-        <button
-          onClick={handleRefreshAll}
-          disabled={loading || rosterLoading}
-          className="flex items-center space-x-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 shadow-sm transition-all disabled:opacity-50"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading || rosterLoading ? 'animate-spin text-cyan-400' : ''}`} />
-          <span>Refresh</span>
-        </button>
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={() => setShowSubmitModal(true)}
+            className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg shadow-rose-500/20 transition-all"
+          >
+            <PlusCircle className="w-4 h-4" />
+            <span>Submit Your Shot</span>
+          </button>
+
+          <button
+            onClick={handleRefreshAll}
+            disabled={loading || rosterLoading || feedLoading}
+            className="flex items-center space-x-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 shadow-sm transition-all disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading || rosterLoading || feedLoading ? 'animate-spin text-cyan-400' : ''}`} />
+            <span>Refresh</span>
+          </button>
+        </div>
       </div>
 
       {/* Alerts / Feedback Banners */}
@@ -445,10 +610,10 @@ export const ShotCamPage: React.FC = () => {
         </div>
       )}
 
-      {/* Main Active Dead Place Penalty Card */}
+      {/* Main Grid: Monarch Banner, Ladder, Feed, and Actions */}
       {activeRecord ? (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Column (8 cols): Subject Banner, Countdown, Video Proof */}
+          {/* Left Column (8 cols): Subject Banner, Countdown, Ladder, and Live Feed */}
           <div className="lg:col-span-8 space-y-6">
             {/* 1. Active Dead Place Monarch Banner */}
             <div className="relative overflow-hidden rounded-2xl border-2 border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-slate-900/90 to-slate-950 p-6 shadow-2xl shadow-black/60">
@@ -581,7 +746,7 @@ export const ShotCamPage: React.FC = () => {
               )}
             </div>
 
-            {/* 3. League Shot Roster & Tab (Week 4) */}
+            {/* 3. League Shot Roster & Tab (Week 4 10-Member Ladder) */}
             <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-4">
                 <div className="flex items-center space-x-2.5">
@@ -590,7 +755,7 @@ export const ShotCamPage: React.FC = () => {
                   </div>
                   <div>
                     <h3 className="text-sm sm:text-base font-black text-white uppercase tracking-wider">
-                      League Shot Roster & Tab (Week 4)
+                      League Shot Ladder & Tab (Week 4)
                     </h3>
                     <p className="text-[11px] text-slate-400 mt-0.5">
                       10-member penalty ladder & persistent tab derived from Week 4 standings.
@@ -614,7 +779,6 @@ export const ShotCamPage: React.FC = () => {
                   const isDisputed = member.status === 'DISPUTED';
                   const isSelf = member.email?.toLowerCase() === 'jack@nflpickem.com' || member.userId === user?.id;
 
-                  // Penalty tier badge styling
                   let penaltyBadge;
                   if (isSafe) {
                     penaltyBadge = (
@@ -642,7 +806,6 @@ export const ShotCamPage: React.FC = () => {
                     );
                   }
 
-                  // Avatar styling
                   let avatarStyle = 'bg-slate-800 text-slate-300 border border-slate-700';
                   if (isMonarch) {
                     avatarStyle = 'bg-gradient-to-tr from-amber-500 via-rose-500 to-indigo-600 text-white font-black shadow-md border border-amber-400/50';
@@ -665,7 +828,6 @@ export const ShotCamPage: React.FC = () => {
                           : 'hover:bg-slate-850/40'
                       }`}
                     >
-                      {/* Left: Avatar & Member Info */}
                       <div className="flex items-center space-x-3 min-w-0">
                         <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs shrink-0 ${avatarStyle}`}>
                           {member.initials}
@@ -694,11 +856,9 @@ export const ShotCamPage: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Right: Shot Badge & Status/Commissioner Toggle */}
                       <div className="flex items-center justify-between sm:justify-end gap-2.5 w-full sm:w-auto self-stretch sm:self-auto pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-800/60">
                         {penaltyBadge}
 
-                        {/* Status Label */}
                         <div className="flex items-center space-x-2">
                           {isSafe ? (
                             <span className="text-[10px] font-bold text-slate-500 uppercase">
@@ -721,7 +881,6 @@ export const ShotCamPage: React.FC = () => {
                             </span>
                           )}
 
-                          {/* Commissioner Quick-Toggle */}
                           {isCommissioner && !isSafe && (
                             <button
                               type="button"
@@ -751,51 +910,174 @@ export const ShotCamPage: React.FC = () => {
               </div>
             </div>
 
-            {/* 4. Video Verification Player */}
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-xl space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <FileVideo className="w-5 h-5 text-cyan-400" />
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                    Shot-Cam Video Proof Verification
-                  </h3>
+            {/* 4. LIVE GAMEDAY SHOT STREAM (Directly Beneath Ledger) */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-5 shadow-2xl space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2.5 rounded-xl bg-gradient-to-tr from-rose-500 to-amber-500 text-white shadow-md shadow-rose-500/30">
+                    <Radio className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <h3 className="text-base sm:text-lg font-black text-white uppercase tracking-wider">
+                        Live Gameday Shot Stream
+                      </h3>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse">
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                        LIVE
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Chronological punishment execution feed recorded and uploaded on gameday.
+                    </p>
+                  </div>
                 </div>
-                <span className="text-xs text-slate-400">
-                  {activeRecord.videoUrl ? 'Proof Attached' : 'No Video Uploaded'}
-                </span>
+
+                <button
+                  type="button"
+                  onClick={() => setShowSubmitModal(true)}
+                  className="inline-flex items-center space-x-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-black border border-amber-500/30 hover:border-amber-500/60 shadow-sm transition-all self-start sm:self-auto"
+                >
+                  <PlusCircle className="w-4 h-4 text-amber-400" />
+                  <span>Submit Clip</span>
+                </button>
               </div>
 
-              {activeRecord.videoUrl ? (
-                <div className="relative rounded-xl overflow-hidden border border-slate-800 bg-black aspect-video flex items-center justify-center group shadow-2xl">
-                  <video
-                    src={activeRecord.videoUrl}
-                    controls
-                    playsInline
-                    className="w-full h-full object-contain"
-                  />
-                  {/* Verified Watermark if VERIFIED */}
-                  {activeRecord.status === 'VERIFIED' && (
-                    <div className="absolute top-3 right-3 px-3 py-1 rounded-full bg-emerald-500/90 text-slate-950 text-xs font-black uppercase tracking-wider flex items-center space-x-1 shadow-lg pointer-events-none">
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Verified Shot</span>
-                    </div>
-                  )}
+              {/* Feed Content */}
+              {feedLoading && feedItems.length === 0 ? (
+                <div className="py-12 flex flex-col items-center justify-center space-y-3 text-slate-400">
+                  <RefreshCw className="w-8 h-8 animate-spin text-amber-500" />
+                  <span className="text-xs font-mono">Loading live gameday stream...</span>
+                </div>
+              ) : feedItems.length === 0 ? (
+                <div className="py-12 flex flex-col items-center justify-center space-y-2 text-center text-slate-400 bg-slate-950/40 rounded-xl border border-dashed border-slate-800 p-8">
+                  <Beer className="w-10 h-10 text-slate-600 mb-1" />
+                  <p className="text-sm font-bold text-slate-300">No shot clips uploaded for this week yet.</p>
+                  <p className="text-xs text-slate-500 max-w-sm">
+                    Be the first to down your penalty shot and stream proof to the league!
+                  </p>
+                  <button
+                    onClick={() => setShowSubmitModal(true)}
+                    className="mt-3 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-rose-500 text-slate-950 text-xs font-bold"
+                  >
+                    Submit Your Shot Proof
+                  </button>
                 </div>
               ) : (
-                <div className="rounded-xl border border-dashed border-slate-800 bg-slate-950/60 p-10 flex flex-col items-center justify-center text-center space-y-2">
-                  <UploadCloud className="w-10 h-10 text-slate-600 animate-bounce" />
-                  <p className="text-sm font-bold text-slate-300">
-                    No Shot-Cam proof video uploaded yet
-                  </p>
-                  <p className="text-xs text-slate-500 max-w-sm">
-                    Big Jack must record and submit 2.5 shots consumed on video to clear this penalty.
-                  </p>
+                <div className="space-y-6">
+                  {feedItems.map((item) => {
+                    const isConfirmed = item.status === 'CONFIRMED';
+                    const isMonarch = item.shots >= 2.5;
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="rounded-2xl border border-slate-800/80 bg-slate-950/70 p-5 shadow-xl space-y-4 hover:border-slate-700/80 transition-all"
+                      >
+                        {/* Video Card Header */}
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-rose-500 text-white font-black flex items-center justify-center text-xs shadow-md">
+                              {item.initials}
+                            </div>
+                            <div>
+                              <div className="flex items-center space-x-2">
+                                <span className="font-bold text-sm text-white">{item.displayName}</span>
+                                {item.isSpotlight && (
+                                  <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                                    <Sparkles className="w-3 h-3 text-amber-400" />
+                                    Shot of the Week
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[11px] text-slate-400 font-mono">
+                                {formatTimestamp(item.createdAt)} • Week {item.weekNumber}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center space-x-2">
+                            {/* Shot Count Badge */}
+                            <span
+                              className={`px-2.5 py-1 rounded-lg text-xs font-black font-mono border ${
+                                isMonarch
+                                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                  : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                              }`}
+                            >
+                              {item.shots.toFixed(1)} Shot{item.shots > 1 ? 's' : ''} {isMonarch ? '(Monarch)' : 'Served'}
+                            </span>
+
+                            {/* Downed & Verified Indicator */}
+                            {isConfirmed ? (
+                              <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[11px] font-black bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.15)]">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                <span>Downed & Verified</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                                <Clock className="w-3.5 h-3.5" />
+                                <span>Under Audit</span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Embedded HTML5 Video Player */}
+                        <div className="relative rounded-xl overflow-hidden border border-slate-800 bg-black aspect-video flex items-center justify-center group shadow-2xl">
+                          <video
+                            src={item.videoUrl}
+                            controls
+                            playsInline
+                            preload="metadata"
+                            className="w-full h-full object-contain"
+                          />
+                        </div>
+
+                        {/* Caption & Notes */}
+                        {item.caption && (
+                          <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800/80 text-xs text-slate-300 flex items-start space-x-2.5">
+                            <Beer className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                            <p className="italic leading-relaxed">"{item.caption}"</p>
+                          </div>
+                        )}
+
+                        {/* Emoji Reaction Bar */}
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-800/60">
+                          <div className="flex items-center space-x-2">
+                            {(['💀', '🍺', '🔥'] as const).map((emoji) => {
+                              const count = item.reactions?.[emoji] || 0;
+                              return (
+                                <button
+                                  key={emoji}
+                                  type="button"
+                                  onClick={() => handleReaction(item.id, emoji)}
+                                  className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700/60 hover:border-slate-600 text-xs font-mono font-bold transition-transform active:scale-95 shadow-sm"
+                                  title={`React with ${emoji}`}
+                                >
+                                  <span>{emoji}</span>
+                                  <span className="text-slate-300">{count}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {item.confirmedBy && (
+                            <span className="text-[11px] text-slate-500 flex items-center space-x-1">
+                              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Audited by {item.confirmedBy}</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
           </div>
 
-          {/* Right Column (4 cols): Commissioner Tray, Actions, Upload & Dispute Drawers */}
+          {/* Right Column (4 cols): Commissioner Tray, Proof Upload & Dispute Drawers */}
           <div className="lg:col-span-4 space-y-6">
             {/* Commissioner Control Tray */}
             {isCommissioner ? (
@@ -864,12 +1146,12 @@ export const ShotCamPage: React.FC = () => {
               </div>
             )}
 
-            {/* Video Submission Portal Drawer */}
+            {/* Video Submission Portal Drawer (Monarch Specific) */}
             <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-lg space-y-4">
               <div className="flex items-center space-x-2">
                 <UploadCloud className="w-5 h-5 text-amber-400" />
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                  Submit Proof Video
+                  Submit Monarch Video Proof
                 </h3>
               </div>
 
@@ -957,6 +1239,120 @@ export const ShotCamPage: React.FC = () => {
           <p className="text-sm font-semibold text-slate-400">
             No active Dead Place penalty found in this pool.
           </p>
+        </div>
+      )}
+
+      {/* Floating / Inline Modal: "Submit Your Shot" on the fly */}
+      {showSubmitModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="relative w-full max-w-lg rounded-3xl border border-amber-500/40 bg-slate-900 p-6 sm:p-8 shadow-2xl shadow-black/80 space-y-5">
+            <button
+              onClick={() => setShowSubmitModal(false)}
+              className="absolute top-5 right-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center space-x-3">
+              <div className="p-3 rounded-2xl bg-gradient-to-tr from-amber-500 to-rose-500 text-slate-950 font-black">
+                <Beer className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-white tracking-tight">
+                  Submit Your Shot Proof
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Upload or link your penalty video to post directly to the live feed.
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleFeedSubmit} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                    Week Number
+                  </label>
+                  <select
+                    value={modalWeek}
+                    onChange={(e) => setModalWeek(parseInt(e.target.value, 10))}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs font-bold focus:outline-none focus:border-amber-500"
+                  >
+                    <option value={4}>Week 4 (Current)</option>
+                    <option value={3}>Week 3</option>
+                    <option value={2}>Week 2</option>
+                    <option value={1}>Week 1</option>
+                    <option value={5}>Week 5</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                    Penalty Shots Served
+                  </label>
+                  <select
+                    value={modalShots}
+                    onChange={(e) => setModalShots(parseFloat(e.target.value))}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs font-bold font-mono focus:outline-none focus:border-amber-500"
+                  >
+                    <option value={1.0}>1.0 Shot</option>
+                    <option value={1.5}>1.5 Shots</option>
+                    <option value={2.0}>2.0 Shots</option>
+                    <option value={2.5}>2.5 Shots (Monarch)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                  Video Clip URL / Storage Key
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={modalVideoUrl}
+                  onChange={(e) => setModalVideoUrl(e.target.value)}
+                  placeholder="https://... / video.mp4"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs font-mono focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                  Caption / Trash Talk
+                </label>
+                <textarea
+                  rows={2}
+                  value={modalCaption}
+                  onChange={(e) => setModalCaption(e.target.value)}
+                  placeholder="e.g. Lost the London tiebreaker, taking tequila like a champ!"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs focus:outline-none focus:border-amber-500 resize-none"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setShowSubmitModal(false)}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingFeed || !modalVideoUrl.trim()}
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50 flex items-center space-x-2"
+                >
+                  {isSubmittingFeed ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Send className="w-4 h-4" />
+                  )}
+                  <span>Post Shot to Feed</span>
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>
