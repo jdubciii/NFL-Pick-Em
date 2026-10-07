@@ -18,7 +18,6 @@ import {
   Printer,
 } from 'lucide-react';
 import { formatGameKickoff } from '../utils/dateUtils';
-import { CompactAntiPeekingBadge } from './mobile/CompactAntiPeekingBadge';
 import { MobileMatrixDrawer } from './mobile/MobileMatrixDrawer';
 import { MobileGamedayFeed } from './matrix/MobileGamedayFeed';
 import { LiveMatchupProjection } from './matrix/MatchupCard';
@@ -629,17 +628,6 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
           </div>
         </div>
       )}
-
-      {/* Anti-Peeking / Rules Banner (Hidden in Print) */}
-      {matrixData?.metadata?.hide_picks_until_kickoff ? (
-        <div className="flex items-center justify-between px-2 py-1 print:hidden">
-          <CompactAntiPeekingBadge
-            hiddenGameCount={
-              matrixData.rows.filter((g) => g.status === 'SCHEDULED' && new Date(g.kickoff_time) > new Date()).length
-            }
-          />
-        </div>
-      ) : null}
 
       {/* Error state */}
       {error && (

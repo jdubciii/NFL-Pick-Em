@@ -1,21 +1,17 @@
 import { describe, it, expect } from 'vitest';
 
 describe('Phase 25.1 Dual-Mode Matrix & Cohort Invariants', () => {
-  it('enforces Decision #66 masking when game is not locked', () => {
-    const evaluateCohortDisplay = (isLocked: boolean, cohortCount: number) => {
-      if (!isLocked) {
-        return { isMasked: true, label: `🔒 ${cohortCount} Picks Hidden` };
+  it('supports open transparency mode where picks are visible before kickoff', () => {
+    const evaluateCohortDisplay = (isOpenSlate: boolean, cohortCount: number) => {
+      if (isOpenSlate) {
+        return { isMasked: false, label: 'Revealed' };
       }
-      return { isMasked: false, label: 'Revealed' };
+      return { isMasked: true, label: `🔒 ${cohortCount} Picks Hidden` };
     };
 
-    const preKickoff = evaluateCohortDisplay(false, 10);
-    expect(preKickoff.isMasked).toBe(true);
-    expect(preKickoff.label).toBe('🔒 10 Picks Hidden');
-
-    const postKickoff = evaluateCohortDisplay(true, 10);
-    expect(postKickoff.isMasked).toBe(false);
-    expect(postKickoff.label).toBe('Revealed');
+    const result = evaluateCohortDisplay(true, 10);
+    expect(result.isMasked).toBe(false);
+    expect(result.label).toBe('Revealed');
   });
 
   it('evaluates member matchState accurately based on live scores', () => {
