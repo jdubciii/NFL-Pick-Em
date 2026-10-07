@@ -121,9 +121,16 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
         if (res.ok) {
           const data: PoolSummary[] = await res.json();
           setPools(data);
-          if (data.length > 0 && !selectedPoolId) {
-            const mainPool = data.find(p => p.name === 'Main League') || data[0];
-            if (mainPool) setSelectedPoolId(mainPool.id);
+          if (data.length > 0) {
+            const savedPoolId = localStorage.getItem('active_pool_id');
+            const mainPool =
+              data.find((p) => p.name === 'Main League') ||
+              (savedPoolId ? data.find((p) => p.id === savedPoolId) : undefined) ||
+              data[0];
+            if (mainPool) {
+              setSelectedPoolId(mainPool.id);
+              localStorage.setItem('active_pool_id', mainPool.id);
+            }
           }
         }
       } catch (err) {
@@ -134,7 +141,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
     if (token) {
       fetchPools();
     }
-  }, [token, selectedPoolId]);
+  }, [token]);
 
   // Fetch Matrix data
   const fetchMatrix = useCallback(async () => {
@@ -327,7 +334,10 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
               <div className="relative">
                 <select
                   value={selectedPoolId}
-                  onChange={(e) => setSelectedPoolId(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedPoolId(e.target.value);
+                    localStorage.setItem('active_pool_id', e.target.value);
+                  }}
                   className="appearance-none bg-slate-800/90 border border-slate-700 text-slate-200 text-xs font-semibold rounded-xl pl-3.5 pr-8 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500 transition-all cursor-pointer"
                 >
                   {pools.map((p) => (

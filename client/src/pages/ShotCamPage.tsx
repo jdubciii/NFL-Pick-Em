@@ -143,7 +143,17 @@ export const ShotCamPage: React.FC = () => {
   const [modalWeek, setModalWeek] = useState<number>(4);
   const [isSubmittingFeed, setIsSubmittingFeed] = useState<boolean>(false);
 
-  // Fetch available pools first
+  // Persistent reaction state
+  const [userReactions, setUserReactions] = useState<Record<string, Record<string, boolean>>>(() => {
+    try {
+      const raw = localStorage.getItem('penalty_reactions_v1');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  // Fetch available pools first with persistent default resolution
   useEffect(() => {
     const fetchPools = async () => {
       try {
@@ -153,8 +163,15 @@ export const ShotCamPage: React.FC = () => {
         if (res.ok) {
           const pools = await res.json();
           if (pools.length > 0) {
-            const main = pools.find((p: any) => p.name === 'Main League') || pools[0];
-            setPoolId(main.id);
+            const savedPoolId = localStorage.getItem('active_pool_id');
+            const main =
+              pools.find((p: any) => p.name === 'Main League') ||
+              (savedPoolId ? pools.find((p: any) => p.id === savedPoolId) : undefined) ||
+              pools[0];
+            if (main) {
+              setPoolId(main.id);
+              localStorage.setItem('active_pool_id', main.id);
+            }
           }
         }
       } catch (err) {
@@ -486,9 +503,31 @@ export const ShotCamPage: React.FC = () => {
     }
   };
 
-  // Handle Reaction Click on any feed video
+  // Handle Reaction Click on any feed video with persistent active state
   const handleReaction = async (mediaId: string, emoji: '💀' | '🍺' | '🔥') => {
-    // Optimistic update
+    const isCurrentlyActive = Boolean(userReactions[mediaId]?.[emoji]);
+    const newActive = !isCurrentlyActive;
+
+    // Update local storage and component state
+    try {
+      const raw = localStorage.getItem('penalty_reactions_v1');
+      const current = raw ? JSON.parse(raw) : {};
+      if (!current[mediaId]) current[mediaId] = {};
+      current[mediaId][emoji] = newActive;
+      localStorage.setItem('penalty_reactions_v1', JSON.stringify(current));
+    } catch (err) {
+      console.warn('Failed to save reaction to localStorage', err);
+    }
+
+    setUserReactions((prev) => ({
+      ...prev,
+      [mediaId]: {
+        ...(prev[mediaId] || {}),
+        [emoji]: newActive,
+      },
+    }));
+
+    // Optimistic update of count
     setFeedItems((prev) =>
       prev.map((it) => {
         if (it.id === mediaId) {
@@ -497,7 +536,7 @@ export const ShotCamPage: React.FC = () => {
             ...it,
             reactions: {
               ...it.reactions,
-              [emoji]: currentCount + 1,
+              [emoji]: Math.max(0, currentCount + (newActive ? 1 : -1)),
             },
           };
         }
@@ -1042,21 +1081,26 @@ export const ShotCamPage: React.FC = () => {
                           </div>
                         )}
 
-                        {/* Emoji Reaction Bar */}
+                        {/* Emoji Reaction Bar with Persistent State */}
                         <div className="flex items-center justify-between pt-1 border-t border-slate-800/60">
                           <div className="flex items-center space-x-2">
                             {(['💀', '🍺', '🔥'] as const).map((emoji) => {
                               const count = item.reactions?.[emoji] || 0;
+                              const isActive = Boolean(userReactions[item.id]?.[emoji]);
                               return (
                                 <button
                                   key={emoji}
                                   type="button"
                                   onClick={() => handleReaction(item.id, emoji)}
-                                  className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700/60 hover:border-slate-600 text-xs font-mono font-bold transition-transform active:scale-95 shadow-sm"
+                                  className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition-all active:scale-95 border ${
+                                    isActive
+                                      ? 'ring-1.5 ring-cyan-400 bg-cyan-950/80 text-cyan-300 font-bold scale-105 shadow-[0_0_12px_rgba(6,182,212,0.35)] border-cyan-400/60'
+                                      : 'bg-slate-900 hover:bg-slate-800 text-slate-200 border-slate-700/60 hover:border-slate-600 shadow-sm'
+                                  }`}
                                   title={`React with ${emoji}`}
                                 >
                                   <span>{emoji}</span>
-                                  <span className="text-slate-300">{count}</span>
+                                  <span className={isActive ? 'text-cyan-300' : 'text-slate-300'}>{count}</span>
                                 </button>
                               );
                             })}

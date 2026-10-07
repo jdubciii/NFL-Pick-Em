@@ -349,10 +349,15 @@ export const SweatRadarPage: React.FC = () => {
       let activePoolId = '';
       if (poolRes.ok) {
         const pools = await poolRes.json();
-        const mainPool = pools.find((p: any) => p.name === 'Main League') || pools[0];
+        const savedPoolId = localStorage.getItem('active_pool_id');
+        const mainPool =
+          pools.find((p: any) => p.name === 'Main League') ||
+          (savedPoolId ? pools.find((p: any) => p.id === savedPoolId) : undefined) ||
+          pools[0];
         if (mainPool) {
           activePoolId = mainPool.id;
           setPoolName(mainPool.name);
+          localStorage.setItem('active_pool_id', mainPool.id);
         }
       }
 

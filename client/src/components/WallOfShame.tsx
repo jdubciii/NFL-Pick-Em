@@ -23,6 +23,8 @@ import {
   Video,
   Eye,
   SlidersHorizontal,
+  TrendingUp,
+  Zap,
 } from 'lucide-react';
 
 export interface CumulativeMember {
@@ -118,17 +120,43 @@ function formatTimestamp(isoString: string): string {
   }
 }
 
+const getStoredReactions = (): Record<string, Record<string, boolean>> => {
+  try {
+    const raw = localStorage.getItem('penalty_reactions_v1');
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+};
+
+const saveStoredReaction = (mediaId: string, emoji: string, active: boolean) => {
+  try {
+    const current = getStoredReactions();
+    if (!current[mediaId]) current[mediaId] = {};
+    current[mediaId][emoji] = active;
+    localStorage.setItem('penalty_reactions_v1', JSON.stringify(current));
+  } catch (err) {
+    console.warn('Failed to save reaction to localStorage', err);
+  }
+};
+
 export const WallOfShame: React.FC = () => {
   const { token, user } = useAuth();
   const [pools, setPools] = useState<PoolOption[]>([]);
   const [selectedPoolId, setSelectedPoolId] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'vault' | 'cumulative'>('vault');
 
+  // Multi-Metric Odometer State
+  const [odometerUnit, setOdometerUnit] = useState<'shots' | 'fifths' | 'oz'>('shots');
+
   // Vault state
   const [vaultItems, setVaultItems] = useState<ShameVaultItem[]>([]);
   const [spotlightItem, setSpotlightItem] = useState<ShameVaultItem | null>(null);
   const [vaultLoading, setVaultLoading] = useState<boolean>(true);
   const [spotlightingId, setSpotlightingId] = useState<string | null>(null);
+
+  // Reaction Persistent Active State
+  const [userReactions, setUserReactions] = useState<Record<string, Record<string, boolean>>>(() => getStoredReactions());
 
   // Vault filter states
   const [selectedMember, setSelectedMember] = useState<string>('ALL');
@@ -149,7 +177,7 @@ export const WallOfShame: React.FC = () => {
     user?.email?.toLowerCase() === 'jack@nflpickem.com' ||
     user?.email?.toLowerCase() === 'admin@nflpickem.com';
 
-  // 1. Fetch available pools
+  // 1. Fetch available pools with resilient Default Resolution
   useEffect(() => {
     const fetchPools = async () => {
       try {
@@ -159,10 +187,19 @@ export const WallOfShame: React.FC = () => {
           },
         });
         if (!res.ok) throw new Error('Failed to fetch pools');
-        const data = await res.json();
+        const data: PoolOption[] = await res.json();
         setPools(data);
         if (data.length > 0) {
-          setSelectedPoolId(data[0].id);
+          const savedPoolId = localStorage.getItem('active_pool_id');
+          const activePool =
+            data.find((p) => p.name === 'Main League') ||
+            (savedPoolId ? data.find((p) => p.id === savedPoolId) : undefined) ||
+            data[0];
+
+          if (activePool) {
+            setSelectedPoolId(activePool.id);
+            localStorage.setItem('active_pool_id', activePool.id);
+          }
         }
       } catch (err: any) {
         console.error('Error loading pools:', err);
@@ -170,8 +207,15 @@ export const WallOfShame: React.FC = () => {
       }
     };
 
-    fetchPools();
+    if (token) {
+      fetchPools();
+    }
   }, [token]);
+
+  const handlePoolChange = (poolId: string) => {
+    setSelectedPoolId(poolId);
+    localStorage.setItem('active_pool_id', poolId);
+  };
 
   // 2. Fetch Wall of Shame Punishment Vault items
   const fetchVault = useCallback(async () => {
@@ -275,7 +319,6 @@ export const WallOfShame: React.FC = () => {
         throw new Error(errData.error || 'Failed to set Shot of the Week.');
       }
 
-      const result = await res.json();
       setSuccessMessage('Successfully updated Shot of the Week spotlight!');
       setTimeout(() => setSuccessMessage(null), 4000);
 
@@ -288,9 +331,22 @@ export const WallOfShame: React.FC = () => {
     }
   };
 
-  // Reaction Click
+  // Persistent Reaction Click
   const handleReaction = async (mediaId: string, emoji: '💀' | '🍺' | '🔥') => {
-    // Optimistic update
+    const isCurrentlyActive = Boolean(userReactions[mediaId]?.[emoji]);
+    const newActive = !isCurrentlyActive;
+
+    // Update local storage and component active state
+    saveStoredReaction(mediaId, emoji, newActive);
+    setUserReactions((prev) => ({
+      ...prev,
+      [mediaId]: {
+        ...(prev[mediaId] || {}),
+        [emoji]: newActive,
+      },
+    }));
+
+    // Optimistic update of count
     setVaultItems((prev) =>
       prev.map((it) => {
         if (it.id === mediaId) {
@@ -299,7 +355,7 @@ export const WallOfShame: React.FC = () => {
             ...it,
             reactions: {
               ...it.reactions,
-              [emoji]: currentCount + 1,
+              [emoji]: Math.max(0, currentCount + (newActive ? 1 : -1)),
             },
           };
         }
@@ -308,11 +364,12 @@ export const WallOfShame: React.FC = () => {
     );
 
     if (spotlightItem && spotlightItem.id === mediaId) {
+      const currentCount = spotlightItem.reactions?.[emoji] || 0;
       setSpotlightItem({
         ...spotlightItem,
         reactions: {
           ...spotlightItem.reactions,
-          [emoji]: (spotlightItem.reactions?.[emoji] || 0) + 1,
+          [emoji]: Math.max(0, currentCount + (newActive ? 1 : -1)),
         },
       });
     }
@@ -344,7 +401,7 @@ export const WallOfShame: React.FC = () => {
     }
   };
 
-  // Identify reigning dead place monarch (user with max dead_place_finishes > 0)
+  // Identify reigning dead place monarch
   const deadPlaceLeader = cumulativeData?.leaderboard.reduce<CumulativeMember | null>((prev, current) => {
     if (current.dead_place_finishes === 0) return prev;
     if (!prev || current.dead_place_finishes > prev.dead_place_finishes) {
@@ -353,7 +410,22 @@ export const WallOfShame: React.FC = () => {
     return prev;
   }, null);
 
-  const odometerData = parseAndFormatOdometer(cumulativeData?.total_pool_shots);
+  // Conversion Metric Calculations
+  const rawTotalShots = cumulativeData?.total_pool_shots ?? 7.5;
+  const currentWeek = 4;
+  const fifthsDowned = rawTotalShots / 17; // 17 shots per 750ml bottle (1.5oz)
+  const volumeOz = rawTotalShots * 1.5; // 1.5oz per shot
+  const seasonPace = (rawTotalShots / Math.max(1, currentWeek)) * 18;
+
+  // Selected Odometer Display Value
+  const displayedOdometerValue =
+    odometerUnit === 'fifths'
+      ? fifthsDowned
+      : odometerUnit === 'oz'
+      ? volumeOz
+      : rawTotalShots;
+
+  const odometerData = parseAndFormatOdometer(displayedOdometerValue);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 animate-in fade-in duration-300">
@@ -405,7 +477,7 @@ export const WallOfShame: React.FC = () => {
           {pools.length > 1 && (
             <select
               value={selectedPoolId}
-              onChange={(e) => setSelectedPoolId(e.target.value)}
+              onChange={(e) => handlePoolChange(e.target.value)}
               className="bg-slate-950 border border-slate-700 text-slate-200 text-xs sm:text-sm rounded-xl px-4 py-2 focus:ring-2 focus:ring-rose-500 focus:outline-none font-bold"
             >
               {pools.map((p) => (
@@ -441,10 +513,10 @@ export const WallOfShame: React.FC = () => {
         </div>
       )}
 
-      {/* TOP BANNER ROW: Dead Place Crown + Shot Odometer (Visible in both views) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 1. Dead Place Crown Banner (2 Cols) */}
-        <div className="lg:col-span-2 relative overflow-hidden rounded-3xl border border-rose-500/40 bg-gradient-to-br from-rose-950/70 via-slate-950 to-slate-950 p-6 sm:p-8 shadow-2xl shadow-rose-950/40">
+      {/* TOP BANNER ROW: Dead Place Crown + Enhanced Shot Odometer */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* 1. Dead Place Crown Banner (7 Cols) */}
+        <div className="lg:col-span-6 relative overflow-hidden rounded-3xl border border-rose-500/40 bg-gradient-to-br from-rose-950/70 via-slate-950 to-slate-950 p-6 sm:p-8 shadow-2xl shadow-rose-950/40 flex flex-col justify-between">
           <div className="absolute top-0 right-0 -mr-8 -mt-8 w-48 h-48 bg-rose-500/10 rounded-full blur-3xl pointer-events-none" />
           
           <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
@@ -497,21 +569,64 @@ export const WallOfShame: React.FC = () => {
               </div>
             </div>
           </div>
+
+          <div className="mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
+            <span>Current Punishment Debt: <strong className="text-rose-400 font-mono">2.5 Shots</strong></span>
+            <span className="text-[11px] font-mono">Week 4 Tiebreaker: -14 PTS</span>
+          </div>
         </div>
 
-        {/* 2. Shot Odometer (1 Col) */}
-        <div className="relative overflow-hidden rounded-3xl border border-amber-500/40 bg-gradient-to-br from-amber-950/60 via-slate-950 to-slate-950 p-6 sm:p-8 shadow-2xl shadow-amber-950/30 flex flex-col justify-between">
+        {/* 2. Enhanced Shot Odometer with Multi-Metric Ticker & Degenerate Conversions (6 Cols) */}
+        <div className="lg:col-span-6 relative overflow-hidden rounded-3xl border-2 border-amber-500/40 bg-gradient-to-br from-amber-950/60 via-slate-950 to-slate-950 p-6 shadow-[0_0_25px_rgba(245,158,11,0.25)] flex flex-col justify-between">
           <div className="absolute -bottom-8 -right-8 w-40 h-40 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
 
-          <div className="flex items-center justify-between">
-            <div className="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-black uppercase tracking-wider">
-              <Flame className="w-4 h-4 text-amber-400 animate-pulse" />
+          {/* Top Row: Title + Interactive Unit Toggle Chips */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-black uppercase tracking-wider">
+              <Flame className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
               <span>Shot Odometer</span>
             </div>
-            <Wine className="w-6 h-6 text-amber-400/60" />
+
+            {/* Quick Interactive Toggle Chips */}
+            <div className="flex items-center p-0.5 rounded-xl bg-slate-950/90 border border-amber-500/30">
+              <button
+                type="button"
+                onClick={() => setOdometerUnit('shots')}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all ${
+                  odometerUnit === 'shots'
+                    ? 'bg-amber-500 text-slate-950 shadow-sm'
+                    : 'text-slate-400 hover:text-amber-300'
+                }`}
+              >
+                🥃 Shots (Total)
+              </button>
+              <button
+                type="button"
+                onClick={() => setOdometerUnit('fifths')}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all ${
+                  odometerUnit === 'fifths'
+                    ? 'bg-amber-500 text-slate-950 shadow-sm'
+                    : 'text-slate-400 hover:text-amber-300'
+                }`}
+              >
+                🍾 Fifths
+              </button>
+              <button
+                type="button"
+                onClick={() => setOdometerUnit('oz')}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all ${
+                  odometerUnit === 'oz'
+                    ? 'bg-amber-500 text-slate-950 shadow-sm'
+                    : 'text-slate-400 hover:text-amber-300'
+                }`}
+              >
+                ⚡ Fluid Oz
+              </button>
+            </div>
           </div>
 
-          <div className="my-4">
+          {/* Odometer Digit Wheels */}
+          <div className="my-3">
             <div className="inline-flex items-center bg-slate-950 p-2 sm:p-2.5 rounded-2xl border-2 border-amber-500/50 shadow-[0_0_20px_rgba(245,158,11,0.2)]">
               {/* Whole Digits */}
               <div className="flex space-x-1">
@@ -542,21 +657,42 @@ export const WallOfShame: React.FC = () => {
               </div>
             </div>
 
-            <div className="mt-2 flex items-center justify-between">
-              <span className="text-[10px] uppercase font-extrabold text-slate-400 tracking-wider">
-                Total League Shots
+            <div className="mt-1 flex items-center justify-between text-xs font-mono font-bold text-amber-400">
+              <span className="text-[10px] uppercase text-slate-400 tracking-wider">
+                {odometerUnit === 'fifths' ? '🍾 750ml Bottles' : odometerUnit === 'oz' ? '⚡ Total Fluid Ounces' : '🥃 Total Penalty Shots'}
               </span>
-              <span className="font-mono text-xs font-bold text-amber-400/90">
-                {odometerData.formatted}
-              </span>
+              <span>{odometerData.formatted} {odometerUnit.toUpperCase()}</span>
             </div>
           </div>
 
-          <div className="w-full bg-slate-900/90 rounded-full h-2 border border-slate-800 overflow-hidden">
-            <div 
-              className="bg-gradient-to-r from-amber-500 to-rose-500 h-full rounded-full transition-all duration-500" 
-              style={{ width: `${Math.min(100, Math.max(15, odometerData.numericValue * 5))}%` }}
-            />
+          {/* 3 Degenerate Conversion Metrics Grid */}
+          <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800/80">
+            {/* 1. Fifths */}
+            <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/80">
+              <div className="text-[10px] font-bold text-slate-400 truncate">🍾 750ml Fifths</div>
+              <div className="text-sm sm:text-base font-black text-amber-300 font-mono mt-0.5">
+                {fifthsDowned.toFixed(1)} <span className="text-[10px] text-slate-400 font-normal">btls</span>
+              </div>
+              <div className="text-[9px] text-slate-500 mt-0.5">17 shots/bottle</div>
+            </div>
+
+            {/* 2. Volume Ounces */}
+            <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/80">
+              <div className="text-[10px] font-bold text-slate-400 truncate">🥃 Volume (oz)</div>
+              <div className="text-sm sm:text-base font-black text-rose-400 font-mono mt-0.5">
+                {volumeOz.toFixed(1)} <span className="text-[10px] text-slate-400 font-normal">oz</span>
+              </div>
+              <div className="text-[9px] text-slate-500 mt-0.5">Straight liquor</div>
+            </div>
+
+            {/* 3. Season Pace */}
+            <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/80">
+              <div className="text-[10px] font-bold text-slate-400 truncate">📈 Season Pace</div>
+              <div className="text-sm sm:text-base font-black text-emerald-400 font-mono mt-0.5">
+                {seasonPace.toFixed(0)} <span className="text-[10px] text-slate-400 font-normal">shots</span>
+              </div>
+              <div className="text-[9px] text-slate-500 mt-0.5">18-week proj</div>
+            </div>
           </div>
         </div>
       </div>
@@ -625,19 +761,24 @@ export const WallOfShame: React.FC = () => {
                     </span>
                   </div>
 
-                  {/* Reaction Bar */}
+                  {/* Reaction Bar with Persistent State */}
                   <div className="flex flex-wrap items-center gap-2 pt-2">
                     {(['💀', '🍺', '🔥'] as const).map((emoji) => {
                       const count = spotlightItem.reactions?.[emoji] || 0;
+                      const isActive = Boolean(userReactions[spotlightItem.id]?.[emoji]);
                       return (
                         <button
                           key={emoji}
                           type="button"
                           onClick={() => handleReaction(spotlightItem.id, emoji)}
-                          className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-100 border border-amber-500/30 hover:border-amber-500 text-xs font-mono font-bold transition-all active:scale-95 shadow-md"
+                          className={`inline-flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-mono font-bold transition-all active:scale-95 shadow-md border ${
+                            isActive
+                              ? 'ring-1.5 ring-cyan-400 bg-cyan-950/80 text-cyan-300 font-bold scale-105 shadow-[0_0_12px_rgba(6,182,212,0.35)] border-cyan-400/60'
+                              : 'bg-slate-900 hover:bg-slate-800 text-slate-100 border-amber-500/30 hover:border-amber-500'
+                          }`}
                         >
                           <span>{emoji}</span>
-                          <span className="text-amber-300">{count}</span>
+                          <span className={isActive ? 'text-cyan-300' : 'text-amber-300'}>{count}</span>
                         </button>
                       );
                     })}
@@ -821,20 +962,25 @@ export const WallOfShame: React.FC = () => {
                       {/* Card Footer: Reactions & Commissioner Spotlight Button */}
                       <div className="pt-3 border-t border-slate-800/60 flex flex-col gap-2.5">
                         <div className="flex items-center justify-between">
-                          {/* Emoji Reactions */}
+                          {/* Emoji Reactions with Persistent State */}
                           <div className="flex items-center space-x-1.5">
                             {(['💀', '🍺', '🔥'] as const).map((emoji) => {
                               const count = item.reactions?.[emoji] || 0;
+                              const isActive = Boolean(userReactions[item.id]?.[emoji]);
                               return (
                                 <button
                                   key={emoji}
                                   type="button"
                                   onClick={() => handleReaction(item.id, emoji)}
-                                  className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-800 text-xs font-mono font-bold transition-all active:scale-95 shadow-sm"
+                                  className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all active:scale-95 border ${
+                                    isActive
+                                      ? 'ring-1.5 ring-cyan-400 bg-cyan-950/80 text-cyan-300 font-bold scale-105 shadow-[0_0_12px_rgba(6,182,212,0.35)] border-cyan-400/60'
+                                      : 'bg-slate-950 hover:bg-slate-800 text-slate-200 border-slate-800'
+                                  }`}
                                   title={`React with ${emoji}`}
                                 >
                                   <span>{emoji}</span>
-                                  <span className="text-slate-400">{count}</span>
+                                  <span className={isActive ? 'text-cyan-300' : 'text-slate-400'}>{count}</span>
                                 </button>
                               );
                             })}

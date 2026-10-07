@@ -1136,8 +1136,9 @@ app.get('/api/pools/:pool_id/matrix', requireAuth, requirePoolMember, async (req
 
 // Start listening if run directly
 if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  const portNum = typeof PORT === 'string' ? parseInt(PORT, 10) : PORT;
+  app.listen(portNum, '0.0.0.0', () => {
+    console.log(`Server running on http://0.0.0.0:${PORT} (Local Wi-Fi: http://192.168.1.18:${PORT})`);
     startLiveScheduleDaemon();
   });
 }

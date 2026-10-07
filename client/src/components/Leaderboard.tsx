@@ -58,9 +58,16 @@ export const Leaderboard: React.FC = () => {
         if (res.ok) {
           const data: PoolSummary[] = await res.json();
           setPools(data);
-          if (data.length > 0 && !selectedPoolId) {
-            const mainPool = data.find((p) => p.name === 'Main League') || data[0];
-            if (mainPool) setSelectedPoolId(mainPool.id);
+          if (data.length > 0) {
+            const savedPoolId = localStorage.getItem('active_pool_id');
+            const mainPool =
+              data.find((p) => p.name === 'Main League') ||
+              (savedPoolId ? data.find((p) => p.id === savedPoolId) : undefined) ||
+              data[0];
+            if (mainPool) {
+              setSelectedPoolId(mainPool.id);
+              localStorage.setItem('active_pool_id', mainPool.id);
+            }
           }
         }
       } catch (err) {
@@ -157,7 +164,10 @@ export const Leaderboard: React.FC = () => {
           {pools.length > 1 && (
             <select
               value={selectedPoolId}
-              onChange={(e) => setSelectedPoolId(e.target.value)}
+              onChange={(e) => {
+                setSelectedPoolId(e.target.value);
+                localStorage.setItem('active_pool_id', e.target.value);
+              }}
               className="bg-slate-900 border border-slate-800 text-slate-200 text-xs rounded-xl px-3 py-2 font-medium focus:outline-none focus:border-cyan-500"
             >
               {pools.map((p) => (
