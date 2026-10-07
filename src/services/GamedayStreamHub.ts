@@ -40,6 +40,11 @@ export class GamedayStreamHub {
       }
     }
   }
+
+  broadcastDelta(poolId: string, gameId: string, patches: any[]): void {
+    if (!patches || patches.length === 0) return;
+    this.broadcastToPool(poolId, 'DRIVE_DELTA', { gameId, patches, timestamp: new Date().toISOString() });
+  }
 }
 
 export const gamedayStreamHub = new GamedayStreamHub();
