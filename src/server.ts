@@ -15,6 +15,7 @@ import { opsRouter } from './routes/ops';
 import { adminOpsRouter } from './routes/adminOps';
 import { webhooksRouter } from './routes/webhooks';
 import { shotCamRouter } from './routes/shotCam';
+import streamRouter from './routes/streamRoutes';
 import type {
   PoolSettings,
   MatrixResponsePayload,
@@ -74,6 +75,7 @@ app.use('/api/pools/:pool_id/shot-cam', shotCamRouter);
 app.use('/api/shot-cam', shotCamRouter);
 app.use('/api/pools/:pool_id/shame', shotCamRouter);
 app.use('/api/shame', shotCamRouter);
+app.use(streamRouter);
 
 
 
