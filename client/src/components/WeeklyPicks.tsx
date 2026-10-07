@@ -1,14 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Lock, Clock, CheckCircle2, AlertCircle, RefreshCw, Shield } from 'lucide-react';
-import { ViewportSelector, type ViewportMode } from './ViewportSelector';
-import { LeagueMatrixView, type MatrixResponsePayload } from './LeagueMatrixView';
+import { Lock, CheckCircle2, AlertCircle, RefreshCw, Shield } from 'lucide-react';
 import { PickPresetControls } from './PickPresetControls';
 import { CompactPicksList } from './picks/CompactPicksList';
 import { UndoSnackbar } from './picks/UndoSnackbar';
 import { quickFillSafetyEngine, SlateGameItem } from '../services/QuickFillSafetyEngine';
 import { formatGameKickoff } from '../utils/dateUtils';
 import { triggerHaptic } from '../utils/haptics';
+import type { MatrixResponsePayload } from './LeagueMatrixView';
 
 export interface GameItem {
   id: string;
@@ -41,10 +40,6 @@ export const WeeklyPicks: React.FC = () => {
   const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [now, setNow] = useState(new Date());
 
-  const [viewportMode, setViewportMode] = useState<ViewportMode>(() => {
-    return (localStorage.getItem('nfl_pickem_viewport') as ViewportMode) || 'cards';
-  });
-
   const [picksViewMode, setPicksViewMode] = useState<'cards' | 'list'>(() => {
     const saved = localStorage.getItem('picks_view_preference');
     return (saved === 'list' || saved === 'cards') ? saved : 'cards';
@@ -59,13 +54,6 @@ export const WeeklyPicks: React.FC = () => {
     setPicksViewMode(mode);
     try {
       localStorage.setItem('picks_view_preference', mode);
-    } catch {}
-  };
-
-  const handleViewportChange = (mode: ViewportMode) => {
-    setViewportMode(mode);
-    try {
-      localStorage.setItem('nfl_pickem_viewport', mode);
     } catch {}
   };
 
@@ -102,11 +90,15 @@ export const WeeklyPicks: React.FC = () => {
             setMatrixData(mData);
           }
         } catch (mErr) {
-          console.warn('Matrix background fetch failed:', mErr);
+          console.warn('Matrix prefetch warning:', mErr);
         }
       }
     } catch (err: any) {
-      setFeedbackMessage({ text: err.message || 'Error fetching slate.', type: 'error' });
+      console.error(err);
+      setFeedbackMessage({
+        text: err.message || 'Error loading slate',
+        type: 'error',
+      });
     } finally {
       setLoading(false);
     }
@@ -116,28 +108,16 @@ export const WeeklyPicks: React.FC = () => {
     fetchGames();
   }, [fetchGames]);
 
-  // Flush pending commits on unmount
-  useEffect(() => {
-    return () => {
-      quickFillSafetyEngine.flushCommit();
-    };
-  }, []);
-
   const handlePick = async (game: GameItem, selectedTeamId: string) => {
     if (!pool) return;
-
-    // Visual lock pre-check
-    const lockOffsetMinutes = pool.lock_offset || 0;
-    const lockTime = new Date(new Date(game.kickoffTime).getTime() - lockOffsetMinutes * 60 * 1000);
-    if (now.getTime() >= lockTime.getTime()) {
-      setFeedbackMessage({ text: 'This matchup is locked. Picks cannot be modified.', type: 'error' });
+    if (isGameLocked(game)) {
+      setFeedbackMessage({ text: 'This game is locked.', type: 'error' });
       return;
     }
 
-    const isTogglingOff = game.userPick === selectedTeamId;
-    const teamToSend = isTogglingOff ? null : selectedTeamId;
-
     setSavingPickForGameId(game.id);
+    const isUnselecting = game.userPick === selectedTeamId;
+    const teamToSend = isUnselecting ? null : selectedTeamId;
 
     try {
       const response = await fetch('/api/picks', {
@@ -153,10 +133,9 @@ export const WeeklyPicks: React.FC = () => {
         }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to submit pick.');
+        const data = await response.json();
+        throw new Error(data.message || data.error || 'Failed to submit pick');
       }
 
       // Optimistically update local state
@@ -173,12 +152,15 @@ export const WeeklyPicks: React.FC = () => {
 
       setTimeout(() => setFeedbackMessage(null), 3000);
     } catch (err: any) {
-      setFeedbackMessage({ text: err.message || 'Failed to submit pick.', type: 'error' });
+      setFeedbackMessage({ text: err.message, type: 'error' });
     } finally {
       setSavingPickForGameId(null);
     }
   };
 
+  /**
+   * Applies quick-fill presets through the QuickFillSafetyEngine with a 7-second undo grace period.
+   */
   const handleApplyPreset = (updatedPicks: Record<string, string | null>, presetDescription: string) => {
     if (!pool) return;
 
@@ -186,7 +168,7 @@ export const WeeklyPicks: React.FC = () => {
       gameId: g.id,
       awayTeam: g.awayTeamId,
       homeTeam: g.homeTeamId,
-      favorite: typeof g.spread === 'number' && g.spread > 0 ? g.awayTeamId : g.homeTeamId,
+      favorite: typeof g.spread === 'number' ? (g.spread < 0 ? g.homeTeamId : g.awayTeamId) : g.homeTeamId,
       isLocked: isGameLocked(g),
     }));
 
@@ -316,63 +298,51 @@ export const WeeklyPicks: React.FC = () => {
             <span>{pool?.name || 'Main League'} • Week 5</span>
           </div>
           <h2 className="hidden md:block text-2xl sm:text-3xl font-black text-white tracking-tight mt-1">
-            {viewportMode === 'matrix' ? 'Square Sheet Matrix' : 'Weekly Matchup Slate'}
+            Weekly Matchup Slate
           </h2>
           <p className="hidden md:block text-xs sm:text-sm text-slate-400 mt-1">
-            {viewportMode === 'matrix'
-              ? 'Full league spreadsheet with live anti-peeking masking & precision scoring.'
-              : `Select a team to lock in your pick. Games lock automatically ${
-                  pool?.lock_offset ? `${pool.lock_offset}m prior to kickoff` : 'at kickoff'
-                }.`}
+            {`Select a team to lock in your pick. Games lock automatically ${
+              pool?.lock_offset ? `${pool.lock_offset}m prior to kickoff` : 'at kickoff'
+            }.`}
           </p>
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
           {/* Density Toggle (Cards | List) */}
-          {viewportMode !== 'matrix' && (
-            <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800">
-              <button
-                type="button"
-                onClick={() => handleTogglePicksView('cards')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  picksViewMode === 'cards'
-                    ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Cards
-              </button>
-              <button
-                type="button"
-                onClick={() => handleTogglePicksView('list')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  picksViewMode === 'list'
-                    ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                List
-              </button>
-            </div>
-          )}
-
-          {/* Viewport Toggle (Cards / Slate / Matrix) */}
-          <ViewportSelector
-            activeMode={viewportMode}
-            onChange={handleViewportChange}
-          />
-
-          {viewportMode !== 'matrix' && (
+          <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800">
             <button
-              onClick={fetchGames}
-              disabled={loading}
-              className="flex items-center space-x-1.5 p-2 sm:px-4 sm:py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all disabled:opacity-50"
-              title="Refresh Slate"
+              type="button"
+              onClick={() => handleTogglePicksView('cards')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                picksViewMode === 'cards'
+                  ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-              <span className="hidden md:inline">Refresh Slate</span>
+              Cards
             </button>
-          )}
+            <button
+              type="button"
+              onClick={() => handleTogglePicksView('list')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                picksViewMode === 'list'
+                  ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              List
+            </button>
+          </div>
+
+          <button
+            onClick={fetchGames}
+            disabled={loading}
+            className="flex items-center space-x-1.5 p-2 sm:px-4 sm:py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all disabled:opacity-50"
+            title="Refresh Slate"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <span className="hidden md:inline">Refresh Slate</span>
+          </button>
         </div>
       </div>
 
@@ -399,12 +369,8 @@ export const WeeklyPicks: React.FC = () => {
         </div>
       )}
 
-      {/* Conditional Viewport Rendering */}
-      {viewportMode === 'matrix' ? (
-        <div className="animate-fade-in">
-          <LeagueMatrixView hideHeader={true} />
-        </div>
-      ) : loading && games.length === 0 ? (
+      {/* Content Rendering */}
+      {loading && games.length === 0 ? (
         <div className="py-20 text-center">
           <div className="w-10 h-10 border-3 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-sm text-slate-400 font-medium">Loading NFL matchups and live odds...</p>
@@ -447,127 +413,9 @@ export const WeeklyPicks: React.FC = () => {
                 if (targetGame) handlePick(targetGame, team);
               }}
             />
-          ) : viewportMode === 'slate' ? (
-            /* High-Density Slate Table View */
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/80 backdrop-blur-md overflow-hidden shadow-xl animate-fade-in">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-800 bg-slate-950/70 text-slate-400 font-bold uppercase tracking-wider text-[11px]">
-                      <th className="py-3.5 px-4">Matchup</th>
-                      <th className="py-3.5 px-4">Kickoff</th>
-                      <th className="py-3.5 px-4 text-center">Status</th>
-                      <th className="py-3.5 px-4 text-center">Away Team</th>
-                      <th className="py-3.5 px-4 text-center">Home Team</th>
-                      <th className="py-3.5 px-4 text-center">Your Pick</th>
-                      <th className="py-3.5 px-4 text-right">Score</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60">
-                    {games.map((game) => {
-                      const locked = isGameLocked(game);
-                      const isHomeSelected = game.userPick === game.homeTeamId;
-                      const isAwaySelected = game.userPick === game.awayTeamId;
-                      const isSaving = savingPickForGameId === game.id;
-
-                      return (
-                        <tr
-                          key={game.id}
-                          className={`hover:bg-slate-850/50 transition-colors ${
-                            locked ? 'opacity-85' : ''
-                          }`}
-                        >
-                          {/* Matchup */}
-                          <td className="py-3.5 px-4 font-bold text-slate-200">
-                            <span>{game.awayTeamId}</span>
-                            <span className="text-slate-500 mx-1.5 font-normal">@</span>
-                            <span>{game.homeTeamId}</span>
-                          </td>
-
-                          {/* Kickoff */}
-                          <td className="py-3.5 px-4 text-slate-400 font-mono text-[11px]">
-                            {formatKickoff(game.kickoffTime)}
-                          </td>
-
-                          {/* Lock Status */}
-                          <td className="py-3.5 px-4 text-center">
-                            {game.status === 'IN_PROGRESS' ? (
-                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse">
-                                <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                                <span>LIVE</span>
-                              </span>
-                            ) : locked ? (
-                              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-amber-400 border border-amber-500/30">
-                                <Lock className="w-3 h-3" />
-                                <span>{game.status === 'FINAL' ? 'FINAL' : 'LOCKED'}</span>
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                                OPEN
-                              </span>
-                            )}
-                          </td>
-
-                          {/* Away Team Pick Button */}
-                          <td className="py-2.5 px-4 text-center">
-                            <button
-                              type="button"
-                              onClick={() => handlePick(game, game.awayTeamId)}
-                              disabled={locked || isSaving}
-                              className={`px-3 py-1.5 rounded-xl font-bold font-mono text-xs transition-all w-24 ${
-                                isAwaySelected
-                                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400 shadow-sm shadow-cyan-950/50 ring-1 ring-cyan-400'
-                                  : 'bg-slate-950/70 hover:bg-slate-800 text-slate-300 border border-slate-750'
-                              } ${locked ? 'cursor-not-allowed' : 'cursor-pointer active:scale-95'}`}
-                            >
-                              {game.awayTeamId}
-                            </button>
-                          </td>
-
-                          {/* Home Team Pick Button */}
-                          <td className="py-2.5 px-4 text-center">
-                            <button
-                              type="button"
-                              onClick={() => handlePick(game, game.homeTeamId)}
-                              disabled={locked || isSaving}
-                              className={`px-3 py-1.5 rounded-xl font-bold font-mono text-xs transition-all w-24 ${
-                                isHomeSelected
-                                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400 shadow-sm shadow-cyan-950/50 ring-1 ring-cyan-400'
-                                  : 'bg-slate-950/70 hover:bg-slate-800 text-slate-300 border border-slate-750'
-                              } ${locked ? 'cursor-not-allowed' : 'cursor-pointer active:scale-95'}`}
-                            >
-                              {game.homeTeamId}
-                            </button>
-                          </td>
-
-                          {/* Selected Pick */}
-                          <td className="py-3.5 px-4 text-center">
-                            {game.userPick ? (
-                              <span className="inline-flex items-center space-x-1 font-bold text-cyan-400">
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                <span>{game.userPick}</span>
-                              </span>
-                            ) : (
-                              <span className="text-slate-500 italic text-[11px]">—</span>
-                            )}
-                          </td>
-
-                          {/* Score / Result */}
-                          <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-300">
-                            {game.awayScore !== null && game.homeScore !== null
-                              ? `${game.awayScore} - ${game.homeScore}`
-                              : '—'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
           ) : (
-            /* Default Interactive Cards Grid View */
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 animate-fade-in pb-20">
+            /* Cards View: Grid of Matchup Cards */
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-6">
               {games.map((game) => {
                 const locked = isGameLocked(game);
                 const isHomeSelected = game.userPick === game.homeTeamId;
@@ -577,38 +425,38 @@ export const WeeklyPicks: React.FC = () => {
                 return (
                   <div
                     key={game.id}
-                    className={`glass-card rounded-2xl p-5 border transition-all duration-300 relative overflow-hidden flex flex-col justify-between ${
+                    className={`rounded-2xl border transition-all duration-300 p-3.5 sm:p-5 flex flex-col justify-between space-y-3 sm:space-y-4 ${
                       locked
-                        ? 'border-slate-800/80 opacity-90'
-                        : 'border-slate-800 hover:border-slate-700 hover:shadow-xl hover:shadow-cyan-950/20'
+                        ? 'bg-slate-900/40 border-slate-800/60 opacity-85'
+                        : 'bg-slate-900/90 border-slate-800/90 hover:border-slate-700 shadow-lg'
                     }`}
                   >
-                    {/* Top Status & Lock Badge */}
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center space-x-1.5 text-[11px] font-semibold text-slate-400">
-                        <Clock className="w-3.5 h-3.5 text-slate-500" />
+                    {/* Card Header: Kickoff & Status */}
+                    <div className="flex items-center justify-between text-xs pb-3 border-b border-slate-800/80">
+                      <div className="flex items-center space-x-1.5 text-slate-400 font-mono text-[11px]">
                         <span>{formatKickoff(game.kickoffTime)}</span>
                       </div>
-
-                      {game.status === 'IN_PROGRESS' ? (
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse">
-                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                          <span>LIVE</span>
-                        </span>
-                      ) : locked ? (
-                        <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800/90 text-amber-400 border border-amber-500/30">
-                          <Lock className="w-3 h-3" />
-                          <span>{game.status === 'FINAL' ? 'FINAL' : 'LOCKED'}</span>
-                        </span>
-                      ) : (
-                        <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                          <span>OPEN</span>
-                        </span>
-                      )}
+                      <div>
+                        {game.status === 'IN_PROGRESS' ? (
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse">
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                            <span>LIVE</span>
+                          </span>
+                        ) : locked ? (
+                          <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-amber-400 border border-amber-500/30">
+                            <Lock className="w-3 h-3" />
+                            <span>{game.status === 'FINAL' ? 'FINAL' : 'LOCKED'}</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            OPEN
+                          </span>
+                        )}
+                      </div>
                     </div>
 
-                    {/* Matchup Team Buttons */}
-                    <div className="grid grid-cols-2 gap-3 mb-4">
+                    {/* Pick Options (Away vs Home) */}
+                    <div className="grid grid-cols-2 gap-2 sm:gap-3">
                       {/* Away Team Option */}
                       <button
                         onClick={() => handlePick(game, game.awayTeamId)}
