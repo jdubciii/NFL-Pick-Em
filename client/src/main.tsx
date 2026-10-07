@@ -34,62 +34,27 @@ if (typeof window !== 'undefined') {
   }
 }
 
-// Global API Interceptor for Capacitor & Mobile Testing
-const API_BASE = import.meta.env.VITE_API_URL || (
-  typeof window !== 'undefined' && (
-    window.location.hostname === 'localhost' ||
-    window.location.protocol === 'capacitor:' ||
-    window.location.protocol === 'http:' ||
-    window.location.protocol === 'https:'
-  ) ? 'http://192.168.1.18:3000' : ''
-);
-
+// Global fetch interceptor
 if (typeof window !== 'undefined') {
   const originalFetch = window.fetch;
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    let urlString = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    let url = typeof input === 'string' ? input : (input instanceof Request ? input.url : input.toString());
     
-    // Clone or initialize options
-    const options: RequestInit = { ...(init || {}) };
-    options.credentials = 'include';
-
-    // Prepare headers
-    const headers = new Headers(options.headers || (typeof input === 'object' && 'headers' in input ? (input as Request).headers : undefined));
-    
-    // Resolve token & dev auth credentials
-    const token = localStorage.getItem('token') || localStorage.getItem('nfl_pickem_jwt_token') || DEFAULT_TOKEN;
-    if (token && !headers.has('Authorization')) {
-      headers.set('Authorization', `Bearer ${token}`);
+    if (url.startsWith('/')) {
+      url = `http://192.168.1.18:3000${url}`;
     }
 
-    let userEmail = 'jack@nflpickem.com';
-    let userRole = 'ADMIN';
-    try {
-      const stored = localStorage.getItem('auth_user') || localStorage.getItem('nfl_pickem_user');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed.email) userEmail = parsed.email;
-        if (parsed.role) userRole = parsed.role;
-      }
-    } catch {
-      // fallback to defaults
-    }
+    const modifiedInit: RequestInit = {
+      ...init,
+      credentials: 'include',
+      headers: {
+        ...(init?.headers || {}),
+        'x-user-email': 'jack@nflpickem.com',
+        'x-user-role': 'ADMIN',
+      },
+    };
 
-    if (!headers.has('x-user-email')) {
-      headers.set('x-user-email', userEmail);
-    }
-    if (!headers.has('x-user-role')) {
-      headers.set('x-user-role', userRole);
-    }
-    
-    options.headers = headers;
-
-    // If request is relative /api, prefix with API_BASE
-    if (urlString.startsWith('/api')) {
-      urlString = `${API_BASE}${urlString}`;
-    }
-
-    return originalFetch(urlString, options);
+    return originalFetch(url, modifiedInit);
   };
 }
 
