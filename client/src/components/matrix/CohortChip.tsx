@@ -18,7 +18,7 @@ export const CohortChip: React.FC<CohortChipProps> = ({ status, isCurrentUser })
       case 'WINNING':
         return 'bg-emerald-950/80 border-emerald-400 text-emerald-300 shadow-sm shadow-emerald-500/20';
       case 'LOSING':
-        return 'bg-slate-900/50 border-slate-700/60 text-slate-500 opacity-60';
+        return 'bg-slate-800/80 border-slate-700/60 text-slate-400 opacity-75';
       case 'WON':
         return 'bg-emerald-700 border-emerald-500 text-white font-bold';
       case 'LOST':

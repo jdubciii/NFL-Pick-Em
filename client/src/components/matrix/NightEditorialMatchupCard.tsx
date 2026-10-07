@@ -41,7 +41,7 @@ export const NightEditorialMatchupCard: React.FC<NightEditorialMatchupCardProps>
   const homePct = 100 - awayPct;
 
   return (
-    <div className="bg-slate-900/95 border border-slate-800 rounded-2xl p-4 md:p-5 shadow-xl space-y-3.5 transition-all">
+    <div className={`bg-slate-900/95 border border-slate-800 rounded-2xl p-4 md:p-5 shadow-xl space-y-3.5 transition-all duration-500 ${game.isRedZone ? "ring-1 ring-rose-500/40 shadow-[inset_0_0_24px_rgba(239,68,68,0.18)]" : ""}`}>
       {/* Top Meta Bar */}
       <div className="flex items-center justify-between text-xs font-mono">
         <div className="flex items-center space-x-2">
@@ -78,7 +78,7 @@ export const NightEditorialMatchupCard: React.FC<NightEditorialMatchupCardProps>
         </div>
 
         {/* Scores */}
-        <div className="col-span-1 flex items-center justify-center space-x-2 font-mono text-3xl md:text-4xl font-black text-white">
+        <div className="col-span-1 flex items-center justify-center space-x-2 font-mono tabular-nums text-3xl md:text-4xl font-black text-white">
           <span className={game.awayTeam.score > game.homeTeam.score ? 'text-white' : 'text-slate-400'}>
             {game.status === 'SCHEDULED' ? '-' : game.awayTeam.score}
           </span>
@@ -149,7 +149,7 @@ export const NightEditorialMatchupCard: React.FC<NightEditorialMatchupCardProps>
                     className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase tracking-wider ${
                       isLeading
                         ? 'bg-emerald-950/80 border border-emerald-500/60 text-emerald-300'
-                        : 'bg-rose-950/80 border border-rose-500/60 text-rose-300'
+                        : 'bg-slate-800/90 border border-slate-700 text-slate-400'
                     }`}
                   >
                     {isLeading ? 'Leading' : 'Trailing'}

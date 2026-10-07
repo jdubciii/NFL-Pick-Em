@@ -16,7 +16,7 @@ interface TopGamedayTickerProps {
 
 export const TopGamedayTicker: React.FC<TopGamedayTickerProps> = ({ games }) => {
   return (
-    <div className="w-full bg-slate-950 border-b border-slate-800 overflow-x-auto py-2 px-3 flex items-center space-x-4 scrollbar-thin">
+    <div className="w-full bg-slate-950 border-b border-slate-800 overflow-x-auto py-2 px-3 flex items-center space-x-4 scrollbar-none will-change-transform transform-gpu hover:pause active:pause">
       <div className="flex items-center space-x-1.5 pr-3 border-r border-slate-800 shrink-0">
         <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
         <span className="text-[10px] font-black uppercase tracking-wider text-slate-300 font-mono">NFL TICKER</span>

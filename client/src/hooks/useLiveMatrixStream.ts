@@ -9,8 +9,15 @@ export interface ScoreUpdatePayload {
   status: 'SCHEDULED' | 'IN_PROGRESS' | 'HALFTIME' | 'FINAL';
 }
 
+export interface DriveDeltaPayload {
+  gameId: string;
+  patches: { op: string; path: string; value: any }[];
+  timestamp: string;
+}
+
 export const useLiveMatrixStream = (poolId: string = 'pool-main') => {
   const [latestUpdate, setLatestUpdate] = useState<ScoreUpdatePayload | null>(null);
+  const [latestDelta, setLatestDelta] = useState<DriveDeltaPayload | null>(null);
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
@@ -30,6 +37,15 @@ export const useLiveMatrixStream = (poolId: string = 'pool-main') => {
       }
     });
 
+    eventSource.addEventListener('DRIVE_DELTA', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        setLatestDelta(data);
+      } catch (err) {
+        console.error('Failed to parse SSE DRIVE_DELTA', err);
+      }
+    });
+
     eventSource.onerror = () => {
       setIsConnected(false);
     };
@@ -40,5 +56,5 @@ export const useLiveMatrixStream = (poolId: string = 'pool-main') => {
     };
   }, [poolId]);
 
-  return { latestUpdate, isConnected };
+  return { latestUpdate, latestDelta, isConnected };
 };
