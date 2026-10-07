@@ -4,6 +4,8 @@ import prisma from '../db/client';
 
 export const shotCamRouter = Router({ mergeParams: true });
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 const MEMBER_DISPLAY_MAP: Record<string, string> = {
   'jack@nflpickem.com': 'Jack (You)',
   'matt.c@nflpickem.com': 'Matt Cone',
@@ -23,6 +25,24 @@ function getDisplayName(email: string): string {
     return MEMBER_DISPLAY_MAP[lower];
   }
   return email.split('@')[0];
+}
+
+/**
+ * Resiliently resolves a pool by UUID, name, or defaults to 'Main League'
+ */
+async function resolvePool(poolIdParam?: string | string[]) {
+  const normalized = Array.isArray(poolIdParam) ? poolIdParam[0] : poolIdParam;
+  if (normalized && UUID_REGEX.test(normalized)) {
+    const byId = await prisma.pool.findUnique({ where: { id: normalized } });
+    if (byId) return byId;
+  }
+  if (normalized && normalized !== 'undefined' && normalized !== 'default' && normalized.trim().length > 0) {
+    const byName = await prisma.pool.findFirst({ where: { name: normalized } });
+    if (byName) return byName;
+  }
+  return prisma.pool.findFirst({
+    where: { name: 'Main League' },
+  });
 }
 
 /**
@@ -80,18 +100,12 @@ function buildShotCamResponse(penalty: any) {
 }
 
 /**
- * GET /api/pools/:pool_id/shot-cam/active
+ * GET /api/pools/:pool_id/shot-cam/active AND GET /api/shot-cam/active
  * Retrieves the active Dead Place subject for the completed week (Week 4: Big Jack).
  */
 shotCamRouter.get('/active', requireAuth, async (req: Request, res: Response): Promise<void> => {
-  const poolId = String(req.params.pool_id);
-
   try {
-    const pool = await prisma.pool.findFirst({
-      where: {
-        OR: [{ id: poolId }, { name: 'Main League' }],
-      },
-    });
+    const pool = await resolvePool(req.params.pool_id);
 
     if (!pool) {
       res.status(404).json({ error: 'Pool not found' });
@@ -167,11 +181,10 @@ shotCamRouter.get('/active', requireAuth, async (req: Request, res: Response): P
 });
 
 /**
- * POST /api/pools/:pool_id/shot-cam/dispute
+ * POST /api/pools/:pool_id/shot-cam/dispute AND POST /api/shot-cam/dispute
  * Allows Dead Place subject to submit a formal excuse/dispute claim, flipping status to DISPUTED.
  */
 shotCamRouter.post('/dispute', requireAuth, async (req: Request, res: Response): Promise<void> => {
-  const poolId = String(req.params.pool_id);
   const { penaltyId, reason } = req.body;
   const requestingUserId = req.user!.id;
 
@@ -181,11 +194,7 @@ shotCamRouter.post('/dispute', requireAuth, async (req: Request, res: Response):
   }
 
   try {
-    const pool = await prisma.pool.findFirst({
-      where: {
-        OR: [{ id: poolId }, { name: 'Main League' }],
-      },
-    });
+    const pool = await resolvePool(req.params.pool_id);
 
     if (!pool) {
       res.status(404).json({ error: 'Pool not found' });
@@ -193,7 +202,7 @@ shotCamRouter.post('/dispute', requireAuth, async (req: Request, res: Response):
     }
 
     let penalty;
-    if (penaltyId && penaltyId !== 'shotcam_active_w4') {
+    if (penaltyId && penaltyId !== 'shotcam_active_w4' && UUID_REGEX.test(penaltyId)) {
       penalty = await prisma.penaltyLedger.findUnique({
         where: { id: penaltyId },
         include: {
@@ -262,12 +271,11 @@ shotCamRouter.post('/dispute', requireAuth, async (req: Request, res: Response):
 });
 
 /**
- * POST /api/pools/:pool_id/shot-cam/review
+ * POST /api/pools/:pool_id/shot-cam/review AND POST /api/shot-cam/review
  * Commissioner Guard: Requires user to be Jack, ADMIN, or pool commissioner.
  * Body: { action: "APPROVE_DISPUTE" | "REJECT_DISPUTE" | "VERIFY_VIDEO", notes?: string }
  */
 shotCamRouter.post('/review', requireAuth, async (req: Request, res: Response): Promise<void> => {
-  const poolId = String(req.params.pool_id);
   const { penaltyId, action, notes } = req.body;
   const user = req.user!;
 
@@ -277,11 +285,7 @@ shotCamRouter.post('/review', requireAuth, async (req: Request, res: Response): 
   }
 
   try {
-    const pool = await prisma.pool.findFirst({
-      where: {
-        OR: [{ id: poolId }, { name: 'Main League' }],
-      },
-    });
+    const pool = await resolvePool(req.params.pool_id);
 
     if (!pool) {
       res.status(404).json({ error: 'Pool not found' });
@@ -299,7 +303,7 @@ shotCamRouter.post('/review', requireAuth, async (req: Request, res: Response): 
     }
 
     let penalty;
-    if (penaltyId && penaltyId !== 'shotcam_active_w4') {
+    if (penaltyId && penaltyId !== 'shotcam_active_w4' && UUID_REGEX.test(penaltyId)) {
       penalty = await prisma.penaltyLedger.findUnique({
         where: { id: penaltyId },
         include: {
@@ -448,22 +452,17 @@ shotCamRouter.post('/review', requireAuth, async (req: Request, res: Response): 
 });
 
 /**
- * POST /api/pools/:pool_id/shot-cam/upload
+ * POST /api/pools/:pool_id/shot-cam/upload AND POST /api/shot-cam/upload
  * Accepts simulated video URL or media payload, flips status to SUBMITTED.
  */
 shotCamRouter.post('/upload', requireAuth, async (req: Request, res: Response): Promise<void> => {
-  const poolId = String(req.params.pool_id);
   const { penaltyId, videoUrl, mediaType } = req.body;
   const user = req.user!;
 
   const finalVideoUrl = videoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
 
   try {
-    const pool = await prisma.pool.findFirst({
-      where: {
-        OR: [{ id: poolId }, { name: 'Main League' }],
-      },
-    });
+    const pool = await resolvePool(req.params.pool_id);
 
     if (!pool) {
       res.status(404).json({ error: 'Pool not found' });
@@ -471,7 +470,7 @@ shotCamRouter.post('/upload', requireAuth, async (req: Request, res: Response): 
     }
 
     let penalty;
-    if (penaltyId && penaltyId !== 'shotcam_active_w4') {
+    if (penaltyId && penaltyId !== 'shotcam_active_w4' && UUID_REGEX.test(penaltyId)) {
       penalty = await prisma.penaltyLedger.findUnique({
         where: { id: penaltyId },
       });

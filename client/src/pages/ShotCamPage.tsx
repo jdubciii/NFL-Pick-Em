@@ -97,11 +97,14 @@ export const ShotCamPage: React.FC = () => {
 
   // Fetch active Shot-Cam penalty record from API
   const fetchActiveRecord = useCallback(async () => {
-    if (!poolId) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/pools/${poolId}/shot-cam/active`, {
+      const endpoint = poolId
+        ? `/api/pools/${poolId}/shot-cam/active`
+        : '/api/shot-cam/active';
+
+      const res = await fetch(endpoint, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {
@@ -118,19 +121,21 @@ export const ShotCamPage: React.FC = () => {
   }, [poolId, token]);
 
   useEffect(() => {
-    if (poolId) {
-      fetchActiveRecord();
-    }
-  }, [poolId, fetchActiveRecord]);
+    fetchActiveRecord();
+  }, [fetchActiveRecord]);
 
   // Handle Commissioner Review Actions
   const handleReview = async (action: 'APPROVE_DISPUTE' | 'REJECT_DISPUTE' | 'VERIFY_VIDEO', notes?: string) => {
-    if (!poolId || !activeRecord) return;
+    if (!activeRecord) return;
     setActionLoading(true);
     setError(null);
     setSuccessMessage(null);
     try {
-      const res = await fetch(`/api/pools/${poolId}/shot-cam/review`, {
+      const endpoint = poolId
+        ? `/api/pools/${poolId}/shot-cam/review`
+        : '/api/shot-cam/review';
+
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -162,12 +167,16 @@ export const ShotCamPage: React.FC = () => {
   // Handle Dispute Submission
   const handleDisputeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!disputeInput.trim() || !poolId || !activeRecord) return;
+    if (!disputeInput.trim() || !activeRecord) return;
     setActionLoading(true);
     setError(null);
     setSuccessMessage(null);
     try {
-      const res = await fetch(`/api/pools/${poolId}/shot-cam/dispute`, {
+      const endpoint = poolId
+        ? `/api/pools/${poolId}/shot-cam/dispute`
+        : '/api/shot-cam/dispute';
+
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -200,12 +209,16 @@ export const ShotCamPage: React.FC = () => {
   // Handle Video Upload Proof Submission
   const handleVideoUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!videoUrlInput.trim() || !poolId || !activeRecord) return;
+    if (!videoUrlInput.trim() || !activeRecord) return;
     setIsUploading(true);
     setError(null);
     setSuccessMessage(null);
     try {
-      const res = await fetch(`/api/pools/${poolId}/shot-cam/upload`, {
+      const endpoint = poolId
+        ? `/api/pools/${poolId}/shot-cam/upload`
+        : '/api/shot-cam/upload';
+
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

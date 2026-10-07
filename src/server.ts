@@ -41,6 +41,7 @@ app.use('/api/notifications', notificationsRouter);
 app.use('/api/webhooks', webhooksRouter);
 app.use('/api/pools', opsRouter);
 app.use('/api/pools/:pool_id/shot-cam', shotCamRouter);
+app.use('/api/shot-cam', shotCamRouter);
 
 
 
