@@ -509,28 +509,14 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
 
       {/* Anti-Peeking / Rules Banner (Hidden in Print) */}
       {matrixData?.metadata?.hide_picks_until_kickoff ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-medium print:hidden">
-          <div className="flex items-center space-x-3">
-            <ShieldCheck className="w-4 h-4 text-indigo-400 shrink-0" />
-            <span>
-              <strong>Anti-Peeking Active (Strict Mode):</strong> Competitor picks remain masked with a lock icon until their respective game kicks off.
-            </span>
-          </div>
+        <div className="flex items-center justify-between px-2 py-1 print:hidden">
           <CompactAntiPeekingBadge
             hiddenGameCount={
               matrixData.rows.filter((g) => g.status === 'SCHEDULED' && new Date(g.kickoff_time) > new Date()).length
             }
           />
         </div>
-      ) : (
-        <div className="flex items-center space-x-3 px-4 py-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs font-medium print:hidden">
-          <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0" />
-          <span>
-            <strong>Open Slate Mode:</strong> Competitor picks become exposed as soon as their weekly submission is finalized.
-          </span>
-        </div>
-      )}
-
+      ) : null}
 
       {/* Error state */}
       {error && (
@@ -551,7 +537,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
       {/* Spreadsheet Matrix Table */}
       {matrixData && (
         <div className="relative rounded-2xl bg-slate-900/90 border border-slate-800 shadow-2xl shadow-black/60 overflow-hidden print:border-black print:shadow-none print:bg-white print:rounded-none">
-          <div className="w-full overflow-x-auto overflow-y-auto max-h-[75vh] scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900 print:max-h-none print:overflow-visible">
+          <div className="w-full overflow-x-auto pb-20 overflow-y-auto max-h-[75vh] scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900 print:max-h-none print:overflow-visible">
             <table className="w-full text-left border-collapse min-w-[750px] print:min-w-0 print:text-black">
               {/* Table Header: Members (Columns) */}
               <thead>
