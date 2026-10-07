@@ -383,7 +383,12 @@ export const WeeklyPicks: React.FC = () => {
 
                       {/* Lock Status */}
                       <td className="py-3.5 px-4 text-center">
-                        {locked ? (
+                        {game.status === 'IN_PROGRESS' ? (
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse">
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                            <span>LIVE</span>
+                          </span>
+                        ) : locked ? (
                           <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-amber-400 border border-amber-500/30">
                             <Lock className="w-3 h-3" />
                             <span>{game.status === 'FINAL' ? 'FINAL' : 'LOCKED'}</span>
@@ -477,7 +482,12 @@ export const WeeklyPicks: React.FC = () => {
                     <span>{formatKickoff(game.kickoffTime)}</span>
                   </div>
 
-                  {locked ? (
+                  {game.status === 'IN_PROGRESS' ? (
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                      <span>LIVE</span>
+                    </span>
+                  ) : locked ? (
                     <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800/90 text-amber-400 border border-amber-500/30">
                       <Lock className="w-3 h-3" />
                       <span>{game.status === 'FINAL' ? 'FINAL' : 'LOCKED'}</span>
@@ -497,8 +507,10 @@ export const WeeklyPicks: React.FC = () => {
                     disabled={locked || isSaving}
                     className={`p-3.5 rounded-xl border text-left flex flex-col justify-between transition-all duration-200 relative group ${
                       isAwaySelected
-                        ? 'bg-cyan-500/15 border-cyan-400 shadow-md shadow-cyan-500/20 ring-1 ring-cyan-400'
-                        : 'bg-slate-900/80 border-slate-800 hover:border-slate-700 hover:bg-slate-800/80'
+                        ? 'ring-2 ring-cyan-500 bg-cyan-950/40 border-cyan-500/50 shadow-[0_0_15px_rgba(6,182,212,0.25)]'
+                        : Boolean(game.userPick)
+                        ? 'bg-slate-900/80 border-slate-800 opacity-40 grayscale-[30%] hover:opacity-80 transition-opacity duration-200'
+                        : 'bg-slate-900/80 border-slate-800 hover:border-slate-700 hover:bg-slate-800/80 opacity-100'
                     } ${locked ? 'cursor-not-allowed' : 'cursor-pointer active:scale-[0.98]'}`}
                   >
                     <div className="flex items-center justify-between mb-2">
@@ -506,7 +518,10 @@ export const WeeklyPicks: React.FC = () => {
                         AWAY
                       </span>
                       {isAwaySelected && (
-                        <CheckCircle2 className="w-4 h-4 text-cyan-400 flex-shrink-0 animate-scale-in" />
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 text-[9px] font-extrabold tracking-wider animate-scale-in">
+                          <CheckCircle2 className="w-3 h-3 text-cyan-400" />
+                          <span>SELECTED</span>
+                        </span>
                       )}
                     </div>
                     <div className="text-xl font-extrabold text-white group-hover:text-cyan-300 transition-colors">
@@ -525,8 +540,10 @@ export const WeeklyPicks: React.FC = () => {
                     disabled={locked || isSaving}
                     className={`p-3.5 rounded-xl border text-left flex flex-col justify-between transition-all duration-200 relative group ${
                       isHomeSelected
-                        ? 'bg-cyan-500/15 border-cyan-400 shadow-md shadow-cyan-500/20 ring-1 ring-cyan-400'
-                        : 'bg-slate-900/80 border-slate-800 hover:border-slate-700 hover:bg-slate-800/80'
+                        ? 'ring-2 ring-cyan-500 bg-cyan-950/40 border-cyan-500/50 shadow-[0_0_15px_rgba(6,182,212,0.25)]'
+                        : Boolean(game.userPick)
+                        ? 'bg-slate-900/80 border-slate-800 opacity-40 grayscale-[30%] hover:opacity-80 transition-opacity duration-200'
+                        : 'bg-slate-900/80 border-slate-800 hover:border-slate-700 hover:bg-slate-800/80 opacity-100'
                     } ${locked ? 'cursor-not-allowed' : 'cursor-pointer active:scale-[0.98]'}`}
                   >
                     <div className="flex items-center justify-between mb-2">
@@ -534,7 +551,10 @@ export const WeeklyPicks: React.FC = () => {
                         HOME
                       </span>
                       {isHomeSelected && (
-                        <CheckCircle2 className="w-4 h-4 text-cyan-400 flex-shrink-0 animate-scale-in" />
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 text-[9px] font-extrabold tracking-wider animate-scale-in">
+                          <CheckCircle2 className="w-3 h-3 text-cyan-400" />
+                          <span>SELECTED</span>
+                        </span>
                       )}
                     </div>
                     <div className="text-xl font-extrabold text-white group-hover:text-cyan-300 transition-colors">

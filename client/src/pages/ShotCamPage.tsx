@@ -532,20 +532,20 @@ export const ShotCamPage: React.FC = () => {
                   <button
                     onClick={() => handleReview('APPROVE_DISPUTE', 'Dispute approved by Commissioner Jack')}
                     disabled={actionLoading}
-                    className="w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs tracking-wide shadow-lg shadow-emerald-600/20 transition-all disabled:opacity-50"
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-5 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-600 hover:to-teal-700 text-white font-bold border border-emerald-500/40 text-xs tracking-wide shadow-md transition-all disabled:opacity-50"
                   >
                     <Check className="w-4 h-4" />
-                    <span>Approve Dispute / Waive Shots</span>
+                    <span>Waive Penalty / Approve Excuse</span>
                   </button>
 
                   {/* Deny / Enforce Button */}
                   <button
                     onClick={() => handleReview('REJECT_DISPUTE', 'Dispute rejected by Commissioner Jack')}
                     disabled={actionLoading}
-                    className="w-full flex items-center justify-center space-x-2 py-3 px-4 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white font-extrabold text-xs tracking-wide shadow-lg shadow-rose-600/20 transition-all disabled:opacity-50"
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-5 rounded-xl bg-gradient-to-r from-rose-700 to-red-800 hover:from-rose-600 hover:to-red-700 text-white font-extrabold shadow-[0_0_20px_rgba(225,29,72,0.4)] border border-rose-500/40 text-xs tracking-wide transition-all disabled:opacity-50"
                   >
                     <X className="w-4 h-4" />
-                    <span>Deny Dispute / Enforce 2.5 Shots</span>
+                    <span>Execute Penalty ({activeRecord.penaltyShots || 2.5} Shots)</span>
                   </button>
 
                   {/* Verify Video Proof Button */}

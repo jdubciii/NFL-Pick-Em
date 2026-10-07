@@ -18,7 +18,8 @@ import {
   Sliders,
   Cpu,
   Wine,
-  Info
+  Info,
+  AlertTriangle,
 } from 'lucide-react';
 import { formatGameKickoff } from '../utils/dateUtils';
 
@@ -595,6 +596,32 @@ export const SweatRadarPage: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 animate-fade-in text-slate-100">
+      {/* Hypothetical Simulation Mode Banner */}
+      {forcedCount > 0 && (
+        <div className="bg-gradient-to-r from-amber-950/60 via-amber-900/40 to-slate-900 border border-amber-500/40 rounded-xl p-4 mb-6 shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center space-x-3">
+            <div className="w-9 h-9 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+              <AlertTriangle className="w-5 h-5 text-amber-400 animate-pulse" />
+            </div>
+            <div>
+              <div className="text-sm font-black text-amber-300 tracking-wide uppercase">
+                HYPOTHETICAL SIMULATION ACTIVE
+              </div>
+              <div className="text-xs text-slate-300 mt-0.5">
+                Viewing custom scenario with {forcedCount} forced outcome{forcedCount > 1 ? 's' : ''}. Projected ranks reflect user overrides.
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={handleResetOutcomes}
+            className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-4 py-2 rounded-lg text-sm shadow-md transition-all flex items-center gap-1.5 shrink-0"
+          >
+            <RotateCcw className="w-4 h-4" />
+            <span>↺ Reset to Baseline Live Reality</span>
+          </button>
+        </div>
+      )}
+
       {/* 1. Header Hero Banner */}
       <div className="p-6 sm:p-8 rounded-3xl glass-panel border border-cyan-500/30 bg-gradient-to-br from-slate-900 via-slate-950 to-cyan-950/40 shadow-2xl relative overflow-hidden">
         <div className="absolute -right-16 -top-16 w-72 h-72 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
@@ -862,7 +889,7 @@ export const SweatRadarPage: React.FC = () => {
                 return (
                   <div
                     key={game.id}
-                    className="rounded-2xl glass-card border border-slate-800 hover:border-slate-700 transition-all bg-slate-900/80 shadow-xl overflow-hidden"
+                    className="bg-slate-900/70 border border-slate-800/80 rounded-2xl hover:border-slate-700 transition-colors shadow-xl overflow-hidden"
                   >
                     <div className="p-5 space-y-4">
                       <div className="flex items-start justify-between gap-4">
@@ -1069,7 +1096,7 @@ export const SweatRadarPage: React.FC = () => {
         {/* Right Column (5 cols): Live Projected Standings & Dead Place Monitor */}
         <div className="lg:col-span-5 space-y-8">
           {/* Live Projected Standings Card */}
-          <div className="p-6 rounded-3xl glass-panel border border-slate-800 bg-slate-900/80 shadow-xl space-y-4">
+          <div className="bg-slate-950/90 border border-cyan-500/20 shadow-2xl rounded-2xl backdrop-blur-xl p-5 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <Activity className="w-5 h-5 text-cyan-400" />
