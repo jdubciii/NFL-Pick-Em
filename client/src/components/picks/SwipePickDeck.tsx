@@ -148,17 +148,18 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
       </AnimatePresence>
 
       {/* Tightened Stepper Progress Ledger Header */}
-      <div className="w-full px-1 mb-2 space-y-1">
+      <div className="w-full px-1 mb-2 space-y-1.5">
         <div className="flex items-center justify-between text-[11px] font-black tracking-wide">
           <div className="flex items-center space-x-1.5 text-cyan-400">
             <span>MATCHUP {currentIndex + 1} OF {totalGames}</span>
           </div>
+
           <div className="flex items-center space-x-2 text-[10px]">
             <span className="text-emerald-400 font-bold">{pickedCount} Picked</span>
             <span className="text-slate-500">·</span>
             <span className="text-slate-400">{totalGames - pickedCount} Left</span>
 
-            {/* Clear All Inline Action */}
+            {/* Clear All elevated safely away from right chevron */}
             {onClearAllPicks && !isUserLocked && pickedCount > 0 && (
               <>
                 <span className="text-slate-500">·</span>
@@ -166,7 +167,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
                   <button
                     type="button"
                     onClick={() => setConfirmClear(true)}
-                    className="text-rose-400 hover:text-rose-300 font-bold underline"
+                    className="text-rose-400 hover:text-rose-300 font-bold underline px-1 py-0.5"
                   >
                     Clear All
                   </button>
@@ -178,7 +179,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
                       setConfirmClear(false);
                       setToastMessage('All picks cleared');
                     }}
-                    className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-black text-[9px] animate-pulse"
+                    className="px-2 py-0.5 rounded bg-rose-600 text-white font-black text-[9px] animate-pulse shadow-md"
                   >
                     Confirm?
                   </button>
@@ -188,12 +189,12 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
           </div>
         </div>
 
-        {/* High-Visibility Ledger Bar with Prominent Touch Chevrons */}
-        <div className="flex items-center space-x-2 w-full">
+        {/* High-Visibility Ledger Bar with Prominent Isolated Touch Chevrons */}
+        <div className="flex items-center space-x-2 w-full pt-0.5">
           <button
             type="button"
             onClick={() => setCurrentIndex(prev => getPrevUnpickedIndex(prev))}
-            className="w-7 h-7 flex items-center justify-center rounded-lg bg-slate-800 border border-slate-700 text-cyan-400 hover:text-white active:scale-90 transition-all shrink-0 text-sm font-black shadow-sm"
+            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 border border-slate-700 text-cyan-400 hover:text-white active:scale-90 transition-all shrink-0 text-sm font-black shadow-sm"
             title="Previous Unpicked"
           >
             ◀
@@ -228,7 +229,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
           <button
             type="button"
             onClick={() => setCurrentIndex(prev => getNextUnpickedIndex(prev))}
-            className="w-7 h-7 flex items-center justify-center rounded-lg bg-slate-800 border border-slate-700 text-cyan-400 hover:text-white active:scale-90 transition-all shrink-0 text-sm font-black shadow-sm"
+            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 border border-slate-700 text-cyan-400 hover:text-white active:scale-90 transition-all shrink-0 text-sm font-black shadow-sm"
             title="Next Unpicked"
           >
             ▶

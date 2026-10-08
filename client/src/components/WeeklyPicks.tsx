@@ -356,19 +356,13 @@ export const WeeklyPicks: React.FC = () => {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* Compact Header Banner */}
-      <div className="flex flex-row items-center justify-between gap-2 p-2 sm:p-4 glass-panel rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl">
-        <div className="flex items-center space-x-2">
-          <div className="flex items-center space-x-1.5 text-[11px] sm:text-xs font-bold text-cyan-400 uppercase tracking-wider">
-            <Shield className="w-3.5 h-3.5" />
-            <span>{pool?.name || 'Main League'} • W5</span>
-          </div>
-        </div>
-
-        {/* Compact Header Controls: [ Swipe | List ] + Locked Toggle + Refresh */}
-        <div className="flex items-center justify-between gap-1.5 py-0.5 select-none">
-          {/* Segmented View Mode: Swipe (Default) & List */}
-          <div className="inline-flex rounded-xl bg-slate-950 p-0.5 border border-slate-800 shrink-0 shadow-inner">
+      {/* Streamlined Mobile Top Bar: Week Tag + View Switcher + Lock Pill */}
+      <div className="flex items-center justify-between gap-2 p-2 glass-panel rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl select-none">
+        <div className="flex items-center space-x-2 shrink-0">
+          <span className="text-[11px] font-mono font-black text-cyan-400 bg-slate-950 px-2 py-0.5 rounded-lg border border-slate-800">
+            WEEK 5
+          </span>
+          <div className="inline-flex rounded-xl bg-slate-950 p-0.5 border border-slate-800 shadow-inner">
             <button
               type="button"
               onClick={() => handleTogglePicksView('swipe')}
@@ -388,32 +382,21 @@ export const WeeklyPicks: React.FC = () => {
               List
             </button>
           </div>
-
-          {/* Corrected Lock Status Button */}
-          <div className="flex items-center space-x-1 shrink-0">
-            <button
-              type="button"
-              onClick={toggleUserLock}
-              className={`flex items-center space-x-1 px-2.5 py-1 rounded-xl border text-xs font-mono font-black transition-all shadow-sm ${
-                isUserLocked
-                  ? 'bg-amber-950/90 border-amber-500/80 text-amber-300 ring-1 ring-amber-500/30'
-                  : 'bg-cyan-950/80 border-cyan-600/80 text-cyan-300 hover:bg-cyan-900'
-              }`}
-            >
-              <span>{isUserLocked ? '🔒' : '🔓'}</span>
-              <span>{isUserLocked ? 'LOCKED' : 'LOCK PICKS'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={fetchGames}
-              className="p-1.5 rounded-xl bg-slate-900 border border-slate-700 text-slate-300 hover:text-white active:scale-90 transition-transform"
-              title="Refresh Picks Slate"
-            >
-              🔄
-            </button>
-          </div>
         </div>
+
+        {/* Dedicated Compact Lock Pill - Fits comfortably within 100vw */}
+        <button
+          type="button"
+          onClick={toggleUserLock}
+          className={`flex items-center space-x-1.5 px-3 py-1 rounded-xl border text-xs font-mono font-black transition-all shadow-sm shrink-0 ${
+            isUserLocked
+              ? 'bg-amber-950/90 border-amber-500/80 text-amber-300 ring-1 ring-amber-500/30'
+              : 'bg-cyan-950/80 border-cyan-600/80 text-cyan-300 hover:bg-cyan-900'
+          }`}
+        >
+          <span>{isUserLocked ? '🔒' : '🔓'}</span>
+          <span>{isUserLocked ? 'LOCKED' : 'LOCK PICKS'}</span>
+        </button>
       </div>
 
       {/* Content Rendering */}
