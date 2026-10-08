@@ -41,9 +41,9 @@ export const WeeklyPicks: React.FC = () => {
   const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [now, setNow] = useState(new Date());
 
-  const [picksViewMode, setPicksViewMode] = useState<'swipe' | 'list' | 'cards'>(() => {
+  const [picksViewMode, setPicksViewMode] = useState<'swipe' | 'list'>(() => {
     const saved = localStorage.getItem('picks_view_preference');
-    return (saved === 'swipe' || saved === 'list' || saved === 'cards') ? (saved as 'swipe' | 'list' | 'cards') : 'swipe';
+    return (saved === 'swipe' || saved === 'list') ? (saved as 'swipe' | 'list') : 'swipe';
   });
 
   const [snackbarState, setSnackbarState] = useState<{ isOpen: boolean; message: string }>({
@@ -72,7 +72,7 @@ export const WeeklyPicks: React.FC = () => {
     });
   };
 
-  const handleTogglePicksView = (mode: 'swipe' | 'list' | 'cards') => {
+  const handleTogglePicksView = (mode: 'swipe' | 'list') => {
     setPicksViewMode(mode);
     try {
       localStorage.setItem('picks_view_preference', mode);
@@ -337,14 +337,14 @@ export const WeeklyPicks: React.FC = () => {
           </p>
         </div>
 
-        {/* Responsive Compact Header Bar */}
+        {/* Streamlined Header Bar: [ Swipe | List ] + Locked Toggle + Working Refresh */}
         <div className="flex items-center justify-between gap-2 py-2 px-1 select-none">
-          {/* Segmented View Mode Switcher */}
-          <div className="inline-flex rounded-xl bg-slate-950 p-0.5 border border-slate-800 shrink-0">
+          {/* Segmented View Mode: Swipe (Default) & List */}
+          <div className="inline-flex rounded-xl bg-slate-950 p-0.5 border border-slate-800 shrink-0 shadow-inner">
             <button
               type="button"
               onClick={() => handleTogglePicksView('swipe')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
+              className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
                 picksViewMode === 'swipe' ? 'bg-cyan-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
               }`}
             >
@@ -353,31 +353,22 @@ export const WeeklyPicks: React.FC = () => {
             <button
               type="button"
               onClick={() => handleTogglePicksView('list')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
+              className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
                 picksViewMode === 'list' ? 'bg-cyan-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
               }`}
             >
               List
             </button>
-            <button
-              type="button"
-              onClick={() => handleTogglePicksView('cards')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
-                picksViewMode === 'cards' ? 'bg-cyan-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Cards
-            </button>
           </div>
 
-          {/* Right Action Controls: Compact Lock & Refresh */}
+          {/* Action Controls: Compact Lock & Working Refresh */}
           <div className="flex items-center space-x-1.5 shrink-0">
             <button
               type="button"
               onClick={toggleUserLock}
-              className={`flex items-center space-x-1 px-2.5 py-1 rounded-xl border text-xs font-mono font-bold transition-all ${
+              className={`flex items-center space-x-1 px-2.5 py-1 rounded-xl border text-xs font-mono font-black transition-all shadow-sm ${
                 isUserLocked
-                  ? 'bg-amber-950/80 border-amber-500/80 text-amber-300'
+                  ? 'bg-amber-950/90 border-amber-500/80 text-amber-300 ring-1 ring-amber-500/30'
                   : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white'
               }`}
             >
@@ -388,8 +379,8 @@ export const WeeklyPicks: React.FC = () => {
             <button
               type="button"
               onClick={fetchGames}
-              className="p-1.5 rounded-xl bg-slate-900 border border-slate-700 text-slate-400 hover:text-white"
-              title="Refresh Slate"
+              className="p-1.5 rounded-xl bg-slate-900 border border-slate-700 text-slate-300 hover:text-white active:scale-90 transition-transform"
+              title="Refresh Picks Slate"
             >
               🔄
             </button>
@@ -468,7 +459,7 @@ export const WeeklyPicks: React.FC = () => {
               }}
               isUserLocked={isUserLocked}
             />
-          ) : picksViewMode === 'list' ? (
+          ) : (
             /* High-Density Compact List View */
             <CompactPicksList
               games={games.map((g) => ({
@@ -488,138 +479,6 @@ export const WeeklyPicks: React.FC = () => {
                 if (targetGame) handlePick(targetGame, team);
               }}
             />
-          ) : (
-            /* Cards View: Grid of Matchup Cards */
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-6">
-              {games.map((game) => {
-                const locked = isGameLocked(game);
-                const isHomeSelected = game.userPick === game.homeTeamId;
-                const isAwaySelected = game.userPick === game.awayTeamId;
-                const isSaving = savingPickForGameId === game.id;
-
-                return (
-                  <div
-                    key={game.id}
-                    className={`rounded-2xl border transition-all duration-300 p-3.5 sm:p-5 flex flex-col justify-between space-y-3 sm:space-y-4 ${
-                      locked
-                        ? 'bg-slate-900/40 border-slate-800/60 opacity-85'
-                        : 'bg-slate-900/90 border-slate-800/90 hover:border-slate-700 shadow-lg'
-                    }`}
-                  >
-                    {/* Card Header: Kickoff & Status */}
-                    <div className="flex items-center justify-between text-xs pb-3 border-b border-slate-800/80">
-                      <div className="flex items-center space-x-1.5 text-slate-400 font-mono text-[11px]">
-                        <span>{formatKickoff(game.kickoffTime)}</span>
-                      </div>
-                      <div>
-                        {game.status === 'IN_PROGRESS' ? (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse">
-                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                            <span>LIVE</span>
-                          </span>
-                        ) : locked ? (
-                          <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-amber-400 border border-amber-500/30">
-                            <Lock className="w-3 h-3" />
-                            <span>{game.status === 'FINAL' ? 'FINAL' : 'LOCKED'}</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                            OPEN
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Pick Options (Away vs Home) */}
-                    <div className="grid grid-cols-2 gap-2 sm:gap-3">
-                      {/* Away Team Option */}
-                      <button
-                        onClick={() => handlePick(game, game.awayTeamId)}
-                        disabled={locked || isSaving}
-                        className={`p-3.5 rounded-xl border text-left flex flex-col justify-between transition-all duration-200 relative group ${
-                          isAwaySelected
-                            ? 'ring-2 ring-cyan-500 bg-cyan-950/40 border-cyan-500/50 shadow-[0_0_15px_rgba(6,182,212,0.25)]'
-                            : Boolean(game.userPick)
-                            ? 'bg-slate-900/80 border-slate-800 opacity-40 grayscale-[30%] hover:opacity-80 transition-opacity duration-200'
-                            : 'bg-slate-900/80 border-slate-800 hover:border-slate-700 hover:bg-slate-800/80 opacity-100'
-                        } ${locked ? 'cursor-not-allowed' : 'cursor-pointer active:scale-[0.98]'}`}
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
-                            AWAY
-                          </span>
-                          {isAwaySelected && (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 text-[9px] font-extrabold tracking-wider animate-scale-in">
-                              <CheckCircle2 className="w-3 h-3 text-cyan-400" />
-                              <span>SELECTED</span>
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xl font-extrabold text-white group-hover:text-cyan-300 transition-colors">
-                          {game.awayTeamId}
-                        </div>
-                        {game.awayScore !== null && (
-                          <div className="text-sm font-bold text-slate-300 mt-1">
-                            Score: {game.awayScore}
-                          </div>
-                        )}
-                      </button>
-
-                      {/* Home Team Option */}
-                      <button
-                        onClick={() => handlePick(game, game.homeTeamId)}
-                        disabled={locked || isSaving}
-                        className={`p-3.5 rounded-xl border text-left flex flex-col justify-between transition-all duration-200 relative group ${
-                          isHomeSelected
-                            ? 'ring-2 ring-cyan-500 bg-cyan-950/40 border-cyan-500/50 shadow-[0_0_15px_rgba(6,182,212,0.25)]'
-                            : Boolean(game.userPick)
-                            ? 'bg-slate-900/80 border-slate-800 opacity-40 grayscale-[30%] hover:opacity-80 transition-opacity duration-200'
-                            : 'bg-slate-900/80 border-slate-800 hover:border-slate-700 hover:bg-slate-800/80 opacity-100'
-                        } ${locked ? 'cursor-not-allowed' : 'cursor-pointer active:scale-[0.98]'}`}
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
-                            HOME
-                          </span>
-                          {isHomeSelected && (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 text-[9px] font-extrabold tracking-wider animate-scale-in">
-                              <CheckCircle2 className="w-3 h-3 text-cyan-400" />
-                              <span>SELECTED</span>
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xl font-extrabold text-white group-hover:text-cyan-300 transition-colors">
-                          {game.homeTeamId}
-                        </div>
-                        {game.homeScore !== null && (
-                          <div className="text-sm font-bold text-slate-300 mt-1">
-                            Score: {game.homeScore}
-                          </div>
-                        )}
-                      </button>
-                    </div>
-
-                    {/* Footer State Info */}
-                    <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
-                      <span className="text-slate-500">
-                        {game.userPick ? (
-                          <span className="text-slate-300">
-                            Your Pick: <strong className="text-cyan-400 font-bold">{game.userPick}</strong>
-                          </span>
-                        ) : (
-                          <span className="text-amber-400/80 italic font-medium">No pick submitted</span>
-                        )}
-                      </span>
-                      {isSaving && (
-                        <span className="text-cyan-400 flex items-center space-x-1 animate-pulse font-semibold">
-                          <span>Saving...</span>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
           )}
         </div>
       )}

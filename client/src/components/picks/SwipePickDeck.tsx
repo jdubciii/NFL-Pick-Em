@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'framer-motion';
 import { TeamLogo } from '../common/TeamLogo';
 import { NFL_TEAMS } from '../../utils/teamAssets';
@@ -12,7 +12,6 @@ export interface SwipeMatchup {
   spread?: string;
   overUnder?: string;
   venue?: string;
-  weather?: string;
   injuryNote?: string;
   selectedTeam?: string | null;
   isLocked?: boolean;
@@ -32,34 +31,45 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
   const [deck, setDeck] = useState<SwipeMatchup[]>(matchups);
   const [showIntel, setShowIntel] = useState(false);
 
-  // Sync if external matchups change
-  React.useEffect(() => {
-    setDeck(matchups);
-  }, [matchups.length]);
+  useEffect(() => {
+    // Keep deck in sync if external pick selections update without resetting queue
+    setDeck(prev => {
+      if (prev.length === 0) return matchups;
+      return prev.map(card => {
+        const updated = matchups.find(m => m.gameId === card.gameId);
+        return updated ? { ...card, selectedTeam: updated.selectedTeam } : card;
+      });
+    });
+  }, [matchups]);
 
   const activeCard = deck[0];
   const nextCard = deck[1];
 
-  // Matchup status calculation
   const totalGames = matchups.length;
-  const pickedCount = matchups.filter(m => m.selectedTeam).length;
-  const currentIndex = activeCard ? (totalGames - deck.length + 1) : totalGames;
+  const pickedCount = matchups.filter(m => !!m.selectedTeam).length;
+  // Locate index in master matchups array (1-indexed)
+  const masterIndex = activeCard ? (matchups.findIndex(m => m.gameId === activeCard.gameId) + 1) : totalGames;
 
   const handleCardExit = (direction: 'LEFT' | 'RIGHT' | 'UP' | 'DOWN') => {
     if (!activeCard) return;
 
+    if (isUserLocked) {
+      // Hard Lock: Block all card movements and state mutations
+      return;
+    }
+
     if (direction === 'LEFT') {
-      if (!isUserLocked && !activeCard.isLocked) {
+      if (!activeCard.isLocked) {
         onSelectPick(activeCard.gameId, activeCard.awayTeam);
       }
       setDeck(prev => prev.slice(1));
     } else if (direction === 'RIGHT') {
-      if (!isUserLocked && !activeCard.isLocked) {
+      if (!activeCard.isLocked) {
         onSelectPick(activeCard.gameId, activeCard.homeTeam);
       }
       setDeck(prev => prev.slice(1));
     } else if (direction === 'UP') {
-      // Skip: Move to back of line
+      // Skip to the back of the queue
       setDeck(prev => [...prev.slice(1), prev[0]]);
     } else if (direction === 'DOWN') {
       setShowIntel(true);
@@ -72,7 +82,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
         <span className="text-5xl animate-bounce">🎉</span>
         <h4 className="text-base font-black text-white uppercase tracking-wider">All Matchups Picked!</h4>
         <p className="text-xs text-slate-400 max-w-xs">
-          You have reviewed all {totalGames} matchups. Switch to List view to review your weekly slate.
+          You have completed your picks for this week. Switch to List view to review your weekly slate.
         </p>
         <button
           onClick={() => setDeck(matchups)}
@@ -86,33 +96,33 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
 
   return (
     <div className="relative w-full max-w-sm mx-auto flex flex-col items-center select-none font-mono">
-      {/* Pick Progress Ledger HUD */}
+      {/* Immutable Static Pick Progress Ledger HUD */}
       <div className="w-full px-2 mb-3 space-y-1.5">
         <div className="flex items-center justify-between text-[11px] font-black tracking-wide">
           <div className="flex items-center space-x-1.5 text-cyan-400">
-            <span>MATCHUP {currentIndex} OF {totalGames}</span>
+            <span>MATCHUP {masterIndex > 0 ? masterIndex : 1} OF {totalGames}</span>
           </div>
           <div className="text-slate-400 text-[10px]">
             <span className="text-emerald-400 font-bold">{pickedCount} Picked</span> · <span>{totalGames - pickedCount} Left</span>
           </div>
         </div>
 
-        {/* Micro-Segmented Ledger Bar */}
+        {/* Micro-Segmented Ledger Bar - Static & Deterministic */}
         <div className="grid grid-flow-col auto-cols-fr gap-1 w-full h-1.5 bg-slate-950/80 p-0.5 rounded-full border border-slate-800">
           {matchups.map((m, idx) => {
             const isCurrent = activeCard && activeCard.gameId === m.gameId;
-            const isPicked = !!m.selectedTeam;
-            const isHome = m.selectedTeam === m.homeTeam;
+            const isAwayPicked = m.selectedTeam === m.awayTeam;
+            const isHomePicked = m.selectedTeam === m.homeTeam;
+
+            let segmentColor = 'bg-slate-800';
+            if (isAwayPicked) segmentColor = 'bg-cyan-400';
+            else if (isHomePicked) segmentColor = 'bg-rose-500';
 
             return (
               <div
                 key={m.gameId || idx}
-                className={`h-full rounded-full transition-all duration-300 ${
-                  isCurrent
-                    ? 'bg-amber-400 ring-2 ring-amber-300 shadow-[0_0_8px_rgba(251,191,36,0.9)] animate-pulse'
-                    : isPicked
-                    ? isHome ? 'bg-rose-500' : 'bg-cyan-400'
-                    : 'bg-slate-800/80'
+                className={`h-full rounded-full transition-all duration-200 ${segmentColor} ${
+                  isCurrent ? 'ring-2 ring-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.9)] animate-pulse' : ''
                 }`}
               />
             );
@@ -122,7 +132,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
 
       {/* Main Swipe Deck Container */}
       <div className="relative w-full h-[470px] flex items-center justify-center">
-        {/* Background Stack Under-Card */}
+        {/* Background Under-Card Stack */}
         {nextCard && (
           <div className="absolute w-[92%] h-[420px] bg-slate-950/80 border border-slate-800 rounded-3xl p-5 shadow-xl scale-95 translate-y-4 opacity-50 blur-[0.5px] pointer-events-none flex flex-col justify-between">
             <div className="flex justify-between text-xs text-slate-500 font-bold">
@@ -150,11 +160,10 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
         </AnimatePresence>
       </div>
 
-      {/* Native-Feel Matchup Intel Drawer with Full Drag-Down Dismiss */}
+      {/* Matchup Intel Sheet Modal with Drag Dismiss */}
       <AnimatePresence>
         {showIntel && (
           <div className="fixed inset-0 z-50 overflow-hidden flex items-end justify-center select-none">
-            {/* Backdrop */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -163,7 +172,6 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
               className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm"
             />
 
-            {/* Draggable Bottom Sheet */}
             <motion.div
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
@@ -173,7 +181,6 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
               dragConstraints={{ top: 0, bottom: 0 }}
               dragElastic={{ top: 0, bottom: 0.6 }}
               onDragEnd={(_, info) => {
-                // If dragged downward past 60px or with downward velocity, dismiss
                 if (info.offset.y > 60 || info.velocity.y > 300) {
                   setShowIntel(false);
                 }
@@ -181,7 +188,6 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
               className="relative w-full max-w-lg bg-slate-900 border-t border-slate-700 rounded-t-3xl p-5 pb-8 space-y-4 text-white font-mono shadow-2xl z-10 max-h-[82dvh] flex flex-col touch-none"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Visible Tactile Drag Handle */}
               <div className="w-12 h-1.5 bg-slate-600 rounded-full mx-auto -mt-1 cursor-grab active:cursor-grabbing shrink-0" />
 
               <div className="flex items-center justify-between border-b border-slate-800 pb-3 shrink-0">
@@ -200,9 +206,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
                 </button>
               </div>
 
-              {/* Scrollable Intel Body */}
               <div className="space-y-3 overflow-y-auto flex-1 pr-1 text-xs touch-pan-y">
-                {/* Team Banner */}
                 <div className="flex items-center justify-around p-3 bg-slate-950 rounded-2xl border border-slate-800">
                   <div className="flex items-center space-x-2">
                     <TeamLogo abbr={activeCard.awayTeam} size="sm" />
@@ -269,13 +273,15 @@ const SwipeCardItem: React.FC<{
   return (
     <motion.div
       style={{ x, y, rotate }}
-      drag
+      // HARD LOCK: Drag disabled completely when user locked
+      drag={!isUserLocked}
       dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
       dragElastic={0.85}
       initial={{ scale: 0.9, y: 20, opacity: 0 }}
       animate={{ scale: 1, y: 0, opacity: 1 }}
       exit={{ opacity: 0, scale: 0.85, transition: { duration: 0.2 } }}
       onDragEnd={(_, info) => {
+        if (isUserLocked) return;
         if (info.offset.x < -80) {
           onSwipe('LEFT');
         } else if (info.offset.x > 80) {
@@ -286,29 +292,35 @@ const SwipeCardItem: React.FC<{
           onOpenIntel();
         }
       }}
-      className="absolute w-full h-[450px] bg-slate-900/95 border-2 border-slate-700/80 rounded-3xl p-5 shadow-2xl flex flex-col justify-between cursor-grab active:cursor-grabbing backdrop-blur-2xl z-20 select-none"
+      className={`absolute w-full h-[450px] bg-slate-900/95 border-2 rounded-3xl p-5 shadow-2xl flex flex-col justify-between backdrop-blur-2xl z-20 select-none ${
+        isUserLocked ? 'border-amber-600/50 cursor-not-allowed' : 'border-slate-700/80 cursor-grab active:cursor-grabbing'
+      }`}
     >
-      {/* Pick Hologram Overlays */}
-      <motion.div
-        style={{ opacity: awayOpacity }}
-        className="absolute top-8 left-6 px-4 py-1.5 rounded-2xl bg-cyan-950/95 border-2 border-cyan-400 text-cyan-300 font-black text-sm uppercase -rotate-12 z-30 shadow-[0_0_15px_rgba(34,211,238,0.5)]"
-      >
-        PICK {matchup.awayTeam} ◀
-      </motion.div>
+      {/* Hologram Pick Indicators */}
+      {!isUserLocked && (
+        <>
+          <motion.div
+            style={{ opacity: awayOpacity }}
+            className="absolute top-8 left-6 px-4 py-1.5 rounded-2xl bg-cyan-950/95 border-2 border-cyan-400 text-cyan-300 font-black text-sm uppercase -rotate-12 z-30 shadow-[0_0_15px_rgba(34,211,238,0.5)]"
+          >
+            PICK {matchup.awayTeam} ◀
+          </motion.div>
 
-      <motion.div
-        style={{ opacity: homeOpacity }}
-        className="absolute top-8 right-6 px-4 py-1.5 rounded-2xl bg-rose-950/95 border-2 border-rose-400 text-rose-300 font-black text-sm uppercase rotate-12 z-30 shadow-[0_0_15px_rgba(244,63,94,0.5)]"
-      >
-        ▶ PICK {matchup.homeTeam}
-      </motion.div>
+          <motion.div
+            style={{ opacity: homeOpacity }}
+            className="absolute top-8 right-6 px-4 py-1.5 rounded-2xl bg-rose-950/95 border-2 border-rose-400 text-rose-300 font-black text-sm uppercase rotate-12 z-30 shadow-[0_0_15px_rgba(244,63,94,0.5)]"
+          >
+            ▶ PICK {matchup.homeTeam}
+          </motion.div>
 
-      <motion.div
-        style={{ opacity: skipOpacity }}
-        className="absolute top-6 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-2xl bg-amber-950/90 border-2 border-amber-400 text-amber-300 font-black text-xs uppercase z-30 shadow-lg"
-      >
-        ▲ SKIP FOR LATER ▲
-      </motion.div>
+          <motion.div
+            style={{ opacity: skipOpacity }}
+            className="absolute top-6 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-2xl bg-amber-950/90 border-2 border-amber-400 text-amber-300 font-black text-xs uppercase z-30 shadow-lg"
+          >
+            ▲ SKIP FOR LATER ▲
+          </motion.div>
+        </>
+      )}
 
       {/* Header Info */}
       <div className="flex items-center justify-between border-b border-slate-800 pb-3 text-xs">
@@ -321,40 +333,53 @@ const SwipeCardItem: React.FC<{
         </span>
       </div>
 
-      {/* Team Confrontation Card */}
+      {/* Team Showdown */}
       <div className="flex items-center justify-around my-2 py-4 px-2 bg-slate-950/60 rounded-2xl border border-slate-800/80">
         <div className="flex flex-col items-center space-y-2 text-center">
-          <div className="p-2 rounded-2xl bg-slate-900 border border-slate-700/80 shadow-md">
+          <div className={`p-2 rounded-2xl bg-slate-900 border shadow-md ${matchup.selectedTeam === matchup.awayTeam ? 'border-cyan-400 ring-2 ring-cyan-500/40' : 'border-slate-700/80'}`}>
             <TeamLogo abbr={matchup.awayTeam} size="lg" />
           </div>
           <span className="text-xl font-black text-white">{matchup.awayTeam}</span>
           <span className="text-[10px] text-slate-400 font-bold">{awayMeta?.name || 'Away'}</span>
-          <div className="px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-800 text-cyan-400 text-[10px] font-black">
-            SWIPE ◀
+          <div className={`px-2 py-0.5 rounded border text-[10px] font-black ${
+            matchup.selectedTeam === matchup.awayTeam
+              ? 'bg-cyan-500 text-slate-950 border-cyan-400 font-black'
+              : 'bg-cyan-950/80 border-cyan-800 text-cyan-400'
+          }`}>
+            {matchup.selectedTeam === matchup.awayTeam ? '✔ SELECTED' : 'SWIPE ◀'}
           </div>
         </div>
 
         <span className="text-slate-600 font-black text-sm uppercase">VS</span>
 
         <div className="flex flex-col items-center space-y-2 text-center">
-          <div className="p-2 rounded-2xl bg-slate-900 border border-slate-700/80 shadow-md">
+          <div className={`p-2 rounded-2xl bg-slate-900 border shadow-md ${matchup.selectedTeam === matchup.homeTeam ? 'border-rose-400 ring-2 ring-rose-500/40' : 'border-slate-700/80'}`}>
             <TeamLogo abbr={matchup.homeTeam} size="lg" />
           </div>
           <span className="text-xl font-black text-white">{matchup.homeTeam}</span>
           <span className="text-[10px] text-slate-400 font-bold">{homeMeta?.name || 'Home'}</span>
-          <div className="px-2 py-0.5 rounded bg-rose-950/80 border border-rose-800 text-rose-400 text-[10px] font-black">
-            ▶ SWIPE
+          <div className={`px-2 py-0.5 rounded border text-[10px] font-black ${
+            matchup.selectedTeam === matchup.homeTeam
+              ? 'bg-rose-500 text-slate-950 border-rose-400 font-black'
+              : 'bg-rose-950/80 border-rose-800 text-rose-400'
+          }`}>
+            {matchup.selectedTeam === matchup.homeTeam ? '✔ SELECTED' : '▶ SWIPE'}
           </div>
         </div>
       </div>
 
-      {/* Prominent Quick-Action Buttons */}
+      {/* Footer Controls */}
       <div className="border-t border-slate-800 pt-3 space-y-2 text-center">
         <div className="grid grid-cols-2 gap-2 text-xs font-bold">
           <button
             type="button"
+            disabled={isUserLocked}
             onClick={() => onSwipe('UP')}
-            className="flex items-center justify-center space-x-1 py-1.5 px-2 rounded-xl bg-slate-800/90 border border-slate-700 text-amber-300 hover:bg-slate-700 active:scale-95"
+            className={`flex items-center justify-center space-x-1 py-1.5 px-2 rounded-xl border transition-all ${
+              isUserLocked
+                ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
+                : 'bg-slate-800/90 border-slate-700 text-amber-300 hover:bg-slate-700 active:scale-95'
+            }`}
           >
             <span>▲</span>
             <span>SKIP (UP)</span>
@@ -370,8 +395,8 @@ const SwipeCardItem: React.FC<{
         </div>
 
         {isUserLocked && (
-          <div className="text-[10px] text-amber-400 font-bold animate-pulse">
-            🔒 Picks locked. Tap 'LOCKED' pill in top bar to edit.
+          <div className="p-2 rounded-xl bg-amber-950/80 border border-amber-500/50 text-[10px] text-amber-300 font-black tracking-wide uppercase shadow-inner">
+            🔒 Picks Locked · Tap 'LOCKED' Pill in Header to Edit
           </div>
         )}
       </div>
