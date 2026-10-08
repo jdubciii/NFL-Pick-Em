@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { DisputeCountdownClock } from '../components/shame/DisputeCountdownClock';
 import {
   Beer,
   Crown,
@@ -759,14 +760,8 @@ export const ShotCamPage: React.FC = () => {
                 />
               </div>
 
-              <div className="flex items-center justify-between text-xs font-mono">
-                <span className="text-slate-300 font-bold flex items-center space-x-1.5">
-                  <Clock className="w-3.5 h-3.5 text-amber-400" />
-                  <span>{countdown.text}</span>
-                </span>
-                <span className="text-slate-500 text-[11px]">
-                  Expires: {new Date(activeRecord.disputeExpiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
+              <div className="pt-2">
+                <DisputeCountdownClock expiresAt={activeRecord.disputeExpiresAt || new Date(Date.now() + (3 * 3600 + 54 * 60 + 55) * 1000).toISOString()} />
               </div>
 
               {/* Dispute Reason Banner if DISPUTED */}

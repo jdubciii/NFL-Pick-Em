@@ -1,3 +1,24 @@
+export function computeAbsolutePosition(
+  yardLine: number,
+  sideOfField: string,
+  awayTeam: string,
+  homeTeam: string
+): number {
+  if (yardLine === 50) return 50;
+  if (sideOfField === awayTeam) return Math.min(50, Math.max(0, yardLine));
+  if (sideOfField === homeTeam) return Math.min(100, Math.max(50, 100 - yardLine));
+  return yardLine;
+}
+
+export function evaluateRedZoneThreat(
+  absolutePosition: number,
+  possession: 'AWAY' | 'HOME'
+): boolean {
+  if (possession === 'AWAY') return absolutePosition >= 80;
+  if (possession === 'HOME') return absolutePosition <= 20;
+  return false;
+}
+
 export interface GameDriveTelemetry {
   gameId: string;
   awayScore: number;

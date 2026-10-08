@@ -69,8 +69,15 @@ export const NightEditorialMatchupCard: React.FC<NightEditorialMatchupCardProps>
         {/* Away Team */}
         <div className="col-span-2 flex items-center space-x-2.5">
           <div className="text-left">
-            <div className="text-xl md:text-2xl font-black text-white tracking-tight leading-none">
-              {game.awayTeam.code}
+            <div className="flex items-center space-x-1.5">
+              <span className="text-xl md:text-2xl font-black text-white tracking-tight leading-none">
+                {game.awayTeam.code}
+              </span>
+              {game.possession === 'AWAY' && (
+                <span className="inline-block text-xs" title="Has Possession">
+                  🏈
+                </span>
+              )}
             </div>
             <div className="text-[11px] font-semibold text-slate-400 truncate">{game.awayTeam.name}</div>
             <div className="text-[10px] font-mono text-slate-500">{game.awayTeam.record}</div>
@@ -91,8 +98,15 @@ export const NightEditorialMatchupCard: React.FC<NightEditorialMatchupCardProps>
         {/* Home Team */}
         <div className="col-span-2 flex items-center justify-end space-x-2.5 text-right">
           <div>
-            <div className="text-xl md:text-2xl font-black text-white tracking-tight leading-none">
-              {game.homeTeam.code}
+            <div className="flex items-center justify-end space-x-1.5">
+              {game.possession === 'HOME' && (
+                <span className="inline-block text-xs" title="Has Possession">
+                  🏈
+                </span>
+              )}
+              <span className="text-xl md:text-2xl font-black text-white tracking-tight leading-none">
+                {game.homeTeam.code}
+              </span>
             </div>
             <div className="text-[11px] font-semibold text-slate-400 truncate">{game.homeTeam.name}</div>
             <div className="text-[10px] font-mono text-slate-500">{game.homeTeam.record}</div>
@@ -103,10 +117,14 @@ export const NightEditorialMatchupCard: React.FC<NightEditorialMatchupCardProps>
       {/* Field Position Drive Tracker (Concept 01 + Concept 03 Hybrid) */}
       {game.status === 'IN_PROGRESS' && (
         <FieldPositionTracker
+          absolutePosition={93}
           possession={game.possession || 'AWAY'}
           yardline={game.yardline || 50}
           downAndDistance={game.downAndDistance}
           sideOfField={game.ballLocation}
+          lineOfScrimmage={game.ballLocation}
+          awayTeam={game.awayTeam.code}
+          homeTeam={game.homeTeam.code}
           isRedZone={game.isRedZone}
         />
       )}

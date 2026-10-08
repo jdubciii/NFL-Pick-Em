@@ -1,59 +1,83 @@
 import React from 'react';
 
-interface FieldPositionTrackerProps {
-  possession: 'HOME' | 'AWAY';
-  yardline: number; // 0 to 100 (50 is midfield)
-  downAndDistance?: string; // e.g., '3rd & 8'
-  sideOfField?: string; // e.g., 'KC 28'
+export interface FieldPositionTrackerProps {
+  absolutePosition?: number; // 0 to 100 (0% = Away End Zone, 100% = Home End Zone)
+  yardline?: number; // legacy fallback
+  downAndDistance?: string; // e.g. "1st & Goal"
+  possession?: 'AWAY' | 'HOME';
+  awayTeam?: string;
+  homeTeam?: string;
+  lineOfScrimmage?: string; // e.g. "BUF 7"
+  sideOfField?: string;
   isRedZone?: boolean;
 }
 
 export const FieldPositionTracker: React.FC<FieldPositionTrackerProps> = ({
-  possession,
+  absolutePosition = 93,
   yardline,
-  downAndDistance,
+  downAndDistance = '1st & Goal',
+  possession = 'AWAY',
+  awayTeam = 'KC',
+  homeTeam = 'BUF',
+  lineOfScrimmage = 'BUF 7',
   sideOfField,
-  isRedZone = false
+  isRedZone = true,
 }) => {
-  // Normalize yardline coordinate across the 100-yard visual field
-  const clamped = Math.max(5, Math.min(95, yardline));
+  const effectiveBallLocation = lineOfScrimmage || sideOfField || 'BUF 7';
+  const effectivePosition = absolutePosition ?? yardline ?? 93;
+  // Option A Standard: Away team (Left) drives Right (▶); Home team (Right) drives Left (◀)
+  const chevron = possession === 'AWAY' ? '▶' : '◀';
 
   return (
-    <div className="w-full space-y-1 my-2">
-      <div className="flex items-center justify-between text-[11px] font-mono font-bold text-slate-400">
-        <span className="text-cyan-400">{downAndDistance || '1st & 10'}</span>
+    <div className="w-full space-y-1.5 font-mono select-none">
+      {/* Telemetry Header */}
+      <div className="flex items-center justify-between text-xs px-1">
+        <div className="flex items-center space-x-1.5 font-black text-cyan-400">
+          <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-ping" />
+          <span>
+            {downAndDistance} {chevron}
+          </span>
+        </div>
+
         {isRedZone && (
-          <span className="px-1.5 py-0.2 rounded bg-rose-600/90 text-white text-[9px] uppercase tracking-wider font-extrabold animate-pulse">
+          <span className="px-2 py-0.5 rounded bg-rose-950/90 border border-rose-500/80 text-[10px] font-black text-rose-300 tracking-wider shadow-[0_0_12px_rgba(244,63,94,0.3)] animate-pulse">
             RED ZONE
           </span>
         )}
-        <span>{sideOfField || 'MIDFIELD'}</span>
+
+        <div className="flex items-center space-x-1 text-slate-300 font-bold">
+          <span className="text-[10px] text-slate-500 uppercase">BALL:</span>
+          <span className="text-white font-black">{effectiveBallLocation}</span>
+        </div>
       </div>
 
-      {/* Field Grid Visualization */}
-      <div className="relative h-4 w-full bg-emerald-950/80 rounded-md border border-emerald-700/50 overflow-hidden flex items-center shadow-inner">
-        {/* Yard Markers */}
-        <div className="absolute inset-0 flex justify-between px-2 text-[8px] font-mono text-emerald-600/70 select-none">
-          <span>10</span>
-          <span>20</span>
-          <span>30</span>
-          <span>40</span>
-          <span className="font-bold text-emerald-400">50</span>
-          <span>40</span>
-          <span>30</span>
-          <span>20</span>
-          <span>10</span>
+      {/* 100-Yard Field Strip */}
+      <div className="relative w-full h-4 bg-emerald-950/80 border border-emerald-800/60 rounded-md overflow-hidden flex items-center shadow-inner">
+        {/* Left End Zone (Away: Fixed at 0%) */}
+        <div className="w-[8%] h-full bg-cyan-950/80 border-r border-emerald-700/60 flex items-center justify-center text-[8px] font-black text-cyan-400">
+          {awayTeam}
         </div>
 
-        {/* Yardlines Subtle Dividers */}
-        <div className="absolute inset-0 grid grid-cols-10 divide-x divide-emerald-800/30" />
+        {/* 20-Yard Line Marker (Left) */}
+        <div className="absolute left-[24%] top-0 bottom-0 w-px bg-emerald-700/30" />
 
-        {/* Ball Location Indicator */}
+        {/* 50-Yard Center Marker */}
+        <div className="absolute left-1/2 top-0 bottom-0 w-px bg-emerald-500/40 z-10" />
+
+        {/* 20-Yard Line Marker (Right) */}
+        <div className="absolute right-[24%] top-0 bottom-0 w-px bg-emerald-700/30" />
+
+        {/* Glowing Football Indicator (Positioned directly by absolutePosition 0-100%) */}
         <div
-          className="absolute top-0 bottom-0 w-2.5 -ml-1.25 flex items-center justify-center transition-all duration-700"
-          style={{ left: `${clamped}%` }}
+          style={{ left: `${Math.min(92, Math.max(8, effectivePosition))}%` }}
+          className="absolute -translate-x-1/2 flex items-center justify-center z-20 transition-all duration-700"
         >
-          <div className="h-3 w-3 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.9)] border border-white" />
+          <div className="h-3 w-3 rounded-full bg-amber-400 ring-2 ring-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.9)] animate-pulse" />
+        </div>
+
+        {/* Right End Zone (Home: Fixed at 100%) */}
+        <div className="ml-auto w-[8%] h-full bg-indigo-950/80 border-l border-emerald-700/60 flex items-center justify-center text-[8px] font-black text-indigo-400">
+          {homeTeam}
         </div>
       </div>
     </div>

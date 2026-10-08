@@ -41,7 +41,10 @@ if (typeof window !== 'undefined') {
     let url = typeof input === 'string' ? input : (input instanceof Request ? input.url : input.toString());
     
     if (url.startsWith('/')) {
-      url = `http://192.168.1.18:3000${url}`;
+      const host = window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== ''
+        ? window.location.hostname
+        : '192.168.1.29';
+      url = `http://${host}:3000${url}`;
     }
 
     const modifiedInit: RequestInit = {
