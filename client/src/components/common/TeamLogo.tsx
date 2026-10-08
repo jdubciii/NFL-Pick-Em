@@ -9,8 +9,7 @@ interface TeamLogoProps {
 
 export const TeamLogo: React.FC<TeamLogoProps> = ({ abbr, size = 'md', className = '' }) => {
   const [hasError, setHasError] = useState(false);
-  
-  // Upscaled dimensions: 'xs' enlarged from 20px to 28px for clear mobile legibility
+
   const sizeMap = {
     xs: { box: 'w-7 h-7 rounded-lg', img: 'w-5 h-5', text: 'text-[9px]' },
     sm: { box: 'w-8 h-8 rounded-lg', img: 'w-6 h-6', text: 'text-[10px]' },
@@ -22,7 +21,7 @@ export const TeamLogo: React.FC<TeamLogoProps> = ({ abbr, size = 'md', className
 
   return (
     <div
-      className={`relative flex items-center justify-center shrink-0 bg-slate-900/90 border border-slate-700/60 shadow-md select-none ${box} ${className}`}
+      className={`relative flex items-center justify-center shrink-0 bg-slate-800/90 border border-slate-600/70 shadow-md select-none ${box} ${className}`}
     >
       {!hasError ? (
         <img
@@ -30,9 +29,8 @@ export const TeamLogo: React.FC<TeamLogoProps> = ({ abbr, size = 'md', className
           alt={abbr}
           className={`${img} object-contain transition-transform duration-200 group-hover:scale-105`}
           style={{
-            /* Dual-layer drop-shadow: soft ambient white halo to separate dark logos (NYG, BAL, NYJ) 
-               plus a dark depth shadow so light logos stay crisp */
-            filter: 'drop-shadow(0 0 1.5px rgba(255, 255, 255, 0.45)) drop-shadow(0 2px 4px rgba(0, 0, 0, 0.9))'
+            /* High-definition dual drop-shadow: Crisp white rim light for dark logos (NYJ, NYG, BAL, CHI) */
+            filter: 'drop-shadow(0 0 2px rgba(255, 255, 255, 0.75)) drop-shadow(0 2px 5px rgba(0, 0, 0, 0.95))'
           }}
           onError={() => setHasError(true)}
           loading="lazy"

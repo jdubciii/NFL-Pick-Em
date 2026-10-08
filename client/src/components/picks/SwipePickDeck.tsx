@@ -28,121 +28,172 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
   onSelectPick,
   isUserLocked
 }) => {
-  const [deck, setDeck] = useState<SwipeMatchup[]>(matchups);
   const [showIntel, setShowIntel] = useState(false);
 
-  useEffect(() => {
-    // Keep deck in sync if external pick selections update without resetting queue
-    setDeck(prev => {
-      if (prev.length === 0) return matchups;
-      return prev.map(card => {
-        const updated = matchups.find(m => m.gameId === card.gameId);
-        return updated ? { ...card, selectedTeam: updated.selectedTeam } : card;
-      });
-    });
-  }, [matchups]);
+  // Helper: Find first unpicked index in slate
+  const getInitialIndex = () => {
+    const firstUnpicked = matchups.findIndex(m => !m.selectedTeam);
+    return firstUnpicked !== -1 ? firstUnpicked : 0;
+  };
 
-  const activeCard = deck[0];
-  const nextCard = deck[1];
+  const [currentIndex, setCurrentIndex] = useState<number>(getInitialIndex);
+
+  // Keep currentIndex clamped within matchup array bounds
+  useEffect(() => {
+    if (currentIndex >= matchups.length && matchups.length > 0) {
+      setCurrentIndex(0);
+    }
+  }, [matchups.length]);
+
+  const activeCard = matchups[currentIndex] || matchups[0];
+
+  // Helper: Calculate smart next unpicked index (Forward Direction)
+  const getNextUnpickedIndex = (fromIdx: number): number => {
+    const total = matchups.length;
+    if (total === 0) return 0;
+
+    // Search ahead
+    for (let i = fromIdx + 1; i < total; i++) {
+      if (!matchups[i].selectedTeam) return i;
+    }
+    // Wrap to beginning
+    for (let i = 0; i < fromIdx; i++) {
+      if (!matchups[i].selectedTeam) return i;
+    }
+    // If all are picked, standard sequential step
+    return (fromIdx + 1) % total;
+  };
+
+  // Helper: Calculate smart previous unpicked index (Reverse Direction)
+  const getPrevUnpickedIndex = (fromIdx: number): number => {
+    const total = matchups.length;
+    if (total === 0) return 0;
+
+    // Search behind
+    for (let i = fromIdx - 1; i >= 0; i--) {
+      if (!matchups[i].selectedTeam) return i;
+    }
+    // Wrap to end
+    for (let i = total - 1; i > fromIdx; i--) {
+      if (!matchups[i].selectedTeam) return i;
+    }
+    // If all are picked, standard sequential step backwards
+    return (fromIdx - 1 + total) % total;
+  };
 
   const totalGames = matchups.length;
   const pickedCount = matchups.filter(m => !!m.selectedTeam).length;
-  // Locate index in master matchups array (1-indexed)
-  const masterIndex = activeCard ? (matchups.findIndex(m => m.gameId === activeCard.gameId) + 1) : totalGames;
 
   const handleCardExit = (direction: 'LEFT' | 'RIGHT' | 'UP' | 'DOWN') => {
-    if (!activeCard) return;
-
-    if (isUserLocked) {
-      // Hard Lock: Block all card movements and state mutations
-      return;
-    }
+    if (!activeCard || isUserLocked) return;
 
     if (direction === 'LEFT') {
       if (!activeCard.isLocked) {
         onSelectPick(activeCard.gameId, activeCard.awayTeam);
       }
-      setDeck(prev => prev.slice(1));
+      setCurrentIndex(prev => getNextUnpickedIndex(prev));
     } else if (direction === 'RIGHT') {
       if (!activeCard.isLocked) {
         onSelectPick(activeCard.gameId, activeCard.homeTeam);
       }
-      setDeck(prev => prev.slice(1));
+      setCurrentIndex(prev => getNextUnpickedIndex(prev));
     } else if (direction === 'UP') {
-      // Skip to the back of the queue
-      setDeck(prev => [...prev.slice(1), prev[0]]);
+      // Skip ahead to next unpicked
+      setCurrentIndex(prev => getNextUnpickedIndex(prev));
     } else if (direction === 'DOWN') {
       setShowIntel(true);
     }
   };
 
+  const nextUnderCard = matchups[getNextUnpickedIndex(currentIndex)];
+
   if (!activeCard) {
     return (
       <div className="flex flex-col items-center justify-center p-8 bg-slate-900/90 border border-slate-800 rounded-3xl text-center space-y-4 font-mono shadow-2xl">
         <span className="text-5xl animate-bounce">🎉</span>
-        <h4 className="text-base font-black text-white uppercase tracking-wider">All Matchups Picked!</h4>
-        <p className="text-xs text-slate-400 max-w-xs">
-          You have completed your picks for this week. Switch to List view to review your weekly slate.
-        </p>
-        <button
-          onClick={() => setDeck(matchups)}
-          className="px-5 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-xl text-xs font-black text-slate-950 uppercase tracking-wider shadow-lg active:scale-95 transition-all"
-        >
-          Review Deck Again
-        </button>
+        <h4 className="text-base font-black text-white uppercase tracking-wider">Slate Complete</h4>
+        <p className="text-xs text-slate-400">All picks have been submitted.</p>
       </div>
     );
   }
 
   return (
     <div className="relative w-full max-w-sm mx-auto flex flex-col items-center select-none font-mono">
-      {/* Immutable Static Pick Progress Ledger HUD */}
-      <div className="w-full px-2 mb-3 space-y-1.5">
+      {/* Interactive Micro-Stepper Progress Ledger with Direct Matchup Selection & Arrow Steppers */}
+      <div className="w-full px-1 mb-3 space-y-1.5">
         <div className="flex items-center justify-between text-[11px] font-black tracking-wide">
           <div className="flex items-center space-x-1.5 text-cyan-400">
-            <span>MATCHUP {masterIndex > 0 ? masterIndex : 1} OF {totalGames}</span>
+            <span>MATCHUP {currentIndex + 1} OF {totalGames}</span>
           </div>
           <div className="text-slate-400 text-[10px]">
             <span className="text-emerald-400 font-bold">{pickedCount} Picked</span> · <span>{totalGames - pickedCount} Left</span>
           </div>
         </div>
 
-        {/* Micro-Segmented Ledger Bar - Static & Deterministic */}
-        <div className="grid grid-flow-col auto-cols-fr gap-1 w-full h-1.5 bg-slate-950/80 p-0.5 rounded-full border border-slate-800">
-          {matchups.map((m, idx) => {
-            const isCurrent = activeCard && activeCard.gameId === m.gameId;
-            const isAwayPicked = m.selectedTeam === m.awayTeam;
-            const isHomePicked = m.selectedTeam === m.homeTeam;
+        {/* Ledger Stepper Row with Tap Segments and Prev/Next Arrows */}
+        <div className="flex items-center space-x-1.5 w-full">
+          {/* Previous Arrow */}
+          <button
+            type="button"
+            onClick={() => setCurrentIndex(prev => getPrevUnpickedIndex(prev))}
+            className="p-1 rounded-lg bg-slate-900 border border-slate-700/80 text-cyan-400 hover:text-white active:scale-90 transition-all shrink-0 text-xs font-black shadow-sm"
+            title="Previous Unpicked Game"
+          >
+            ◀
+          </button>
 
-            let segmentColor = 'bg-slate-800';
-            if (isAwayPicked) segmentColor = 'bg-cyan-400';
-            else if (isHomePicked) segmentColor = 'bg-rose-500';
+          {/* Interactive Tap-to-Jump Ledger Segments */}
+          <div className="grid grid-flow-col auto-cols-fr gap-1 flex-1 h-3.5 bg-slate-950 p-1 rounded-xl border border-slate-800 items-center">
+            {matchups.map((m, idx) => {
+              const isCurrent = idx === currentIndex;
+              const isAwayPicked = m.selectedTeam === m.awayTeam;
+              const isHomePicked = m.selectedTeam === m.homeTeam;
 
-            return (
-              <div
-                key={m.gameId || idx}
-                className={`h-full rounded-full transition-all duration-200 ${segmentColor} ${
-                  isCurrent ? 'ring-2 ring-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.9)] animate-pulse' : ''
-                }`}
-              />
-            );
-          })}
+              let segmentBg = 'bg-slate-800 hover:bg-slate-700';
+              if (isAwayPicked) segmentBg = 'bg-cyan-400';
+              else if (isHomePicked) segmentBg = 'bg-rose-500';
+
+              return (
+                <button
+                  key={m.gameId || idx}
+                  type="button"
+                  onClick={() => setCurrentIndex(idx)}
+                  className={`h-full w-full rounded-md transition-all ${segmentBg} ${
+                    isCurrent
+                      ? 'ring-2 ring-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.9)] scale-110 z-10'
+                      : 'opacity-80 active:scale-95'
+                  }`}
+                  title={`Jump to Matchup ${idx + 1}: ${m.awayTeam} @ ${m.homeTeam}`}
+                />
+              );
+            })}
+          </div>
+
+          {/* Next Arrow */}
+          <button
+            type="button"
+            onClick={() => setCurrentIndex(prev => getNextUnpickedIndex(prev))}
+            className="p-1 rounded-lg bg-slate-900 border border-slate-700/80 text-cyan-400 hover:text-white active:scale-90 transition-all shrink-0 text-xs font-black shadow-sm"
+            title="Next Unpicked Game"
+          >
+            ▶
+          </button>
         </div>
       </div>
 
       {/* Main Swipe Deck Container */}
       <div className="relative w-full h-[470px] flex items-center justify-center">
-        {/* Background Under-Card Stack */}
-        {nextCard && (
+        {/* Under-Card Stack Preview */}
+        {nextUnderCard && nextUnderCard.gameId !== activeCard.gameId && (
           <div className="absolute w-[92%] h-[420px] bg-slate-950/80 border border-slate-800 rounded-3xl p-5 shadow-xl scale-95 translate-y-4 opacity-50 blur-[0.5px] pointer-events-none flex flex-col justify-between">
             <div className="flex justify-between text-xs text-slate-500 font-bold">
-              <span>{nextCard.startTime}</span>
-              <span>NEXT UP</span>
+              <span>{nextUnderCard.startTime}</span>
+              <span>UP NEXT</span>
             </div>
             <div className="flex items-center justify-around">
-              <TeamLogo abbr={nextCard.awayTeam} size="md" />
+              <TeamLogo abbr={nextUnderCard.awayTeam} size="md" />
               <span className="text-slate-600 font-black">VS</span>
-              <TeamLogo abbr={nextCard.homeTeam} size="md" />
+              <TeamLogo abbr={nextUnderCard.homeTeam} size="md" />
             </div>
             <div className="h-6" />
           </div>
@@ -160,7 +211,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
         </AnimatePresence>
       </div>
 
-      {/* Matchup Intel Sheet Modal with Drag Dismiss */}
+      {/* Matchup Intel Bottom Sheet */}
       <AnimatePresence>
         {showIntel && (
           <div className="fixed inset-0 z-50 overflow-hidden flex items-end justify-center select-none">
@@ -273,7 +324,6 @@ const SwipeCardItem: React.FC<{
   return (
     <motion.div
       style={{ x, y, rotate }}
-      // HARD LOCK: Drag disabled completely when user locked
       drag={!isUserLocked}
       dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
       dragElastic={0.85}
@@ -296,7 +346,6 @@ const SwipeCardItem: React.FC<{
         isUserLocked ? 'border-amber-600/50 cursor-not-allowed' : 'border-slate-700/80 cursor-grab active:cursor-grabbing'
       }`}
     >
-      {/* Hologram Pick Indicators */}
       {!isUserLocked && (
         <>
           <motion.div
@@ -333,7 +382,7 @@ const SwipeCardItem: React.FC<{
         </span>
       </div>
 
-      {/* Team Showdown */}
+      {/* Team Confrontation Card */}
       <div className="flex items-center justify-around my-2 py-4 px-2 bg-slate-950/60 rounded-2xl border border-slate-800/80">
         <div className="flex flex-col items-center space-y-2 text-center">
           <div className={`p-2 rounded-2xl bg-slate-900 border shadow-md ${matchup.selectedTeam === matchup.awayTeam ? 'border-cyan-400 ring-2 ring-cyan-500/40' : 'border-slate-700/80'}`}>
