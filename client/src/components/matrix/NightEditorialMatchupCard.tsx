@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { FieldPositionTracker } from './FieldPositionTracker';
 import { LiveMatchupPulse } from '../animations/LiveMatchupPulse';
+import { TeamLogo } from '../common/TeamLogo';
 
 export interface ParticipantPickStatus {
   memberId: string;
@@ -68,6 +69,7 @@ export const NightEditorialMatchupCard: React.FC<NightEditorialMatchupCardProps>
       <div className="grid grid-cols-5 items-center gap-2">
         {/* Away Team */}
         <div className="col-span-2 flex items-center space-x-2.5">
+          <TeamLogo abbr={game.awayTeam.code} size="md" />
           <div className="text-left">
             <div className="flex items-center space-x-1.5">
               <span className="text-xl md:text-2xl font-black text-white tracking-tight leading-none">
@@ -111,6 +113,7 @@ export const NightEditorialMatchupCard: React.FC<NightEditorialMatchupCardProps>
             <div className="text-[11px] font-semibold text-slate-400 truncate">{game.homeTeam.name}</div>
             <div className="text-[10px] font-mono text-slate-500">{game.homeTeam.record}</div>
           </div>
+          <TeamLogo abbr={game.homeTeam.code} size="md" />
         </div>
       </div>
 

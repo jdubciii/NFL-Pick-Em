@@ -1,4 +1,5 @@
 import React from 'react';
+import { TeamLogo } from '../common/TeamLogo';
 
 export interface CompactGameRow {
   gameId: string;
@@ -39,7 +40,10 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
                   : 'bg-slate-950/80 border-slate-800 text-white hover:border-slate-700'
               } ${g.isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              <span>{g.awayTeam}</span>
+              <div className="flex items-center space-x-1.5">
+                <TeamLogo abbr={g.awayTeam} size="xs" />
+                <span>{g.awayTeam}</span>
+              </div>
               {selected === g.awayTeam && <span>✓</span>}
             </button>
 
@@ -59,7 +63,10 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
                   : 'bg-slate-950/80 border-slate-800 text-white hover:border-slate-700'
               } ${g.isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              <span>{g.homeTeam}</span>
+              <div className="flex items-center space-x-1.5">
+                <TeamLogo abbr={g.homeTeam} size="xs" />
+                <span>{g.homeTeam}</span>
+              </div>
               {selected === g.homeTeam && <span>✓</span>}
             </button>
           </div>
