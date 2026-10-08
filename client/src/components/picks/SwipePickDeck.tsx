@@ -274,12 +274,7 @@ const SwipeCardItem: React.FC<{
       dragElastic={0.85}
       initial={{ scale: 0.9, y: 20, opacity: 0 }}
       animate={{ scale: 1, y: 0, opacity: 1 }}
-      exit={(dir) => ({
-        x: dir === 'LEFT' ? -400 : dir === 'RIGHT' ? 400 : 0,
-        y: dir === 'UP' ? -400 : 0,
-        opacity: 0,
-        transition: { duration: 0.22 }
-      })}
+      exit={{ opacity: 0, scale: 0.85, transition: { duration: 0.2 } }}
       onDragEnd={(_, info) => {
         if (info.offset.x < -80) {
           onSwipe('LEFT');
