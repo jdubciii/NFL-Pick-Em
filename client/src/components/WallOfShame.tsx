@@ -516,6 +516,48 @@ export const WallOfShame: React.FC = () => {
         </div>
       </div>
 
+      {/* Wall of Shame Top Segmented Switcher */}
+      <div className="flex items-center justify-center mb-4 select-none">
+        <div className="inline-flex rounded-2xl bg-slate-950 p-1 border border-slate-800 shadow-xl">
+          <button
+            type="button"
+            onClick={() => setShameViewMode('reels')}
+            className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-mono font-bold transition-all ${
+              shameViewMode === 'reels'
+                ? 'bg-rose-600 text-white shadow-md shadow-rose-950/50'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <span>📱</span>
+            <span>Reels</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setShameViewMode('standings')}
+            className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-mono font-bold transition-all ${
+              shameViewMode === 'standings'
+                ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-950/50'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <span>📊</span>
+            <span>Standings</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setShameViewMode('infamy')}
+            className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-mono font-bold transition-all ${
+              shameViewMode === 'infamy'
+                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-950/50'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <span>👑</span>
+            <span>All-Time</span>
+          </button>
+        </div>
+      </div>
+
       {error && (
         <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm flex items-center space-x-3">
           <AlertTriangle className="w-5 h-5 flex-shrink-0" />
@@ -1229,47 +1271,7 @@ export const WallOfShame: React.FC = () => {
           </div>
         </div>
       )}
-      {/* Wall of Shame View Switcher: Reels (Default) | Standings | Infamy */}
-      <div className="flex items-center justify-center my-6 select-none">
-        <div className="inline-flex rounded-2xl bg-slate-950 p-1 border border-slate-800 shadow-lg">
-          <button
-            type="button"
-            onClick={() => setShameViewMode('reels')}
-            className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-mono font-bold transition-all ${
-              shameViewMode === 'reels'
-                ? 'bg-rose-600 text-white shadow-md shadow-rose-950/50'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <span>📱</span>
-            <span>Reels</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setShameViewMode('standings')}
-            className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-mono font-bold transition-all ${
-              shameViewMode === 'standings'
-                ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-950/50'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <span>📊</span>
-            <span>Standings</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setShameViewMode('infamy')}
-            className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-mono font-bold transition-all ${
-              shameViewMode === 'infamy'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-950/50'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <span>👑</span>
-            <span>All-Time</span>
-          </button>
-        </div>
-      </div>
+
 
       {shameViewMode === 'reels' && (
         <div className="mb-4">

@@ -103,24 +103,35 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
         />
       </AnimatePresence>
 
-      {/* Matchup Intel Bottom Sheet Modal */}
+      {/* Matchup Intel Sheet Modal - Fixed Mobile Viewport & Drag Dismiss */}
       <AnimatePresence>
         {showIntel && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-end justify-center p-4"
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-hidden"
             onClick={() => setShowIntel(false)}
           >
             <motion.div
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+              drag="y"
+              dragConstraints={{ top: 0, bottom: 300 }}
+              dragElastic={0.2}
+              onDragEnd={(_, info) => {
+                if (info.offset.y > 100) {
+                  setShowIntel(false);
+                }
+              }}
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-t-3xl p-6 space-y-4 text-white font-mono shadow-2xl"
+              className="w-full max-w-lg bg-slate-900 border-t sm:border border-slate-700 rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 space-y-4 text-white font-mono shadow-2xl max-h-[85vh] overflow-y-auto"
             >
+              {/* Drag Handle Pill */}
+              <div className="w-12 h-1.5 bg-slate-700 rounded-full mx-auto -mt-1 mb-2" />
+
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="flex items-center space-x-2">
                   <span className="text-xl">📊</span>
@@ -163,9 +174,9 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
                   <span className="text-slate-400">Venue & Conditions</span>
                   <span className="font-bold text-slate-200">{activeCard.venue || 'Outdoor · 68°F Clear'}</span>
                 </div>
-                <div className="p-2.5 bg-rose-950/30 rounded-xl border border-rose-900/50">
-                  <span className="text-[10px] text-rose-400 font-black uppercase block mb-1">Key Injury Intel</span>
-                  <span className="text-slate-300 text-[11px] leading-relaxed">
+                <div className="p-3 bg-rose-950/30 rounded-xl border border-rose-900/50 space-y-1">
+                  <span className="text-[10px] text-rose-400 font-black uppercase block">Key Injury Intel</span>
+                  <span className="text-slate-300 text-[11px] leading-relaxed block">
                     {activeCard.injuryNote || 'Both starting QBs active. Away team starting CB ruled OUT (hamstring).'}
                   </span>
                 </div>
@@ -173,9 +184,9 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
 
               <button
                 onClick={() => setShowIntel(false)}
-                className="w-full py-2.5 bg-slate-800 rounded-xl font-bold text-xs text-white hover:bg-slate-700"
+                className="w-full py-3 bg-slate-800 rounded-xl font-bold text-xs text-white hover:bg-slate-700 active:scale-98 transition-all"
               >
-                Close Intel
+                Close Intel (Swipe Down)
               </button>
             </motion.div>
           </motion.div>
