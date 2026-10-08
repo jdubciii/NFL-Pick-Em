@@ -32,8 +32,18 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
   const [deck, setDeck] = useState<SwipeMatchup[]>(matchups);
   const [showIntel, setShowIntel] = useState(false);
 
+  // Sync if external matchups change
+  React.useEffect(() => {
+    setDeck(matchups);
+  }, [matchups.length]);
+
   const activeCard = deck[0];
   const nextCard = deck[1];
+
+  // Matchup status calculation
+  const totalGames = matchups.length;
+  const pickedCount = matchups.filter(m => m.selectedTeam).length;
+  const currentIndex = activeCard ? (totalGames - deck.length + 1) : totalGames;
 
   const handleCardExit = (direction: 'LEFT' | 'RIGHT' | 'UP' | 'DOWN') => {
     if (!activeCard) return;
@@ -49,7 +59,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
       }
       setDeck(prev => prev.slice(1));
     } else if (direction === 'UP') {
-      // Move current card to end of deck
+      // Skip: Move to back of line
       setDeck(prev => [...prev.slice(1), prev[0]]);
     } else if (direction === 'DOWN') {
       setShowIntel(true);
@@ -62,7 +72,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
         <span className="text-5xl animate-bounce">🎉</span>
         <h4 className="text-base font-black text-white uppercase tracking-wider">All Matchups Picked!</h4>
         <p className="text-xs text-slate-400 max-w-xs">
-          Your picks are locked in. Switch to List view to review your full weekly slate.
+          You have reviewed all {totalGames} matchups. Switch to List view to review your weekly slate.
         </p>
         <button
           onClick={() => setDeck(matchups)}
@@ -75,35 +85,72 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
   }
 
   return (
-    <div className="relative w-full max-w-sm mx-auto h-[480px] flex items-center justify-center select-none font-mono">
-      {/* Background Next Card (Stack Physics) */}
-      {nextCard && (
-        <div className="absolute w-[92%] h-[430px] bg-slate-950/70 border border-slate-800/80 rounded-3xl p-5 shadow-xl scale-95 translate-y-4 opacity-50 blur-[0.5px] pointer-events-none flex flex-col justify-between">
-          <div className="flex justify-between text-xs text-slate-500 font-bold">
-            <span>{nextCard.startTime}</span>
-            <span>NEXT UP</span>
+    <div className="relative w-full max-w-sm mx-auto flex flex-col items-center select-none font-mono">
+      {/* Pick Progress Ledger HUD */}
+      <div className="w-full px-2 mb-3 space-y-1.5">
+        <div className="flex items-center justify-between text-[11px] font-black tracking-wide">
+          <div className="flex items-center space-x-1.5 text-cyan-400">
+            <span>MATCHUP {currentIndex} OF {totalGames}</span>
           </div>
-          <div className="flex items-center justify-around">
-            <TeamLogo abbr={nextCard.awayTeam} size="md" />
-            <span className="text-slate-600 font-black">VS</span>
-            <TeamLogo abbr={nextCard.homeTeam} size="md" />
+          <div className="text-slate-400 text-[10px]">
+            <span className="text-emerald-400 font-bold">{pickedCount} Picked</span> · <span>{totalGames - pickedCount} Left</span>
           </div>
-          <div className="h-6" />
         </div>
-      )}
 
-      {/* Active Interactive Top Card */}
-      <AnimatePresence mode="popLayout">
-        <SwipeCardItem
-          key={activeCard.gameId}
-          matchup={activeCard}
-          onSwipe={handleCardExit}
-          isUserLocked={isUserLocked}
-          onOpenIntel={() => setShowIntel(true)}
-        />
-      </AnimatePresence>
+        {/* Micro-Segmented Ledger Bar */}
+        <div className="grid grid-flow-col auto-cols-fr gap-1 w-full h-1.5 bg-slate-950/80 p-0.5 rounded-full border border-slate-800">
+          {matchups.map((m, idx) => {
+            const isCurrent = activeCard && activeCard.gameId === m.gameId;
+            const isPicked = !!m.selectedTeam;
+            const isHome = m.selectedTeam === m.homeTeam;
 
-      {/* Matchup Intel Bottom Sheet (Anchored & Fixed Viewport) */}
+            return (
+              <div
+                key={m.gameId || idx}
+                className={`h-full rounded-full transition-all duration-300 ${
+                  isCurrent
+                    ? 'bg-amber-400 ring-2 ring-amber-300 shadow-[0_0_8px_rgba(251,191,36,0.9)] animate-pulse'
+                    : isPicked
+                    ? isHome ? 'bg-rose-500' : 'bg-cyan-400'
+                    : 'bg-slate-800/80'
+                }`}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Main Swipe Deck Container */}
+      <div className="relative w-full h-[470px] flex items-center justify-center">
+        {/* Background Stack Under-Card */}
+        {nextCard && (
+          <div className="absolute w-[92%] h-[420px] bg-slate-950/80 border border-slate-800 rounded-3xl p-5 shadow-xl scale-95 translate-y-4 opacity-50 blur-[0.5px] pointer-events-none flex flex-col justify-between">
+            <div className="flex justify-between text-xs text-slate-500 font-bold">
+              <span>{nextCard.startTime}</span>
+              <span>NEXT UP</span>
+            </div>
+            <div className="flex items-center justify-around">
+              <TeamLogo abbr={nextCard.awayTeam} size="md" />
+              <span className="text-slate-600 font-black">VS</span>
+              <TeamLogo abbr={nextCard.homeTeam} size="md" />
+            </div>
+            <div className="h-6" />
+          </div>
+        )}
+
+        {/* Active Swipe Card */}
+        <AnimatePresence mode="popLayout">
+          <SwipeCardItem
+            key={activeCard.gameId}
+            matchup={activeCard}
+            onSwipe={handleCardExit}
+            isUserLocked={isUserLocked}
+            onOpenIntel={() => setShowIntel(true)}
+          />
+        </AnimatePresence>
+      </div>
+
+      {/* Native-Feel Matchup Intel Drawer with Full Drag-Down Dismiss */}
       <AnimatePresence>
         {showIntel && (
           <div className="fixed inset-0 z-50 overflow-hidden flex items-end justify-center select-none">
@@ -116,20 +163,26 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
               className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm"
             />
 
-            {/* Bottom Sheet */}
+            {/* Draggable Bottom Sheet */}
             <motion.div
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 26, stiffness: 260 }}
-              className="relative w-full max-w-lg bg-slate-900 border-t border-slate-700 rounded-t-3xl p-5 pb-8 space-y-4 text-white font-mono shadow-2xl z-10 max-h-[80dvh] flex flex-col"
+              transition={{ type: 'spring', damping: 25, stiffness: 280 }}
+              drag="y"
+              dragConstraints={{ top: 0, bottom: 0 }}
+              dragElastic={{ top: 0, bottom: 0.6 }}
+              onDragEnd={(_, info) => {
+                // If dragged downward past 60px or with downward velocity, dismiss
+                if (info.offset.y > 60 || info.velocity.y > 300) {
+                  setShowIntel(false);
+                }
+              }}
+              className="relative w-full max-w-lg bg-slate-900 border-t border-slate-700 rounded-t-3xl p-5 pb-8 space-y-4 text-white font-mono shadow-2xl z-10 max-h-[82dvh] flex flex-col touch-none"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Drag Pill Handle */}
-              <div
-                className="w-12 h-1.5 bg-slate-600 hover:bg-slate-500 rounded-full mx-auto -mt-1 cursor-pointer shrink-0"
-                onClick={() => setShowIntel(false)}
-              />
+              {/* Visible Tactile Drag Handle */}
+              <div className="w-12 h-1.5 bg-slate-600 rounded-full mx-auto -mt-1 cursor-grab active:cursor-grabbing shrink-0" />
 
               <div className="flex items-center justify-between border-b border-slate-800 pb-3 shrink-0">
                 <div className="flex items-center space-x-2">
@@ -139,6 +192,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
                   </h3>
                 </div>
                 <button
+                  type="button"
                   onClick={() => setShowIntel(false)}
                   className="w-7 h-7 rounded-full bg-slate-800 flex items-center justify-center text-slate-400 font-bold hover:text-white"
                 >
@@ -147,7 +201,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
               </div>
 
               {/* Scrollable Intel Body */}
-              <div className="space-y-3 overflow-y-auto flex-1 pr-1 text-xs">
+              <div className="space-y-3 overflow-y-auto flex-1 pr-1 text-xs touch-pan-y">
                 {/* Team Banner */}
                 <div className="flex items-center justify-around p-3 bg-slate-950 rounded-2xl border border-slate-800">
                   <div className="flex items-center space-x-2">
@@ -184,12 +238,9 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
                 </div>
               </div>
 
-              <button
-                onClick={() => setShowIntel(false)}
-                className="w-full py-3 bg-slate-800 hover:bg-slate-700 active:scale-98 rounded-xl font-bold text-xs text-white shrink-0 transition-all"
-              >
-                Close Intel
-              </button>
+              <div className="text-[10px] text-slate-500 text-center uppercase tracking-wider shrink-0">
+                ↓ Drag down or tap ✕ to close
+              </div>
             </motion.div>
           </div>
         )}
@@ -206,12 +257,11 @@ const SwipeCardItem: React.FC<{
 }> = ({ matchup, onSwipe, isUserLocked, onOpenIntel }) => {
   const x = useMotionValue(0);
   const y = useMotionValue(0);
-  const rotate = useTransform(x, [-200, 200], [-22, 22]);
+  const rotate = useTransform(x, [-200, 200], [-20, 20]);
 
-  // Dynamic Opacity Feedback Overlays
-  const awayOpacity = useTransform(x, [-120, -30], [1, 0]);
-  const homeOpacity = useTransform(x, [30, 120], [0, 1]);
-  const skipOpacity = useTransform(y, [-100, -30], [1, 0]);
+  const awayOpacity = useTransform(x, [-110, -30], [1, 0]);
+  const homeOpacity = useTransform(x, [30, 110], [0, 1]);
+  const skipOpacity = useTransform(y, [-90, -30], [1, 0]);
 
   const awayMeta = NFL_TEAMS[matchup.awayTeam];
   const homeMeta = NFL_TEAMS[matchup.homeTeam];
@@ -221,24 +271,29 @@ const SwipeCardItem: React.FC<{
       style={{ x, y, rotate }}
       drag
       dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
-      dragElastic={0.9}
+      dragElastic={0.85}
       initial={{ scale: 0.9, y: 20, opacity: 0 }}
       animate={{ scale: 1, y: 0, opacity: 1 }}
-      exit={{ opacity: 0, scale: 0.85, transition: { duration: 0.2 } }}
+      exit={(dir) => ({
+        x: dir === 'LEFT' ? -400 : dir === 'RIGHT' ? 400 : 0,
+        y: dir === 'UP' ? -400 : 0,
+        opacity: 0,
+        transition: { duration: 0.22 }
+      })}
       onDragEnd={(_, info) => {
-        if (info.offset.x < -90) {
+        if (info.offset.x < -80) {
           onSwipe('LEFT');
-        } else if (info.offset.x > 90) {
+        } else if (info.offset.x > 80) {
           onSwipe('RIGHT');
-        } else if (info.offset.y < -80) {
+        } else if (info.offset.y < -70) {
           onSwipe('UP');
-        } else if (info.offset.y > 70) {
+        } else if (info.offset.y > 60) {
           onOpenIntel();
         }
       }}
-      className="absolute w-full h-[450px] bg-slate-900/95 border-2 border-slate-700/80 rounded-3xl p-5 shadow-2xl flex flex-col justify-between cursor-grab active:cursor-grabbing backdrop-blur-2xl z-20"
+      className="absolute w-full h-[450px] bg-slate-900/95 border-2 border-slate-700/80 rounded-3xl p-5 shadow-2xl flex flex-col justify-between cursor-grab active:cursor-grabbing backdrop-blur-2xl z-20 select-none"
     >
-      {/* Dynamic Pick Hologram Badges */}
+      {/* Pick Hologram Overlays */}
       <motion.div
         style={{ opacity: awayOpacity }}
         className="absolute top-8 left-6 px-4 py-1.5 rounded-2xl bg-cyan-950/95 border-2 border-cyan-400 text-cyan-300 font-black text-sm uppercase -rotate-12 z-30 shadow-[0_0_15px_rgba(34,211,238,0.5)]"
@@ -260,7 +315,7 @@ const SwipeCardItem: React.FC<{
         ▲ SKIP FOR LATER ▲
       </motion.div>
 
-      {/* Header Chyron */}
+      {/* Header Info */}
       <div className="flex items-center justify-between border-b border-slate-800 pb-3 text-xs">
         <div className="flex items-center space-x-2">
           <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
@@ -271,9 +326,8 @@ const SwipeCardItem: React.FC<{
         </span>
       </div>
 
-      {/* Matchup Showcase */}
+      {/* Team Confrontation Card */}
       <div className="flex items-center justify-around my-2 py-4 px-2 bg-slate-950/60 rounded-2xl border border-slate-800/80">
-        {/* Away Team Touch Card */}
         <div className="flex flex-col items-center space-y-2 text-center">
           <div className="p-2 rounded-2xl bg-slate-900 border border-slate-700/80 shadow-md">
             <TeamLogo abbr={matchup.awayTeam} size="lg" />
@@ -287,7 +341,6 @@ const SwipeCardItem: React.FC<{
 
         <span className="text-slate-600 font-black text-sm uppercase">VS</span>
 
-        {/* Home Team Touch Card */}
         <div className="flex flex-col items-center space-y-2 text-center">
           <div className="p-2 rounded-2xl bg-slate-900 border border-slate-700/80 shadow-md">
             <TeamLogo abbr={matchup.homeTeam} size="lg" />
@@ -300,7 +353,7 @@ const SwipeCardItem: React.FC<{
         </div>
       </div>
 
-      {/* Prominent High-Visibility Gesture Cues */}
+      {/* Prominent Quick-Action Buttons */}
       <div className="border-t border-slate-800 pt-3 space-y-2 text-center">
         <div className="grid grid-cols-2 gap-2 text-xs font-bold">
           <button
@@ -323,7 +376,7 @@ const SwipeCardItem: React.FC<{
 
         {isUserLocked && (
           <div className="text-[10px] text-amber-400 font-bold animate-pulse">
-            🔒 Picks locked. Tap 'EDIT PICKS' to register swipes.
+            🔒 Picks locked. Tap 'LOCKED' pill in top bar to edit.
           </div>
         )}
       </div>

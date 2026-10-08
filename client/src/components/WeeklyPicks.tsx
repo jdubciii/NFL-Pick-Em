@@ -337,16 +337,15 @@ export const WeeklyPicks: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
-          {/* Density Toggle (Swipe | List | Cards) */}
-          <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800">
+        {/* Responsive Compact Header Bar */}
+        <div className="flex items-center justify-between gap-2 py-2 px-1 select-none">
+          {/* Segmented View Mode Switcher */}
+          <div className="inline-flex rounded-xl bg-slate-950 p-0.5 border border-slate-800 shrink-0">
             <button
               type="button"
               onClick={() => handleTogglePicksView('swipe')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                picksViewMode === 'swipe'
-                  ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+              className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
+                picksViewMode === 'swipe' ? 'bg-cyan-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
               }`}
             >
               Swipe
@@ -354,10 +353,8 @@ export const WeeklyPicks: React.FC = () => {
             <button
               type="button"
               onClick={() => handleTogglePicksView('list')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                picksViewMode === 'list'
-                  ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+              className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
+                picksViewMode === 'list' ? 'bg-cyan-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
               }`}
             >
               List
@@ -365,98 +362,38 @@ export const WeeklyPicks: React.FC = () => {
             <button
               type="button"
               onClick={() => handleTogglePicksView('cards')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                picksViewMode === 'cards'
-                  ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+              className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
+                picksViewMode === 'cards' ? 'bg-cyan-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
               }`}
             >
               Cards
             </button>
           </div>
 
-          {/* Animated User Picks Lock/Unlock Guard */}
-          <button
-            type="button"
-            onClick={() => {
-              toggleUserLock();
-              try {
-                if ((window as any).Capacitor?.isPluginAvailable('Haptics')) {
-                  (window as any).Capacitor.Plugins.Haptics.impact({ style: 'LIGHT' });
-                }
-              } catch (_) {}
-            }}
-            className={`group relative flex items-center space-x-2 px-3 py-1.5 rounded-xl border text-xs font-mono font-bold transition-all duration-300 shadow-md select-none active:scale-95 ${
-              isUserLocked
-                ? 'bg-amber-950/80 border-amber-500/80 text-amber-200 shadow-amber-950/50 ring-1 ring-amber-500/30'
-                : 'bg-slate-900/90 border-slate-700/80 text-slate-300 hover:border-cyan-500/60 hover:text-white shadow-slate-950/40'
-            }`}
-            title={isUserLocked ? 'Picks are protected against accidental clicks. Tap to unlock.' : 'Tap to lock picks and prevent accidental selections.'}
-          >
-            {/* Animated SVG Padlock Icon */}
-            <div className="relative flex items-center justify-center w-4 h-4">
-              {isUserLocked ? (
-                /* Closed Padlock with Shackle Snap Animation */
-                <svg
-                  className="w-4 h-4 text-amber-400 transform transition-transform duration-300 scale-110 drop-shadow-[0_0_6px_rgba(251,191,36,0.6)]"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-                  />
-                </svg>
-              ) : (
-                /* Open Padlock with Shifted Shackle */
-                <svg
-                  className="w-4 h-4 text-cyan-400 group-hover:text-cyan-300 transform transition-transform duration-300"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth="2.2"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"
-                  />
-                </svg>
-              )}
-            </div>
-
-            {/* Dynamic Two-Line Verbiage */}
-            <div className="flex flex-col text-left leading-tight">
-              <span className={`text-[11px] font-black tracking-wide ${isUserLocked ? 'text-amber-300' : 'text-slate-200'}`}>
-                {isUserLocked ? 'PICKS LOCKED' : 'EDIT PICKS'}
-              </span>
-              <span className={`text-[9px] font-medium tracking-tight ${isUserLocked ? 'text-amber-400/80' : 'text-slate-400'}`}>
-                {isUserLocked ? 'Tap to unlock' : 'Tap to protect'}
-              </span>
-            </div>
-
-            {/* Glowing Beacon Pill */}
-            <span
-              className={`w-1.5 h-1.5 rounded-full ml-0.5 ${
+          {/* Right Action Controls: Compact Lock & Refresh */}
+          <div className="flex items-center space-x-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={toggleUserLock}
+              className={`flex items-center space-x-1 px-2.5 py-1 rounded-xl border text-xs font-mono font-bold transition-all ${
                 isUserLocked
-                  ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.9)] animate-pulse'
-                  : 'bg-slate-600 group-hover:bg-cyan-400 transition-colors'
+                  ? 'bg-amber-950/80 border-amber-500/80 text-amber-300'
+                  : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white'
               }`}
-            />
-          </button>
+            >
+              <span>{isUserLocked ? '🔒' : '🔓'}</span>
+              <span>{isUserLocked ? 'LOCKED' : 'EDIT'}</span>
+            </button>
 
-          <button
-            onClick={fetchGames}
-            disabled={loading}
-            className="flex items-center space-x-1.5 p-2 sm:px-4 sm:py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all disabled:opacity-50"
-            title="Refresh Slate"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span className="hidden md:inline">Refresh Slate</span>
-          </button>
+            <button
+              type="button"
+              onClick={fetchGames}
+              className="p-1.5 rounded-xl bg-slate-900 border border-slate-700 text-slate-400 hover:text-white"
+              title="Refresh Slate"
+            >
+              🔄
+            </button>
+          </div>
         </div>
       </div>
 
