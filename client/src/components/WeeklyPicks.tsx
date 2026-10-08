@@ -363,19 +363,77 @@ export const WeeklyPicks: React.FC = () => {
             </button>
           </div>
 
-          {/* User Picks Lock / Unlock Button */}
+          {/* Animated User Picks Lock/Unlock Guard */}
           <button
             type="button"
-            onClick={toggleUserLock}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-mono font-bold transition-all shadow-sm ${
+            onClick={() => {
+              toggleUserLock();
+              try {
+                if ((window as any).Capacitor?.isPluginAvailable('Haptics')) {
+                  (window as any).Capacitor.Plugins.Haptics.impact({ style: 'LIGHT' });
+                }
+              } catch (_) {}
+            }}
+            className={`group relative flex items-center space-x-2 px-3 py-1.5 rounded-xl border text-xs font-mono font-bold transition-all duration-300 shadow-md select-none active:scale-95 ${
               isUserLocked
-                ? 'bg-amber-950/80 border-amber-500/80 text-amber-300 shadow-amber-950/40'
-                : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:text-white hover:border-slate-500'
+                ? 'bg-amber-950/80 border-amber-500/80 text-amber-200 shadow-amber-950/50 ring-1 ring-amber-500/30'
+                : 'bg-slate-900/90 border-slate-700/80 text-slate-300 hover:border-cyan-500/60 hover:text-white shadow-slate-950/40'
             }`}
-            title={isUserLocked ? 'Click to unlock and edit picks' : 'Lock your picks to prevent accidental clicks'}
+            title={isUserLocked ? 'Picks are protected against accidental clicks. Tap to unlock.' : 'Tap to lock picks and prevent accidental selections.'}
           >
-            <span>{isUserLocked ? '🔒' : '🔓'}</span>
-            <span>{isUserLocked ? 'LOCKED' : 'LOCK PICKS'}</span>
+            {/* Animated SVG Padlock Icon */}
+            <div className="relative flex items-center justify-center w-4 h-4">
+              {isUserLocked ? (
+                /* Closed Padlock with Shackle Snap Animation */
+                <svg
+                  className="w-4 h-4 text-amber-400 transform transition-transform duration-300 scale-110 drop-shadow-[0_0_6px_rgba(251,191,36,0.6)]"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                  />
+                </svg>
+              ) : (
+                /* Open Padlock with Shifted Shackle */
+                <svg
+                  className="w-4 h-4 text-cyan-400 group-hover:text-cyan-300 transform transition-transform duration-300"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"
+                  />
+                </svg>
+              )}
+            </div>
+
+            {/* Dynamic Two-Line Verbiage */}
+            <div className="flex flex-col text-left leading-tight">
+              <span className={`text-[11px] font-black tracking-wide ${isUserLocked ? 'text-amber-300' : 'text-slate-200'}`}>
+                {isUserLocked ? 'PICKS LOCKED' : 'EDIT PICKS'}
+              </span>
+              <span className={`text-[9px] font-medium tracking-tight ${isUserLocked ? 'text-amber-400/80' : 'text-slate-400'}`}>
+                {isUserLocked ? 'Tap to unlock' : 'Tap to protect'}
+              </span>
+            </div>
+
+            {/* Glowing Beacon Pill */}
+            <span
+              className={`w-1.5 h-1.5 rounded-full ml-0.5 ${
+                isUserLocked
+                  ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.9)] animate-pulse'
+                  : 'bg-slate-600 group-hover:bg-cyan-400 transition-colors'
+              }`}
+            />
           </button>
 
           <button
