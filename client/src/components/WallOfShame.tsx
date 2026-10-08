@@ -30,6 +30,7 @@ import { MechanicalRollingOdometer } from './animations/MechanicalRollingOdomete
 import { DisputeCountdownClock } from './shame/DisputeCountdownClock';
 import { EmojiReactionTray } from './shame/EmojiReactionTray';
 import { HallOfInfamyTable } from './shame/HallOfInfamyTable';
+import { VerticalReelsFeed } from './shame/VerticalReelsFeed';
 import { WeeklyLeaderboardCard } from './standings/WeeklyLeaderboardCard';
 import type { InfamyRecord } from '../services/SocialStakesEngine';
 
@@ -160,6 +161,7 @@ export const WallOfShame: React.FC = () => {
   const [pools, setPools] = useState<PoolOption[]>([]);
   const [selectedPoolId, setSelectedPoolId] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'vault' | 'cumulative'>('vault');
+  const [shameViewMode, setShameViewMode] = useState<'reels' | 'standings' | 'infamy'>('reels');
 
   // Multi-Metric Odometer State
   const [odometerUnit, setOdometerUnit] = useState<'shots' | 'fifths' | 'oz'>('shots');
@@ -1227,27 +1229,77 @@ export const WallOfShame: React.FC = () => {
           </div>
         </div>
       )}
-      {/* Weekly Standings & Penalty Exposure Leaderboard */}
-      <div className="mt-8">
-        <WeeklyLeaderboardCard />
+      {/* Wall of Shame View Switcher: Reels (Default) | Standings | Infamy */}
+      <div className="flex items-center justify-center my-6 select-none">
+        <div className="inline-flex rounded-2xl bg-slate-950 p-1 border border-slate-800 shadow-lg">
+          <button
+            type="button"
+            onClick={() => setShameViewMode('reels')}
+            className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-mono font-bold transition-all ${
+              shameViewMode === 'reels'
+                ? 'bg-rose-600 text-white shadow-md shadow-rose-950/50'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <span>📱</span>
+            <span>Reels</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setShameViewMode('standings')}
+            className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-mono font-bold transition-all ${
+              shameViewMode === 'standings'
+                ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-950/50'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <span>📊</span>
+            <span>Standings</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setShameViewMode('infamy')}
+            className={`flex items-center space-x-1.5 px-4 py-1.5 rounded-xl text-xs font-mono font-bold transition-all ${
+              shameViewMode === 'infamy'
+                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-950/50'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <span>👑</span>
+            <span>All-Time</span>
+          </button>
+        </div>
       </div>
 
-      {/* Hall of Infamy Multi-Criteria Shame Table */}
-      <div className="mt-8">
-        <HallOfInfamyTable
-          records={
-            cumulativeData?.leaderboard && cumulativeData.leaderboard.length > 0
-              ? cumulativeData.leaderboard.map((m) => ({
-                  memberId: m.user_id,
-                  name: m.email.split('@')[0],
-                  shotsDrank: parseFloat(String(m.total_shots_drank || 0)),
-                  deadPlaceFinishes: m.dead_place_finishes || 0,
-                  maxSingleWeekDebt: (m.dead_place_finishes || 0) * 1.0 || 1.0,
-                }))
-              : mockInfamyRecords
-          }
-        />
-      </div>
+      {shameViewMode === 'reels' && (
+        <div className="mb-4">
+          <VerticalReelsFeed />
+        </div>
+      )}
+
+      {shameViewMode === 'standings' && (
+        <div className="mb-6">
+          <WeeklyLeaderboardCard />
+        </div>
+      )}
+
+      {shameViewMode === 'infamy' && (
+        <div className="mt-4">
+          <HallOfInfamyTable
+            records={
+              cumulativeData?.leaderboard && cumulativeData.leaderboard.length > 0
+                ? cumulativeData.leaderboard.map((m) => ({
+                    memberId: m.user_id,
+                    name: m.email.split('@')[0],
+                    shotsDrank: parseFloat(String(m.total_shots_drank || 0)),
+                    deadPlaceFinishes: m.dead_place_finishes || 0,
+                    maxSingleWeekDebt: (m.dead_place_finishes || 0) * 1.0 || 1.0,
+                  }))
+                : mockInfamyRecords
+            }
+          />
+        </div>
+      )}
     </div>
   );
 };
