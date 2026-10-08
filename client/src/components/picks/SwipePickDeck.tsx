@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'framer-motion';
 import { TeamLogo } from '../common/TeamLogo';
+import { NFL_TEAMS } from '../../utils/teamAssets';
 
 export interface SwipeMatchup {
   id: string;
@@ -9,6 +10,10 @@ export interface SwipeMatchup {
   homeTeam: string;
   startTime: string;
   spread?: string;
+  overUnder?: string;
+  venue?: string;
+  weather?: string;
+  injuryNote?: string;
   selectedTeam?: string | null;
   isLocked?: boolean;
 }
@@ -17,75 +22,164 @@ interface SwipePickDeckProps {
   matchups: SwipeMatchup[];
   onSelectPick: (gameId: string, team: string) => void;
   isUserLocked: boolean;
-  onOpenDrawer?: (gameId: string) => void;
 }
 
 export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
   matchups,
   onSelectPick,
-  isUserLocked,
-  onOpenDrawer
+  isUserLocked
 }) => {
-  const [deck, setDeck] = useState<SwipeMatchup[]>([]);
-
-  useEffect(() => {
-    // Deck tracks unpicked games first, then all remaining
-    setDeck(matchups);
-  }, [matchups]);
+  const [deck, setDeck] = useState<SwipeMatchup[]>(matchups);
+  const [showIntel, setShowIntel] = useState(false);
 
   const activeCard = deck[0];
+  const nextCard = deck[1];
 
-  const handleSwipe = (direction: 'LEFT' | 'RIGHT' | 'UP' | 'DOWN') => {
+  const handleCardExit = (direction: 'LEFT' | 'RIGHT' | 'UP' | 'DOWN') => {
     if (!activeCard) return;
 
     if (direction === 'LEFT') {
-      // Pick Away
       if (!isUserLocked && !activeCard.isLocked) {
         onSelectPick(activeCard.gameId, activeCard.awayTeam);
       }
       setDeck(prev => prev.slice(1));
     } else if (direction === 'RIGHT') {
-      // Pick Home
       if (!isUserLocked && !activeCard.isLocked) {
         onSelectPick(activeCard.gameId, activeCard.homeTeam);
       }
       setDeck(prev => prev.slice(1));
     } else if (direction === 'UP') {
-      // Skip: Move to back of deck
+      // Move current card to end of deck
       setDeck(prev => [...prev.slice(1), prev[0]]);
     } else if (direction === 'DOWN') {
-      // Reveal Intel Drawer
-      if (onOpenDrawer) {
-        onOpenDrawer(activeCard.gameId);
-      }
+      setShowIntel(true);
     }
   };
 
   if (!activeCard) {
     return (
-      <div className="flex flex-col items-center justify-center p-8 bg-slate-900 border border-slate-800 rounded-3xl text-center space-y-3 font-mono">
-        <span className="text-4xl">🎉</span>
-        <h4 className="text-sm font-black text-white uppercase">All Matchups Reviewed</h4>
-        <p className="text-xs text-slate-400">Switch to List view to review your weekly slate or make adjustments.</p>
+      <div className="flex flex-col items-center justify-center p-8 bg-slate-900/90 border border-slate-800 rounded-3xl text-center space-y-4 font-mono shadow-2xl">
+        <span className="text-5xl animate-bounce">🎉</span>
+        <h4 className="text-base font-black text-white uppercase tracking-wider">All Matchups Picked!</h4>
+        <p className="text-xs text-slate-400 max-w-xs">
+          Your picks are locked in. Switch to List view to review your full weekly slate.
+        </p>
         <button
           onClick={() => setDeck(matchups)}
-          className="px-4 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs font-bold text-cyan-300 hover:text-white"
+          className="px-5 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-xl text-xs font-black text-slate-950 uppercase tracking-wider shadow-lg active:scale-95 transition-all"
         >
-          Reset Deck
+          Review Deck Again
         </button>
       </div>
     );
   }
 
   return (
-    <div className="relative w-full max-w-sm mx-auto h-[430px] flex items-center justify-center select-none font-mono">
-      <AnimatePresence>
+    <div className="relative w-full max-w-sm mx-auto h-[480px] flex items-center justify-center select-none font-mono">
+      {/* Background Next Card (Stack Physics) */}
+      {nextCard && (
+        <div className="absolute w-[92%] h-[430px] bg-slate-950/70 border border-slate-800/80 rounded-3xl p-5 shadow-xl scale-95 translate-y-4 opacity-50 blur-[0.5px] pointer-events-none flex flex-col justify-between">
+          <div className="flex justify-between text-xs text-slate-500 font-bold">
+            <span>{nextCard.startTime}</span>
+            <span>NEXT UP</span>
+          </div>
+          <div className="flex items-center justify-around">
+            <TeamLogo abbr={nextCard.awayTeam} size="md" />
+            <span className="text-slate-600 font-black">VS</span>
+            <TeamLogo abbr={nextCard.homeTeam} size="md" />
+          </div>
+          <div className="h-6" />
+        </div>
+      )}
+
+      {/* Active Interactive Top Card */}
+      <AnimatePresence mode="popLayout">
         <SwipeCardItem
           key={activeCard.gameId}
           matchup={activeCard}
-          onSwipe={handleSwipe}
+          onSwipe={handleCardExit}
           isUserLocked={isUserLocked}
+          onOpenIntel={() => setShowIntel(true)}
         />
+      </AnimatePresence>
+
+      {/* Matchup Intel Bottom Sheet Modal */}
+      <AnimatePresence>
+        {showIntel && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-end justify-center p-4"
+            onClick={() => setShowIntel(false)}
+          >
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-t-3xl p-6 space-y-4 text-white font-mono shadow-2xl"
+            >
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center space-x-2">
+                  <span className="text-xl">📊</span>
+                  <h3 className="text-sm font-black uppercase text-cyan-400 tracking-wider">
+                    Matchup Intel & Insights
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setShowIntel(false)}
+                  className="w-7 h-7 rounded-full bg-slate-800 flex items-center justify-center text-slate-400 font-bold hover:text-white"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Matchup Teams Banner */}
+              <div className="flex items-center justify-around p-3 bg-slate-950 rounded-2xl border border-slate-800">
+                <div className="flex items-center space-x-2">
+                  <TeamLogo abbr={activeCard.awayTeam} size="sm" />
+                  <span className="font-black text-sm">{activeCard.awayTeam}</span>
+                </div>
+                <span className="text-slate-600 font-black">@</span>
+                <div className="flex items-center space-x-2">
+                  <span className="font-black text-sm">{activeCard.homeTeam}</span>
+                  <TeamLogo abbr={activeCard.homeTeam} size="sm" />
+                </div>
+              </div>
+
+              {/* Intel Breakdown Items */}
+              <div className="space-y-2 text-xs">
+                <div className="flex justify-between p-2.5 bg-slate-950/60 rounded-xl border border-slate-800">
+                  <span className="text-slate-400">Consensus Spread</span>
+                  <span className="font-bold text-amber-300">{activeCard.spread || 'EVEN'}</span>
+                </div>
+                <div className="flex justify-between p-2.5 bg-slate-950/60 rounded-xl border border-slate-800">
+                  <span className="text-slate-400">Over / Under</span>
+                  <span className="font-bold text-emerald-400">{activeCard.overUnder || '44.5 PTS'}</span>
+                </div>
+                <div className="flex justify-between p-2.5 bg-slate-950/60 rounded-xl border border-slate-800">
+                  <span className="text-slate-400">Venue & Conditions</span>
+                  <span className="font-bold text-slate-200">{activeCard.venue || 'Outdoor · 68°F Clear'}</span>
+                </div>
+                <div className="p-2.5 bg-rose-950/30 rounded-xl border border-rose-900/50">
+                  <span className="text-[10px] text-rose-400 font-black uppercase block mb-1">Key Injury Intel</span>
+                  <span className="text-slate-300 text-[11px] leading-relaxed">
+                    {activeCard.injuryNote || 'Both starting QBs active. Away team starting CB ruled OUT (hamstring).'}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowIntel(false)}
+                className="w-full py-2.5 bg-slate-800 rounded-xl font-bold text-xs text-white hover:bg-slate-700"
+              >
+                Close Intel
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
     </div>
   );
@@ -95,92 +189,133 @@ const SwipeCardItem: React.FC<{
   matchup: SwipeMatchup;
   onSwipe: (dir: 'LEFT' | 'RIGHT' | 'UP' | 'DOWN') => void;
   isUserLocked: boolean;
-}> = ({ matchup, onSwipe, isUserLocked }) => {
+  onOpenIntel: () => void;
+}> = ({ matchup, onSwipe, isUserLocked, onOpenIntel }) => {
   const x = useMotionValue(0);
   const y = useMotionValue(0);
-  const rotate = useTransform(x, [-150, 150], [-18, 18]);
-  const awayOpacity = useTransform(x, [-100, -20], [1, 0]);
-  const homeOpacity = useTransform(x, [20, 100], [0, 1]);
-  const skipOpacity = useTransform(y, [-100, -20], [1, 0]);
+  const rotate = useTransform(x, [-200, 200], [-22, 22]);
+
+  // Dynamic Opacity Feedback Overlays
+  const awayOpacity = useTransform(x, [-120, -30], [1, 0]);
+  const homeOpacity = useTransform(x, [30, 120], [0, 1]);
+  const skipOpacity = useTransform(y, [-100, -30], [1, 0]);
+
+  const awayMeta = NFL_TEAMS[matchup.awayTeam];
+  const homeMeta = NFL_TEAMS[matchup.homeTeam];
 
   return (
     <motion.div
       style={{ x, y, rotate }}
       drag
       dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
-      dragElastic={0.8}
-      onTouchStart={(e) => {
-        // Prevent pull-to-refresh on downward drag gesture
-        if (e.touches[0].clientY > 50) {
-          e.preventDefault();
-        }
-      }}
+      dragElastic={0.9}
+      initial={{ scale: 0.9, y: 20, opacity: 0 }}
+      animate={{ scale: 1, y: 0, opacity: 1 }}
+      exit={(custom) => ({
+        x: custom === 'LEFT' ? -400 : custom === 'RIGHT' ? 400 : 0,
+        y: custom === 'UP' ? -400 : 0,
+        opacity: 0,
+        transition: { duration: 0.25 }
+      })}
       onDragEnd={(_, info) => {
-        if (info.offset.x < -100) {
+        if (info.offset.x < -90) {
           onSwipe('LEFT');
-        } else if (info.offset.x > 100) {
+        } else if (info.offset.x > 90) {
           onSwipe('RIGHT');
-        } else if (info.offset.y < -100) {
+        } else if (info.offset.y < -80) {
           onSwipe('UP');
-        } else if (info.offset.y > 100) {
-          onSwipe('DOWN');
+        } else if (info.offset.y > 70) {
+          onOpenIntel();
         }
       }}
-      className="absolute w-full h-[400px] bg-slate-900 border border-slate-700/80 rounded-3xl p-5 shadow-2xl flex flex-col justify-between cursor-grab active:cursor-grabbing backdrop-blur-xl"
+      className="absolute w-full h-[450px] bg-slate-900/95 border-2 border-slate-700/80 rounded-3xl p-5 shadow-2xl flex flex-col justify-between cursor-grab active:cursor-grabbing backdrop-blur-2xl z-20"
     >
-      {/* Pick Indicators Overlay */}
+      {/* Dynamic Pick Hologram Badges */}
       <motion.div
         style={{ opacity: awayOpacity }}
-        className="absolute top-6 left-6 px-3 py-1 rounded-xl bg-cyan-950/90 border-2 border-cyan-400 text-cyan-300 font-black text-sm uppercase -rotate-12 z-30"
+        className="absolute top-8 left-6 px-4 py-1.5 rounded-2xl bg-cyan-950/95 border-2 border-cyan-400 text-cyan-300 font-black text-sm uppercase -rotate-12 z-30 shadow-[0_0_15px_rgba(34,211,238,0.5)]"
       >
-        PICK {matchup.awayTeam}
+        PICK {matchup.awayTeam} ◀
       </motion.div>
 
       <motion.div
         style={{ opacity: homeOpacity }}
-        className="absolute top-6 right-6 px-3 py-1 rounded-xl bg-rose-950/90 border-2 border-rose-400 text-rose-300 font-black text-sm uppercase rotate-12 z-30"
+        className="absolute top-8 right-6 px-4 py-1.5 rounded-2xl bg-rose-950/95 border-2 border-rose-400 text-rose-300 font-black text-sm uppercase rotate-12 z-30 shadow-[0_0_15px_rgba(244,63,94,0.5)]"
       >
-        PICK {matchup.homeTeam}
+        ▶ PICK {matchup.homeTeam}
       </motion.div>
 
       <motion.div
         style={{ opacity: skipOpacity }}
-        className="absolute top-4 left-1/2 -translate-x-1/2 px-3 py-1 rounded-xl bg-slate-800 border border-slate-600 text-slate-300 font-black text-xs uppercase z-30"
+        className="absolute top-6 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-2xl bg-amber-950/90 border-2 border-amber-400 text-amber-300 font-black text-xs uppercase z-30 shadow-lg"
       >
-        SKIP / PASS ⬆
+        ▲ SKIP FOR LATER ▲
       </motion.div>
 
-      {/* Header Info */}
-      <div className="flex items-center justify-between border-b border-slate-800 pb-3 text-xs text-slate-400">
-        <span>{matchup.startTime}</span>
-        <span className="text-cyan-400 font-bold">{matchup.spread || 'EVEN'}</span>
+      {/* Header Chyron */}
+      <div className="flex items-center justify-between border-b border-slate-800 pb-3 text-xs">
+        <div className="flex items-center space-x-2">
+          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+          <span className="font-bold text-slate-300">{matchup.startTime}</span>
+        </div>
+        <span className="px-2.5 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-cyan-300 font-black text-[11px]">
+          {matchup.spread || 'EVEN'}
+        </span>
       </div>
 
-      {/* Matchup Center Stage */}
-      <div className="flex items-center justify-around my-4">
-        <div className="flex flex-col items-center space-y-2">
-          <TeamLogo abbr={matchup.awayTeam} size="lg" />
-          <span className="text-lg font-black text-white">{matchup.awayTeam}</span>
-          <span className="text-[10px] text-cyan-400">SWIPE LEFT ◀</span>
+      {/* Matchup Showcase */}
+      <div className="flex items-center justify-around my-2 py-4 px-2 bg-slate-950/60 rounded-2xl border border-slate-800/80">
+        {/* Away Team Touch Card */}
+        <div className="flex flex-col items-center space-y-2 text-center">
+          <div className="p-2 rounded-2xl bg-slate-900 border border-slate-700/80 shadow-md">
+            <TeamLogo abbr={matchup.awayTeam} size="lg" />
+          </div>
+          <span className="text-xl font-black text-white">{matchup.awayTeam}</span>
+          <span className="text-[10px] text-slate-400 font-bold">{awayMeta?.name || 'Away'}</span>
+          <div className="px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-800 text-cyan-400 text-[10px] font-black">
+            SWIPE ◀
+          </div>
         </div>
 
-        <span className="text-slate-600 font-black text-sm">@</span>
+        <span className="text-slate-600 font-black text-sm uppercase">VS</span>
 
-        <div className="flex flex-col items-center space-y-2">
-          <TeamLogo abbr={matchup.homeTeam} size="lg" />
-          <span className="text-lg font-black text-white">{matchup.homeTeam}</span>
-          <span className="text-[10px] text-rose-400">▶ SWIPE RIGHT</span>
+        {/* Home Team Touch Card */}
+        <div className="flex flex-col items-center space-y-2 text-center">
+          <div className="p-2 rounded-2xl bg-slate-900 border border-slate-700/80 shadow-md">
+            <TeamLogo abbr={matchup.homeTeam} size="lg" />
+          </div>
+          <span className="text-xl font-black text-white">{matchup.homeTeam}</span>
+          <span className="text-[10px] text-slate-400 font-bold">{homeMeta?.name || 'Home'}</span>
+          <div className="px-2 py-0.5 rounded bg-rose-950/80 border border-rose-800 text-rose-400 text-[10px] font-black">
+            ▶ SWIPE
+          </div>
         </div>
       </div>
 
-      {/* Guidance Footer */}
-      <div className="border-t border-slate-800 pt-3 text-center space-y-1">
-        <div className="text-[11px] text-slate-400 font-medium">
-          ⬆ Swipe Up to Skip · ⬇ Swipe Down for Intel
+      {/* Prominent High-Visibility Gesture Cues */}
+      <div className="border-t border-slate-800 pt-3 space-y-2 text-center">
+        <div className="grid grid-cols-2 gap-2 text-xs font-bold">
+          <button
+            type="button"
+            onClick={() => onSwipe('UP')}
+            className="flex items-center justify-center space-x-1 py-1.5 px-2 rounded-xl bg-slate-800/90 border border-slate-700 text-amber-300 hover:bg-slate-700 active:scale-95"
+          >
+            <span>▲</span>
+            <span>SKIP (UP)</span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenIntel}
+            className="flex items-center justify-center space-x-1 py-1.5 px-2 rounded-xl bg-slate-800/90 border border-slate-700 text-cyan-300 hover:bg-slate-700 active:scale-95"
+          >
+            <span>▼</span>
+            <span>INTEL (DOWN)</span>
+          </button>
         </div>
+
         {isUserLocked && (
           <div className="text-[10px] text-amber-400 font-bold animate-pulse">
-            🔒 Protected: Unlock in header to register swipes
+            🔒 Picks locked. Tap 'EDIT PICKS' to register swipes.
           </div>
         )}
       </div>
