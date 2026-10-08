@@ -17,6 +17,13 @@ export interface SwipeMatchup {
   isLocked?: boolean;
 }
 
+interface ToastState {
+  id: number;
+  message: string;
+  type: 'AWAY' | 'HOME' | 'SKIP' | 'CLEAR';
+  team?: string;
+}
+
 interface SwipePickDeckProps {
   matchups: SwipeMatchup[];
   onSelectPick: (gameId: string, team: string) => void;
@@ -31,7 +38,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
   isUserLocked
 }) => {
   const [showIntel, setShowIntel] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
   const getInitialIndex = () => {
@@ -48,11 +55,11 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
   }, [matchups.length]);
 
   useEffect(() => {
-    if (toastMessage) {
-      const timer = setTimeout(() => setToastMessage(null), 1600);
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 1500);
       return () => clearTimeout(timer);
     }
-  }, [toastMessage]);
+  }, [toast]);
 
   useEffect(() => {
     if (confirmClear) {
@@ -60,6 +67,10 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
       return () => clearTimeout(timer);
     }
   }, [confirmClear]);
+
+  const triggerToast = (message: string, type: 'AWAY' | 'HOME' | 'SKIP' | 'CLEAR', team?: string) => {
+    setToast({ id: Date.now(), message, type, team });
+  };
 
   const activeCard = matchups[currentIndex] || matchups[0];
 
@@ -98,7 +109,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
         if (activeCard.selectedTeam !== activeCard.awayTeam) {
           onSelectPick(activeCard.gameId, activeCard.awayTeam);
         }
-        setToastMessage(`Locked in ${activeCard.awayTeam}`);
+        triggerToast(`Picked ${activeCard.awayTeam}`, 'AWAY', activeCard.awayTeam);
       }
       setCurrentIndex(prev => getNextUnpickedIndex(prev));
     } else if (direction === 'RIGHT') {
@@ -106,11 +117,11 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
         if (activeCard.selectedTeam !== activeCard.homeTeam) {
           onSelectPick(activeCard.gameId, activeCard.homeTeam);
         }
-        setToastMessage(`Locked in ${activeCard.homeTeam}`);
+        triggerToast(`Picked ${activeCard.homeTeam}`, 'HOME', activeCard.homeTeam);
       }
       setCurrentIndex(prev => getNextUnpickedIndex(prev));
     } else if (direction === 'UP') {
-      setToastMessage('Skipped for later');
+      triggerToast('Skipped Matchup', 'SKIP');
       setCurrentIndex(prev => getNextUnpickedIndex(prev));
     } else if (direction === 'DOWN') {
       setShowIntel(true);
@@ -131,35 +142,48 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
 
   return (
     <div className="relative w-full max-w-sm mx-auto flex flex-col items-center select-none font-mono">
-      {/* Floating Hardware-Accelerated Toast Pill */}
-      <AnimatePresence>
-        {toastMessage && (
+      {/* Semantic Intent-Aligned Floating Toast Pill */}
+      <AnimatePresence mode="wait">
+        {toast && (
           <motion.div
-            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            key={toast.id}
+            initial={{ opacity: 0, y: -18, scale: 0.9 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -15, scale: 0.95 }}
-            transition={{ duration: 0.16, ease: 'easeOut' }}
-            className="fixed top-14 z-50 pointer-events-none flex items-center space-x-2 px-4 py-1.5 rounded-full bg-slate-900/95 border border-cyan-500/80 text-cyan-300 text-xs font-black tracking-wide shadow-2xl backdrop-blur-xl"
+            exit={{ opacity: 0, y: -12, scale: 0.95 }}
+            transition={{ type: 'spring', damping: 20, stiffness: 350 }}
+            className={`fixed top-14 z-50 pointer-events-none flex items-center space-x-2 px-3.5 py-1.5 rounded-full border text-xs font-black tracking-wide shadow-2xl backdrop-blur-xl ${
+              toast.type === 'AWAY'
+                ? 'bg-cyan-950/95 border-cyan-400 text-cyan-200 shadow-cyan-950/50'
+                : toast.type === 'HOME'
+                ? 'bg-rose-950/95 border-rose-400 text-rose-200 shadow-rose-950/50'
+                : toast.type === 'SKIP'
+                ? 'bg-amber-950/95 border-amber-400 text-amber-200 shadow-amber-950/50'
+                : 'bg-red-950/95 border-red-500 text-red-200 shadow-red-950/50'
+            }`}
           >
-            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-            <span>{toastMessage}</span>
+            {toast.type === 'AWAY' && <span className="text-cyan-400">◀</span>}
+            {toast.type === 'HOME' && <span className="text-rose-400">▶</span>}
+            {toast.type === 'SKIP' && <span>▲</span>}
+            {toast.type === 'CLEAR' && <span>🗑️</span>}
+            {toast.team && <TeamLogo abbr={toast.team} size="xs" className="!w-4 !h-4 !rounded" />}
+            <span>{toast.message}</span>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Tightened Stepper Progress Ledger Header */}
-      <div className="w-full px-1 mb-2 space-y-1.5">
+      {/* Stepper Progress Ledger Header */}
+      <div className="w-full px-1 mb-2 space-y-1">
         <div className="flex items-center justify-between text-[11px] font-black tracking-wide">
           <div className="flex items-center space-x-1.5 text-cyan-400">
             <span>MATCHUP {currentIndex + 1} OF {totalGames}</span>
           </div>
 
-          <div className="flex items-center space-x-2 text-[10px]">
+          <div className="flex items-center space-x-1.5 text-[10px]">
             <span className="text-emerald-400 font-bold">{pickedCount} Picked</span>
             <span className="text-slate-500">·</span>
             <span className="text-slate-400">{totalGames - pickedCount} Left</span>
 
-            {/* Clear All elevated safely away from right chevron */}
+            {/* Clear All Action */}
             {onClearAllPicks && !isUserLocked && pickedCount > 0 && (
               <>
                 <span className="text-slate-500">·</span>
@@ -177,7 +201,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
                     onClick={() => {
                       onClearAllPicks();
                       setConfirmClear(false);
-                      setToastMessage('All picks cleared');
+                      triggerToast('All picks reset', 'CLEAR');
                     }}
                     className="px-2 py-0.5 rounded bg-rose-600 text-white font-black text-[9px] animate-pulse shadow-md"
                   >
@@ -389,19 +413,16 @@ const SwipeCardItem: React.FC<{
       exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2, ease: 'easeIn' } }}
       onDragEnd={(_, info) => {
         if (isUserLocked) return;
-        // Directional Intent Dominance: ensure intended axis dominates before firing
         const absX = Math.abs(info.offset.x);
         const absY = Math.abs(info.offset.y);
 
         if (absX > absY) {
-          // Horizontal Pick Intent: increased distance threshold to 110px with velocity support
           if (info.offset.x < -110 || (info.offset.x < -60 && info.velocity.x < -500)) {
             onSwipe('LEFT');
           } else if (info.offset.x > 110 || (info.offset.x > 60 && info.velocity.x > 500)) {
             onSwipe('RIGHT');
           }
         } else {
-          // Vertical Intent
           if (info.offset.y < -95 || (info.offset.y < -50 && info.velocity.y < -500)) {
             onSwipe('UP');
           } else if (info.offset.y > 75) {
