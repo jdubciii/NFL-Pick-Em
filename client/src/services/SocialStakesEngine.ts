@@ -4,10 +4,11 @@ export interface InfamyRecord {
   shotsDrank: number;
   deadPlaceFinishes: number;
   maxSingleWeekDebt: number;
+  winRate?: string;
   avatarUrl?: string;
 }
 
-export type InfamySortCriteria = 'MOST_SHOTS' | 'MOST_DEAD_PLACES' | 'HIGHEST_DEBT';
+export type InfamySortCriteria = 'MOST_SHOTS' | 'MOST_DEAD_PLACES' | 'HIGHEST_DEBT' | 'BEST_WIN_RATE';
 
 export function formatDisputeCountdown(remainingMs: number): string {
   if (remainingMs <= 0) return '00:00:00';
@@ -30,6 +31,12 @@ export function sortHallOfInfamy(records: InfamyRecord[], criteria: InfamySortCr
   switch (criteria) {
     case 'MOST_DEAD_PLACES':
       return clone.sort((a, b) => b.deadPlaceFinishes - a.deadPlaceFinishes);
+    case 'BEST_WIN_RATE':
+      return clone.sort((a, b) => {
+        const rateA = parseFloat(a.winRate || '0') || 0;
+        const rateB = parseFloat(b.winRate || '0') || 0;
+        return rateB - rateA;
+      });
     case 'HIGHEST_DEBT':
       return clone.sort((a, b) => b.maxSingleWeekDebt - a.maxSingleWeekDebt);
     case 'MOST_SHOTS':

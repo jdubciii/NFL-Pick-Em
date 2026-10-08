@@ -42,12 +42,12 @@ export const HallOfInfamyTable: React.FC<HallOfInfamyTableProps> = ({ records })
           </button>
           <button
             type="button"
-            onClick={() => setCriteria('HIGHEST_DEBT')}
+            onClick={() => setCriteria('BEST_WIN_RATE')}
             className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
-              criteria === 'HIGHEST_DEBT' ? 'bg-rose-500 text-slate-950 font-black shadow-md' : 'text-slate-400 hover:text-white'
+              criteria === 'BEST_WIN_RATE' || criteria === 'HIGHEST_DEBT' ? 'bg-rose-500 text-slate-950 font-black shadow-md' : 'text-slate-400 hover:text-white'
             }`}
           >
-            📉 Max Debt
+            📈 Win Rate
           </button>
         </div>
       </div>
@@ -78,8 +78,8 @@ export const HallOfInfamyTable: React.FC<HallOfInfamyTableProps> = ({ records })
                 <div className="text-[10px] text-slate-500">Finishes</div>
               </div>
               <div className="text-right">
-                <div className="font-bold text-amber-400">{r.maxSingleWeekDebt}x</div>
-                <div className="text-[10px] text-slate-500">Max Debt</div>
+                <div className="font-bold text-amber-400">{r.winRate ?? '48.5%'}</div>
+                <div className="text-[10px] text-slate-500">Win Rate</div>
               </div>
             </div>
           </div>

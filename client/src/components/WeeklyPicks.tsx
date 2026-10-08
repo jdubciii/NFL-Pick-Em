@@ -50,6 +50,27 @@ export const WeeklyPicks: React.FC = () => {
     message: ''
   });
 
+  const [isUserLocked, setIsUserLocked] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('nfl_picks_user_locked_w5') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleUserLock = () => {
+    setIsUserLocked((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('nfl_picks_user_locked_w5', String(next));
+      } catch (e) {
+        console.error(e);
+      }
+      triggerHaptic('selection');
+      return next;
+    });
+  };
+
   const handleTogglePicksView = (mode: 'cards' | 'list') => {
     setPicksViewMode(mode);
     try {
@@ -109,6 +130,10 @@ export const WeeklyPicks: React.FC = () => {
   }, [fetchGames]);
 
   const handlePick = async (game: GameItem, selectedTeamId: string) => {
+    if (isUserLocked) {
+      setFeedbackMessage({ text: 'Picks are locked. Tap "LOCKED" button to edit picks.', type: 'error' });
+      return;
+    }
     if (!pool) return;
     if (isGameLocked(game)) {
       setFeedbackMessage({ text: 'This game is locked.', type: 'error' });
@@ -162,6 +187,10 @@ export const WeeklyPicks: React.FC = () => {
    * Applies quick-fill presets through the QuickFillSafetyEngine with a 7-second undo grace period.
    */
   const handleApplyPreset = (updatedPicks: Record<string, string | null>, presetDescription: string) => {
+    if (isUserLocked) {
+      setFeedbackMessage({ text: 'Picks are locked. Tap "LOCKED" button to edit picks.', type: 'error' });
+      return;
+    }
     if (!pool) return;
 
     const slateItems: SlateGameItem[] = games.map((g) => ({
@@ -333,6 +362,21 @@ export const WeeklyPicks: React.FC = () => {
               List
             </button>
           </div>
+
+          {/* User Picks Lock / Unlock Button */}
+          <button
+            type="button"
+            onClick={toggleUserLock}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-mono font-bold transition-all shadow-sm ${
+              isUserLocked
+                ? 'bg-amber-950/80 border-amber-500/80 text-amber-300 shadow-amber-950/40'
+                : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:text-white hover:border-slate-500'
+            }`}
+            title={isUserLocked ? 'Click to unlock and edit picks' : 'Lock your picks to prevent accidental clicks'}
+          >
+            <span>{isUserLocked ? '🔒' : '🔓'}</span>
+            <span>{isUserLocked ? 'LOCKED' : 'LOCK PICKS'}</span>
+          </button>
 
           <button
             onClick={fetchGames}

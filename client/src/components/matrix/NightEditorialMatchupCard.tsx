@@ -117,7 +117,7 @@ export const NightEditorialMatchupCard: React.FC<NightEditorialMatchupCardProps>
       {/* Field Position Drive Tracker (Concept 01 + Concept 03 Hybrid) */}
       {game.status === 'IN_PROGRESS' && (
         <FieldPositionTracker
-          absolutePosition={93}
+          absolutePosition={game.ballLocation === 'BUF 7' ? 93 : (game.yardline ?? 50)}
           possession={game.possession || 'AWAY'}
           yardline={game.yardline || 50}
           downAndDistance={game.downAndDistance}

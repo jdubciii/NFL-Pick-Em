@@ -120,7 +120,7 @@ export const WeeklyLeaderboardCard: React.FC<WeeklyLeaderboardCardProps> = ({
                   </div>
 
                   <div className="text-[10px] text-slate-500 mt-0.5">
-                    {s.winPercentage}% {isFinalized ? `(${s.correct}/${s.totalGames})` : `decided`}
+                    {isFinalized ? `${s.correct}/${s.totalGames} Picks (${s.winPercentage}%)` : `Win Rate: ${s.winPercentage}%`}
                   </div>
                 </div>
 
