@@ -29,8 +29,8 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
   isUserLocked
 }) => {
   const [showIntel, setShowIntel] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Helper: Find first unpicked index in slate
   const getInitialIndex = () => {
     const firstUnpicked = matchups.findIndex(m => !m.selectedTeam);
     return firstUnpicked !== -1 ? firstUnpicked : 0;
@@ -38,46 +38,43 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
 
   const [currentIndex, setCurrentIndex] = useState<number>(getInitialIndex);
 
-  // Keep currentIndex clamped within matchup array bounds
   useEffect(() => {
     if (currentIndex >= matchups.length && matchups.length > 0) {
       setCurrentIndex(0);
     }
   }, [matchups.length]);
 
+  // Auto-dismiss floating toast
+  useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => setToastMessage(null), 1800);
+      return () => clearTimeout(timer);
+    }
+  }, [toastMessage]);
+
   const activeCard = matchups[currentIndex] || matchups[0];
 
-  // Helper: Calculate smart next unpicked index (Forward Direction)
   const getNextUnpickedIndex = (fromIdx: number): number => {
     const total = matchups.length;
     if (total === 0) return 0;
-
-    // Search ahead
     for (let i = fromIdx + 1; i < total; i++) {
       if (!matchups[i].selectedTeam) return i;
     }
-    // Wrap to beginning
     for (let i = 0; i < fromIdx; i++) {
       if (!matchups[i].selectedTeam) return i;
     }
-    // If all are picked, standard sequential step
     return (fromIdx + 1) % total;
   };
 
-  // Helper: Calculate smart previous unpicked index (Reverse Direction)
   const getPrevUnpickedIndex = (fromIdx: number): number => {
     const total = matchups.length;
     if (total === 0) return 0;
-
-    // Search behind
     for (let i = fromIdx - 1; i >= 0; i--) {
       if (!matchups[i].selectedTeam) return i;
     }
-    // Wrap to end
     for (let i = total - 1; i > fromIdx; i--) {
       if (!matchups[i].selectedTeam) return i;
     }
-    // If all are picked, standard sequential step backwards
     return (fromIdx - 1 + total) % total;
   };
 
@@ -88,17 +85,25 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
     if (!activeCard || isUserLocked) return;
 
     if (direction === 'LEFT') {
+      // Pick Away Team: IDEMPOTENT (Do not toggle off if already picked)
       if (!activeCard.isLocked) {
-        onSelectPick(activeCard.gameId, activeCard.awayTeam);
+        if (activeCard.selectedTeam !== activeCard.awayTeam) {
+          onSelectPick(activeCard.gameId, activeCard.awayTeam);
+        }
+        setToastMessage(`Locked in ${activeCard.awayTeam}`);
       }
       setCurrentIndex(prev => getNextUnpickedIndex(prev));
     } else if (direction === 'RIGHT') {
+      // Pick Home Team: IDEMPOTENT (Do not toggle off if already picked)
       if (!activeCard.isLocked) {
-        onSelectPick(activeCard.gameId, activeCard.homeTeam);
+        if (activeCard.selectedTeam !== activeCard.homeTeam) {
+          onSelectPick(activeCard.gameId, activeCard.homeTeam);
+        }
+        setToastMessage(`Locked in ${activeCard.homeTeam}`);
       }
       setCurrentIndex(prev => getNextUnpickedIndex(prev));
     } else if (direction === 'UP') {
-      // Skip ahead to next unpicked
+      setToastMessage('Skipped for later');
       setCurrentIndex(prev => getNextUnpickedIndex(prev));
     } else if (direction === 'DOWN') {
       setShowIntel(true);
@@ -119,7 +124,23 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
 
   return (
     <div className="relative w-full max-w-sm mx-auto flex flex-col items-center select-none font-mono">
-      {/* Interactive Micro-Stepper Progress Ledger with Direct Matchup Selection & Arrow Steppers */}
+      {/* Floating Hardware-Accelerated Toast Pill (Zero Layout Shift) */}
+      <AnimatePresence>
+        {toastMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -15, scale: 0.95 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+            className="fixed top-20 z-50 pointer-events-none flex items-center space-x-2 px-4 py-2 rounded-full bg-slate-900/95 border border-cyan-500/80 text-cyan-300 text-xs font-black tracking-wide shadow-2xl backdrop-blur-xl"
+          >
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+            <span>{toastMessage}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Stepper Progress Ledger */}
       <div className="w-full px-1 mb-3 space-y-1.5">
         <div className="flex items-center justify-between text-[11px] font-black tracking-wide">
           <div className="flex items-center space-x-1.5 text-cyan-400">
@@ -130,19 +151,16 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
           </div>
         </div>
 
-        {/* Ledger Stepper Row with Tap Segments and Prev/Next Arrows */}
         <div className="flex items-center space-x-1.5 w-full">
-          {/* Previous Arrow */}
           <button
             type="button"
             onClick={() => setCurrentIndex(prev => getPrevUnpickedIndex(prev))}
             className="p-1 rounded-lg bg-slate-900 border border-slate-700/80 text-cyan-400 hover:text-white active:scale-90 transition-all shrink-0 text-xs font-black shadow-sm"
-            title="Previous Unpicked Game"
+            title="Previous Unpicked"
           >
             ◀
           </button>
 
-          {/* Interactive Tap-to-Jump Ledger Segments */}
           <div className="grid grid-flow-col auto-cols-fr gap-1 flex-1 h-3.5 bg-slate-950 p-1 rounded-xl border border-slate-800 items-center">
             {matchups.map((m, idx) => {
               const isCurrent = idx === currentIndex;
@@ -163,18 +181,17 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
                       ? 'ring-2 ring-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.9)] scale-110 z-10'
                       : 'opacity-80 active:scale-95'
                   }`}
-                  title={`Jump to Matchup ${idx + 1}: ${m.awayTeam} @ ${m.homeTeam}`}
+                  title={`Jump to Matchup ${idx + 1}`}
                 />
               );
             })}
           </div>
 
-          {/* Next Arrow */}
           <button
             type="button"
             onClick={() => setCurrentIndex(prev => getNextUnpickedIndex(prev))}
             className="p-1 rounded-lg bg-slate-900 border border-slate-700/80 text-cyan-400 hover:text-white active:scale-90 transition-all shrink-0 text-xs font-black shadow-sm"
-            title="Next Unpicked Game"
+            title="Next Unpicked"
           >
             ▶
           </button>
@@ -183,9 +200,11 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
 
       {/* Main Swipe Deck Container */}
       <div className="relative w-full h-[470px] flex items-center justify-center">
-        {/* Under-Card Stack Preview */}
         {nextUnderCard && nextUnderCard.gameId !== activeCard.gameId && (
-          <div className="absolute w-[92%] h-[420px] bg-slate-950/80 border border-slate-800 rounded-3xl p-5 shadow-xl scale-95 translate-y-4 opacity-50 blur-[0.5px] pointer-events-none flex flex-col justify-between">
+          <div
+            className="absolute w-[92%] h-[420px] bg-slate-950/80 border border-slate-800 rounded-3xl p-5 shadow-xl scale-95 translate-y-4 opacity-50 blur-[0.5px] pointer-events-none flex flex-col justify-between"
+            style={{ willChange: 'transform, opacity' }}
+          >
             <div className="flex justify-between text-xs text-slate-500 font-bold">
               <span>{nextUnderCard.startTime}</span>
               <span>UP NEXT</span>
@@ -199,8 +218,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
           </div>
         )}
 
-        {/* Active Swipe Card */}
-        <AnimatePresence mode="popLayout">
+        <AnimatePresence initial={false}>
           <SwipeCardItem
             key={activeCard.gameId}
             matchup={activeCard}
@@ -211,7 +229,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
         </AnimatePresence>
       </div>
 
-      {/* Matchup Intel Bottom Sheet */}
+      {/* Matchup Intel Sheet */}
       <AnimatePresence>
         {showIntel && (
           <div className="fixed inset-0 z-50 overflow-hidden flex items-end justify-center select-none">
@@ -304,6 +322,15 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
   );
 };
 
+const cardVariants = {
+  initial: { scale: 0.94, opacity: 0 },
+  animate: { scale: 1, opacity: 1, transition: { duration: 0.2, ease: 'easeOut' } },
+  exitLeft: { x: -380, opacity: 0, scale: 0.9, transition: { duration: 0.22, ease: 'easeIn' } },
+  exitRight: { x: 380, opacity: 0, scale: 0.9, transition: { duration: 0.22, ease: 'easeIn' } },
+  exitUp: { y: -380, opacity: 0, scale: 0.9, transition: { duration: 0.22, ease: 'easeIn' } },
+  exitDefault: { opacity: 0, scale: 0.9, transition: { duration: 0.22, ease: 'easeIn' } },
+};
+
 const SwipeCardItem: React.FC<{
   matchup: SwipeMatchup;
   onSwipe: (dir: 'LEFT' | 'RIGHT' | 'UP' | 'DOWN') => void;
@@ -312,31 +339,32 @@ const SwipeCardItem: React.FC<{
 }> = ({ matchup, onSwipe, isUserLocked, onOpenIntel }) => {
   const x = useMotionValue(0);
   const y = useMotionValue(0);
-  const rotate = useTransform(x, [-200, 200], [-20, 20]);
+  const rotate = useTransform(x, [-200, 200], [-18, 18]);
 
-  const awayOpacity = useTransform(x, [-110, -30], [1, 0]);
-  const homeOpacity = useTransform(x, [30, 110], [0, 1]);
-  const skipOpacity = useTransform(y, [-90, -30], [1, 0]);
+  const awayOpacity = useTransform(x, [-100, -25], [1, 0]);
+  const homeOpacity = useTransform(x, [25, 100], [0, 1]);
+  const skipOpacity = useTransform(y, [-80, -25], [1, 0]);
 
   const awayMeta = NFL_TEAMS[matchup.awayTeam];
   const homeMeta = NFL_TEAMS[matchup.homeTeam];
 
   return (
     <motion.div
-      style={{ x, y, rotate }}
+      style={{ x, y, rotate, willChange: 'transform, opacity' }}
       drag={!isUserLocked}
       dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
-      dragElastic={0.85}
-      initial={{ scale: 0.9, y: 20, opacity: 0 }}
-      animate={{ scale: 1, y: 0, opacity: 1 }}
-      exit={{ opacity: 0, scale: 0.85, transition: { duration: 0.2 } }}
+      dragElastic={0.75}
+      variants={cardVariants}
+      initial="initial"
+      animate="animate"
+      exit="exitDefault"
       onDragEnd={(_, info) => {
         if (isUserLocked) return;
-        if (info.offset.x < -80) {
+        if (info.offset.x < -75 || info.velocity.x < -300) {
           onSwipe('LEFT');
-        } else if (info.offset.x > 80) {
+        } else if (info.offset.x > 75 || info.velocity.x > 300) {
           onSwipe('RIGHT');
-        } else if (info.offset.y < -70) {
+        } else if (info.offset.y < -70 || info.velocity.y < -300) {
           onSwipe('UP');
         } else if (info.offset.y > 60) {
           onOpenIntel();

@@ -388,28 +388,6 @@ export const WeeklyPicks: React.FC = () => {
         </div>
       </div>
 
-      {/* Toast Feedback */}
-      {feedbackMessage && (
-        <div
-          className={`p-4 rounded-xl flex items-center justify-between text-xs font-medium border transition-all animate-fade-in ${
-            feedbackMessage.type === 'success'
-              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-              : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
-          }`}
-        >
-          <div className="flex items-center space-x-2">
-            {feedbackMessage.type === 'success' ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            ) : (
-              <AlertCircle className="w-4 h-4 text-rose-400" />
-            )}
-            <span>{feedbackMessage.text}</span>
-          </div>
-          <button onClick={() => setFeedbackMessage(null)} className="text-slate-400 hover:text-white">
-            ✕
-          </button>
-        </div>
-      )}
 
       {/* Content Rendering */}
       {loading && games.length === 0 ? (
