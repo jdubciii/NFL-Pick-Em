@@ -103,36 +103,35 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
         />
       </AnimatePresence>
 
-      {/* Matchup Intel Sheet Modal - Fixed Mobile Viewport & Drag Dismiss */}
+      {/* Matchup Intel Bottom Sheet (Anchored & Fixed Viewport) */}
       <AnimatePresence>
         {showIntel && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-hidden"
-            onClick={() => setShowIntel(false)}
-          >
+          <div className="fixed inset-0 z-50 overflow-hidden flex items-end justify-center select-none">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowIntel(false)}
+              className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm"
+            />
+
+            {/* Bottom Sheet */}
             <motion.div
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-              drag="y"
-              dragConstraints={{ top: 0, bottom: 300 }}
-              dragElastic={0.2}
-              onDragEnd={(_, info) => {
-                if (info.offset.y > 100) {
-                  setShowIntel(false);
-                }
-              }}
+              transition={{ type: 'spring', damping: 26, stiffness: 260 }}
+              className="relative w-full max-w-lg bg-slate-900 border-t border-slate-700 rounded-t-3xl p-5 pb-8 space-y-4 text-white font-mono shadow-2xl z-10 max-h-[80dvh] flex flex-col"
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-lg bg-slate-900 border-t sm:border border-slate-700 rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 space-y-4 text-white font-mono shadow-2xl max-h-[85vh] overflow-y-auto"
             >
-              {/* Drag Handle Pill */}
-              <div className="w-12 h-1.5 bg-slate-700 rounded-full mx-auto -mt-1 mb-2" />
+              {/* Drag Pill Handle */}
+              <div
+                className="w-12 h-1.5 bg-slate-600 hover:bg-slate-500 rounded-full mx-auto -mt-1 cursor-pointer shrink-0"
+                onClick={() => setShowIntel(false)}
+              />
 
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3 shrink-0">
                 <div className="flex items-center space-x-2">
                   <span className="text-xl">📊</span>
                   <h3 className="text-sm font-black uppercase text-cyan-400 tracking-wider">
@@ -147,33 +146,36 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
                 </button>
               </div>
 
-              {/* Matchup Teams Banner */}
-              <div className="flex items-center justify-around p-3 bg-slate-950 rounded-2xl border border-slate-800">
-                <div className="flex items-center space-x-2">
-                  <TeamLogo abbr={activeCard.awayTeam} size="sm" />
-                  <span className="font-black text-sm">{activeCard.awayTeam}</span>
+              {/* Scrollable Intel Body */}
+              <div className="space-y-3 overflow-y-auto flex-1 pr-1 text-xs">
+                {/* Team Banner */}
+                <div className="flex items-center justify-around p-3 bg-slate-950 rounded-2xl border border-slate-800">
+                  <div className="flex items-center space-x-2">
+                    <TeamLogo abbr={activeCard.awayTeam} size="sm" />
+                    <span className="font-black text-sm">{activeCard.awayTeam}</span>
+                  </div>
+                  <span className="text-slate-600 font-black">@</span>
+                  <div className="flex items-center space-x-2">
+                    <span className="font-black text-sm">{activeCard.homeTeam}</span>
+                    <TeamLogo abbr={activeCard.homeTeam} size="sm" />
+                  </div>
                 </div>
-                <span className="text-slate-600 font-black">@</span>
-                <div className="flex items-center space-x-2">
-                  <span className="font-black text-sm">{activeCard.homeTeam}</span>
-                  <TeamLogo abbr={activeCard.homeTeam} size="sm" />
-                </div>
-              </div>
 
-              {/* Intel Breakdown Items */}
-              <div className="space-y-2 text-xs">
-                <div className="flex justify-between p-2.5 bg-slate-950/60 rounded-xl border border-slate-800">
+                <div className="flex justify-between p-3 bg-slate-950/60 rounded-xl border border-slate-800">
                   <span className="text-slate-400">Consensus Spread</span>
                   <span className="font-bold text-amber-300">{activeCard.spread || 'EVEN'}</span>
                 </div>
-                <div className="flex justify-between p-2.5 bg-slate-950/60 rounded-xl border border-slate-800">
+
+                <div className="flex justify-between p-3 bg-slate-950/60 rounded-xl border border-slate-800">
                   <span className="text-slate-400">Over / Under</span>
                   <span className="font-bold text-emerald-400">{activeCard.overUnder || '44.5 PTS'}</span>
                 </div>
-                <div className="flex justify-between p-2.5 bg-slate-950/60 rounded-xl border border-slate-800">
+
+                <div className="flex justify-between p-3 bg-slate-950/60 rounded-xl border border-slate-800">
                   <span className="text-slate-400">Venue & Conditions</span>
                   <span className="font-bold text-slate-200">{activeCard.venue || 'Outdoor · 68°F Clear'}</span>
                 </div>
+
                 <div className="p-3 bg-rose-950/30 rounded-xl border border-rose-900/50 space-y-1">
                   <span className="text-[10px] text-rose-400 font-black uppercase block">Key Injury Intel</span>
                   <span className="text-slate-300 text-[11px] leading-relaxed block">
@@ -184,12 +186,12 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
 
               <button
                 onClick={() => setShowIntel(false)}
-                className="w-full py-3 bg-slate-800 rounded-xl font-bold text-xs text-white hover:bg-slate-700 active:scale-98 transition-all"
+                className="w-full py-3 bg-slate-800 hover:bg-slate-700 active:scale-98 rounded-xl font-bold text-xs text-white shrink-0 transition-all"
               >
-                Close Intel (Swipe Down)
+                Close Intel
               </button>
             </motion.div>
-          </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </div>

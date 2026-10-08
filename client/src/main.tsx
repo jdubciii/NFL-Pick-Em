@@ -43,7 +43,7 @@ if (typeof window !== 'undefined') {
     if (url.startsWith('/')) {
       const host = window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== ''
         ? window.location.hostname
-        : '192.168.1.29';
+        : '192.168.1.18';
       url = `http://${host}:3000${url}`;
     }
 

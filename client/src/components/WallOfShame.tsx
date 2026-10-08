@@ -516,8 +516,8 @@ export const WallOfShame: React.FC = () => {
         </div>
       </div>
 
-      {/* Wall of Shame Top Segmented Switcher */}
-      <div className="flex items-center justify-center mb-4 select-none">
+      {/* Master Wall of Shame View Switcher */}
+      <div className="flex items-center justify-center my-4 select-none">
         <div className="inline-flex rounded-2xl bg-slate-950 p-1 border border-slate-800 shadow-xl">
           <button
             type="button"
@@ -557,6 +557,39 @@ export const WallOfShame: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* VIEW 1: REELS FEED */}
+      {shameViewMode === 'reels' && (
+        <div className="w-full">
+          <VerticalReelsFeed />
+        </div>
+      )}
+
+      {/* VIEW 2: WEEKLY STANDINGS */}
+      {shameViewMode === 'standings' && (
+        <div className="w-full space-y-4">
+          <WeeklyLeaderboardCard />
+        </div>
+      )}
+
+      {/* VIEW 3: ALL-TIME HALL OF INFAMY */}
+      {shameViewMode === 'infamy' && (
+        <div className="w-full space-y-4">
+          <HallOfInfamyTable
+            records={
+              cumulativeData?.leaderboard && cumulativeData.leaderboard.length > 0
+                ? cumulativeData.leaderboard.map((m) => ({
+                    memberId: m.user_id,
+                    name: m.email.split('@')[0],
+                    shotsDrank: parseFloat(String(m.total_shots_drank || 0)),
+                    deadPlaceFinishes: m.dead_place_finishes || 0,
+                    maxSingleWeekDebt: (m.dead_place_finishes || 0) * 1.0 || 1.0,
+                  }))
+                : mockInfamyRecords
+            }
+          />
+        </div>
+      )}
 
       {error && (
         <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm flex items-center space-x-3">
@@ -1273,35 +1306,7 @@ export const WallOfShame: React.FC = () => {
       )}
 
 
-      {shameViewMode === 'reels' && (
-        <div className="mb-4">
-          <VerticalReelsFeed />
-        </div>
-      )}
 
-      {shameViewMode === 'standings' && (
-        <div className="mb-6">
-          <WeeklyLeaderboardCard />
-        </div>
-      )}
-
-      {shameViewMode === 'infamy' && (
-        <div className="mt-4">
-          <HallOfInfamyTable
-            records={
-              cumulativeData?.leaderboard && cumulativeData.leaderboard.length > 0
-                ? cumulativeData.leaderboard.map((m) => ({
-                    memberId: m.user_id,
-                    name: m.email.split('@')[0],
-                    shotsDrank: parseFloat(String(m.total_shots_drank || 0)),
-                    deadPlaceFinishes: m.dead_place_finishes || 0,
-                    maxSingleWeekDebt: (m.dead_place_finishes || 0) * 1.0 || 1.0,
-                  }))
-                : mockInfamyRecords
-            }
-          />
-        </div>
-      )}
     </div>
   );
 };
