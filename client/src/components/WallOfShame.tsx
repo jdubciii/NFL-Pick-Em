@@ -30,6 +30,7 @@ import { MechanicalRollingOdometer } from './animations/MechanicalRollingOdomete
 import { DisputeCountdownClock } from './shame/DisputeCountdownClock';
 import { EmojiReactionTray } from './shame/EmojiReactionTray';
 import { HallOfInfamyTable } from './shame/HallOfInfamyTable';
+import { WeeklyLeaderboardCard } from './standings/WeeklyLeaderboardCard';
 import type { InfamyRecord } from '../services/SocialStakesEngine';
 
 
@@ -1226,6 +1227,11 @@ export const WallOfShame: React.FC = () => {
           </div>
         </div>
       )}
+      {/* Weekly Standings & Penalty Exposure Leaderboard */}
+      <div className="mt-8">
+        <WeeklyLeaderboardCard />
+      </div>
+
       {/* Hall of Infamy Multi-Criteria Shame Table */}
       <div className="mt-8">
         <HallOfInfamyTable
