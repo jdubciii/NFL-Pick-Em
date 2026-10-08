@@ -50,21 +50,21 @@ export function calculateWeeklyStandings(
       tier = 'SAFE';
       projectedLabel = '🛡️ Safe (0)';
       finalizedLabel = '🏆 Safe (0)';
-    } else if (rank >= 2 && rank <= 6) {
-      penaltyShots = 1.0;
-      tier = 'STANDARD';
-      projectedLabel = '🍺 Proj: 1.0';
-      finalizedLabel = '🍺 Owed: 1.0';
+    } else if (rank === 10 || (rank === sorted.length && sorted.length > 1)) {
+      penaltyShots = 2.5;
+      tier = 'DEAD_PLACE';
+      projectedLabel = '💀 Dead Place: 2.5';
+      finalizedLabel = '💀 Owed: 2.5';
     } else if (rank >= 7 && rank <= 9) {
       penaltyShots = 2.0;
       tier = 'DANGER';
       projectedLabel = '⚠️ Danger: 2.0';
       finalizedLabel = '⚠️ Owed: 2.0';
-    } else if (rank === 10 || rank === sorted.length) {
-      penaltyShots = 2.5;
-      tier = 'DEAD_PLACE';
-      projectedLabel = '💀 Dead Place: 2.5';
-      finalizedLabel = '💀 Owed: 2.5';
+    } else {
+      penaltyShots = 1.0;
+      tier = 'STANDARD';
+      projectedLabel = '🍺 Proj: 1.0';
+      finalizedLabel = '🍺 Owed: 1.0';
     }
 
     return {

@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { Lock, CheckCircle2, AlertCircle, RefreshCw, Shield } from 'lucide-react';
 import { PickPresetControls } from './PickPresetControls';
 import { CompactPicksList } from './picks/CompactPicksList';
+import { SwipePickDeck } from './picks/SwipePickDeck';
 import { UndoSnackbar } from './picks/UndoSnackbar';
 import { quickFillSafetyEngine, SlateGameItem } from '../services/QuickFillSafetyEngine';
 import { formatGameKickoff } from '../utils/dateUtils';
@@ -40,9 +41,9 @@ export const WeeklyPicks: React.FC = () => {
   const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [now, setNow] = useState(new Date());
 
-  const [picksViewMode, setPicksViewMode] = useState<'cards' | 'list'>(() => {
+  const [picksViewMode, setPicksViewMode] = useState<'swipe' | 'list' | 'cards'>(() => {
     const saved = localStorage.getItem('picks_view_preference');
-    return (saved === 'list' || saved === 'cards') ? saved : 'cards';
+    return (saved === 'swipe' || saved === 'list' || saved === 'cards') ? (saved as 'swipe' | 'list' | 'cards') : 'swipe';
   });
 
   const [snackbarState, setSnackbarState] = useState<{ isOpen: boolean; message: string }>({
@@ -71,7 +72,7 @@ export const WeeklyPicks: React.FC = () => {
     });
   };
 
-  const handleTogglePicksView = (mode: 'cards' | 'list') => {
+  const handleTogglePicksView = (mode: 'swipe' | 'list' | 'cards') => {
     setPicksViewMode(mode);
     try {
       localStorage.setItem('picks_view_preference', mode);
@@ -337,18 +338,18 @@ export const WeeklyPicks: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0">
-          {/* Density Toggle (Cards | List) */}
+          {/* Density Toggle (Swipe | List | Cards) */}
           <div className="flex items-center p-1 rounded-xl bg-slate-950 border border-slate-800">
             <button
               type="button"
-              onClick={() => handleTogglePicksView('cards')}
+              onClick={() => handleTogglePicksView('swipe')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                picksViewMode === 'cards'
+                picksViewMode === 'swipe'
                   ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-sm'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              Cards
+              Swipe
             </button>
             <button
               type="button"
@@ -360,6 +361,17 @@ export const WeeklyPicks: React.FC = () => {
               }`}
             >
               List
+            </button>
+            <button
+              type="button"
+              onClick={() => handleTogglePicksView('cards')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                picksViewMode === 'cards'
+                  ? 'bg-gradient-to-r from-cyan-600 to-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Cards
             </button>
           </div>
 
@@ -495,7 +507,31 @@ export const WeeklyPicks: React.FC = () => {
             disabled={loading || games.length === 0}
           />
 
-          {picksViewMode === 'list' ? (
+          {picksViewMode === 'swipe' ? (
+            /* Fast-Decision Tinder-Style Swipe Deck */
+            <SwipePickDeck
+              matchups={games.map((g) => ({
+                id: g.id,
+                gameId: g.id,
+                awayTeam: g.awayTeamId,
+                homeTeam: g.homeTeamId,
+                startTime: formatKickoff(g.kickoffTime),
+                spread: typeof g.spread === 'number' ? `${g.spread}` : undefined,
+                selectedTeam: g.userPick,
+                isLocked: isGameLocked(g),
+              }))}
+              onSelectPick={(gameId, team) => {
+                const targetGame = games.find((g) => g.id === gameId);
+                if (targetGame) handlePick(targetGame, team);
+                try {
+                  if ((window as any).Capacitor?.isPluginAvailable('Haptics')) {
+                    (window as any).Capacitor.Plugins.Haptics.impact({ style: 'LIGHT' });
+                  }
+                } catch (_) {}
+              }}
+              isUserLocked={isUserLocked}
+            />
+          ) : picksViewMode === 'list' ? (
             /* High-Density Compact List View */
             <CompactPicksList
               games={games.map((g) => ({
