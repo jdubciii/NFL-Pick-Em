@@ -185,6 +185,42 @@ export const WeeklyPicks: React.FC = () => {
   };
 
   /**
+   * Clears all unlocked picks across the active slate.
+   */
+  const handleClearAllPicks = async () => {
+    if (isUserLocked || !pool) return;
+    const unlockedPickedGames = games.filter((g) => !isGameLocked(g) && g.userPick);
+    if (unlockedPickedGames.length === 0) return;
+
+    // Optimistically clear picks in local state
+    setGames((prev) =>
+      prev.map((g) => (!isGameLocked(g) ? { ...g, userPick: null } : g))
+    );
+
+    try {
+      await Promise.all(
+        unlockedPickedGames.map((game) =>
+          fetch('/api/picks', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              pool_id: pool.id,
+              game_id: game.id,
+              selected_team_id: null,
+            }),
+          })
+        )
+      );
+      triggerHaptic('impactMedium');
+    } catch (err) {
+      console.error('Failed to clear all picks:', err);
+    }
+  };
+
+  /**
    * Applies quick-fill presets through the QuickFillSafetyEngine with a 7-second undo grace period.
    */
   const handleApplyPreset = (updatedPicks: Record<string, string | null>, presetDescription: string) => {
@@ -320,25 +356,17 @@ export const WeeklyPicks: React.FC = () => {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* Header Banner */}
-      <div className="flex flex-row items-center justify-between gap-2 sm:gap-4 p-2.5 sm:p-6 glass-panel rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl">
-        <div>
-          <div className="flex items-center space-x-1.5 sm:space-x-2 text-[11px] sm:text-xs font-bold text-cyan-400 uppercase tracking-wider">
+      {/* Compact Header Banner */}
+      <div className="flex flex-row items-center justify-between gap-2 p-2 sm:p-4 glass-panel rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl">
+        <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-1.5 text-[11px] sm:text-xs font-bold text-cyan-400 uppercase tracking-wider">
             <Shield className="w-3.5 h-3.5" />
-            <span>{pool?.name || 'Main League'} • Week 5</span>
+            <span>{pool?.name || 'Main League'} • W5</span>
           </div>
-          <h2 className="hidden md:block text-2xl sm:text-3xl font-black text-white tracking-tight mt-1">
-            Weekly Matchup Slate
-          </h2>
-          <p className="hidden md:block text-xs sm:text-sm text-slate-400 mt-1">
-            {`Select a team to lock in your pick. Games lock automatically ${
-              pool?.lock_offset ? `${pool.lock_offset}m prior to kickoff` : 'at kickoff'
-            }.`}
-          </p>
         </div>
 
-        {/* Streamlined Header Bar: [ Swipe | List ] + Locked Toggle + Working Refresh */}
-        <div className="flex items-center justify-between gap-2 py-2 px-1 select-none">
+        {/* Compact Header Controls: [ Swipe | List ] + Locked Toggle + Refresh */}
+        <div className="flex items-center justify-between gap-1.5 py-0.5 select-none">
           {/* Segmented View Mode: Swipe (Default) & List */}
           <div className="inline-flex rounded-xl bg-slate-950 p-0.5 border border-slate-800 shrink-0 shadow-inner">
             <button
@@ -361,19 +389,19 @@ export const WeeklyPicks: React.FC = () => {
             </button>
           </div>
 
-          {/* Action Controls: Compact Lock & Working Refresh */}
-          <div className="flex items-center space-x-1.5 shrink-0">
+          {/* Corrected Lock Status Button */}
+          <div className="flex items-center space-x-1 shrink-0">
             <button
               type="button"
               onClick={toggleUserLock}
               className={`flex items-center space-x-1 px-2.5 py-1 rounded-xl border text-xs font-mono font-black transition-all shadow-sm ${
                 isUserLocked
                   ? 'bg-amber-950/90 border-amber-500/80 text-amber-300 ring-1 ring-amber-500/30'
-                  : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white'
+                  : 'bg-cyan-950/80 border-cyan-600/80 text-cyan-300 hover:bg-cyan-900'
               }`}
             >
               <span>{isUserLocked ? '🔒' : '🔓'}</span>
-              <span>{isUserLocked ? 'LOCKED' : 'EDIT'}</span>
+              <span>{isUserLocked ? 'LOCKED' : 'LOCK PICKS'}</span>
             </button>
 
             <button
@@ -388,7 +416,6 @@ export const WeeklyPicks: React.FC = () => {
         </div>
       </div>
 
-
       {/* Content Rendering */}
       {loading && games.length === 0 ? (
         <div className="py-20 text-center">
@@ -396,7 +423,7 @@ export const WeeklyPicks: React.FC = () => {
           <p className="text-sm text-slate-400 font-medium">Loading NFL matchups and live odds...</p>
         </div>
       ) : (
-        <div className="space-y-5">
+        <div className="space-y-4">
           {/* Quick-Fill Presets Toolbar */}
           <PickPresetControls
             games={games}
@@ -435,6 +462,7 @@ export const WeeklyPicks: React.FC = () => {
                   }
                 } catch (_) {}
               }}
+              onClearAllPicks={handleClearAllPicks}
               isUserLocked={isUserLocked}
             />
           ) : (
