@@ -26,6 +26,7 @@ import type {
   PickingMode,
 } from './types/pool';
 import { startLiveScheduleDaemon } from './services/liveScheduleDaemon';
+import { LiveScoreboardService, LiveGameStatus } from './services/LiveScoreboardService';
 
 export const app = express();
 const PORT = process.env.PORT || 3000;
@@ -258,6 +259,20 @@ app.get('/api/games', requireAuth, async (req: Request, res: Response): Promise<
 
     const lockOffset = Number(settings.lock_offset ?? settings.lockOffset ?? 0);
 
+    let liveScores: LiveGameStatus[] = [];
+    try {
+      liveScores = await LiveScoreboardService.fetchLiveScores();
+    } catch {
+      // Graceful fallback if live score poll fails
+    }
+
+    const liveScoresMap = new Map<string, LiveGameStatus>();
+    for (const ls of liveScores) {
+      if (ls.awayTeam && ls.homeTeam) {
+        liveScoresMap.set(`${ls.awayTeam.toUpperCase()}_${ls.homeTeam.toUpperCase()}`, ls);
+      }
+    }
+
     res.json({
       pool: {
         id: pool.id,
@@ -266,18 +281,31 @@ app.get('/api/games', requireAuth, async (req: Request, res: Response): Promise<
         settings: pool.settings,
         current_week: defaultWeek,
       },
-      games: games.map((game) => ({
-        id: game.id,
-        externalGameId: game.externalGameId,
-        homeTeamId: game.homeTeamId,
-        awayTeamId: game.awayTeamId,
-        kickoffTime: game.kickoffTime,
-        status: game.status,
-        homeScore: game.homeScore,
-        awayScore: game.awayScore,
-        userPick: game.picks[0]?.selectedTeamId ?? null,
-        pickId: game.picks[0]?.id ?? null,
-      })),
+      games: games.map((game) => {
+        const key = `${game.awayTeamId.toUpperCase()}_${game.homeTeamId.toUpperCase()}`;
+        const live = liveScoresMap.get(key);
+        const isLive = live ? live.isLive : game.status === 'IN_PROGRESS';
+        const homeScore = live && live.homeScore !== undefined ? live.homeScore : game.homeScore;
+        const awayScore = live && live.awayScore !== undefined ? live.awayScore : game.awayScore;
+        const gameStatus = live?.status || game.status;
+
+        return {
+          id: game.id,
+          externalGameId: game.externalGameId,
+          homeTeamId: game.homeTeamId,
+          awayTeamId: game.awayTeamId,
+          kickoffTime: game.kickoffTime,
+          status: game.status,
+          gameStatus,
+          isLive,
+          homeScore,
+          awayScore,
+          possession: live?.possession,
+          inRedZone: live?.inRedZone,
+          userPick: game.picks[0]?.selectedTeamId ?? null,
+          pickId: game.picks[0]?.id ?? null,
+        };
+      }),
     });
   } catch (error) {
     console.error('Error fetching games:', error);

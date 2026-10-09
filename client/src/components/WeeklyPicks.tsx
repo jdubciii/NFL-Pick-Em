@@ -130,6 +130,19 @@ export const WeeklyPicks: React.FC = () => {
     fetchGames();
   }, [fetchGames]);
 
+  // AUTO_LIVE_SYNC_INTERVAL: Poll slate every 10s during live games
+  React.useEffect(() => {
+    const liveInterval = setInterval(() => {
+      const hasLiveGame = games.some((g: any) => g.isLive || g.status === 'IN_PROGRESS');
+      if (hasLiveGame) {
+        if (typeof fetchGames === 'function') {
+          fetchGames();
+        }
+      }
+    }, 10000);
+    return () => clearInterval(liveInterval);
+  }, [games, fetchGames]);
+
   const handlePick = async (game: GameItem, selectedTeamId: string) => {
     if (isUserLocked) {
       setFeedbackMessage({ text: 'Picks are locked. Tap "LOCKED" button to edit picks.', type: 'error' });
@@ -426,13 +439,19 @@ export const WeeklyPicks: React.FC = () => {
           {picksViewMode === 'swipe' ? (
             /* Fast-Decision Tinder-Style Swipe Deck */
             <SwipePickDeck
-              matchups={games.map((g) => ({
+              matchups={games.map((g: any) => ({
                 id: g.id,
                 gameId: g.id,
                 awayTeam: g.awayTeamId,
                 homeTeam: g.homeTeamId,
+                awayScore: g.awayScore ?? undefined,
+                homeScore: g.homeScore ?? undefined,
+                isLive: Boolean(g.isLive || g.status === 'IN_PROGRESS'),
+                gameStatus: g.gameStatus || g.status,
+                possession: g.possession,
+                inRedZone: g.inRedZone,
                 startTime: formatKickoff(g.kickoffTime),
-                spread: typeof g.spread === 'number' ? `${g.spread}` : undefined,
+                spread: typeof g.spread === 'number' ? `${g.spread}` : (typeof g.spread === 'string' ? g.spread : undefined),
                 selectedTeam: g.userPick,
                 isLocked: isGameLocked(g),
               }))}

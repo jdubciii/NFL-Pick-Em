@@ -8,6 +8,12 @@ export interface SwipeMatchup {
   gameId: string;
   awayTeam: string;
   homeTeam: string;
+  awayScore?: number;
+  homeScore?: number;
+  isLive?: boolean;
+  gameStatus?: string;
+  possession?: string;
+  inRedZone?: boolean;
   startTime: string;
   spread?: string;
   overUnder?: string;
@@ -459,12 +465,24 @@ const SwipeCardItem: React.FC<{
         </>
       )}
 
-      {/* Header Info */}
+      {/* Header Info with Live Gameday Scoreboard */}
       <div className="flex items-center justify-between border-b border-slate-800 pb-2.5 text-xs">
-        <div className="flex items-center space-x-1.5">
-          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-          <span className="font-bold text-slate-300">{matchup.startTime}</span>
-        </div>
+        {matchup.isLive ? (
+          <div className="flex items-center space-x-2">
+            <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-rose-500/20 border border-rose-500 text-rose-400 font-black text-[10px] animate-pulse">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+              <span>LIVE · {matchup.gameStatus || 'IN PROGRESS'}</span>
+            </span>
+            <span className="font-black text-amber-300 text-xs">
+              {matchup.awayScore ?? 0} - {matchup.homeScore ?? 0}
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-center space-x-1.5">
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+            <span className="font-bold text-slate-300">{matchup.startTime}</span>
+          </div>
+        )}
         <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-cyan-300 font-black text-[10px]">
           {matchup.spread || 'EVEN'}
         </span>
