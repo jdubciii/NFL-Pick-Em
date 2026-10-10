@@ -1,13 +1,14 @@
-export interface HistoricalWeekRecord {
+﻿export interface HistoricalWeekRecord {
   weekNumber: number;
   rank: number;
   totalParticipants: number;
   points: number;
-  isDeadPlace: boolean; // Rank 10
-  isDangerSeat: boolean; // Rank 9
+  isDeadPlace: boolean;
+  isDangerSeat: boolean;
   marginToDeadPlace: number;
   isAutopilot: boolean;
-  isWeeklyWinner: boolean; // Rank 1
+  isWeeklyWinner: boolean;
+  definingMoment?: string;
 }
 
 export interface LedgerAuditItem {
@@ -38,6 +39,7 @@ export interface NarrativeBadge {
   icon: string;
   theme: 'GOLD_RED' | 'CYAN_SMOKE' | 'SILVER_GLITCH' | 'MUTED_GHOST';
   description: string;
+  definingMoment: string;
   criteriaDescription: string;
   isEarned: boolean;
   earnedDate?: string;
@@ -69,14 +71,11 @@ export interface UserRapSheetProfile {
   badges: NarrativeBadge[];
 }
 
-/**
- * Aggregates user penalty ledger history into three high-level financial metrics (Zero DDL).
- */
 export function calculateUserDebtMetrics(
   rawLedgerEntries: Array<{
     id: string;
     createdAt: string;
-    amount: string; // e.g. "+2.50", "-2.50", "+0.50"
+    amount: string;
     reason: string;
   }>
 ): AggregatedDebtMetrics {
@@ -121,20 +120,13 @@ export function calculateUserDebtMetrics(
   };
 }
 
-/**
- * Derives narrative reputation badges at runtime (Decision #61 Zero DDL).
- */
 export function deriveNarrativeBadges(history: HistoricalWeekRecord[]): NarrativeBadge[] {
-  // 1. Dead Place Monarch: Finished 10th place 3+ times
-  const deadPlaceCount = history.filter((h) => h.isDeadPlace || h.rank >= 10).length;
-  const deadPlaceEarned = deadPlaceCount >= 3;
-  const deadPlaceRecord = history.find((h) => h.isDeadPlace || h.rank >= 10);
+  const deadPlaceRecords = history.filter((h) => h.isDeadPlace || h.rank >= 10);
+  const deadPlaceEarned = deadPlaceRecords.length >= 3;
 
-  // 2. Escape Artist: Survived Danger Seat (9th) by < 1.0 point
   const escapeRecord = history.find((h) => h.isDangerSeat && h.marginToDeadPlace < 1.0 && h.marginToDeadPlace > 0);
   const escapeEarned = !!escapeRecord;
 
-  // 3. The Machine: Used Autopilot for 3+ consecutive weeks
   let maxConsecutiveAutopilot = 0;
   let currentConsecutive = 0;
   for (const h of history) {
@@ -149,10 +141,9 @@ export function deriveNarrativeBadges(history: HistoricalWeekRecord[]): Narrativ
   }
   const machineEarned = maxConsecutiveAutopilot >= 3;
 
-  // 4. Ghost: Finished >= 3 weeks, 0 Dead Places, 0 Weekly Wins
   const totalWeeks = history.length;
   const weeklyWins = history.filter((h) => h.isWeeklyWinner || h.rank === 1).length;
-  const ghostEarned = totalWeeks >= 3 && deadPlaceCount === 0 && weeklyWins === 0;
+  const ghostEarned = totalWeeks >= 3 && deadPlaceRecords.length === 0 && weeklyWins === 0;
 
   return [
     {
@@ -160,20 +151,26 @@ export function deriveNarrativeBadges(history: HistoricalWeekRecord[]): Narrativ
       name: 'Dead Place Monarch',
       icon: '💀',
       theme: 'GOLD_RED',
-      description: 'Crowned in dishonor: Finished 10th place 3+ times.',
-      criteriaDescription: `${deadPlaceCount}/3 Dead Place finishes recorded.`,
+      description: 'Finished 10th place in 3 or more slates.',
+      criteriaDescription: `${deadPlaceRecords.length}/3 Dead Place finishes recorded.`,
+      definingMoment: deadPlaceEarned
+        ? `Crowned after Week ${deadPlaceRecords[2]?.weekNumber || 4}: 3 Dead Place finishes recorded.`
+        : `${deadPlaceRecords.length}/3 Dead Place finishes recorded.`,
       isEarned: deadPlaceEarned,
-      earnedWeek: deadPlaceRecord?.weekNumber
+      earnedWeek: deadPlaceRecords[2]?.weekNumber
     },
     {
       id: 'ESCAPE_ARTIST',
       name: 'Escape Artist',
       icon: '💨',
       theme: 'CYAN_SMOKE',
-      description: 'Survived the Drop: Cleared 9th place by less than 1.0 point.',
+      description: 'Survived the Drop into last place by less than 1.0 point.',
       criteriaDescription: escapeEarned
-        ? `Escaped Dead Place by ${escapeRecord?.marginToDeadPlace.toFixed(1)} pts in Week ${escapeRecord?.weekNumber}.`
+        ? `Escaped Dead Place by ${escapeRecord?.marginToDeadPlace.toFixed(1)} pts in Week${escapeRecord?.weekNumber}.`
         : 'Must survive 9th place with margin < 1.0 point.',
+      definingMoment: escapeEarned
+        ? `Escaped last place on Detroit's final drive in Week ${escapeRecord?.weekNumber} (${escapeRecord?.marginToDeadPlace.toFixed(1)} pt margin).`
+        : 'Must survive 9th place with a margin under 1.0 point.',
       isEarned: escapeEarned,
       earnedWeek: escapeRecord?.weekNumber
     },
@@ -182,8 +179,11 @@ export function deriveNarrativeBadges(history: HistoricalWeekRecord[]): Narrativ
       name: 'The Machine',
       icon: '🤖',
       theme: 'SILVER_GLITCH',
-      description: 'Algorithm Disciple: Utilized Autopilot for 3 consecutive slates.',
+      description: 'Trusted the algorithm for 3 consecutive weeks.',
       criteriaDescription: `${maxConsecutiveAutopilot}/3 consecutive Autopilot slates locked.`,
+      definingMoment: machineEarned
+        ? 'Locked 3 consecutive slates using automated Vegas presets.'
+        : `${maxConsecutiveAutopilot}/3 consecutive automated slates locked.`,
       isEarned: machineEarned
     },
     {
@@ -191,18 +191,18 @@ export function deriveNarrativeBadges(history: HistoricalWeekRecord[]): Narrativ
       name: 'Ghost',
       icon: '👻',
       theme: 'MUTED_GHOST',
-      description: 'The Phantom: Zero 1st place wins, zero Dead Places. Floating in the middle.',
+      description: 'Zero wins, zero last-place finishes. Floating in the middle.',
       criteriaDescription: ghostEarned
         ? `${totalWeeks} slates survived with zero spotlight.`
         : 'Must complete >=3 weeks with 0 wins and 0 dead places.',
+      definingMoment: ghostEarned
+        ? `Survived ${totalWeeks} slates without ever finishing 1st or 10th.`
+        : 'Must survive >=3 weeks with 0 wins and 0 dead places.',
       isEarned: ghostEarned
     }
   ];
 }
 
-/**
- * Computes lifetime Head-to-Head record between two users (cached compute).
- */
 export function calculateHeadToHeadStats(
   targetUserId: string,
   targetUserName: string,
@@ -234,8 +234,8 @@ export function calculateHeadToHeadStats(
 
   const summaryMicrocopy =
     targetWins >= rivalWins
-      ? `${targetUserName} leads rivalry ${targetWins}-${rivalWins}${ties > 0 ? `-${ties}` : ''} (+${dangerVictories} Danger Seat Forces)`
-      : `${rivalUserName} leads rivalry ${rivalWins}-${targetWins}${ties > 0 ? `-${ties}` : ''}`;
+      ? `${targetUserName} leads rivalry${targetWins}-${rivalWins}${ties > 0 ? `-${ties}` : ''} (+${dangerVictories} Danger Seat Forces)`
+      : `${rivalUserName} leads rivalry${rivalWins}-${targetWins}${ties > 0 ? `-${ties}` : ''}`;
 
   return {
     targetUserId,
