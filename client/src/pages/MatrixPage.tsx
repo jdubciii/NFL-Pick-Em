@@ -5,6 +5,7 @@ import { StackedAvatarCluster, CampParticipant } from '../components/matrix/Stac
 import { TugOfWarDrawer } from '../components/matrix/TugOfWarDrawer';
 import { LockCountdownTimer } from '../components/matrix/LockCountdownTimer';
 import { LiveGametrackStream, LiveGameflowCardData } from '../components/matrix/LiveGametrackStream';
+import { EmptyStateWireframe } from '../components/common/EmptyStateWireframe';
 import {
   computeSlateTopology,
   computeDuelComparison,
@@ -217,11 +218,26 @@ export const MatrixPage: React.FC = () => {
 
       {/* TAB 1: LIVE GAMETRACK & DRIVE FLOW */}
       {activeTab === 'GAMETRACK' && (
-        <LiveGametrackStream games={SAMPLE_LIVE_GAMES} />
+        SAMPLE_LIVE_GAMES.length === 0 ? (
+          <EmptyStateWireframe
+            header="[ NO LIVE MATCHUPS ACTIVE ]"
+            subtitle="[ AWAITING SUNDAY 1:00 PM KICKOFF ]"
+            contextDetail="Live gameflow drive tracking activates upon official NFL slate kickoff."
+          />
+        ) : (
+          <LiveGametrackStream games={SAMPLE_LIVE_GAMES} />
+        )
       )}
 
       {/* TAB 2: PRE-LOCK LEVERAGE BOARD */}
       {activeTab === 'LEVERAGE' && (
+        SAMPLE_GAMES.length === 0 ? (
+          <EmptyStateWireframe
+            header="[ AWAITING LEAGUE ACTION ]"
+            subtitle="[ VEGAS LINES FREEZING... ]"
+            contextDetail="Tuesday morning recalibration underway. Leverage board unlocks once picks are registered."
+          />
+        ) : (
         <>
           {duelComparison ? (
             <RivalCrosshairsDuel
@@ -349,6 +365,7 @@ export const MatrixPage: React.FC = () => {
             </div>
           )}
         </>
+        )
       )}
     </div>
   );

@@ -16,6 +16,8 @@ import { OpsDashboardPage } from './pages/OpsDashboardPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { BottomTabBar } from './components/mobile/BottomTabBar';
 import { SplashScreen } from './components/brand/SplashScreen';
+import { SystemErrorBoundary } from './components/common/SystemErrorBoundary';
+import { CharterOnboardingModal } from './components/common/CharterOnboardingModal';
 
 const AppLayout: React.FC = () => {
   const location = useLocation();
@@ -25,52 +27,56 @@ const AppLayout: React.FC = () => {
   return (
     <>
       {showSplash && <SplashScreen onDismiss={() => setShowSplash(false)} />}
+      <CharterOnboardingModal />
       <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100 flex flex-col font-sans pb-16 md:pb-0">
-      <Navbar />
-      <main className="flex-1">
-        <Routes>
-          {/* Public route */}
-          <Route path="/login" element={<Login />} />
+        <Navbar />
+        <main className="flex-1">
+          <SystemErrorBoundary>
+            <Routes>
+              {/* Public route */}
+              <Route path="/login" element={<Login />} />
 
-          {/* Protected routes for authenticated users */}
-          <Route element={<ProtectedRoute />}>
-            <Route path="/" element={<Navigate to="/picks" replace />} />
-            <Route path="/picks" element={<PicksPage />} />
-            <Route path="/matrix" element={<MatrixPage />} />
-            <Route path="/leaderboard" element={<LeaderboardPage />} />
-            <Route path="/radar" element={<RadarPage />} />
-            <Route path="/shot-cam" element={<ShotCamPage />} />
-            <Route path="/rules" element={<RulesPage />} />
-            <Route path="/shame" element={<WallOfShamePage />} />
-            <Route path="/wall-of-shame" element={<WallOfShamePage />} />
-            <Route path="/profile" element={<ProfilePage />} />
-          </Route>
+              {/* Protected routes for authenticated users */}
+              <Route element={<ProtectedRoute />}>
+                <Route path="/" element={<Navigate to="/picks" replace />} />
+                <Route path="/picks" element={<PicksPage />} />
+                <Route path="/matrix" element={<MatrixPage />} />
+                <Route path="/leaderboard" element={<LeaderboardPage />} />
+                <Route path="/radar" element={<RadarPage />} />
+                <Route path="/shot-cam" element={<ShotCamPage />} />
+                <Route path="/rules" element={<RulesPage />} />
+                <Route path="/shame" element={<WallOfShamePage />} />
+                <Route path="/wall-of-shame" element={<WallOfShamePage />} />
+                <Route path="/profile" element={<ProfilePage />} />
+              </Route>
 
-          {/* Protected admin-only routes */}
-          <Route element={<ProtectedRoute requireAdmin={true} />}>
-            <Route path="/admin" element={<AdminPage />} />
-            <Route path="/admin/ops" element={<OpsDashboardPage />} />
-          </Route>
+              {/* Protected admin-only routes */}
+              <Route element={<ProtectedRoute requireAdmin={true} />}>
+                <Route path="/admin" element={<AdminPage />} />
+                <Route path="/admin/ops" element={<OpsDashboardPage />} />
+              </Route>
 
-          {/* Fallback */}
-          <Route path="*" element={<Navigate to="/picks" replace />} />
-        </Routes>
-      </main>
-      <BottomTabBar currentPath={location.pathname} onNavigate={(path) => navigate(path)} />
-    </div>
+              {/* Fallback */}
+              <Route path="*" element={<Navigate to="/picks" replace />} />
+            </Routes>
+          </SystemErrorBoundary>
+        </main>
+        <BottomTabBar currentPath={location.pathname} onNavigate={(path) => navigate(path)} />
+      </div>
     </>
   );
 };
 
 export const App: React.FC = () => {
   return (
-    <AuthProvider>
-      <Router>
-        <AppLayout />
-      </Router>
-    </AuthProvider>
+    <SystemErrorBoundary>
+      <AuthProvider>
+        <Router>
+          <AppLayout />
+        </Router>
+      </AuthProvider>
+    </SystemErrorBoundary>
   );
 };
 
 export default App;
-
