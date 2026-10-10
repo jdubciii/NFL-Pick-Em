@@ -34,8 +34,8 @@ export const EvidenceSubmissionDrawer: React.FC<EvidenceSubmissionDrawerProps> =
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 backdrop-blur-sm p-4 font-mono">
-      <div className="w-full max-w-md bg-slate-950 border border-slate-700 rounded-t-3xl p-6 shadow-2xl space-y-5 animate-slide-up">
+    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/80 backdrop-blur-sm p-4 font-mono">
+      <div className="w-full max-w-md bg-slate-950 border border-slate-700 rounded-t-3xl p-6 pb-10 shadow-2xl space-y-5 animate-slide-up">
         {/* Drawer Header */}
         <div className="flex justify-between items-center border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2">

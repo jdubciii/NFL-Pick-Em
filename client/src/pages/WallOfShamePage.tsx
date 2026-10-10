@@ -131,7 +131,7 @@ export const WallOfShamePage: React.FC = () => {
   const activeDisputeDocket = dockets.find((d) => d.id === selectedDisputeDocketId);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans max-w-md mx-auto pb-24 overflow-x-hidden">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans max-w-md mx-auto pb-36 overflow-x-hidden">
       <ShameSegmentedHeader activeTab={activeTab} onSelectTab={setActiveTab} />
 
       {activeTab === 'REELS' && (
