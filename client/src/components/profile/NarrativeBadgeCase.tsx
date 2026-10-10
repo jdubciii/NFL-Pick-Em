@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import type { NarrativeBadge } from '../../services/reputationEngineService';
 
 interface NarrativeBadgeCaseProps {
@@ -26,9 +26,9 @@ export const NarrativeBadgeCase: React.FC<NarrativeBadgeCaseProps> = ({ badges }
     <div className="w-full space-y-2.5 font-mono">
       <div className="flex items-center justify-between px-1">
         <span className="text-[10px] font-black text-amber-400 tracking-wider uppercase">
-          🏆 TROPHY CASE OF SHAME // NARRATIVE BADGES
+          🏆 REPUTATION BADGES &amp; RECEIPTS
         </span>
-        <span className="text-[9px] text-slate-500">TAP FOR RECEIPT</span>
+        <span className="text-[9px] text-slate-500">TAP TO VIEW STORY</span>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -44,15 +44,15 @@ export const NarrativeBadgeCase: React.FC<NarrativeBadgeCaseProps> = ({ badges }
             <div className="text-xl flex-shrink-0">{badge.icon}</div>
             <div className="overflow-hidden">
               <p className="text-[11px] font-black truncate">{badge.name}</p>
-              <p className="text-[9px] opacity-80 truncate">{badge.isEarned ? 'EARNED' : 'LOCKED'}</p>
+              <p className="text-[9px] opacity-80 truncate">{badge.isEarned ? 'UNLOCKED' : 'LOCKED'}</p>
             </div>
           </div>
         ))}
       </div>
 
       {selectedBadge && (
-        <div className="p-3 rounded-xl bg-slate-950 border border-slate-700 shadow-xl space-y-1.5 animate-fade-in text-xs">
-          <div className="flex items-center justify-between">
+        <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-700 shadow-xl space-y-2 animate-fade-in text-xs">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
             <span className="font-black text-white flex items-center gap-1.5">
               <span>{selectedBadge.icon}</span>
               <span>{selectedBadge.name}</span>
@@ -65,9 +65,9 @@ export const NarrativeBadgeCase: React.FC<NarrativeBadgeCaseProps> = ({ badges }
             </button>
           </div>
           <p className="text-[11px] font-sans text-slate-300">{selectedBadge.description}</p>
-          <div className="pt-1 border-t border-slate-800 flex justify-between text-[10px] text-cyan-400">
-            <span>CRITERIA:</span>
-            <span>{selectedBadge.criteriaDescription}</span>
+          <div className="p-2 rounded bg-slate-900/90 border border-slate-800 text-[10px] space-y-0.5">
+            <span className="font-bold text-amber-400 uppercase">DEFINING MOMENT:</span>
+            <p className="text-slate-200 font-sans italic">{selectedBadge.definingMoment}</p>
           </div>
         </div>
       )}
