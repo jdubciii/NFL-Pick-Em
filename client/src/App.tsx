@@ -15,13 +15,17 @@ import { SweatRadarPage } from './pages/SweatRadarPage';
 import { OpsDashboardPage } from './pages/OpsDashboardPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { BottomTabBar } from './components/mobile/BottomTabBar';
+import { SplashScreen } from './components/brand/SplashScreen';
 
 const AppLayout: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const [showSplash, setShowSplash] = React.useState(true);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100 flex flex-col font-sans pb-16 md:pb-0">
+    <>
+      {showSplash && <SplashScreen onDismiss={() => setShowSplash(false)} />}
+      <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100 flex flex-col font-sans pb-16 md:pb-0">
       <Navbar />
       <main className="flex-1">
         <Routes>
@@ -54,6 +58,7 @@ const AppLayout: React.FC = () => {
       </main>
       <BottomTabBar currentPath={location.pathname} onNavigate={(path) => navigate(path)} />
     </div>
+    </>
   );
 };
 

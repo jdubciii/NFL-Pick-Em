@@ -10,7 +10,7 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
   ladder,
   onTriggerFtaDemo
 }) => {
-  const [secondsRemaining, setSecondsRemaining] = useState<number>(3600 * 24 + 1800); // 24h 30m demo
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(3600 * 24 + 1800); // 24h 30m
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -84,14 +84,14 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
         ))}
       </div>
 
-      {/* 3. BOTTOM: THE PIT (DARK RED CONTAINER & EXECUTIONER CLOCK) */}
+      {/* 3. BOTTOM: THE PIT (WCAG CONTRAST COMPLIANT & STANDARDIZED GLOW) */}
       {pitMember && (
         <div className="space-y-2 pt-2">
           <span className="text-[10px] font-black text-rose-400 px-1 uppercase tracking-wider">
             THE PIT // 10TH PLACE DEAD PLACE
           </span>
 
-          <div className="p-4 rounded-2xl bg-rose-950/40 border-2 border-rose-500/80 shadow-[0_0_25px_rgba(244,63,94,0.3)] space-y-3">
+          <div className="p-4 rounded-2xl bg-rose-950/40 border-2 border-rose-500/80 shadow-glow-rose space-y-3">
             <div className="flex items-center justify-between border-b border-rose-500/40 pb-2">
               <div className="flex items-center gap-2">
                 <span className="text-lg">💀</span>
@@ -112,12 +112,12 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
               </div>
             </div>
 
-            {/* The Executioner's Clock (Submission Deadline) */}
+            {/* The Executioner's Clock (High-Contrast text-rose-200 and tabular-nums) */}
             <div className="p-3 rounded-xl bg-slate-950/90 border border-rose-500/60 text-center space-y-1">
-              <p className="text-[10px] text-rose-300 font-bold uppercase tracking-wider">
+              <p className="text-[10px] text-rose-200 font-bold uppercase tracking-widest">
                 TIME TO SUBMIT EVIDENCE (EXECUTIONER'S CLOCK)
               </p>
-              <p className="text-xl font-black tracking-widest text-rose-400 animate-pulse">
+              <p className={`text-2xl font-mono font-black tracking-widest text-rose-400 tabular-nums ${secondsRemaining < 43200 ? 'animate-pulse' : ''}`}>
                 {formatHoursClock(secondsRemaining)}
               </p>
               <p className="text-[9px] text-slate-400">
@@ -127,7 +127,7 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
 
             {/* Failure to Appear Escalation Stamp */}
             {pitMember.isFailureToAppear && (
-              <div className="p-3 rounded-xl bg-rose-950 border-2 border-rose-500 text-center animate-bounce">
+              <div className="p-3 rounded-xl bg-rose-950 border-2 border-rose-500 text-center animate-bounce shadow-glow-rose">
                 <span className="text-xs font-black text-white tracking-widest bg-rose-600 px-2 py-1 rounded">
                   [ FAILURE TO APPEAR // +2.00 SHOTS STAMPED ]
                 </span>
