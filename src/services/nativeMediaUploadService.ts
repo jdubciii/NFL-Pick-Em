@@ -69,21 +69,46 @@ export function generateEvidenceStoragePath(
   };
 }
 
-export interface MockCaptureResult {
-  fileUri: string;
-  mimeType: string;
-  sizeBytes: number;
-  durationSeconds: number;
+export interface SubmitPenaltyEvidenceRPCParams {
+  filePath: string;
+  liquorType: string;
+  poolId: string;
+  userId: string;
+  weekNumber: number;
 }
 
-export async function requestMockMediaCapture(
-  userId: string,
-  weekNumber: number
-): Promise<MockCaptureResult> {
+export interface SubmitPenaltyEvidenceRPCResponse {
+  success: boolean;
+  status: 'UNDER_REVIEW' | 'FAILED';
+  juryClockExpiresAt: string;
+  cleanedUpOrphan: boolean;
+  error?: string;
+}
+
+/**
+ * Simulates the secure atomic Supabase RPC: submit_penalty_evidence
+ * Verifies vault file existence, prevents client-side FSM manipulation,
+ * initiates the 24h Jury Clock, and handles orphan cleanup on failure.
+ */
+export async function submitPenaltyEvidenceRPC(
+  params: SubmitPenaltyEvidenceRPCParams
+): Promise<SubmitPenaltyEvidenceRPCResponse> {
+  if (!params.filePath || !params.filePath.includes('penalties/')) {
+    return {
+      success: false,
+      status: 'FAILED',
+      juryClockExpiresAt: '',
+      cleanedUpOrphan: true,
+      error: 'Invalid storage path: file missing in vault bucket.'
+    };
+  }
+
+  const expiresDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
   return {
-    fileUri: `file:///storage/emulated/0/DCIM/Camera/evidence_w${weekNumber}_${userId}.mp4`,
-    mimeType: 'video/mp4',
-    sizeBytes: 12.4 * 1024 * 1024,
-    durationSeconds: 18.5
+    success: true,
+    status: 'UNDER_REVIEW',
+    juryClockExpiresAt: expiresDate.toISOString(),
+    cleanedUpOrphan: false
   };
 }

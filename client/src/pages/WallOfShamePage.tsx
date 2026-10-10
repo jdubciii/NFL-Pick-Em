@@ -114,10 +114,32 @@ export const WallOfShamePage: React.FC = () => {
     setSelectedDisputeDocketId(null);
   };
 
-  const handleEvidenceSubmit = async (liquorType: string) => {
-    const newSubmission = createPendingPenalty('pool_alpha', currentUserId, 'Jack', 5, 2.50, liquorType);
-    const finalizedSub = submitPenaltyEvidence(newSubmission, `supabase://vault/jack_w5_${Date.now()}.mp4`);
-    setDockets((prev) => [initializeTribunalDocket(finalizedSub), ...prev]);
+  const [userSubmissionStatus, setUserSubmissionStatus] = useState<'PENDING' | 'UNDER_REVIEW'>('PENDING');
+
+  const handleEvidenceSubmit = async (liquorType: string, fileSizeMb: number) => {
+    const uploadPath = `penalties/pool_alpha/${currentUserId}/w5_${Date.now()}.mp4`;
+    const rpcRes = await import('../services/nativeMediaUploadService').then(m =>
+      m.submitPenaltyEvidenceRPC({
+        filePath: uploadPath,
+        liquorType,
+        poolId: 'pool_alpha',
+        userId: currentUserId,
+        weekNumber: 5
+      })
+    );
+
+    if (rpcRes.success) {
+      setUserSubmissionStatus('UNDER_REVIEW');
+      const newSubmission = createPendingPenalty('pool_alpha', currentUserId, 'Jack', 5, 2.50, liquorType);
+      const finalizedSub = submitPenaltyEvidence(newSubmission, `supabase://vault/${uploadPath}`);
+      setDockets((prev) => [
+        {
+          ...initializeTribunalDocket(finalizedSub),
+          status: 'UNDER_REVIEW'
+        },
+        ...prev
+      ]);
+    }
   };
 
   const ladderTiers = buildSettledLadderTiers(

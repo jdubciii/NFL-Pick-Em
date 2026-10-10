@@ -61,11 +61,11 @@ export const PenaltyVideoPlayer: React.FC<PenaltyVideoPlayerProps> = ({
       {/* Anchored Tribunal Deliberation Overlay (Bottom 30%) */}
       {status === 'DISPUTED' && accusation && (
         <div className="absolute bottom-0 left-0 right-0 p-4 bg-black/80 backdrop-blur-md border-t border-rose-500/50 z-10 space-y-1 animate-fade-in">
-          <div className="flex items-center gap-1.5 text-[10px] font-black tracking-wider text-rose-400 uppercase">
+          <div className="flex items-center gap-1.5 text-[10px] font-black text-rose-300 uppercase tracking-widest">
             <span>⚖️</span>
             <span>FORMAL INFRACTION ACCUSATION:</span>
           </div>
-          <p className="text-xs text-slate-200 italic font-sans line-clamp-3">
+          <p className="text-xs text-white italic font-sans font-medium line-clamp-3">
             "{accusation}"
           </p>
         </div>
