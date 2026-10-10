@@ -98,25 +98,47 @@ export const RadarPage: React.FC = () => {
     setWhatIfs([]);
   };
 
+  const isSimulating = whatIfs.length > 0;
+
   const standings = useMemo(() => {
     return evaluateLiveStandings(DEFAULT_PARTICIPANTS, MOCK_PICKS, MOCK_GAMES, whatIfs);
   }, [whatIfs]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-4 pb-24 max-w-md mx-auto">
+    <div className={`min-h-screen text-slate-100 p-4 pb-24 max-w-md mx-auto transition-colors duration-500 ${
+      isSimulating ? 'bg-slate-950/95 ring-1 ring-inset ring-cyan-500/30' : 'bg-slate-950'
+    }`}>
+      {/* Sticky Simulation Warning Banner */}
+      {isSimulating && (
+        <div className="sticky top-0 z-50 mb-3 -mx-4 px-4 py-2 bg-cyan-950/95 border-b border-cyan-400 shadow-md shadow-cyan-950/60 backdrop-blur flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-sm animate-pulse">⚠️</span>
+            <span className="text-[11px] font-mono font-black tracking-wider text-cyan-300">
+              SIMULATION ACTIVE (INV-6)
+            </span>
+          </div>
+          <button
+            onClick={handleReset}
+            className="text-[10px] font-mono font-black px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white uppercase tracking-wider transition"
+          >
+            TAP TO RESET
+          </button>
+        </div>
+      )}
+
       <header className="mb-4 border-b border-slate-800 pb-2 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-black tracking-wider text-cyan-400 font-mono">RADAR // LIVE CONSEQUENCES</h1>
           <p className="text-xs text-slate-400 font-mono">Sunday 1:00 PM - 4:15 PM ET Sweat Window</p>
         </div>
         <div className="text-right">
-          <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping mr-1"></span>
+          <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping mr-1" />
           <span className="text-[11px] font-mono text-emerald-400 font-bold">LIVE</span>
         </div>
       </header>
 
-      <DangerSeatStrip standings={standings} isSimulating={whatIfs.length > 0} />
-      <ConsequenceTiers standings={standings} />
+      <DangerSeatStrip standings={standings} isSimulating={isSimulating} />
+      <ConsequenceTiers standings={standings} isSimulating={isSimulating} />
       <WhatIfChaosControls
         games={MOCK_GAMES}
         whatIfs={whatIfs}

@@ -6,12 +6,12 @@ export interface LiveGameTelemetry {
   awayTeam: string;
   homeScore: number;
   awayScore: number;
-  spread: number; // Applied to home team (e.g. -3.5 means home favored by 3.5)
+  spread: number;
   status: GameStatus;
   quarter?: string;
   timeRemaining?: string;
   possession?: string;
-  yardLine?: number; // Distance from goal (<= 20 is red zone)
+  yardLine?: number;
   isRedZone?: boolean;
 }
 
@@ -43,6 +43,7 @@ export interface ParticipantStandings {
   totalProjectedPoints: number;
   rank: number;
   tier: 'SAFE' | 'DANGER_ZONE' | 'DEAD_PLACE';
+  isDeadPlace: boolean;
   penaltyShots: string;
   dangerSeatStatus: 'SURVIVAL_LEADER' | 'SURVIVAL_BORDER' | 'SAFE_MIDDLE' | 'DANGER_SEAT_9TH' | 'DEAD_PLACE_10TH';
   gapToSafety: number;
@@ -144,6 +145,7 @@ export function evaluateLiveStandings(
   return evaluated.map((item, index) => {
     const rank = index + 1;
     let tier: 'SAFE' | 'DANGER_ZONE' | 'DEAD_PLACE' = 'DANGER_ZONE';
+    let isDeadPlace = false;
     let penaltyShots = '1.50';
     let dangerSeatStatus: ParticipantStandings['dangerSeatStatus'] = 'SAFE_MIDDLE';
 
@@ -153,6 +155,7 @@ export function evaluateLiveStandings(
       dangerSeatStatus = 'SURVIVAL_LEADER';
     } else if (rank === totalCount && totalCount >= 10) {
       tier = 'DEAD_PLACE';
+      isDeadPlace = true;
       penaltyShots = '2.50';
       dangerSeatStatus = 'DEAD_PLACE_10TH';
     } else if (rank === totalCount - 1 && totalCount >= 10) {
@@ -182,6 +185,7 @@ export function evaluateLiveStandings(
       totalProjectedPoints: item.totalProjectedPoints,
       rank,
       tier,
+      isDeadPlace,
       penaltyShots,
       dangerSeatStatus,
       gapToSafety: parseFloat(gapToSafety.toFixed(1)),
