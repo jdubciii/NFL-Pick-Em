@@ -13,6 +13,7 @@ import { ShotCamPage } from './pages/ShotCamPage';
 import { RulesPage } from './pages/RulesPage';
 import { SweatRadarPage } from './pages/SweatRadarPage';
 import { OpsDashboardPage } from './pages/OpsDashboardPage';
+import { ProfilePage } from './pages/ProfilePage';
 import { BottomTabBar } from './components/mobile/BottomTabBar';
 
 const AppLayout: React.FC = () => {
@@ -38,6 +39,7 @@ const AppLayout: React.FC = () => {
             <Route path="/rules" element={<RulesPage />} />
             <Route path="/shame" element={<WallOfShamePage />} />
             <Route path="/wall-of-shame" element={<WallOfShamePage />} />
+            <Route path="/profile" element={<ProfilePage />} />
           </Route>
 
           {/* Protected admin-only routes */}

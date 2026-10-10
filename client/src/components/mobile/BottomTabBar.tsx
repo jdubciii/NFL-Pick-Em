@@ -12,7 +12,8 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'picks', label: 'Picks', path: '/picks', icon: '🏈' },
   { id: 'matrix', label: 'Matrix', path: '/matrix', icon: '📊' },
   { id: 'radar', label: 'Radar', path: '/radar', icon: '⚡' },
-  { id: 'shame', label: 'Shame', path: '/shame', icon: '💀' }
+  { id: 'shame', label: 'Shame', path: '/shame', icon: '💀' },
+  { id: 'profile', label: 'Profile', path: '/profile', icon: '🪪' }
 ];
 
 interface BottomTabBarProps {

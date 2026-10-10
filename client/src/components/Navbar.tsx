@@ -64,6 +64,7 @@ export const Navbar: React.FC = () => {
     { name: 'Shot-Cam Dispute Hub', path: '/shot-cam', icon: Beer },
     { name: 'Rules', path: '/rules', icon: Sliders },
     { name: 'Wall of Shame', path: '/shame', icon: Skull },
+    { name: 'Profile & Rap Sheet', path: '/profile', icon: Shield },
     ...(isCommissioner ? [{ name: 'System Ops', path: '/admin/ops', icon: Activity }] : []),
     ...(isCommissioner ? [{ name: 'Admin Console', path: '/admin', icon: Shield }] : []),
   ];
