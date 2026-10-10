@@ -47,7 +47,7 @@ export const TheGavelAdjudication: React.FC<TheGavelAdjudicationProps> = ({
         {/* The 50-Character Accusation Banner */}
         <div className="p-3 rounded-xl bg-rose-950/90 border border-rose-500/80 shadow-lg shadow-rose-950/60 max-w-sm mx-auto">
           <p className="text-[10px] font-bold text-rose-400 uppercase tracking-widest mb-1">
-            FORMAL CHARGE: {primaryDispute?.infraction || 'INFRACTION REPORTED'}
+            DISPUTE REASON: {primaryDispute?.infraction || 'INFRACTION REPORTED'}
           </p>
           <p className="text-xs font-sans font-semibold text-rose-100 leading-snug">
             "{primaryDispute?.justification || 'Evidence contested by league member.'}"

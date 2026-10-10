@@ -11,9 +11,11 @@ export interface SettledLadderParticipant {
   rank: number;
   userId: string;
   userName: string;
-  tier: 'SAFE' | 'DANGER' | 'PIT';
+  tier: 'SAFE' | 'DANGER_LOW' | 'DANGER_HIGH' | 'PIT';
+  tierLabel: string;
   penaltyShots: number;
   fsmStatus: ExtendedPunishmentState;
+  fsmDisplayStatus: string;
   submissionDeadlineEndsAt?: string;
   isFailureToAppear: boolean;
 }
@@ -40,17 +42,13 @@ export interface FailureToAppearEscalation {
   poolId: string;
   userId: string;
   originalDebt: number;
-  escalatedDebt: number; // e.g. 2.50 + 2.00 = 4.50
-  amountAdded: string; // "+2.00"
+  escalatedDebt: number;
+  amountAdded: string;
   reason: string;
   referenceMediaId: string;
   createdAt: string;
 }
 
-/**
- * Evaluates Failure to Appear worker logic (Zero DDL).
- * If 48 hours elapse from slate finalization without submission, escalates debt by +2.00 shots.
- */
 export function evaluateFailureToAppear(
   poolId: string,
   userId: string,
@@ -82,7 +80,7 @@ export function evaluateFailureToAppear(
       originalDebt: baseDebt,
       escalatedDebt,
       amountAdded: '+2.00',
-      reason: 'FAILURE_TO_APPEAR: 48h deadline expired without video proof',
+      reason: 'Failure to Appear: 48h deadline expired without video proof',
       referenceMediaId: `fta_${poolId}_${userId}`,
       createdAt: now.toISOString()
     };
@@ -103,14 +101,17 @@ export function evaluateFailureToAppear(
 }
 
 /**
- * Organizes finalized weekly roster into Settled Ladder Tiers (Safe, Danger, The Pit).
+ * Enforces strict League Charter discrete tiers:
+ * - Rank 1: 0.00 Shots (Safe Haven)
+ * - Rank 2-6: 1.00 Shot (Danger Zone - Tier 1)
+ * - Rank 7-9: 2.00 Shots (Danger Zone - Tier 2 / High Risk)
+ * - Rank 10: 2.50 Shots (The Pit / Dead Place Monarch)
  */
 export function buildSettledLadderTiers(
   standings: Array<{
     rank: number;
     userId: string;
     userName: string;
-    penaltyShots: string;
   }>,
   deadPlaceStatus: ExtendedPunishmentState,
   deadPlaceDebt: number,
@@ -119,21 +120,43 @@ export function buildSettledLadderTiers(
   const deadlineDate = new Date(slateFinalizedAt.getTime() + 48 * 3600 * 1000);
 
   return standings.map((item) => {
-    let tier: SettledLadderParticipant['tier'] = 'DANGER';
+    let tier: SettledLadderParticipant['tier'] = 'DANGER_LOW';
+    let tierLabel = '1.00 Shot';
     let fsmStatus: ExtendedPunishmentState = 'CLEARED';
-    let shots = parseFloat(item.penaltyShots);
+    let fsmDisplayStatus = 'Cleared';
+    let shots = 1.00;
 
     if (item.rank === 1) {
       tier = 'SAFE';
+      tierLabel = '0.00 Shots (Safe)';
       shots = 0.00;
       fsmStatus = 'CLEARED';
-    } else if (item.rank === 10) {
+      fsmDisplayStatus = 'Safe Haven';
+    } else if (item.rank >= 2 && item.rank <= 6) {
+      tier = 'DANGER_LOW';
+      tierLabel = '1.00 Shot';
+      shots = 1.00;
+      fsmStatus = 'CLEARED';
+      fsmDisplayStatus = 'Settled';
+    } else if (item.rank >= 7 && item.rank <= 9) {
+      tier = 'DANGER_HIGH';
+      tierLabel = '2.00 Shots';
+      shots = 2.00;
+      fsmStatus = 'CLEARED';
+      fsmDisplayStatus = 'Settled';
+    } else {
       tier = 'PIT';
+      tierLabel = '2.50 Shots (Dead Place)';
       shots = deadPlaceDebt;
       fsmStatus = deadPlaceStatus;
-    } else {
-      tier = 'DANGER';
-      fsmStatus = 'CLEARED';
+      fsmDisplayStatus =
+        deadPlaceStatus === 'PENDING_SUBMISSION'
+          ? 'Awaiting Video'
+          : deadPlaceStatus === 'FAILURE_TO_APPEAR'
+          ? 'Failed to Appear'
+          : deadPlaceStatus === 'UNDER_REVIEW'
+          ? 'Under Review'
+          : 'Cleared';
     }
 
     return {
@@ -141,8 +164,10 @@ export function buildSettledLadderTiers(
       userId: item.userId,
       userName: item.userName,
       tier,
+      tierLabel,
       penaltyShots: shots,
       fsmStatus,
+      fsmDisplayStatus,
       submissionDeadlineEndsAt: tier === 'PIT' ? deadlineDate.toISOString() : undefined,
       isFailureToAppear: fsmStatus === 'FAILURE_TO_APPEAR'
     };

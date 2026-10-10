@@ -49,7 +49,7 @@ export const MultiMetricLedger: React.FC<MultiMetricLedgerProps> = ({ metrics })
         >
           <span className="flex items-center gap-1.5">
             <span>📜</span>
-            <span>CHRONOLOGICAL LEDGER AUDIT TRAIL</span>
+            <span>PENALTY HISTORY</span>
           </span>
           <span className="text-[10px] text-cyan-400">
             {showAuditTrail ? 'HIDE ▲' : 'EXPAND ▼'}

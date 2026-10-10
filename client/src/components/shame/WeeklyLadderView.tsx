@@ -6,11 +6,8 @@ interface WeeklyLadderViewProps {
   onTriggerFtaDemo?: () => void;
 }
 
-export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
-  ladder,
-  onTriggerFtaDemo
-}) => {
-  const [secondsRemaining, setSecondsRemaining] = useState<number>(3600 * 24 + 1800); // 24h 30m
+export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) => {
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(3600 * 24 + 1800);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -27,64 +24,105 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
   };
 
   const safeMembers = ladder.filter((m) => m.tier === 'SAFE');
-  const dangerMembers = ladder.filter((m) => m.tier === 'DANGER');
+  const dangerTier1 = ladder.filter((m) => m.tier === 'DANGER_LOW');
+  const dangerTier2 = ladder.filter((m) => m.tier === 'DANGER_HIGH');
   const pitMember = ladder.find((m) => m.tier === 'PIT');
 
   return (
     <div className="w-full space-y-4 p-3 font-mono">
       <div className="flex items-center justify-between px-1">
         <span className="text-[10px] font-black text-slate-400 tracking-wider uppercase">
-          AUTOPSY // FINALIZED WEEK LADDER
+          WEEK RESULTS // LADDER BREAKDOWN
         </span>
         <span className="text-[10px] px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300">
-          SETTLED LADDER
+          OFFICIAL CHARTER TIERS
         </span>
       </div>
 
-      {/* 1. TOP: SAFE HAVEN (MUTED ROWS) */}
+      {/* 1. Safe Haven (0.00 Shots) */}
       <div className="space-y-1.5">
-        <span className="text-[10px] font-bold text-emerald-400 px-1 uppercase">
-          Safe Haven (0.00 Shots)
-        </span>
+        <div className="flex justify-between items-center px-1">
+          <span className="text-[10px] font-bold text-emerald-400 uppercase">
+            SAFE HAVEN // 1ST PLACE (0 SHOTS)
+          </span>
+          <span className="text-[9px] text-emerald-500 font-bold">0.00s</span>
+        </div>
         {safeMembers.map((m) => (
           <div
             key={m.userId}
-            className="p-2 rounded-lg bg-slate-950/40 border border-slate-900 flex items-center justify-between text-xs text-slate-500"
+            className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-900 flex items-center justify-between text-xs text-slate-300"
           >
             <div className="flex items-center gap-2">
-              <span className="font-bold">#{m.rank}</span>
-              <span className="text-slate-400">{m.userName}</span>
+              <span className="font-black text-emerald-400">#{m.rank}</span>
+              <span className="font-bold">{m.userName}</span>
             </div>
-            <span className="text-[10px] text-emerald-500/80 font-bold">CLEARED (SAFE)</span>
+            <span className="text-[10px] text-emerald-400 font-bold">CLEARED (SAFE)</span>
           </div>
         ))}
       </div>
 
-      {/* 2. MIDDLE: DANGER ZONE (AMBER BORDERS) */}
+      {/* 2. Danger Zone Tier 1 (2nd–6th Place: 1.00 Shot) */}
       <div className="space-y-1.5">
-        <span className="text-[10px] font-bold text-amber-400 px-1 uppercase">
-          Danger Zone (1.00 - 2.00 Shots)
-        </span>
-        {dangerMembers.map((m) => (
+        <div className="flex justify-between items-center px-1">
+          <span className="text-[10px] font-bold text-amber-400 uppercase">
+            DANGER ZONE // 2ND–6TH PLACE (1.00 SHOT)
+          </span>
+          <span className="text-[9px] text-amber-400 font-bold">1.00s</span>
+        </div>
+        {dangerTier1.map((m) => (
           <div
             key={m.userId}
-            className="p-2.5 rounded-lg bg-slate-900/80 border border-amber-500/40 flex items-center justify-between text-xs"
+            className="p-2.5 rounded-xl bg-slate-900/80 border border-amber-500/30 flex items-center justify-between text-xs"
           >
             <div className="flex items-center gap-2">
               <span className="font-bold text-amber-400">#{m.rank}</span>
               <span className="font-semibold text-slate-200">{m.userName}</span>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-amber-300 font-bold">{m.penaltyShots.toFixed(2)}s</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-950 text-slate-400 border border-slate-800">
-                SETTLED
+            <div className="flex items-center gap-2">
+              <span className="text-amber-300 font-black">1.00s</span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-950 text-slate-400 border border-slate-800">
+                {m.fsmDisplayStatus}
               </span>
             </div>
           </div>
         ))}
       </div>
 
-      {/* 3. BOTTOM: THE PIT (WCAG CONTRAST COMPLIANT & STANDARDIZED GLOW) */}
+      {/* 6TH / 7TH DANGER FAULT LINE */}
+      <div className="my-1 border-t-2 border-dashed border-rose-500/50 relative text-center">
+        <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-slate-950 px-2 text-[9px] font-black text-rose-400 uppercase tracking-widest">
+          ▼ THE DROP (1.00s ➔ 2.00s STEP) ▼
+        </span>
+      </div>
+
+      {/* 3. Danger Zone Tier 2 (7th–9th Place: 2.00 Shots) */}
+      <div className="space-y-1.5">
+        <div className="flex justify-between items-center px-1">
+          <span className="text-[10px] font-bold text-rose-400 uppercase">
+            HIGH DANGER // 7TH–9TH PLACE (2.00 SHOTS)
+          </span>
+          <span className="text-[9px] text-rose-400 font-bold">2.00s</span>
+        </div>
+        {dangerTier2.map((m) => (
+          <div
+            key={m.userId}
+            className="p-2.5 rounded-xl bg-rose-950/20 border border-rose-500/40 flex items-center justify-between text-xs"
+          >
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-rose-400">#{m.rank}</span>
+              <span className="font-semibold text-slate-100">{m.userName}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-rose-300 font-black">2.00s</span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-950 text-slate-400 border border-slate-800">
+                {m.fsmDisplayStatus}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* 4. The Pit (10th Place: 2.50 Shots) */}
       {pitMember && (
         <div className="space-y-2 pt-2">
           <span className="text-[10px] font-black text-rose-400 px-1 uppercase tracking-wider">
@@ -106,45 +144,24 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
                 <p className="text-base font-black text-rose-400">
                   {pitMember.penaltyShots.toFixed(2)} SHOTS
                 </p>
-                <p className="text-[9px] text-rose-300/80 uppercase font-bold">
-                  STATUS: {pitMember.fsmStatus}
+                <p className="text-[9px] text-rose-200 uppercase font-bold">
+                  {pitMember.fsmDisplayStatus}
                 </p>
               </div>
             </div>
 
-            {/* The Executioner's Clock (High-Contrast text-rose-200 and tabular-nums) */}
-            <div className="p-3 rounded-xl bg-slate-950/90 border border-rose-500/60 text-center space-y-1">
+            {/* Executioner's Clock with WCAG Compliant Text Contrast */}
+            <div className="p-3 rounded-xl bg-slate-950/95 border border-rose-500/70 text-center space-y-1">
               <p className="text-[10px] text-rose-200 font-bold uppercase tracking-widest">
-                TIME TO SUBMIT EVIDENCE (EXECUTIONER'S CLOCK)
+                TIME TO SUBMIT EVIDENCE (SUBMISSION DEADLINE)
               </p>
-              <p className={`text-2xl font-mono font-black tracking-widest text-rose-400 tabular-nums ${secondsRemaining < 43200 ? 'animate-pulse' : ''}`}>
+              <p className="text-2xl font-mono font-black tracking-widest text-rose-400 tabular-nums">
                 {formatHoursClock(secondsRemaining)}
               </p>
-              <p className="text-[9px] text-slate-400">
+              <p className="text-[9px] text-slate-300">
                 Deadline: 48h from finalization before +2.00 Failure to Appear escalation
               </p>
             </div>
-
-            {/* Failure to Appear Escalation Stamp */}
-            {pitMember.isFailureToAppear && (
-              <div className="p-3 rounded-xl bg-rose-950 border-2 border-rose-500 text-center animate-bounce shadow-glow-rose">
-                <span className="text-xs font-black text-white tracking-widest bg-rose-600 px-2 py-1 rounded">
-                  [ FAILURE TO APPEAR // +2.00 SHOTS STAMPED ]
-                </span>
-                <p className="text-[10px] text-rose-300 mt-1.5 font-bold">
-                  DEBT ESCALATED TO 4.50 SHOTS
-                </p>
-              </div>
-            )}
-
-            {onTriggerFtaDemo && (
-              <button
-                onClick={onTriggerFtaDemo}
-                className="w-full py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 hover:text-white text-[10px] font-bold transition"
-              >
-                [ SIMULATE 48H DEADLINE EXPIRATION (+2.00 FTA) ]
-              </button>
-            )}
           </div>
         </div>
       )}

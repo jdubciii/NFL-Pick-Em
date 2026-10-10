@@ -205,7 +205,7 @@ export const MatrixPage: React.FC = () => {
       {/* Floating Topology Update Toast */}
       {showTopologyToast && activeTab === 'LEVERAGE' && (
         <div className="mb-3 px-3 py-1.5 rounded-full bg-cyan-950/80 border border-cyan-400 shadow-md text-center font-mono text-[10px] text-cyan-300 font-bold flex items-center justify-between animate-fade-in">
-          <span>📡 Matrix Topology Synchronized (SSE)</span>
+          <span>📡 Live updates connected</span>
           <button
             onClick={() => setShowTopologyToast(false)}
             className="text-slate-400 hover:text-white"
