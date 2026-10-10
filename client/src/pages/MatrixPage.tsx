@@ -1,407 +1,357 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '../context/AuthContext';
-import { TopGamedayTicker, TickerGame } from '../components/matrix/TopGamedayTicker';
+import React, { useState, useMemo } from 'react';
+import { RivalCrosshairsDuel } from '../components/matrix/RivalCrosshairsDuel';
+import { LoneWolfBadge } from '../components/matrix/LoneWolfBadge';
+import { StackedAvatarCluster, CampParticipant } from '../components/matrix/StackedAvatarCluster';
+import { TugOfWarDrawer } from '../components/matrix/TugOfWarDrawer';
+import { LockCountdownTimer } from '../components/matrix/LockCountdownTimer';
+import { LiveGametrackStream, LiveGameflowCardData } from '../components/matrix/LiveGametrackStream';
 import {
-  NightEditorialMatchupCard,
-  EditorialMatchupData,
-  ParticipantPickStatus,
-  sanitizeMemberName,
-} from '../components/matrix/NightEditorialMatchupCard';
-import { LeagueMatrixView } from '../components/LeagueMatrixView';
-import { NFL_TEAMS, getTeamLogoUrl } from '../utils/teamAssets';
-import { formatGameKickoff } from '../utils/dateUtils';
-import { Table, X, Radio } from 'lucide-react';
+  computeSlateTopology,
+  computeDuelComparison,
+  RawGameDefinition,
+  UserSubmittedPick
+} from '../services/pregameTopologyService';
+import {
+  deriveAutopilotProvenance,
+  RawGameLine
+} from '../services/autopilotTopologyService';
 
-const DEFAULT_MEMBERS = [
-  { id: 'usr-jack', name: 'Jack', initials: 'JC' },
-  { id: 'usr-mattc', name: 'Matt Cone', initials: 'MC' },
-  { id: 'usr-mattb', name: 'Matt Brickner', initials: 'MB' },
-  { id: 'usr-justin', name: 'Justin Brickner', initials: 'JB' },
-  { id: 'usr-adamb', name: 'Adam Brickner', initials: 'AB' },
-  { id: 'usr-richb', name: 'Rich Brickner', initials: 'RB' },
-  { id: 'usr-mikec', name: 'Mike Cone', initials: 'MK' },
-  { id: 'usr-nicks', name: 'Nick Santos', initials: 'NS' },
-  { id: 'usr-markb', name: 'Mark Brickner', initials: 'MR' },
-  { id: 'usr-bigjack', name: 'Big Jack', initials: 'BJ' },
+const SAMPLE_GAMES: RawGameDefinition[] = [
+  { gameId: 'g1', homeTeam: 'DET', awayTeam: 'GB', spread: -2.5 },
+  { gameId: 'g2', homeTeam: 'KC', awayTeam: 'BUF', spread: -1.5 },
+  { gameId: 'g3', homeTeam: 'PHI', awayTeam: 'DAL', spread: -4.5 },
+  { gameId: 'g4', homeTeam: 'MIA', awayTeam: 'NE', spread: -6.0 }
 ];
 
-const DEFAULT_EDITORIAL_FALLBACKS: EditorialMatchupData[] = [
+const SAMPLE_USERS = [
+  { userId: 'u1', userName: 'Jack', isAutopilot: false },
+  { userId: 'u2', userName: 'Dave', isAutopilot: true },
+  { userId: 'u3', userName: 'Sarah', isAutopilot: false },
+  { userId: 'u4', userName: 'Mike', isAutopilot: false },
+  { userId: 'u5', userName: 'Tom', isAutopilot: false },
+  { userId: 'u6', userName: 'Chris', isAutopilot: true },
+  { userId: 'u7', userName: 'Alex', isAutopilot: false },
+  { userId: 'u8', userName: 'Emma', isAutopilot: false },
+  { userId: 'u9', userName: 'Ryan', isAutopilot: false },
+  { userId: 'u10', userName: 'Ben', isAutopilot: false },
+];
+
+const SAMPLE_PICKS: UserSubmittedPick[] = [
+  // g1: 9 picked DET, Ben (u10) is Lone Wolf on GB
+  { userId: 'u1', userName: 'Jack', gameId: 'g1', selectedTeam: 'DET' },
+  { userId: 'u2', userName: 'Dave', gameId: 'g1', selectedTeam: 'DET' },
+  { userId: 'u3', userName: 'Sarah', gameId: 'g1', selectedTeam: 'DET' },
+  { userId: 'u4', userName: 'Mike', gameId: 'g1', selectedTeam: 'DET' },
+  { userId: 'u5', userName: 'Tom', gameId: 'g1', selectedTeam: 'DET' },
+  { userId: 'u6', userName: 'Chris', gameId: 'g1', selectedTeam: 'DET' },
+  { userId: 'u7', userName: 'Alex', gameId: 'g1', selectedTeam: 'DET' },
+  { userId: 'u8', userName: 'Emma', gameId: 'g1', selectedTeam: 'DET' },
+  { userId: 'u9', userName: 'Ryan', gameId: 'g1', selectedTeam: 'DET' },
+  { userId: 'u10', userName: 'Ben', gameId: 'g1', selectedTeam: 'GB' },
+
+  // g2: 10/10 Consensus on KC
+  ...SAMPLE_USERS.map((u) => ({
+    userId: u.userId,
+    userName: u.userName,
+    gameId: 'g2',
+    selectedTeam: 'KC'
+  })),
+
+  // g3: Battleground split (6 PHI, 4 DAL)
+  { userId: 'u1', userName: 'Jack', gameId: 'g3', selectedTeam: 'PHI' },
+  { userId: 'u2', userName: 'Dave', gameId: 'g3', selectedTeam: 'DAL' },
+  { userId: 'u3', userName: 'Sarah', gameId: 'g3', selectedTeam: 'PHI' },
+  { userId: 'u4', userName: 'Mike', gameId: 'g3', selectedTeam: 'DAL' },
+  { userId: 'u5', userName: 'Tom', gameId: 'g3', selectedTeam: 'PHI' },
+  { userId: 'u6', userName: 'Chris', gameId: 'g3', selectedTeam: 'DAL' },
+  { userId: 'u7', userName: 'Alex', gameId: 'g3', selectedTeam: 'PHI' },
+  { userId: 'u8', userName: 'Emma', gameId: 'g3', selectedTeam: 'DAL' },
+  { userId: 'u9', userName: 'Ryan', gameId: 'g3', selectedTeam: 'PHI' },
+  { userId: 'u10', userName: 'Ben', gameId: 'g3', selectedTeam: 'PHI' },
+
+  // g4: 8 MIA, 2 NE
+  ...SAMPLE_USERS.slice(0, 8).map((u) => ({
+    userId: u.userId,
+    userName: u.userName,
+    gameId: 'g4',
+    selectedTeam: 'MIA'
+  })),
+  { userId: 'u9', userName: 'Ryan', gameId: 'g4', selectedTeam: 'NE' },
+  { userId: 'u10', userName: 'Ben', gameId: 'g4', selectedTeam: 'NE' },
+];
+
+const SAMPLE_LIVE_GAMES: LiveGameflowCardData[] = [
   {
-    gameId: 'w5-tnf-dal-tb',
-    awayTeam: {
-      code: 'TB',
-      name: 'Buccaneers',
-      record: '3-1',
-      score: 24,
-      logoUrl: getTeamLogoUrl('TB'),
-    },
-    homeTeam: {
-      code: 'DAL',
-      name: 'Cowboys',
-      record: '2-2',
-      score: 16,
-      logoUrl: getTeamLogoUrl('DAL'),
-    },
-    status: 'FINAL',
-    broadcastNetwork: 'PRIME VIDEO',
-    awayPickCount: 7,
-    homePickCount: 3,
-    totalPicks: 10,
-    participants: [
-      { memberId: 'usr-jack', name: 'Jack', initials: 'JC', pickedTeam: 'TB', matchState: 'WON' },
-      { memberId: 'usr-mattc', name: 'Matt Cone', initials: 'MC', pickedTeam: 'TB', matchState: 'WON' },
-      { memberId: 'usr-mattb', name: 'Matt Brickner', initials: 'MB', pickedTeam: 'DAL', matchState: 'LOST' },
-      { memberId: 'usr-justin', name: 'Justin Brickner', initials: 'JB', pickedTeam: 'TB', matchState: 'WON' },
-      { memberId: 'usr-adamb', name: 'Adam Brickner', initials: 'AB', pickedTeam: 'DAL', matchState: 'LOST' },
-      { memberId: 'usr-richb', name: 'Rich Brickner', initials: 'RB', pickedTeam: 'TB', matchState: 'WON' },
-      { memberId: 'usr-mikec', name: 'Mike Cone', initials: 'MK', pickedTeam: 'TB', matchState: 'WON' },
-      { memberId: 'usr-nicks', name: 'Nick Santos', initials: 'NS', pickedTeam: 'DAL', matchState: 'LOST' },
-      { memberId: 'usr-markb', name: 'Mark Brickner', initials: 'MR', pickedTeam: 'TB', matchState: 'WON' },
-      { memberId: 'usr-bigjack', name: 'Big Jack', initials: 'BJ', pickedTeam: 'TB', matchState: 'WON' },
-    ],
+    gameId: 'g1',
+    awayTeam: 'GB',
+    homeTeam: 'DET',
+    awayScore: 21,
+    homeScore: 24,
+    spread: -2.5,
+    quarter: 'Q4',
+    timeRemaining: '02:14',
+    possession: 'GB',
+    downAndDistance: '2nd & 4',
+    yardLine: 18,
+    isFinal: false
   },
+  {
+    gameId: 'g2',
+    awayTeam: 'BUF',
+    homeTeam: 'KC',
+    awayScore: 24,
+    homeScore: 27,
+    spread: -1.5,
+    quarter: 'FINAL',
+    timeRemaining: '00:00',
+    possession: 'KC',
+    downAndDistance: 'Final',
+    yardLine: 0,
+    isFinal: true
+  },
+  {
+    gameId: 'g3',
+    awayTeam: 'DAL',
+    homeTeam: 'PHI',
+    awayScore: 14,
+    homeScore: 10,
+    spread: -4.5,
+    quarter: 'Q3',
+    timeRemaining: '08:42',
+    possession: 'PHI',
+    downAndDistance: '3rd & 7',
+    yardLine: 34,
+    isFinal: false
+  }
 ];
 
 export const MatrixPage: React.FC = () => {
-  const { user } = useAuth();
-  const [tickerGames, setTickerGames] = useState<TickerGame[]>([]);
-  const [editorialCards, setEditorialCards] = useState<EditorialMatchupData[]>(DEFAULT_EDITORIAL_FALLBACKS);
-  const [showSquareSheet, setShowSquareSheet] = useState<boolean>(false);
-  const [loading, setLoading] = useState<boolean>(true);
+  const currentUserId = 'u1';
+  const currentUserName = 'Jack';
 
-  const fetchGamedayData = useCallback(async () => {
-    try {
-      const res = await fetch('/api/games');
-      if (!res.ok) throw new Error('Failed to fetch /api/games');
-      const data = await res.json();
-      const rawGames = data.games || [];
+  const [activeTab, setActiveTab] = useState<'LEVERAGE' | 'GAMETRACK'>('LEVERAGE');
+  const [selectedRivalId, setSelectedRivalId] = useState<string | null>(null);
+  const [expandedTugGameId, setExpandedTugGameId] = useState<string | null>(null);
+  const [showTopologyToast, setShowTopologyToast] = useState<boolean>(true);
 
-      if (rawGames.length > 0) {
-        // 1. Map to TickerGame
-        const tickerMapped: TickerGame[] = rawGames.map((g: any) => {
-          const gIsFinal = g.status === 'FINAL' || g.status === 'COMPLETED' || g.gameStatus?.toUpperCase().includes('FINAL');
-          const gIsLive = !gIsFinal && (Boolean(g.isLive) || g.status === 'IN_PROGRESS' || g.status === 'HALFTIME');
-          let clockStr = 'SCHEDULED';
-          if (gIsFinal) {
-            clockStr = 'FINAL';
-          } else if (gIsLive) {
-            clockStr = g.gameStatus || 'LIVE';
-          } else if (g.kickoffTime) {
-            clockStr = formatGameKickoff(g.kickoffTime);
-          }
+  const topology = useMemo(() => {
+    return computeSlateTopology('pool_alpha', 5, SAMPLE_PICKS, SAMPLE_GAMES, 3);
+  }, []);
 
-          return {
-            id: g.id,
-            away: g.awayTeamId,
-            home: g.homeTeamId,
-            awayScore: g.awayScore ?? 0,
-            homeScore: g.homeScore ?? 0,
-            status: gIsFinal ? 'FINAL' : (gIsLive ? 'IN_PROGRESS' : 'SCHEDULED'),
-            clock: clockStr,
-          };
-        });
-        setTickerGames(tickerMapped);
-
-        // Fetch pool matrix if available to get actual picks
-        let matrixCells: Record<string, any> = {};
-        let matrixColumns: any[] = [];
-        if (data.pool?.id) {
-          try {
-            const mRes = await fetch(`/api/pools/${data.pool.id}/matrix`);
-            if (mRes.ok) {
-              const mData = await mRes.json();
-              matrixCells = mData.cells || {};
-              matrixColumns = mData.columns || [];
-            }
-          } catch {
-            // Non-blocking
-          }
-        }
-
-        // 2. Map to EditorialMatchupData
-        const cardsMapped: EditorialMatchupData[] = rawGames.map((g: any, index: number) => {
-          const awayCode = (g.awayTeamId || 'AWAY').toUpperCase();
-          const homeCode = (g.homeTeamId || 'HOME').toUpperCase();
-          const awayMeta = NFL_TEAMS[awayCode];
-          const homeMeta = NFL_TEAMS[homeCode];
-
-          const awayScore = g.awayScore ?? 0;
-          const homeScore = g.homeScore ?? 0;
-          const isFinal = g.status === 'FINAL' || g.status === 'COMPLETED' || g.gameStatus?.toUpperCase().includes('FINAL');
-          const isLive = !isFinal && (Boolean(g.isLive) || g.status === 'IN_PROGRESS' || g.status === 'HALFTIME');
-
-          let status: 'SCHEDULED' | 'IN_PROGRESS' | 'HALFTIME' | 'FINAL' = 'SCHEDULED';
-          if (isFinal) {
-            status = 'FINAL';
-          } else if (isLive) {
-            status = g.gameStatus?.toLowerCase().includes('half') ? 'HALFTIME' : 'IN_PROGRESS';
-          }
-
-          const winningTeamId = isFinal
-            ? (homeScore > awayScore ? homeCode : (awayScore > homeScore ? awayCode : null))
-            : null;
-
-          // Quarter / Clock parsing (only for live games)
-          let quarter = isLive ? 'LIVE' : undefined;
-          let clock = isLive ? (g.gameStatus || 'LIVE') : undefined;
-          if (isLive && g.gameStatus) {
-            if (g.gameStatus.toLowerCase().includes('half')) {
-              quarter = 'HALFTIME';
-              clock = 'Half';
-            } else if (g.gameStatus.includes('1st')) {
-              quarter = 'Q1';
-              clock = g.gameStatus.replace(' - 1st', '').trim();
-            } else if (g.gameStatus.includes('2nd')) {
-              quarter = 'Q2';
-              clock = g.gameStatus.replace(' - 2nd', '').trim();
-            } else if (g.gameStatus.includes('3rd')) {
-              quarter = 'Q3';
-              clock = g.gameStatus.replace(' - 3rd', '').trim();
-            } else if (g.gameStatus.includes('4th')) {
-              quarter = 'Q4';
-              clock = g.gameStatus.replace(' - 4th', '').trim();
-            }
-          }
-
-          // Possession & Yardline telemetry (only for live games)
-          const possession: 'HOME' | 'AWAY' = g.possession === homeCode ? 'HOME' : 'AWAY';
-          const yardline = isLive ? (g.yardline ?? 28) : undefined;
-          const downAndDistance = isLive ? (g.downAndDistance || (g.inRedZone ? '1st & Goal' : '2nd & 7')) : undefined;
-          const ballLocation = isLive ? (g.ballLocation || `${possession === 'AWAY' ? awayCode : homeCode} ${yardline || 28}`) : undefined;
-          const isRedZone = isLive && Boolean(g.inRedZone || (yardline && yardline <= 20));
-
-          // Participants & Picks mapping
-          const participants: ParticipantPickStatus[] = [];
-          let awayPickCount = 0;
-          let homePickCount = 0;
-
-          if (matrixColumns.length > 0) {
-            matrixColumns.forEach((col: any) => {
-              const cell = matrixCells[g.id]?.[col.user_id];
-              let pickedTeam = cell?.selected_team_id || (col.user_id === user?.id ? g.userPick : null);
-
-              // Fallback default deterministic split if pick is not set
-              if (!pickedTeam) {
-                pickedTeam = (col.user_id.charCodeAt(0) + index) % 3 === 0 ? homeCode : awayCode;
-              }
-
-              if (pickedTeam === awayCode) awayPickCount += 1;
-              if (pickedTeam === homeCode) homePickCount += 1;
-
-              let matchState: 'WINNING' | 'LOSING' | 'TIED' | 'WON' | 'LOST' | 'PENDING' = 'PENDING';
-              if (isFinal) {
-                if (homeScore === awayScore) {
-                  matchState = 'TIED';
-                } else if (pickedTeam === winningTeamId) {
-                  matchState = 'WON';
-                } else {
-                  matchState = 'LOST';
-                }
-              } else if (isLive) {
-                if (homeScore === awayScore) {
-                  matchState = 'TIED';
-                } else if (
-                  (pickedTeam === homeCode && homeScore > awayScore) ||
-                  (pickedTeam === awayCode && awayScore > homeScore)
-                ) {
-                  matchState = 'WINNING';
-                } else {
-                  matchState = 'LOSING';
-                }
-              }
-
-              const isMe = col.user_id === user?.id;
-              const sanitized = sanitizeMemberName(col.displayName || col.email, isMe);
-
-              participants.push({
-                memberId: col.user_id,
-                name: sanitized.name,
-                initials: sanitized.initials,
-                pickedTeam,
-                matchState,
-              });
-            });
-          } else {
-            // Fallback default participant cohort
-            DEFAULT_MEMBERS.forEach((m, mIdx) => {
-              const pickedTeam = mIdx % 3 === 0 ? homeCode : awayCode;
-              if (pickedTeam === awayCode) awayPickCount += 1;
-              if (pickedTeam === homeCode) homePickCount += 1;
-
-              let matchState: 'WINNING' | 'LOSING' | 'TIED' | 'WON' | 'LOST' | 'PENDING' = 'PENDING';
-              if (isFinal) {
-                if (homeScore === awayScore) {
-                  matchState = 'TIED';
-                } else if (pickedTeam === winningTeamId) {
-                  matchState = 'WON';
-                } else {
-                  matchState = 'LOST';
-                }
-              } else if (isLive) {
-                if (homeScore === awayScore) {
-                  matchState = 'TIED';
-                } else if (
-                  (pickedTeam === homeCode && homeScore > awayScore) ||
-                  (pickedTeam === awayCode && awayScore > homeScore)
-                ) {
-                  matchState = 'WINNING';
-                } else {
-                  matchState = 'LOSING';
-                }
-              }
-
-              participants.push({
-                memberId: m.id,
-                name: m.name,
-                initials: m.initials,
-                pickedTeam,
-                matchState,
-              });
-            });
-          }
-
-          const totalPicks = awayPickCount + homePickCount;
-
-          return {
-            gameId: g.id,
-            awayTeam: {
-              code: awayCode,
-              name: awayMeta?.name || awayCode,
-              record: '3-1',
-              score: awayScore,
-              logoUrl: getTeamLogoUrl(awayCode),
-            },
-            homeTeam: {
-              code: homeCode,
-              name: homeMeta?.name || homeCode,
-              record: '2-2',
-              score: homeScore,
-              logoUrl: getTeamLogoUrl(homeCode),
-            },
-            status,
-            quarter,
-            clock,
-            downAndDistance,
-            ballLocation,
-            yardline,
-            possession: isLive ? possession : undefined,
-            isRedZone,
-            broadcastNetwork: (awayCode === 'TB' && homeCode === 'DAL') ? 'PRIME VIDEO' : 'NFL',
-            kickoffTime: g.kickoffTime ? formatGameKickoff(g.kickoffTime) : undefined,
-            awayPickCount,
-            homePickCount,
-            totalPicks: totalPicks > 0 ? totalPicks : 10,
-            participants,
-          };
-        });
-
-        // Sort: LIVE games first, then FINAL games, then SCHEDULED games
-        cardsMapped.sort((a, b) => {
-          const getRank = (st: string) => {
-            if (st === 'IN_PROGRESS' || st === 'HALFTIME') return 0;
-            if (st === 'FINAL') return 1;
-            return 2;
-          };
-          return getRank(a.status) - getRank(b.status);
-        });
-
-        setEditorialCards(cardsMapped);
-      }
-    } catch (err) {
-      console.warn('[MatrixPage] Error loading gameday live stream:', err);
-    } finally {
-      setLoading(false);
+  const autopilotUsers = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const u of SAMPLE_USERS) {
+      const provenance = deriveAutopilotProvenance(u.userId, SAMPLE_PICKS, SAMPLE_GAMES as RawGameLine[]);
+      map.set(u.userId, provenance.isAutopilot);
     }
-  }, [user]);
+    return map;
+  }, []);
 
-  useEffect(() => {
-    fetchGamedayData();
-    const interval = setInterval(fetchGamedayData, 10000);
-    return () => clearInterval(interval);
-  }, [fetchGamedayData]);
+  const duelComparison = useMemo(() => {
+    if (!selectedRivalId) return null;
+    const rival = SAMPLE_USERS.find((u) => u.userId === selectedRivalId);
+    if (!rival) return null;
+    return computeDuelComparison(
+      currentUserId,
+      currentUserName,
+      rival.userId,
+      rival.userName,
+      SAMPLE_PICKS,
+      SAMPLE_GAMES
+    );
+  }, [selectedRivalId]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white pb-24">
-      {/* 1. Top NFL Live Ticker */}
-      <TopGamedayTicker games={tickerGames} />
+    <div className="min-h-screen bg-slate-950 text-slate-100 p-4 pb-24 max-w-md mx-auto font-sans">
+      {/* Sticky 1:00 PM Pre-Lock Countdown */}
+      <LockCountdownTimer onLockExpired={() => setActiveTab('GAMETRACK')} />
 
-      <div className="max-w-4xl mx-auto px-3.5 py-4 space-y-4">
-        {/* 2. Page Header Bar */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg">
-          <div>
-            <h1 className="text-xl md:text-2xl font-black uppercase tracking-wider text-white flex items-center space-x-2">
-              <span>LIVE GAMEDAY HUB</span>
-            </h1>
-            <p className="text-xs md:text-sm text-slate-400 font-medium mt-0.5">
-              Real games. Real people. Live all day at /matrix.
-            </p>
-          </div>
+      {/* Header & Persistent Tab Switcher (Leverage vs Gametrack) */}
+      <header className="my-3 border-b border-slate-800 pb-2 flex items-center justify-between font-mono">
+        <div>
+          <h1 className="text-lg font-black tracking-wider text-cyan-400">
+            THE MATRIX // GAMEDAY
+          </h1>
+          <p className="text-xs text-slate-400">
+            {activeTab === 'LEVERAGE' ? 'Pre-Lock Leverage Board' : 'Live Drive Progression'}
+          </p>
+        </div>
 
+        {/* Segmented Controller: Preserving Gametrack */}
+        <div className="flex gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800 text-[11px] font-bold">
           <button
-            type="button"
-            onClick={() => setShowSquareSheet(!showSquareSheet)}
-            className={`flex items-center justify-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-mono font-bold transition-all border shadow-sm ${
-              showSquareSheet
-                ? 'bg-rose-950/80 border-rose-500/80 text-rose-300 ring-1 ring-rose-500/30'
-                : 'bg-cyan-950/80 border-cyan-500/80 text-cyan-300 hover:bg-cyan-900 active:scale-95'
+            onClick={() => setActiveTab('LEVERAGE')}
+            className={`px-2.5 py-1 rounded transition ${
+              activeTab === 'LEVERAGE'
+                ? 'bg-cyan-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-white'
             }`}
           >
-            {showSquareSheet ? <X className="w-3.5 h-3.5" /> : <Table className="w-3.5 h-3.5" />}
-            <span>{showSquareSheet ? 'Hide Square Sheet Grid' : '📊 View Square Sheet Grid'}</span>
+            ⚔️ LEVERAGE
+          </button>
+          <button
+            onClick={() => setActiveTab('GAMETRACK')}
+            className={`px-2.5 py-1 rounded transition ${
+              activeTab === 'GAMETRACK'
+                ? 'bg-emerald-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            🏈 GAMETRACK
           </button>
         </div>
+      </header>
 
-        {/* Collapsible Square Sheet Drawer / Modal */}
-        {showSquareSheet && (
-          <div className="bg-slate-900/95 border border-cyan-500/40 rounded-2xl p-4 shadow-2xl space-y-3 transition-all">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <div className="flex items-center space-x-2 font-mono text-xs font-black text-cyan-400">
-                <Table className="w-4 h-4" />
-                <span>LEAGUE MATRIX SQUARE SHEET</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowSquareSheet(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <LeagueMatrixView hideHeader={false} />
-          </div>
-        )}
-
-        {/* 3. Matchups Section Header */}
-        <div className="flex items-center justify-between pt-1">
-          <span className="text-xs font-mono font-black uppercase tracking-widest text-slate-300 flex items-center space-x-1.5">
-            <Radio className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
-            <span>LIVE MATCHUPS</span>
-          </span>
-
-          <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-emerald-950/80 border border-emerald-500/50 text-emerald-400 font-mono text-[10px] font-bold shadow-sm">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-            <span>• Live Score Updates Active</span>
-          </div>
+      {/* Floating Topology Update Toast */}
+      {showTopologyToast && activeTab === 'LEVERAGE' && (
+        <div className="mb-3 px-3 py-1.5 rounded-full bg-cyan-950/80 border border-cyan-400 shadow-md text-center font-mono text-[10px] text-cyan-300 font-bold flex items-center justify-between animate-fade-in">
+          <span>📡 Live updates connected</span>
+          <button
+            onClick={() => setShowTopologyToast(false)}
+            className="text-slate-400 hover:text-white"
+          >
+            ✕
+          </button>
         </div>
+      )}
 
-        {/* 4. Editorial Cards Feed */}
-        {loading && editorialCards.length === 0 ? (
-          <div className="py-16 text-center space-y-3">
-            <div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-xs text-slate-400 font-mono">Connecting to live NFL gameday feed...</p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {editorialCards.map((card) => (
-              <NightEditorialMatchupCard
-                key={card.gameId}
-                game={card}
-                currentUserId={user?.id}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      {/* TAB 1: LIVE GAMETRACK & DRIVE FLOW */}
+      {activeTab === 'GAMETRACK' && (
+        <LiveGametrackStream games={SAMPLE_LIVE_GAMES} />
+      )}
+
+      {/* TAB 2: PRE-LOCK LEVERAGE BOARD */}
+      {activeTab === 'LEVERAGE' && (
+        <>
+          {duelComparison ? (
+            <RivalCrosshairsDuel
+              duel={duelComparison}
+              onCloseDuel={() => setSelectedRivalId(null)}
+            />
+          ) : (
+            <div className="space-y-4">
+              {/* Member Selector Bar (Autopilot machine scanlines attribution) */}
+              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 font-mono">
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2">
+                  SELECT RIVAL TO ENGAGE 1-ON-1 DUEL MODE
+                </p>
+                <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+                  {SAMPLE_USERS.filter((u) => u.userId !== currentUserId).map((user) => {
+                    const isMachine = autopilotUsers.get(user.userId);
+
+                    return (
+                      <button
+                        key={user.userId}
+                        onClick={() => setSelectedRivalId(user.userId)}
+                        className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 text-xs transition relative overflow-hidden ${
+                          isMachine
+                            ? 'border-cyan-400 text-cyan-200 bg-[linear-gradient(45deg,transparent_25%,rgba(6,182,212,0.1)_50%,transparent_75%)] shadow-[0_0_10px_rgba(6,182,212,0.3)]'
+                            : 'bg-slate-950 border-slate-700 text-slate-200 hover:border-cyan-400'
+                        }`}
+                      >
+                        <span>{isMachine ? '🤖' : '👤'}</span>
+                        <span className="font-bold">{user.userName}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Matchup Distribution & Avatar Clusters */}
+              <div className="space-y-2.5 font-mono">
+                {SAMPLE_GAMES.map((game) => {
+                  const gameDist = topology.games.find((g) => g.gameId === game.gameId);
+                  const isConsensus = gameDist?.isConsensus;
+
+                  const awayCamp: CampParticipant[] = SAMPLE_PICKS
+                    .filter((p) => p.gameId === game.gameId && p.selectedTeam === game.awayTeam)
+                    .map((p) => ({
+                      userId: p.userId,
+                      userName: p.userName,
+                      team: p.selectedTeam,
+                      isAutopilot: autopilotUsers.get(p.userId)
+                    }));
+
+                  const homeCamp: CampParticipant[] = SAMPLE_PICKS
+                    .filter((p) => p.gameId === game.gameId && p.selectedTeam === game.homeTeam)
+                    .map((p) => ({
+                      userId: p.userId,
+                      userName: p.userName,
+                      team: p.selectedTeam,
+                      isAutopilot: autopilotUsers.get(p.userId)
+                    }));
+
+                  return (
+                    <div
+                      key={game.gameId}
+                      className={`p-3 rounded-xl border transition-all duration-700 ${
+                        isConsensus
+                          ? 'bg-slate-950/40 border-slate-900 opacity-30 grayscale'
+                          : 'bg-slate-900/90 border-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-white">
+                            {game.awayTeam} @ {game.homeTeam}
+                          </span>
+                          <span className="text-[10px] text-cyan-400">
+                            [{game.spread > 0 ? `+${game.spread}` : game.spread}]
+                          </span>
+                        </div>
+                        {isConsensus && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-bold">
+                            10/10 CONSENSUS [{gameDist?.consensusTeam}]
+                          </span>
+                        )}
+                        {gameDist?.isLoneWolf && (
+                          <LoneWolfBadge team={gameDist.loneWolfTeam || ''} />
+                        )}
+                      </div>
+
+                      {/* Stacked Avatar Camp Clusters */}
+                      <div
+                        onClick={() =>
+                          setExpandedTugGameId(expandedTugGameId === game.gameId ? null : game.gameId)
+                        }
+                        className="cursor-pointer py-1 px-2 rounded-lg bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 flex items-center justify-between transition"
+                      >
+                        <StackedAvatarCluster
+                          participants={awayCamp}
+                          teamLabel={game.awayTeam}
+                          isAway={true}
+                        />
+                        <span className="text-[9px] text-slate-500 font-bold uppercase">
+                          VS (TUG OF WAR)
+                        </span>
+                        <StackedAvatarCluster
+                          participants={homeCamp}
+                          teamLabel={game.homeTeam}
+                          isAway={false}
+                        />
+                      </div>
+
+                      {/* Expandable Tug-of-War Drawer */}
+                      {expandedTugGameId === game.gameId && (
+                        <TugOfWarDrawer
+                          gameMatchup={`${game.awayTeam} @ ${game.homeTeam}`}
+                          awayTeam={game.awayTeam}
+                          homeTeam={game.homeTeam}
+                          awayCamp={awayCamp}
+                          homeCamp={homeCamp}
+                          onClose={() => setExpandedTugGameId(null)}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 };
+
+export default MatrixPage;
