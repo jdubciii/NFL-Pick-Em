@@ -1,3 +1,4 @@
+import RadarPage from './pages/RadarPage';
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
@@ -11,7 +12,6 @@ import { MatrixPage } from './pages/MatrixPage';
 import { AdminPage } from './pages/AdminPage';
 import { ShotCamPage } from './pages/ShotCamPage';
 import { RulesPage } from './pages/RulesPage';
-import { SweatRadarPage } from './pages/SweatRadarPage';
 import { OpsDashboardPage } from './pages/OpsDashboardPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { BottomTabBar } from './components/mobile/BottomTabBar';
@@ -38,7 +38,7 @@ const AppLayout: React.FC = () => {
             <Route path="/picks" element={<PicksPage />} />
             <Route path="/matrix" element={<MatrixPage />} />
             <Route path="/leaderboard" element={<LeaderboardPage />} />
-            <Route path="/radar" element={<SweatRadarPage />} />
+            <Route path="/radar" element={<RadarPage />} />
             <Route path="/shot-cam" element={<ShotCamPage />} />
             <Route path="/rules" element={<RulesPage />} />
             <Route path="/shame" element={<WallOfShamePage />} />
