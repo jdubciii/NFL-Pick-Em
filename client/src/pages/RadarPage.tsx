@@ -65,25 +65,47 @@ const MOCK_PICKS: UserPick[] = [
   { userId: 'u1', userName: 'Jack', gameId: 'g3', selectedTeam: 'PHI' },
   { userId: 'u2', userName: 'Dave', gameId: 'g1', selectedTeam: 'GB' },
   { userId: 'u2', userName: 'Dave', gameId: 'g2', selectedTeam: 'KC' },
+  { userId: 'u9', userName: 'Ryan', gameId: 'g1', selectedTeam: 'DET' },
+  { userId: 'u9', userName: 'Ryan', gameId: 'g3', selectedTeam: 'DAL' },
   { userId: 'u10', userName: 'Ben', gameId: 'g1', selectedTeam: 'GB' },
   { userId: 'u10', userName: 'Ben', gameId: 'g2', selectedTeam: 'BUF' },
   { userId: 'u10', userName: 'Ben', gameId: 'g3', selectedTeam: 'DAL' },
 ];
 
+// Rolling state buffer for Momentum Sparklines (last 5 telemetry snapshots)
+const INITIAL_HISTORY: Record<string, number[]> = {
+  u1: [1.0, 1.5, 2.0, 2.0, 2.0],
+  u2: [2.0, 1.5, 1.0, 1.0, 1.0],
+  u3: [1.0, 1.0, 1.0, 1.0, 1.0],
+  u4: [0.5, 0.5, 1.0, 1.0, 1.0],
+  u5: [1.0, 0.5, 0.5, 0.5, 0.5],
+  u6: [0.5, 0.5, 0.5, 0.5, 0.5],
+  u7: [0.0, 0.0, 0.5, 0.5, 0.5],
+  u8: [0.5, 0.5, 0.0, 0.0, 0.0],
+  u9: [1.0, 0.5, 0.5, 0.0, 0.0],
+  u10: [0.5, 0.0, 0.0, 0.0, 0.0],
+};
+
 export const RadarPage: React.FC = () => {
   const [whatIfs, setWhatIfs] = useState<WhatIfScenario[]>([]);
+  const [historyMap] = useState<Record<string, number[]>>(INITIAL_HISTORY);
+  const [isSlateFinalized, setIsSlateFinalized] = useState<boolean>(false);
+  const [debtAcknowledged, setDebtAcknowledged] = useState<boolean>(false);
 
   const handleToggleDelta = (gameId: string, team: 'HOME' | 'AWAY', delta: number) => {
     setWhatIfs((prev) => {
-      const existing = prev.find(w => w.gameId === gameId);
+      const existing = prev.find((w) => w.gameId === gameId);
       if (!existing) {
-        return [...prev, {
-          gameId,
-          scoreDeltaHome: team === 'HOME' ? delta : 0,
-          scoreDeltaAway: team === 'AWAY' ? delta : 0
-        }];
+        return [
+          ...prev,
+          {
+            gameId,
+            scoreDeltaHome: team === 'HOME' ? delta : 0,
+            scoreDeltaAway: team === 'AWAY' ? delta : 0
+          }
+        ];
       }
-      return prev.map(w => {
+      return prev.map((w) => {
         if (w.gameId !== gameId) return w;
         return {
           ...w,
@@ -105,9 +127,11 @@ export const RadarPage: React.FC = () => {
   }, [whatIfs]);
 
   return (
-    <div className={`min-h-screen text-slate-100 p-4 pb-24 max-w-md mx-auto transition-colors duration-500 ${
-      isSimulating ? 'bg-slate-950/95 ring-1 ring-inset ring-cyan-500/30' : 'bg-slate-950'
-    }`}>
+    <div
+      className={`min-h-screen text-slate-100 p-4 pb-24 max-w-md mx-auto transition-colors duration-500 ${
+        isSimulating ? 'bg-slate-950/95 ring-1 ring-inset ring-cyan-500/30' : 'bg-slate-950'
+      }`}
+    >
       {/* Sticky Simulation Warning Banner */}
       {isSimulating && (
         <div className="sticky top-0 z-50 mb-3 -mx-4 px-4 py-2 bg-cyan-950/95 border-b border-cyan-400 shadow-md shadow-cyan-950/60 backdrop-blur flex items-center justify-between">
@@ -128,17 +152,55 @@ export const RadarPage: React.FC = () => {
 
       <header className="mb-4 border-b border-slate-800 pb-2 flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-black tracking-wider text-cyan-400 font-mono">RADAR // LIVE CONSEQUENCES</h1>
-          <p className="text-xs text-slate-400 font-mono">Sunday 1:00 PM - 4:15 PM ET Sweat Window</p>
+          <h1 className="text-lg font-black tracking-wider text-cyan-400 font-mono">
+            RADAR // LIVE CONSEQUENCES
+          </h1>
+          <p className="text-xs text-slate-400 font-mono">
+            {isSlateFinalized ? 'Slate Finalized (00:00 Final)' : 'Sunday 1:00 PM - 4:15 PM ET Window'}
+          </p>
         </div>
-        <div className="text-right">
-          <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping mr-1" />
-          <span className="text-[11px] font-mono text-emerald-400 font-bold">LIVE</span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsSlateFinalized((prev) => !prev)}
+            className="text-[10px] font-mono px-2 py-0.5 rounded border border-slate-700 bg-slate-900 text-slate-300 hover:text-white"
+          >
+            {isSlateFinalized ? 'REOPEN SLATE' : 'SIM FINAL 4:15PM'}
+          </button>
+          <div className="text-right">
+            <span
+              className={`inline-block w-2 h-2 rounded-full mr-1 ${
+                isSlateFinalized ? 'bg-slate-500' : 'bg-emerald-400 animate-ping'
+              }`}
+            />
+            <span
+              className={`text-[11px] font-mono font-bold ${
+                isSlateFinalized ? 'text-slate-400' : 'text-emerald-400'
+              }`}
+            >
+              {isSlateFinalized ? 'FINAL' : 'LIVE'}
+            </span>
+          </div>
         </div>
       </header>
 
+      {debtAcknowledged && (
+        <div className="mb-3 p-2.5 rounded bg-rose-950/90 border border-rose-500/80 text-rose-300 font-mono text-xs text-center font-bold">
+          ✓ DEBT RECORDED: 2.50 SHOT SUBMISSION DUE WITHIN 24 HOURS
+        </div>
+      )}
+
       <DangerSeatStrip standings={standings} isSimulating={isSimulating} />
-      <ConsequenceTiers standings={standings} isSimulating={isSimulating} />
+      <ConsequenceTiers
+        standings={standings}
+        isSimulating={isSimulating}
+        historyMap={historyMap}
+        games={MOCK_GAMES}
+        picks={MOCK_PICKS}
+        participants={DEFAULT_PARTICIPANTS}
+        activeUserId="u1"
+        isSlateFinalized={isSlateFinalized}
+        onAcknowledgeDebt={() => setDebtAcknowledged(true)}
+      />
       <WhatIfChaosControls
         games={MOCK_GAMES}
         whatIfs={whatIfs}
