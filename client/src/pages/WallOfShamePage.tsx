@@ -157,10 +157,10 @@ export const WallOfShamePage: React.FC = () => {
                     src={mediaUrl}
                     isActive={true}
                     status={docket.status as any}
-                    accusation={docket.disputes?.[0]?.justification || (docket as any).dispute?.reasonDescription}
+                    accusation={(docket as any).dispute?.reasonDescription || docket.disputes?.[0]?.justification}
                   />
 
-                  {/* Header Pill Overlay on top of player */}
+                  {/* Header Pill Overlay */}
                   <div className="absolute top-3 right-3 z-20 flex gap-2">
                     {isDisputed && (
                       <button
@@ -204,7 +204,7 @@ export const WallOfShamePage: React.FC = () => {
             })}
           </div>
 
-          {/* Tribunal Jury Deliberation Modal Drawer */}
+          {/* Tribunal Jury Deliberation Modal */}
           {activeDisputeDocket && (
             <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 backdrop-blur-sm p-3 font-mono">
               <div className="w-full max-w-md rounded-2xl bg-slate-950 border-2 border-rose-500 shadow-2xl p-4 space-y-3 animate-fade-in">
@@ -235,8 +235,8 @@ export const WallOfShamePage: React.FC = () => {
         <div className="space-y-4">
           <WeeklyLadderView ladder={ladderTiers} />
 
-          {/* Elevated Call to Action Trigger inside The Pit */}
-          <div className="px-3">
+          {/* Call to Action Trigger inside The Pit */}
+          <div className="px-3 pb-6">
             <button
               type="button"
               onClick={() => setIsEvidenceDrawerOpen(true)}
