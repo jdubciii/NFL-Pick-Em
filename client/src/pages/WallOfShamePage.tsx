@@ -1,9 +1,11 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { ShameSegmentedHeader } from '../components/shame/ShameSegmentedHeader';
 import { WeeklyLadderView } from '../components/shame/WeeklyLadderView';
 import { InfamyPenthouseArchive } from '../components/shame/InfamyPenthouseArchive';
 import { ShotOfTheWeekCarousel } from '../components/punishment/ShotOfTheWeekCarousel';
 import { TheGavelAdjudication } from '../components/punishment/TheGavelAdjudication';
+import { PenaltyVideoPlayer } from '../components/shame/PenaltyVideoPlayer';
+import { EvidenceSubmissionDrawer } from '../components/shame/EvidenceSubmissionDrawer';
 import {
   ShameTabId,
   buildSettledLadderTiers,
@@ -79,6 +81,7 @@ export const WallOfShamePage: React.FC = () => {
   const currentUserId = 'u1';
   const [activeTab, setActiveTab] = useState<ShameTabId>('REELS');
   const [selectedDisputeDocketId, setSelectedDisputeDocketId] = useState<string | null>(null);
+  const [isEvidenceDrawerOpen, setIsEvidenceDrawerOpen] = useState(false);
 
   const initialBase1 = createPendingPenalty('pool_alpha', 'u10', 'Ben', 5, 2.50, 'WARM TEQUILA');
   const submitted1 = submitPenaltyEvidence(initialBase1, 'supabase://vault/ben_w5.mp4');
@@ -111,6 +114,34 @@ export const WallOfShamePage: React.FC = () => {
     setSelectedDisputeDocketId(null);
   };
 
+  const [userSubmissionStatus, setUserSubmissionStatus] = useState<'PENDING' | 'UNDER_REVIEW'>('PENDING');
+
+  const handleEvidenceSubmit = async (liquorType: string, fileSizeMb: number) => {
+    const uploadPath = `penalties/pool_alpha/${currentUserId}/w5_${Date.now()}.mp4`;
+    const rpcRes = await import('../services/nativeMediaUploadService').then(m =>
+      m.submitPenaltyEvidenceRPC({
+        filePath: uploadPath,
+        liquorType,
+        poolId: 'pool_alpha',
+        userId: currentUserId,
+        weekNumber: 5
+      })
+    );
+
+    if (rpcRes.success) {
+      setUserSubmissionStatus('UNDER_REVIEW');
+      const newSubmission = createPendingPenalty('pool_alpha', currentUserId, 'Jack', 5, 2.50, liquorType);
+      const finalizedSub = submitPenaltyEvidence(newSubmission, `supabase://vault/${uploadPath}`);
+      setDockets((prev) => [
+        {
+          ...initializeTribunalDocket(finalizedSub),
+          status: 'UNDER_REVIEW'
+        },
+        ...prev
+      ]);
+    }
+  };
+
   const ladderTiers = buildSettledLadderTiers(
     SAMPLE_STANDINGS,
     'PENDING_SUBMISSION',
@@ -122,7 +153,7 @@ export const WallOfShamePage: React.FC = () => {
   const activeDisputeDocket = dockets.find((d) => d.id === selectedDisputeDocketId);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans max-w-md mx-auto pb-24 overflow-x-hidden">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans max-w-md mx-auto pb-36 overflow-x-hidden">
       <ShameSegmentedHeader activeTab={activeTab} onSelectTab={setActiveTab} />
 
       {activeTab === 'REELS' && (
@@ -137,29 +168,27 @@ export const WallOfShamePage: React.FC = () => {
           <div className="px-3 space-y-4">
             {dockets.map((docket) => {
               const isDisputed = docket.status === 'DISPUTED';
+              const mediaUrl =
+                docket.id === dockets[0].id
+                  ? 'supabase://vault/ben_w5.mp4'
+                  : 'supabase://vault/mike_w4.mp4';
 
               return (
-                <div
-                  key={docket.id}
-                  className="relative rounded-2xl bg-black border border-slate-800 overflow-hidden shadow-2xl font-mono"
-                >
-                  <div className="relative w-full h-[380px] bg-slate-900 flex flex-col items-center justify-center overflow-hidden">
-                    <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/80 pointer-events-none" />
+                <div key={docket.id} className="relative space-y-2">
+                  <PenaltyVideoPlayer
+                    src={mediaUrl}
+                    isActive={true}
+                    status={docket.status as any}
+                    accusation={(docket as any).dispute?.reasonDescription || docket.disputes?.[0]?.justification}
+                  />
 
-                    <div className="text-center space-y-2 z-10">
-                      <span className="text-5xl">🥃</span>
-                      <p className="text-sm font-black text-white">
-                        {docket.userName} // {docket.shotDebt.toFixed(2)} SHOTS
-                      </p>
-                      <p className="text-[10px] text-slate-400">
-                        {docket.liquorType || 'WARM TEQUILA'} • WEEK {docket.weekNumber}
-                      </p>
-                    </div>
-
+                  {/* Header Pill Overlay */}
+                  <div className="absolute top-3 right-3 z-20 flex gap-2">
                     {isDisputed && (
                       <button
+                        type="button"
                         onClick={() => setSelectedDisputeDocketId(docket.id)}
-                        className="absolute top-3 right-3 z-20 px-2.5 py-1 rounded-full bg-rose-600/90 hover:bg-rose-500 border border-rose-400 shadow-glow-rose text-white text-[10px] font-black tracking-wider uppercase animate-pulse flex items-center gap-1.5 transition"
+                        className="px-2.5 py-1 rounded-full bg-rose-600/90 hover:bg-rose-500 border border-rose-400 shadow-glow-rose text-white text-[10px] font-black tracking-wider uppercase animate-pulse flex items-center gap-1.5 transition"
                       >
                         <span>⚖️</span>
                         <span>UNDER LEAGUE REVIEW</span>
@@ -167,21 +196,23 @@ export const WallOfShamePage: React.FC = () => {
                     )}
 
                     {docket.status === 'CLEARED' && (
-                      <div className="absolute top-3 right-3 z-20 px-2.5 py-1 rounded-full bg-emerald-950/80 border border-emerald-400 text-emerald-300 text-[10px] font-black uppercase">
+                      <div className="px-2.5 py-1 rounded-full bg-emerald-950/80 border border-emerald-400 text-emerald-300 text-[10px] font-black uppercase">
                         ✓ DEBT CLEARED
                       </div>
                     )}
                   </div>
 
-                  <div className="p-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
+                  {/* Footer Metadata Strip */}
+                  <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between font-mono">
                     <div>
                       <p className="text-xs font-bold text-white">{docket.userName}</p>
                       <p className="text-[10px] text-slate-400">
-                        Submitted for Week {docket.weekNumber} Dead Place
+                        {docket.liquorType || 'WARM TEQUILA'} • Week {docket.weekNumber} Dead Place
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
                       <button
+                        type="button"
                         onClick={() => {}}
                         className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 hover:border-amber-400 text-amber-300 text-xs font-bold transition flex items-center gap-1"
                       >
@@ -195,6 +226,7 @@ export const WallOfShamePage: React.FC = () => {
             })}
           </div>
 
+          {/* Tribunal Jury Deliberation Modal */}
           {activeDisputeDocket && (
             <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 backdrop-blur-sm p-3 font-mono">
               <div className="w-full max-w-md rounded-2xl bg-slate-950 border-2 border-rose-500 shadow-2xl p-4 space-y-3 animate-fade-in">
@@ -222,12 +254,34 @@ export const WallOfShamePage: React.FC = () => {
       )}
 
       {activeTab === 'LADDER' && (
-        <WeeklyLadderView ladder={ladderTiers} />
+        <div className="space-y-4">
+          <WeeklyLadderView ladder={ladderTiers} />
+
+          {/* Call to Action Trigger inside The Pit */}
+          <div className="px-3 pb-6">
+            <button
+              type="button"
+              onClick={() => setIsEvidenceDrawerOpen(true)}
+              className="w-full py-4 bg-rose-600 hover:bg-rose-500 text-white font-mono font-black text-xs uppercase tracking-widest rounded-2xl shadow-[0_0_20px_rgba(244,63,94,0.4)] animate-pulse flex items-center justify-center gap-2 transition active:scale-98"
+            >
+              <span>📷</span>
+              <span>RECORD EVIDENCE // SERVE 2.50 SHOT DEBT</span>
+            </button>
+          </div>
+        </div>
       )}
 
       {activeTab === 'INFAMY' && (
         <InfamyPenthouseArchive dockets={HISTORICAL_INFAMY_DOCKETS} />
       )}
+
+      {/* Slide-Up Evidence Deposition Submission Drawer */}
+      <EvidenceSubmissionDrawer
+        isOpen={isEvidenceDrawerOpen}
+        onClose={() => setIsEvidenceDrawerOpen(false)}
+        onSubmit={handleEvidenceSubmit}
+        debtAmount={2.50}
+      />
     </div>
   );
 };

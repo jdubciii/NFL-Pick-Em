@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { EmptyStateWireframe } from '../components/common/EmptyStateWireframe';
 import {
   OFFICIAL_WEEK_5_GAMES,
   reconcileRadarStandings,
@@ -91,12 +92,20 @@ export const RadarPage: React.FC = () => {
         </div>
       </header>
 
-      {/* 3. ABOVE-THE-FOLD: Your Standing If Current Results Held */}
-      <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-950 to-cyan-950/40 border-2 border-cyan-500/50 shadow-glow-cyan mb-4 font-mono">
-        <div className="flex items-center justify-between border-b border-cyan-500/30 pb-2">
-          <span className="text-[10px] font-black text-cyan-300 uppercase tracking-wider">
-            YOUR STANDING (IF CURRENT RESULTS HELD)
-          </span>
+      {!isDemoGameday || standings.length === 0 || OFFICIAL_WEEK_5_GAMES.length === 0 ? (
+        <EmptyStateWireframe
+          header="[ 14 MATCHUPS PENDING KICKOFF ]"
+          subtitle="[ SUNDAY 1:00 PM LOCK INCOMING ]"
+          contextDetail="All 14 matchups are pending kickoff with zero live scores. Live standing equity, podium probabilities, and danger seat telemetry will activate on Sunday opening drive."
+        />
+      ) : (
+        <>
+          {/* 3. ABOVE-THE-FOLD: Your Standing If Current Results Held */}
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-950 to-cyan-950/40 border-2 border-cyan-500/50 shadow-glow-cyan mb-4 font-mono">
+            <div className="flex items-center justify-between border-b border-cyan-500/30 pb-2">
+              <span className="text-[10px] font-black text-cyan-300 uppercase tracking-wider">
+                YOUR STANDING (IF CURRENT RESULTS HELD)
+              </span>
           <span className="text-xs font-black px-2 py-0.5 rounded bg-cyan-950 border border-cyan-400 text-cyan-200">
             RANK #{userStanding.currentRank}
           </span>
@@ -243,8 +252,10 @@ export const RadarPage: React.FC = () => {
           );
         })}
       </div>
-    </div>
-  );
+      </>
+    )}
+  </div>
+);
 };
 
 export default RadarPage;
