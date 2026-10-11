@@ -1,4 +1,4 @@
-import { CapacitorConfig } from '@capacitor/cli';
+﻿import { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.nflpickem.app',
@@ -7,7 +7,7 @@ const config: CapacitorConfig = {
   server: {
     androidScheme: 'http',
     cleartext: true,
-    allowNavigation: ['192.168.1.29:3000', '192.168.1.29', '192.168.1.18:3000', '192.168.1.18', 'localhost:3000'],
+    allowNavigation: ['192.168.1.18:3000', '192.168.1.18', '192.168.1.18:3000', '192.168.1.18', 'localhost:3000'],
   },
   plugins: {
     CapacitorHttp: {
@@ -17,3 +17,5 @@ const config: CapacitorConfig = {
 };
 
 export default config;
+
+

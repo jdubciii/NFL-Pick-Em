@@ -16,121 +16,26 @@ import {
   deriveAutopilotProvenance,
   RawGameLine
 } from '../services/autopilotTopologyService';
+import { isKickoffLocked } from '../services/lockEnforcementService';
+import { evaluatePickVisibility } from '../services/openSlatePolicyService';
 
-const SAMPLE_GAMES: RawGameDefinition[] = [
-  { gameId: 'g1', homeTeam: 'DET', awayTeam: 'GB', spread: -2.5 },
-  { gameId: 'g2', homeTeam: 'KC', awayTeam: 'BUF', spread: -1.5 },
-  { gameId: 'g3', homeTeam: 'PHI', awayTeam: 'DAL', spread: -4.5 },
-  { gameId: 'g4', homeTeam: 'MIA', awayTeam: 'NE', spread: -6.0 }
-];
+const SAMPLE_GAMES: RawGameDefinition[] = [];
 
 const SAMPLE_USERS = [
-  { userId: 'u1', userName: 'Jack', isAutopilot: false },
-  { userId: 'u2', userName: 'Dave', isAutopilot: true },
-  { userId: 'u3', userName: 'Sarah', isAutopilot: false },
-  { userId: 'u4', userName: 'Mike', isAutopilot: false },
-  { userId: 'u5', userName: 'Tom', isAutopilot: false },
-  { userId: 'u6', userName: 'Chris', isAutopilot: true },
-  { userId: 'u7', userName: 'Alex', isAutopilot: false },
-  { userId: 'u8', userName: 'Emma', isAutopilot: false },
-  { userId: 'u9', userName: 'Ryan', isAutopilot: false },
-  { userId: 'u10', userName: 'Ben', isAutopilot: false },
+  { userId: 'u1', userName: 'Jack (You)', isAutopilot: false },
 ];
 
-const SAMPLE_PICKS: UserSubmittedPick[] = [
-  // g1: 9 picked DET, Ben (u10) is Lone Wolf on GB
-  { userId: 'u1', userName: 'Jack', gameId: 'g1', selectedTeam: 'DET' },
-  { userId: 'u2', userName: 'Dave', gameId: 'g1', selectedTeam: 'DET' },
-  { userId: 'u3', userName: 'Sarah', gameId: 'g1', selectedTeam: 'DET' },
-  { userId: 'u4', userName: 'Mike', gameId: 'g1', selectedTeam: 'DET' },
-  { userId: 'u5', userName: 'Tom', gameId: 'g1', selectedTeam: 'DET' },
-  { userId: 'u6', userName: 'Chris', gameId: 'g1', selectedTeam: 'DET' },
-  { userId: 'u7', userName: 'Alex', gameId: 'g1', selectedTeam: 'DET' },
-  { userId: 'u8', userName: 'Emma', gameId: 'g1', selectedTeam: 'DET' },
-  { userId: 'u9', userName: 'Ryan', gameId: 'g1', selectedTeam: 'DET' },
-  { userId: 'u10', userName: 'Ben', gameId: 'g1', selectedTeam: 'GB' },
+const SAMPLE_PICKS: UserSubmittedPick[] = [];
 
-  // g2: 10/10 Consensus on KC
-  ...SAMPLE_USERS.map((u) => ({
-    userId: u.userId,
-    userName: u.userName,
-    gameId: 'g2',
-    selectedTeam: 'KC'
-  })),
-
-  // g3: Battleground split (6 PHI, 4 DAL)
-  { userId: 'u1', userName: 'Jack', gameId: 'g3', selectedTeam: 'PHI' },
-  { userId: 'u2', userName: 'Dave', gameId: 'g3', selectedTeam: 'DAL' },
-  { userId: 'u3', userName: 'Sarah', gameId: 'g3', selectedTeam: 'PHI' },
-  { userId: 'u4', userName: 'Mike', gameId: 'g3', selectedTeam: 'DAL' },
-  { userId: 'u5', userName: 'Tom', gameId: 'g3', selectedTeam: 'PHI' },
-  { userId: 'u6', userName: 'Chris', gameId: 'g3', selectedTeam: 'DAL' },
-  { userId: 'u7', userName: 'Alex', gameId: 'g3', selectedTeam: 'PHI' },
-  { userId: 'u8', userName: 'Emma', gameId: 'g3', selectedTeam: 'DAL' },
-  { userId: 'u9', userName: 'Ryan', gameId: 'g3', selectedTeam: 'PHI' },
-  { userId: 'u10', userName: 'Ben', gameId: 'g3', selectedTeam: 'PHI' },
-
-  // g4: 8 MIA, 2 NE
-  ...SAMPLE_USERS.slice(0, 8).map((u) => ({
-    userId: u.userId,
-    userName: u.userName,
-    gameId: 'g4',
-    selectedTeam: 'MIA'
-  })),
-  { userId: 'u9', userName: 'Ryan', gameId: 'g4', selectedTeam: 'NE' },
-  { userId: 'u10', userName: 'Ben', gameId: 'g4', selectedTeam: 'NE' },
-];
-
-const SAMPLE_LIVE_GAMES: LiveGameflowCardData[] = [
-  {
-    gameId: 'g1',
-    awayTeam: 'GB',
-    homeTeam: 'DET',
-    awayScore: 21,
-    homeScore: 24,
-    spread: -2.5,
-    quarter: 'Q4',
-    timeRemaining: '02:14',
-    possession: 'GB',
-    downAndDistance: '2nd & 4',
-    yardLine: 18,
-    isFinal: false
-  },
-  {
-    gameId: 'g2',
-    awayTeam: 'BUF',
-    homeTeam: 'KC',
-    awayScore: 24,
-    homeScore: 27,
-    spread: -1.5,
-    quarter: 'FINAL',
-    timeRemaining: '00:00',
-    possession: 'KC',
-    downAndDistance: 'Final',
-    yardLine: 0,
-    isFinal: true
-  },
-  {
-    gameId: 'g3',
-    awayTeam: 'DAL',
-    homeTeam: 'PHI',
-    awayScore: 14,
-    homeScore: 10,
-    spread: -4.5,
-    quarter: 'Q3',
-    timeRemaining: '08:42',
-    possession: 'PHI',
-    downAndDistance: '3rd & 7',
-    yardLine: 34,
-    isFinal: false
-  }
-];
+const SAMPLE_LIVE_GAMES: LiveGameflowCardData[] = [];
 
 export const MatrixPage: React.FC = () => {
+  // Decision #66: authoritative kickoff lock evaluation
+  const isSlateLocked = isKickoffLocked('2026-10-11T17:00:00.000Z');
   const currentUserId = 'u1';
   const currentUserName = 'Jack';
 
-  const [activeTab, setActiveTab] = useState<'LEVERAGE' | 'GAMETRACK'>('LEVERAGE');
+  const [activeTab, setActiveTab] = useState<'LEVERAGE' | 'GAMETRACK'>(isSlateLocked ? 'GAMETRACK' : 'LEVERAGE');
   const [selectedRivalId, setSelectedRivalId] = useState<string | null>(null);
   const [expandedTugGameId, setExpandedTugGameId] = useState<string | null>(null);
   const [showTopologyToast, setShowTopologyToast] = useState<boolean>(true);
@@ -164,14 +69,14 @@ export const MatrixPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 pb-24 max-w-md mx-auto font-sans">
-      {/* Sticky 1:00 PM Pre-Lock Countdown */}
-      <LockCountdownTimer onLockExpired={() => setActiveTab('GAMETRACK')} />
+      {/* Sticky Gameday Live / Lock Countdown */}
+      <LockCountdownTimer isLocked={isSlateLocked} onLockExpired={() => setActiveTab('GAMETRACK')} />
 
       {/* Header & Persistent Tab Switcher (Leverage vs Gametrack) */}
       <header className="my-3 border-b border-slate-800 pb-2 flex items-center justify-between font-mono">
         <div>
           <h1 className="text-lg font-black tracking-wider text-cyan-400">
-            THE MATRIX // GAMEDAY
+            THE MATRIX // GAMEDAY LIVE
           </h1>
           <p className="text-xs text-slate-400">
             {activeTab === 'LEVERAGE' ? 'Pre-Lock Leverage Board' : 'Live Drive Progression'}
@@ -218,15 +123,7 @@ export const MatrixPage: React.FC = () => {
 
       {/* TAB 1: LIVE GAMETRACK & DRIVE FLOW */}
       {activeTab === 'GAMETRACK' && (
-        SAMPLE_LIVE_GAMES.length === 0 ? (
-          <EmptyStateWireframe
-            header="[ NO LIVE MATCHUPS ACTIVE ]"
-            subtitle="[ AWAITING SUNDAY 1:00 PM KICKOFF ]"
-            contextDetail="Live gameflow drive tracking activates upon official NFL slate kickoff."
-          />
-        ) : (
-          <LiveGametrackStream games={SAMPLE_LIVE_GAMES} />
-        )
+        <LiveGametrackStream />
       )}
 
       {/* TAB 2: PRE-LOCK LEVERAGE BOARD */}

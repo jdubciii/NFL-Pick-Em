@@ -155,6 +155,119 @@ app.get('/api/pools', requireAuth, async (_req: Request, res: Response): Promise
 });
 
 /**
+ * POST /api/pools/:pool_id/join
+ * Server-Enforced Registration (Decision #55):
+ * Strictly rejects forged payloads containing { status: 'ACTIVE' } or { role: 'ADMIN' }, forcing membership to 'PENDING'.
+ */
+app.post('/api/pools/:pool_id/join', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { pool_id } = req.params;
+  const { inviteCode, status, role } = req.body || {};
+
+  if (!UUID_REGEX.test(pool_id)) {
+    res.status(400).json({ error: 'Invalid pool ID format. Must be a valid UUID.' });
+    return;
+  }
+
+  const MAIN_LEAGUE_POOL_ID = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+
+  // Strictly extract and validate inviteCode before any database operations
+  if (!inviteCode || typeof inviteCode !== 'string') {
+    res.status(403).json({ error: 'Invalid or missing league invite code' });
+    return;
+  }
+
+  // Validate target pool binding: MAIN26 is strictly bound to Main League
+  if (pool_id !== MAIN_LEAGUE_POOL_ID) {
+    res.status(403).json({ error: 'Invite code is not valid for the requested league pool' });
+    return;
+  }
+
+  if (inviteCode.trim().toUpperCase() !== 'MAIN26') {
+    res.status(403).json({ error: 'Invalid or missing league invite code' });
+    return;
+  }
+
+  // Strictly reject forged privilege escalation
+  if (status && status !== 'PENDING') {
+    res.status(403).json({ error: 'FORGERY_REJECTED: Cannot self-assign status' });
+    return;
+  }
+  if (role && role !== 'USER') {
+    res.status(403).json({ error: 'FORGERY_REJECTED: Cannot self-assign role' });
+    return;
+  }
+
+  try {
+    const pool = await prisma.pool.findUnique({ where: { id: pool_id } });
+    if (!pool) {
+      res.status(404).json({ error: 'Pool not found.' });
+      return;
+    }
+
+    const membership = await prisma.poolMembership.upsert({
+      where: {
+        poolId_userId: {
+          poolId: pool_id,
+          userId: req.user!.id,
+        },
+      },
+      update: {}, // Retains existing status if already present (e.g. ACTIVE)
+      create: {
+        poolId: pool_id,
+        userId: req.user!.id,
+        status: 'PENDING',
+      },
+    });
+
+    res.status(200).json({
+      message: 'Registration submitted successfully. Awaiting commissioner adjudication.',
+      membership,
+    });
+  } catch (error) {
+    console.error('Error in pool join:', error);
+    res.status(500).json({ error: 'Failed to join pool.' });
+  }
+});
+
+/**
+ * POST /api/pools/:pool_id/adjudicate
+ * Pool-Scoped Commissioner Adjudication (Decision #20 & Decision #55):
+ * Protected by requireAuth & requirePoolCommissioner.
+ * Foreign pool commissioners are strictly denied with HTTP 403.
+ */
+app.post('/api/pools/:pool_id/adjudicate', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {
+  const { pool_id } = req.params;
+  const { targetUserId, action } = req.body || {};
+
+  if (!targetUserId || !['ACTIVE', 'REJECTED'].includes(action)) {
+    res.status(400).json({ error: 'Invalid adjudication parameters.' });
+    return;
+  }
+
+  try {
+    const updated = await prisma.poolMembership.update({
+      where: {
+        poolId_userId: {
+          poolId: pool_id,
+          userId: targetUserId,
+        },
+      },
+      data: {
+        status: action,
+      },
+    });
+
+    res.status(200).json({
+      message: `Applicant successfully adjudicated to ${action}.`,
+      membership: updated,
+    });
+  } catch (error) {
+    console.error('Error in pool adjudication:', error);
+    res.status(500).json({ error: 'Failed to adjudicate applicant.' });
+  }
+});
+
+/**
  * GET /api/games
  * Returns upcoming and current week NFL games with the requesting user's pick status.
  */
@@ -1198,7 +1311,7 @@ app.get('/api/pools/:pool_id/matrix', requireAuth, requirePoolMember, async (req
 if (require.main === module) {
   const portNum = typeof PORT === 'string' ? parseInt(PORT, 10) : PORT;
   app.listen(portNum, '0.0.0.0', () => {
-    console.log(`Server running on http://0.0.0.0:${PORT} (Local Wi-Fi: http://192.168.1.18:${PORT})`);
+    console.log(`Server running on http://0.0.0.0:${PORT} (Local Wi-Fi: http://192.168.32.124:${PORT})`);
     startLiveScheduleDaemon();
   });
 }

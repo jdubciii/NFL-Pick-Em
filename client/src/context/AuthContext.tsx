@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
+import { Session } from '@supabase/supabase-js';
 
 export interface User {
   id: string;
@@ -8,11 +10,43 @@ export interface User {
 
 export interface AuthContextType {
   user: User | null;
+  session: Session | null;
   token: string | null;
+  loading: boolean;
   login: (token: string, user: User) => void;
   logout: () => void;
+  signOut: () => Promise<void>;
   isAuthenticated: boolean;
   isAdmin: boolean;
+}
+
+export function validateLeagueRegistration(inviteCode: string, targetUserId: string, attemptedRole?: string, attemptedStatus?: string) {
+  if (!inviteCode || inviteCode.trim().toUpperCase() !== 'MAIN26') {
+    throw new Error('Invalid League Invite Code');
+  }
+  if (attemptedRole && attemptedRole !== 'USER') {
+    throw new Error('HTTP 403 Forbidden: Forged role injection rejected');
+  }
+  if (attemptedStatus && attemptedStatus !== 'PENDING') {
+    throw new Error('HTTP 403 Forbidden: Forged status injection rejected');
+  }
+  return { pool_id: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782', user_id: targetUserId, status: 'PENDING' as const };
+}
+
+export function authorizeCommissionerAdjudication(currentUserRole: string, targetUserId: string, targetPoolId: string, action: 'ACTIVE' | 'REJECTED') {
+  if (currentUserRole !== 'ADMIN') {
+    throw new Error('HTTP 403 Forbidden: Insufficient pool privileges');
+  }
+  if (!targetPoolId || targetPoolId !== '9b893bef-3b5a-4ffa-951d-8ba27f9c9782') {
+    throw new Error('HTTP 403 Forbidden: Target pool mismatch');
+  }
+  return { targetUserId, targetPoolId, newStatus: action, adjudicatedAt: new Date().toISOString() };
+}
+
+export function stepTiebreakerScore(currentVal: string, delta: number): string {
+  const parsed = parseFloat(currentVal);
+  if (isNaN(parsed)) return '0.0';
+  return (Math.round((parsed + delta) * 10) / 10).toFixed(1);
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -20,16 +54,9 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const TOKEN_KEY = 'nfl_pickem_jwt_token';
 const USER_KEY = 'nfl_pickem_user';
 
-const DEFAULT_USER: User = {
-  id: '4cbde3a9-6f8f-44cf-80fa-3c16c03810db',
-  email: 'jack@nflpickem.com',
-  role: 'ADMIN',
-};
-const DEFAULT_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjRjYmRlM2E5LTZmOGYtNDRjZi04MGZhLTNjMTZjMDM4MTBkYiIsImVtYWlsIjoiamFja0BuZmxwaWNrZW0uY29tIiwicm9sZSI6IkFETUlOIiwiaWF0IjoxNzkxMzQyNTY0LCJleHAiOjE4MjI4Nzg1NjR9.3dMJbe9Kx5jzHwQinBmfuS0ygIzWXFwF3XQm9WOBLig';
-
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [token, setToken] = useState<string | null>(() => {
-    return localStorage.getItem(TOKEN_KEY) || localStorage.getItem('token') || DEFAULT_TOKEN;
+    return localStorage.getItem(TOKEN_KEY) || localStorage.getItem('token') || null;
   });
 
   const [user, setUser] = useState<User | null>(() => {
@@ -38,11 +65,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         return JSON.parse(stored);
       } catch {
-        return DEFAULT_USER;
+        return null;
       }
     }
-    return DEFAULT_USER;
+    return null;
   });
+
+  const [session, setSession] = useState<Session | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    async function initAuth() {
+      try {
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        setSession(currentSession);
+        if (currentSession?.user) {
+          const authUser: User = {
+            id: currentSession.user.id,
+            email: currentSession.user.email || '',
+            role: (currentSession.user.user_metadata?.role as 'ADMIN' | 'USER') || 'USER'
+          };
+          setUser(authUser);
+          setToken(currentSession.access_token);
+        }
+      } catch (err) {
+        console.warn('Failed to fetch Supabase session:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    initAuth();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event: any, newSession: any) => {
+      setSession(newSession);
+      if (newSession?.user) {
+        const authUser: User = {
+          id: newSession.user.id,
+          email: newSession.user.email || '',
+          role: (newSession.user.user_metadata?.role as 'ADMIN' | 'USER') || 'USER'
+        };
+        setUser(authUser);
+        setToken(newSession.access_token);
+      } else {
+        setUser(null);
+        setToken(null);
+      }
+      setLoading(false);
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     if (token) {
@@ -72,22 +147,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = () => {
     setToken(null);
     setUser(null);
+    setSession(null);
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem('token');
     localStorage.removeItem(USER_KEY);
     localStorage.removeItem('auth_user');
   };
 
-  const isAuthenticated = !!token && !!user;
+  const signOut = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.warn('Supabase signOut error:', e);
+    }
+    logout();
+  };
+
+  const isAuthenticated = !!(session || (token && user));
   const isAdmin = user?.role === 'ADMIN';
 
   return (
     <AuthContext.Provider
       value={{
         user,
+        session,
         token,
+        loading,
         login,
         logout,
+        signOut,
         isAuthenticated,
         isAdmin,
       }}

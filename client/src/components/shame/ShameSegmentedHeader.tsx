@@ -1,22 +1,35 @@
 import React from 'react';
 import type { ShameTabId } from '../../services/wallOfShameConsolidationService';
 
+export type ExtendedShameTabId = ShameTabId | 'reels' | 'ladder' | 'infamy';
+
 interface ShameSegmentedHeaderProps {
-  activeTab: ShameTabId;
-  onSelectTab: (tab: ShameTabId) => void;
+  activeTab: ExtendedShameTabId;
+  onSelectTab: (tab: any) => void;
 }
 
 export const ShameSegmentedHeader: React.FC<ShameSegmentedHeaderProps> = ({
   activeTab,
   onSelectTab
 }) => {
+  const currentTabLower = String(activeTab || 'ladder').toLowerCase();
+  const isLowerMode = typeof activeTab === 'string' && activeTab === activeTab.toLowerCase();
+
+  const handleSelect = (tabName: 'reels' | 'ladder' | 'infamy') => {
+    if (isLowerMode) {
+      onSelectTab(tabName);
+    } else {
+      onSelectTab(tabName.toUpperCase() as ShameTabId);
+    }
+  };
+
   return (
     <div className="sticky top-0 z-40 w-full pt-1 pb-2 px-3 bg-slate-950/80 backdrop-blur-md border-b border-slate-800/80 font-mono">
       <div className="flex rounded-xl bg-slate-900/90 p-1 border border-slate-800 text-xs font-bold">
         <button
-          onClick={() => onSelectTab('REELS')}
+          onClick={() => handleSelect('reels')}
           className={`flex-1 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-            activeTab === 'REELS'
+            currentTabLower === 'reels'
               ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/50 shadow-[0_0_12px_rgba(6,182,212,0.3)]'
               : 'text-slate-400 hover:text-slate-200'
           }`}
@@ -26,9 +39,9 @@ export const ShameSegmentedHeader: React.FC<ShameSegmentedHeaderProps> = ({
         </button>
 
         <button
-          onClick={() => onSelectTab('LADDER')}
+          onClick={() => handleSelect('ladder')}
           className={`flex-1 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-            activeTab === 'LADDER'
+            currentTabLower === 'ladder'
               ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/50 shadow-[0_0_12px_rgba(6,182,212,0.3)]'
               : 'text-slate-400 hover:text-slate-200'
           }`}
@@ -38,9 +51,9 @@ export const ShameSegmentedHeader: React.FC<ShameSegmentedHeaderProps> = ({
         </button>
 
         <button
-          onClick={() => onSelectTab('INFAMY')}
+          onClick={() => handleSelect('infamy')}
           className={`flex-1 py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-            activeTab === 'INFAMY'
+            currentTabLower === 'infamy'
               ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/50 shadow-[0_0_12px_rgba(6,182,212,0.3)]'
               : 'text-slate-400 hover:text-slate-200'
           }`}

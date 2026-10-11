@@ -18,6 +18,8 @@ android {
     }
     signingConfigs {
         release {
+            v1SigningEnabled true
+            v2SigningEnabled true
             storeFile file('../nflpickem-release.keystore')
             storePassword 'pickem2026'
             keyAlias 'nflpickem'

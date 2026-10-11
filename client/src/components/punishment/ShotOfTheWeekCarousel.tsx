@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import type { PenaltySubmission } from '../../services/punishmentFsmService';
 
 interface ShotOfTheWeekCarouselProps {
@@ -10,7 +10,7 @@ export const ShotOfTheWeekCarousel: React.FC<ShotOfTheWeekCarouselProps> = ({
   hallOfFameSubmissions,
   onSelectSubmission
 }) => {
-  if (hallOfFameSubmissions.length === 0) return null;
+  if (!hallOfFameSubmissions || hallOfFameSubmissions.length === 0) return null;
 
   return (
     <div className="w-full mb-2 font-mono">
@@ -24,20 +24,20 @@ export const ShotOfTheWeekCarousel: React.FC<ShotOfTheWeekCarouselProps> = ({
       <div className="flex gap-2.5 overflow-x-auto pb-1 scrollbar-none snap-x snap-mandatory">
         {hallOfFameSubmissions.map((sub) => (
           <div
-            key={sub.id}
-            onClick={() => onSelectSubmission(sub.id)}
+            key={sub?.id}
+            onClick={() => sub?.id && onSelectSubmission(sub.id)}
             className="flex-shrink-0 w-36 h-24 rounded-xl bg-slate-900 border-2 border-amber-400 shadow-[0_0_15px_rgba(251,191,36,0.35)] p-2 cursor-pointer flex flex-col justify-between snap-start transition hover:scale-105"
           >
             <div className="flex justify-between items-center text-[9px] text-amber-300 font-black">
-              <span>W{sub.weekNumber}</span>
-              <span>{sub.nominations.length} 🏆</span>
+              <span>W{sub?.weekNumber}</span>
+              <span>{sub?.nominations?.length || 0} 🏆</span>
             </div>
             <div className="text-center">
               <span className="text-xl">🍸</span>
-              <p className="text-[10px] text-white font-extrabold truncate">{sub.userName}</p>
+              <p className="text-[10px] text-white font-extrabold truncate">{sub?.userName}</p>
             </div>
             <p className="text-[8px] text-amber-300 text-center uppercase tracking-wider font-bold">
-              WEEK {sub.weekNumber} WINNER
+              WEEK {sub?.weekNumber} WINNER
             </p>
           </div>
         ))}

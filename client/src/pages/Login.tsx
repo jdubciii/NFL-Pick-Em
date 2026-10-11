@@ -1,20 +1,15 @@
 import React, { useState } from 'react';
-import { useNavigate, Navigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
-import { Trophy, Lock, Mail, AlertCircle, ArrowRight, ShieldCheck } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { TargetLockLogo } from '../components/TargetLockLogo';
 
 export const Login: React.FC = () => {
-  const { login, isAuthenticated } = useAuth();
-  const navigate = useNavigate();
-
+  const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  if (isAuthenticated) {
-    return <Navigate to="/picks" replace />;
-  }
+  const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,121 +17,137 @@ export const Login: React.FC = () => {
     setLoading(true);
 
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
+      if (isSignUp) {
+        if (inviteCode.trim().toUpperCase() !== 'MAIN26') {
+          throw new Error('Invalid League Invite Code. Contact commissioner for entry.');
+        }
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+          email,
+          password,
+        });
+        if (signUpError) throw signUpError;
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to authenticate. Please check your credentials.');
+        if (signUpData.user) {
+          // Request PENDING membership in pool_memberships
+          const { error: memberError } = await supabase.from('pool_memberships').insert({
+            pool_id: activePoolId,
+            user_id: signUpData.user.id,
+            status: 'PENDING'
+          });
+          if (memberError && !memberError.message.includes('duplicate')) {
+            console.warn('[SignUp] Membership registration note:', memberError.message);
+          }
+        }
+      } else {
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        if (signInError) throw signInError;
       }
-
-      login(data.token, data.user);
-      navigate('/picks');
     } catch (err: any) {
-      setError(err.message || 'An unexpected error occurred.');
+      setError(err.message || 'Authentication failed');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center px-4 sm:px-6 lg:px-8 py-12">
-      <div className="w-full max-w-md">
-        {/* Card Container */}
-        <div className="glass-panel rounded-2xl p-8 shadow-2xl relative overflow-hidden border border-slate-800">
-          {/* Subtle top decorative glow */}
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 h-1 bg-gradient-to-r from-transparent via-cyan-400 to-transparent"></div>
+    <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center px-4">
+      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl">
+        <div className="flex justify-center mb-6">
+          <TargetLockLogo className="w-16 h-16" />
+        </div>
+        <h1 className="text-2xl font-black text-center text-white uppercase tracking-wider mb-2">
+          NFL Pick 'Em
+        </h1>
+        <p className="text-slate-400 text-xs text-center mb-6 uppercase tracking-wider">
+          {isSignUp ? 'Apply for Pilot League Entry' : 'Authenticate to Access Slate'}
+        </p>
 
-          {/* Header */}
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-cyan-500/20 to-emerald-500/20 border border-cyan-500/30 mb-4 shadow-lg shadow-cyan-500/10">
-              <Trophy className="w-7 h-7 text-cyan-400" />
-            </div>
-            <h2 className="text-3xl font-extrabold text-white tracking-tight">
-              Welcome Back
-            </h2>
-            <p className="text-sm text-slate-400 mt-2 font-medium">
-              Sign in to manage your NFL picks, view locks, and check standings.
-            </p>
+        <div className="flex bg-slate-950 p-1 rounded-xl mb-6 border border-slate-800">
+          <button
+            type="button"
+            onClick={() => { setIsSignUp(false); setError(null); }}
+            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+              !isSignUp ? 'bg-amber-500 text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            SIGN IN
+          </button>
+          <button
+            type="button"
+            onClick={() => { setIsSignUp(true); setError(null); }}
+            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+              isSignUp ? 'bg-amber-500 text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            CREATE ACCOUNT
+          </button>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-950/60 border border-red-800/80 rounded-xl text-red-300 text-xs text-center font-medium">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+              Email Address
+            </label>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-sm focus:outline-none focus:border-amber-500"
+              placeholder="member@example.com"
+            />
           </div>
 
-          {/* Error Alert */}
-          {error && (
-            <div className="mb-6 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-start space-x-3 animate-shake">
-              <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
-              <div className="text-xs text-rose-300 leading-relaxed font-medium">{error}</div>
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+              Password
+            </label>
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-sm focus:outline-none focus:border-amber-500"
+              placeholder="••••••••••••"
+            />
+          </div>
+
+          {isSignUp && (
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
+                League Invite Code
+              </label>
+              <input
+                type="text"
+                required
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+                className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-sm focus:outline-none focus:border-amber-500 uppercase tracking-widest font-mono text-center"
+                placeholder="MAIN26"
+                maxLength={8}
+              />
             </div>
           )}
 
-          {/* Login Form */}
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-1.5">
-                Email Address
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
-                  <Mail className="w-4 h-4" />
-                </div>
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@example.com"
-                  className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-1.5">
-                Password
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
-                  <Lock className="w-4 h-4" />
-                </div>
-                <input
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full mt-2 py-3 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-slate-950 font-bold text-sm tracking-wide shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 transition-all duration-200 flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed group"
-            >
-              {loading ? (
-                <div className="w-5 h-5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin"></div>
-              ) : (
-                <>
-                  <span>Sign In to Pool</span>
-                  <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                </>
-              )}
-            </button>
-          </form>
-
-          {/* Security Badge Info */}
-          <div className="mt-8 pt-6 border-t border-slate-800/80 flex items-center justify-center space-x-2 text-[11px] text-slate-500">
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span>Protected by JWT & Granular Kickoff Locking</span>
-          </div>
-        </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs uppercase tracking-wider shadow-lg transition-all disabled:opacity-50"
+          >
+            {loading ? 'Processing...' : isSignUp ? 'Submit Application' : 'Sign In'}
+          </button>
+        </form>
       </div>
     </div>
   );
 };
+export default Login;

@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { fetchLiveNFLScores, LiveGame } from '../services/liveScoreService';
 import { EmptyStateWireframe } from '../components/common/EmptyStateWireframe';
 import {
   OFFICIAL_WEEK_5_GAMES,
@@ -9,18 +10,19 @@ import {
 
 const SAMPLE_INITIAL_PLAYERS = [
   { userId: 'u1', userName: 'Jack (You)', bankedPoints: 7, livePicksWinning: 2 },
-  { userId: 'u2', userName: 'Dave', bankedPoints: 7, livePicksWinning: 1 },
-  { userId: 'u3', userName: 'Sarah', bankedPoints: 6, livePicksWinning: 2 },
-  { userId: 'u4', userName: 'Mike', bankedPoints: 6, livePicksWinning: 1 },
-  { userId: 'u5', userName: 'Tom', bankedPoints: 5, livePicksWinning: 2 },
-  { userId: 'u6', userName: 'Chris', bankedPoints: 5, livePicksWinning: 1 },
-  { userId: 'u7', userName: 'Alex', bankedPoints: 4, livePicksWinning: 2 },
-  { userId: 'u8', userName: 'Emma', bankedPoints: 4, livePicksWinning: 1 },
-  { userId: 'u9', userName: 'Ryan', bankedPoints: 3, livePicksWinning: 2 },
-  { userId: 'u10', userName: 'Ben', bankedPoints: 3, livePicksWinning: 0 }
 ];
 
 export const RadarPage: React.FC = () => {
+  const [liveScores, setLiveScores] = useState<LiveGame[]>([]);
+  useEffect(() => {
+    fetchLiveNFLScores().then(data => { if (data && data.length > 0) setLiveScores(data); });
+    const timer = setInterval(() => {
+      fetchLiveNFLScores().then(data => { if (data && data.length > 0) setLiveScores(data); });
+    }, 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const isGamedayActive = liveScores.length > 0 || true;
   const [isSimulationActive, setIsSimulationActive] = useState<boolean>(false);
   const [whatIfDallasWins, setWhatIfDallasWins] = useState<boolean>(false);
   const [isDemoGameday, setIsDemoGameday] = useState<boolean>(true);
@@ -87,12 +89,12 @@ export const RadarPage: React.FC = () => {
         </div>
         <div className="text-right">
           <span className="text-[10px] px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-cyan-300 font-bold">
-            14 MATCHUPS // WEEK 5
+            LIVE GAMEDAY // WEEK 5
           </span>
         </div>
       </header>
 
-      {!isDemoGameday || standings.length === 0 || OFFICIAL_WEEK_5_GAMES.length === 0 ? (
+      {!isGamedayActive || standings.length === 0 || OFFICIAL_WEEK_5_GAMES.length === 0 ? (
         <EmptyStateWireframe
           header="[ 14 MATCHUPS PENDING KICKOFF ]"
           subtitle="[ SUNDAY 1:00 PM LOCK INCOMING ]"
@@ -137,51 +139,17 @@ export const RadarPage: React.FC = () => {
         </div>
       </div>
 
-      {/* 4. THE DECISIVE GAME (Highest Standing Impact Matchup) */}
-      <div className="p-3.5 rounded-2xl bg-slate-900 border border-amber-500/40 shadow-md mb-4 font-mono">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2">
-          <span className="text-[10px] font-black text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
-            <span>⚡</span> DECISIVE GAME // HIGHEST LEVERAGE
-          </span>
-          <span className="text-[10px] text-slate-400">
-            {decisiveGame.quarter} - {decisiveGame.clock}
-          </span>
-        </div>
-
-        <div className="flex items-center justify-between my-2">
-          <div>
-            <p className="text-sm font-black text-white">{decisiveGame.matchup}</p>
-            <p className="text-[10px] text-cyan-400">Spread: {decisiveGame.spread}</p>
+        {/* Decisive Game / Highest Leverage */}
+        <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 mb-4 font-mono">
+          <div className="flex items-center justify-between text-xs font-bold text-amber-400 mb-2">
+            <span>⚡ DECISIVE GAME // GAMEDAY LEVERAGE</span>
+            <span className="text-slate-500 text-[10px]">PEER PICKS</span>
           </div>
-          <div className="flex items-center gap-2 text-xs font-bold">
-            <span className="px-2 py-1 rounded bg-emerald-950 border border-emerald-500 text-emerald-300">
-              YOU: {decisiveGame.userPickedTeam}
-            </span>
-            <span className="text-slate-500">vs</span>
-            <span className="px-2 py-1 rounded bg-rose-950 border border-rose-500 text-rose-300">
-              DAVE: {decisiveGame.rivalPickedTeam}
-            </span>
+          <div className="p-3 bg-slate-950/60 rounded-lg border border-slate-800/80 text-center">
+            <p className="text-xs text-slate-400">Awaiting peer pick submissions across active league members.</p>
+            <p className="text-[10px] text-slate-500 mt-1">Live head-to-head leverage and comeback simulations unlock once peer slates lock.</p>
           </div>
         </div>
-
-        <p className="text-[10px] text-slate-300 font-sans border-t border-slate-800/80 pt-1.5">
-          {decisiveGame.outcomeDescription}
-        </p>
-
-        {/* What-If Toggle for Decisive Game */}
-        <button
-          onClick={handleToggleSimulation}
-          className={`w-full mt-2.5 py-2 rounded-xl text-xs font-mono font-bold uppercase tracking-wider transition ${
-            whatIfDallasWins
-              ? 'bg-rose-600 text-white shadow-glow-rose'
-              : 'bg-slate-800 text-slate-300 hover:text-white border border-slate-700'
-          }`}
-        >
-          {whatIfDallasWins
-            ? '✕ RESET WHAT-IF (PHI HOLDS)'
-            : '⚡ SIMULATE: WHAT IF DAL COMES BACK?'}
-        </button>
-      </div>
 
       {/* 5. PROVISIONAL CHARTER TIER LADDER */}
       <div className="space-y-2 font-mono">
@@ -259,3 +227,4 @@ export const RadarPage: React.FC = () => {
 };
 
 export default RadarPage;
+

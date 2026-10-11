@@ -4,9 +4,10 @@ import { useAuth } from '../context/AuthContext';
 
 interface ProtectedRouteProps {
   requireAdmin?: boolean;
+  children?: React.ReactNode;
 }
 
-export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ requireAdmin = false }) => {
+export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ requireAdmin = false, children }) => {
   const { isAuthenticated, isAdmin } = useAuth();
 
   if (!isAuthenticated) {
@@ -17,5 +18,5 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ requireAdmin = f
     return <Navigate to="/picks" replace />;
   }
 
-  return <Outlet />;
+  return children ? <>{children}</> : <Outlet />;
 };

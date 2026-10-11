@@ -1,12 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import type { SettledLadderParticipant } from '../../services/wallOfShameConsolidationService';
+import {
+  SettledLadderParticipant,
+  buildSettledLadderTiers
+} from '../../services/wallOfShameConsolidationService';
+
+const DEFAULT_LADDER: any[] = [
+  { rank: 1, userId: 'u1', userName: 'Jack (Commissioner)', name: 'Jack (Commissioner)', shots: '0.00s', status: 'CLEARED (SAFE)', tier: 'SAFE HAVEN' }
+];
 
 interface WeeklyLadderViewProps {
-  ladder: SettledLadderParticipant[];
+  ladder?: any[];
   onTriggerFtaDemo?: () => void;
 }
 
-export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) => {
+export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder = DEFAULT_LADDER }) => {
   const [secondsRemaining, setSecondsRemaining] = useState<number>(3600 * 24 + 1800);
 
   useEffect(() => {
@@ -17,16 +24,18 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
   }, []);
 
   const formatHoursClock = (sec: number) => {
+    if (!sec || sec <= 0) return '--:--:--';
     const hours = Math.floor(sec / 3600);
     const mins = Math.floor((sec % 3600) / 60);
     const secs = sec % 60;
     return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const safeMembers = ladder.filter((m) => m.tier === 'SAFE');
-  const dangerTier1 = ladder.filter((m) => m.tier === 'DANGER_LOW');
-  const dangerTier2 = ladder.filter((m) => m.tier === 'DANGER_HIGH');
-  const pitMember = ladder.find((m) => m.tier === 'PIT');
+  const activeLadder = ladder || DEFAULT_LADDER;
+  const safeMembers = activeLadder.filter((m) => m?.tier === 'SAFE' || m?.tier === 'SAFE HAVEN');
+  const dangerTier1 = activeLadder.filter((m) => m?.tier === 'DANGER_LOW');
+  const dangerTier2 = activeLadder.filter((m) => m?.tier === 'DANGER_HIGH');
+  const pitMember = activeLadder.find((m) => m?.tier === 'PIT');
 
   return (
     <div className="w-full space-y-4 p-3 font-mono">
@@ -49,14 +58,14 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
         </div>
         {safeMembers.map((m) => (
           <div
-            key={m.userId}
+            key={m.userId || m.name || m.userName}
             className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-900 flex items-center justify-between text-xs text-slate-300"
           >
             <div className="flex items-center gap-2">
               <span className="font-black text-emerald-400">#{m.rank}</span>
-              <span className="font-bold">{m.userName}</span>
+              <span className="font-bold">{m.userName || m.name}</span>
             </div>
-            <span className="text-[10px] text-emerald-400 font-bold">CLEARED (SAFE)</span>
+            <span className="text-[10px] text-emerald-400 font-bold">{m.status || 'CLEARED (SAFE)'}</span>
           </div>
         ))}
       </div>
@@ -134,7 +143,7 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
               <div className="flex items-center gap-2">
                 <span className="text-lg">💀</span>
                 <div>
-                  <p className="text-sm font-black text-white">{pitMember.userName}</p>
+                  <p className="text-sm font-black text-white">{pitMember.userName || 'No Unsettled Penalties'}</p>
                   <p className="text-[9px] text-rose-300 font-bold uppercase">
                     DEAD PLACE MONARCH
                   </p>

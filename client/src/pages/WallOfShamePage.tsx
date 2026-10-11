@@ -1,289 +1,73 @@
 import React, { useState } from 'react';
 import { ShameSegmentedHeader } from '../components/shame/ShameSegmentedHeader';
 import { WeeklyLadderView } from '../components/shame/WeeklyLadderView';
-import { InfamyPenthouseArchive } from '../components/shame/InfamyPenthouseArchive';
-import { ShotOfTheWeekCarousel } from '../components/punishment/ShotOfTheWeekCarousel';
-import { TheGavelAdjudication } from '../components/punishment/TheGavelAdjudication';
-import { PenaltyVideoPlayer } from '../components/shame/PenaltyVideoPlayer';
-import { EvidenceSubmissionDrawer } from '../components/shame/EvidenceSubmissionDrawer';
-import {
-  ShameTabId,
-  buildSettledLadderTiers,
-  InfamyArchiveDocket
-} from '../services/wallOfShameConsolidationService';
-import {
-  initializeTribunalDocket,
-  castTribunalVote,
-  evaluateTribunalVerdict,
-  AdjudicatedPenaltySubmission,
-  TribunalVoteType
-} from '../services/tribunalAdjudicationService';
-import {
-  createPendingPenalty,
-  submitPenaltyEvidence,
-  filePenaltyDispute
-} from '../services/punishmentFsmService';
 
-const SAMPLE_STANDINGS = [
-  { rank: 1, userId: 'u1', userName: 'Jack', penaltyShots: '0.00' },
-  { rank: 2, userId: 'u2', userName: 'Dave', penaltyShots: '1.00' },
-  { rank: 3, userId: 'u3', userName: 'Sarah', penaltyShots: '1.00' },
-  { rank: 4, userId: 'u4', userName: 'Mike', penaltyShots: '1.00' },
-  { rank: 5, userId: 'u5', userName: 'Tom', penaltyShots: '1.00' },
-  { rank: 6, userId: 'u6', userName: 'Chris', penaltyShots: '1.00' },
-  { rank: 7, userId: 'u7', userName: 'Alex', penaltyShots: '2.00' },
-  { rank: 8, userId: 'u8', userName: 'Emma', penaltyShots: '2.00' },
-  { rank: 9, userId: 'u9', userName: 'Ryan', penaltyShots: '2.00' },
-  { rank: 10, userId: 'u10', userName: 'Ben', penaltyShots: '2.50' }
-];
-
-const HISTORICAL_INFAMY_DOCKETS: InfamyArchiveDocket[] = [
-  {
-    id: 'inf_w4_mike',
-    weekNumber: 4,
-    date: '2026-10-02',
-    userId: 'u4',
-    userName: 'Mike',
-    crimeDescription: 'Shot of the Week (Viral Chaser Reaction)',
-    shotDebt: 1.00,
-    liquorType: 'WARM TEQUILA',
-    nominationsCount: 6,
-    hasGoldBorder: true,
-    isContemptOfCourt: false,
-    jurors: [
-      { name: 'Jack', vote: 'DISMISS' },
-      { name: 'Dave', vote: 'DISMISS' }
-    ]
-  },
-  {
-    id: 'inf_w3_ben',
-    weekNumber: 3,
-    date: '2026-09-25',
-    userId: 'u10',
-    userName: 'Ben',
-    crimeDescription: 'Contempt of Court (Spilled liquor escalated to 3.00 shots)',
-    shotDebt: 3.00,
-    liquorType: 'WARM TEQUILA',
-    nominationsCount: 2,
-    hasGoldBorder: false,
-    isContemptOfCourt: true,
-    jurors: [
-      { name: 'Dave', vote: 'UPHOLD' },
-      { name: 'Sarah', vote: 'UPHOLD' },
-      { name: 'Mike', vote: 'UPHOLD' },
-      { name: 'Tom', vote: 'UPHOLD' },
-      { name: 'Jack', vote: 'UPHOLD' }
-    ]
-  }
-];
-
-export const WallOfShamePage: React.FC = () => {
-  const currentUserId = 'u1';
-  const [activeTab, setActiveTab] = useState<ShameTabId>('REELS');
-  const [selectedDisputeDocketId, setSelectedDisputeDocketId] = useState<string | null>(null);
-  const [isEvidenceDrawerOpen, setIsEvidenceDrawerOpen] = useState(false);
-
-  const initialBase1 = createPendingPenalty('pool_alpha', 'u10', 'Ben', 5, 2.50, 'WARM TEQUILA');
-  const submitted1 = submitPenaltyEvidence(initialBase1, 'supabase://vault/ben_w5.mp4');
-  const disputed1 = filePenaltyDispute(
-    submitted1,
-    'u2',
-    'Dave',
-    'SPILLED_LIQUOR',
-    'At timestamp 00:14, half of the second shot glass was spilled on the table.'
-  );
-
-  const [dockets, setDockets] = useState<AdjudicatedPenaltySubmission[]>([
-    initializeTribunalDocket(disputed1),
-    {
-      ...initializeTribunalDocket(createPendingPenalty('pool_alpha', 'u4', 'Mike', 4, 1.00)),
-      status: 'CLEARED',
-      nominations: ['u1', 'u2', 'u3', 'u5', 'u6', 'u7']
-    }
-  ]);
-
-  const handleCastVote = (docketId: string, vote: TribunalVoteType) => {
-    setDockets((prev) =>
-      prev.map((d) => {
-        if (d.id !== docketId) return d;
-        const voted = castTribunalVote(d, currentUserId, 'Jack', vote);
-        const { updatedDocket } = evaluateTribunalVerdict(voted);
-        return updatedDocket;
-      })
-    );
-    setSelectedDisputeDocketId(null);
-  };
-
-  const [userSubmissionStatus, setUserSubmissionStatus] = useState<'PENDING' | 'UNDER_REVIEW'>('PENDING');
-
-  const handleEvidenceSubmit = async (liquorType: string, fileSizeMb: number) => {
-    const uploadPath = `penalties/pool_alpha/${currentUserId}/w5_${Date.now()}.mp4`;
-    const rpcRes = await import('../services/nativeMediaUploadService').then(m =>
-      m.submitPenaltyEvidenceRPC({
-        filePath: uploadPath,
-        liquorType,
-        poolId: 'pool_alpha',
-        userId: currentUserId,
-        weekNumber: 5
-      })
-    );
-
-    if (rpcRes.success) {
-      setUserSubmissionStatus('UNDER_REVIEW');
-      const newSubmission = createPendingPenalty('pool_alpha', currentUserId, 'Jack', 5, 2.50, liquorType);
-      const finalizedSub = submitPenaltyEvidence(newSubmission, `supabase://vault/${uploadPath}`);
-      setDockets((prev) => [
-        {
-          ...initializeTribunalDocket(finalizedSub),
-          status: 'UNDER_REVIEW'
-        },
-        ...prev
-      ]);
-    }
-  };
-
-  const ladderTiers = buildSettledLadderTiers(
-    SAMPLE_STANDINGS,
-    'PENDING_SUBMISSION',
-    2.50,
-    new Date(Date.now() - 3600 * 24 * 1000)
-  );
-
-  const hallOfFameSubmissions = dockets.filter((d) => d.nominations.length > 5);
-  const activeDisputeDocket = dockets.find((d) => d.id === selectedDisputeDocketId);
+export function WallOfShamePage() {
+  const [activeTab, setActiveTab] = useState<'reels' | 'ladder' | 'infamy'>('ladder');
+  const [dockets] = useState<any[]>([]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans max-w-md mx-auto pb-36 overflow-x-hidden">
-      <ShameSegmentedHeader activeTab={activeTab} onSelectTab={setActiveTab} />
+    <div className="flex flex-col min-h-screen bg-[#0a0f1d] text-slate-100 pb-24">
+      {/* Persistent 3-Tab Segmented Header */}
+      <div className="sticky top-0 z-30 bg-[#0a0f1d]/95 backdrop-blur-md px-4 pt-3 pb-2 border-b border-slate-800">
+        <ShameSegmentedHeader activeTab={activeTab} onSelectTab={setActiveTab} />
+      </div>
 
-      {activeTab === 'REELS' && (
-        <div className="space-y-4">
-          <div className="px-3 pt-1">
-            <ShotOfTheWeekCarousel
-              hallOfFameSubmissions={hallOfFameSubmissions}
-              onSelectSubmission={() => {}}
-            />
+      {/* Tab 1: Reels Feed (Scoped Empty State) */}
+      {activeTab === 'reels' && (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center min-h-[60vh]">
+          <div className="w-16 h-16 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center mb-4 text-3xl">
+            🎬
           </div>
-
-          <div className="px-3 space-y-4">
-            {dockets.map((docket) => {
-              const isDisputed = docket.status === 'DISPUTED';
-              const mediaUrl =
-                docket.id === dockets[0].id
-                  ? 'supabase://vault/ben_w5.mp4'
-                  : 'supabase://vault/mike_w4.mp4';
-
-              return (
-                <div key={docket.id} className="relative space-y-2">
-                  <PenaltyVideoPlayer
-                    src={mediaUrl}
-                    isActive={true}
-                    status={docket.status as any}
-                    accusation={(docket as any).dispute?.reasonDescription || docket.disputes?.[0]?.justification}
-                  />
-
-                  {/* Header Pill Overlay */}
-                  <div className="absolute top-3 right-3 z-20 flex gap-2">
-                    {isDisputed && (
-                      <button
-                        type="button"
-                        onClick={() => setSelectedDisputeDocketId(docket.id)}
-                        className="px-2.5 py-1 rounded-full bg-rose-600/90 hover:bg-rose-500 border border-rose-400 shadow-glow-rose text-white text-[10px] font-black tracking-wider uppercase animate-pulse flex items-center gap-1.5 transition"
-                      >
-                        <span>⚖️</span>
-                        <span>UNDER LEAGUE REVIEW</span>
-                      </button>
-                    )}
-
-                    {docket.status === 'CLEARED' && (
-                      <div className="px-2.5 py-1 rounded-full bg-emerald-950/80 border border-emerald-400 text-emerald-300 text-[10px] font-black uppercase">
-                        ✓ DEBT CLEARED
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Footer Metadata Strip */}
-                  <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between font-mono">
-                    <div>
-                      <p className="text-xs font-bold text-white">{docket.userName}</p>
-                      <p className="text-[10px] text-slate-400">
-                        {docket.liquorType || 'WARM TEQUILA'} • Week {docket.weekNumber} Dead Place
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {}}
-                        className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 hover:border-amber-400 text-amber-300 text-xs font-bold transition flex items-center gap-1"
-                      >
-                        <span>🏆</span>
-                        <span>{docket.nominations.length}</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+          <div className="text-amber-400 font-bold text-sm tracking-wider uppercase mb-1">
+            [ NO ACTIVE PENALTY REELS ]
           </div>
+          <p className="text-slate-400 text-xs max-w-xs leading-relaxed mb-6">
+            Zero penalty shot videos have been uploaded for Week 5. The tribunal queue unlocks once evidence is submitted.
+          </p>
+          <button 
+            onClick={() => setActiveTab('ladder')}
+            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold rounded-lg text-slate-200 transition"
+          >
+            VIEW SHOT DEBT LADDER →
+          </button>
+        </div>
+      )}
 
-          {/* Tribunal Jury Deliberation Modal */}
-          {activeDisputeDocket && (
-            <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 backdrop-blur-sm p-3 font-mono">
-              <div className="w-full max-w-md rounded-2xl bg-slate-950 border-2 border-rose-500 shadow-2xl p-4 space-y-3 animate-fade-in">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                  <span className="text-xs font-black text-rose-400 uppercase tracking-wider">
-                    ⚖️ THE SOCIAL TRIBUNAL // JURY DELIBERATION
-                  </span>
-                  <button
-                    onClick={() => setSelectedDisputeDocketId(null)}
-                    className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 hover:text-white"
-                  >
-                    CLOSE
-                  </button>
-                </div>
+      {/* Tab 2: Live Shot Debt Ladder (Always Accessible) */}
+      {activeTab === 'ladder' && (
+        <div className="flex-1 p-4">
+          <WeeklyLadderView />
+        </div>
+      )}
 
-                <TheGavelAdjudication
-                  docket={activeDisputeDocket}
-                  currentUserId={currentUserId}
-                  onCastVote={(v) => handleCastVote(activeDisputeDocket.id, v)}
-                />
-              </div>
+      {/* Tab 3: Hall of Infamy (Always Accessible) */}
+      {activeTab === 'infamy' && (
+        <div className="flex-1 p-6 text-center">
+          <div className="w-14 h-14 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center mx-auto mb-3 text-2xl">
+            🏛️
+          </div>
+          <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400 mb-1">
+            [ HALL OF INFAMY ARCHIVE ]
+          </h3>
+          <p className="text-slate-400 text-xs max-w-xs mx-auto mb-6">
+            Historical dead-place punishments and penalty records.
+          </p>
+          <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-4 text-left max-w-sm mx-auto">
+            <div className="text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-2">SEASON LEDGER SUMMARY</div>
+            <div className="flex justify-between text-xs py-1 border-b border-slate-800/60">
+              <span className="text-slate-400">Total League Penalties:</span>
+              <span className="text-amber-400 font-mono font-bold">0.00 Shots</span>
             </div>
-          )}
-        </div>
-      )}
-
-      {activeTab === 'LADDER' && (
-        <div className="space-y-4">
-          <WeeklyLadderView ladder={ladderTiers} />
-
-          {/* Call to Action Trigger inside The Pit */}
-          <div className="px-3 pb-6">
-            <button
-              type="button"
-              onClick={() => setIsEvidenceDrawerOpen(true)}
-              className="w-full py-4 bg-rose-600 hover:bg-rose-500 text-white font-mono font-black text-xs uppercase tracking-widest rounded-2xl shadow-[0_0_20px_rgba(244,63,94,0.4)] animate-pulse flex items-center justify-center gap-2 transition active:scale-98"
-            >
-              <span>📷</span>
-              <span>RECORD EVIDENCE // SERVE 2.50 SHOT DEBT</span>
-            </button>
+            <div className="flex justify-between text-xs py-1">
+              <span className="text-slate-400">Tribunal Disputes:</span>
+              <span className="text-emerald-400 font-mono font-bold">0 Active</span>
+            </div>
           </div>
         </div>
       )}
-
-      {activeTab === 'INFAMY' && (
-        <InfamyPenthouseArchive dockets={HISTORICAL_INFAMY_DOCKETS} />
-      )}
-
-      {/* Slide-Up Evidence Deposition Submission Drawer */}
-      <EvidenceSubmissionDrawer
-        isOpen={isEvidenceDrawerOpen}
-        onClose={() => setIsEvidenceDrawerOpen(false)}
-        onSubmit={handleEvidenceSubmit}
-        debtAmount={2.50}
-      />
     </div>
   );
-};
+}
 
 export default WallOfShamePage;

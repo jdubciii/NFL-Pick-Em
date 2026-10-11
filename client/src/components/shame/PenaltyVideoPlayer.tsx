@@ -29,7 +29,14 @@ export const PenaltyVideoPlayer: React.FC<PenaltyVideoPlayerProps> = ({
   return (
     <div className="relative w-full aspect-[9/16] bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 shadow-2xl font-mono">
       {/* Media Viewport */}
-      {src.startsWith('supabase://') ? (
+      {!src ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/90 text-slate-400 p-6 text-center space-y-2">
+          <span className="text-4xl">🎬</span>
+          <p className="text-xs font-black tracking-widest uppercase text-slate-400">
+            [ PENDING VIDEO EVIDENCE ]
+          </p>
+        </div>
+      ) : src.startsWith('supabase://') ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/90 text-slate-400 p-6 text-center space-y-2">
           <span className="text-4xl">🔒</span>
           <p className="text-xs font-black tracking-widest uppercase text-cyan-400">
