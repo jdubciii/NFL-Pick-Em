@@ -104,7 +104,7 @@ describe('Phase 38 Sunday Sweat Projection Engine (Ruling P37-P38-2026-10-12-01)
     expect(jack.totalProvisionalPoints).toBe(2);
     expect(jack.provisionalRank).toBe(1);
     expect(jack.rankDelta).toBe(1); // Improved from rank 2 to 1 (+1)
-    expect(jack.tier).toBe('PODIUM');
+    expect(jack.tier).toBe('SAFE_HAVEN');
 
     // Alice should be Rank 2 (1 pt, -1 delta)
     const alice = standings.find((s) => s.userId === 'u2')!;

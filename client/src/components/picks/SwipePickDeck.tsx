@@ -551,7 +551,7 @@ const SwipeCardItem: React.FC<{
 
         {isUserLocked && (
           <div className="p-1.5 rounded-xl bg-amber-950/80 border border-amber-500/50 text-[10px] text-amber-300 font-black tracking-wide uppercase shadow-inner">
-            🔒 Picks Locked · Tap 'LOCKED' Pill in Header to Edit
+            🔒 Locked (Kickoff passed)
           </div>
         )}
       </div>

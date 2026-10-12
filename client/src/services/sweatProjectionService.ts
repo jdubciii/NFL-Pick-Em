@@ -49,7 +49,8 @@ export interface ProvisionalStandingEntry {
   provisionalRank: number;
   rankDelta: number;
   isTied: boolean;
-  tier: 'PODIUM' | 'SAFE_HAVEN' | 'BUBBLE' | 'DANGER' | 'PIT';
+  tier: 'SAFE_HAVEN' | 'DANGER_ZONE' | 'THE_DROP' | 'PIT' | 'PODIUM';
+  statusText: string;
   podiumProbability: number;
   dangerProbability: number;
   swingGame: SwingGameCard | null;
@@ -235,33 +236,51 @@ export function calculateProvisionalStandings(
     const prevRank = prevRankMap.get(calc.user.id);
     const rankDelta = prevRank !== undefined ? prevRank - rank : 0;
 
-    // Determine Tier
-    let tier: ProvisionalStandingEntry['tier'] = 'SAFE_HAVEN';
-    if (rank === totalCompetitors && totalCompetitors > 1) {
-      tier = 'PIT';
-    } else if (rank <= 3) {
-      tier = 'PODIUM';
-    } else if (rank >= totalCompetitors - 1 && totalCompetitors >= 4) {
-      tier = 'DANGER';
-    } else if (rank >= totalCompetitors / 2) {
-      tier = 'BUBBLE';
-    }
-
-    // Probabilities calculation
-    let podiumProbability = 0;
-    let dangerProbability = 0;
-
-    if (rank === totalCompetitors && totalCompetitors > 1) {
-      podiumProbability = Math.min(10, Math.max(0, 10 - rank));
-      dangerProbability = Math.max(80, Math.min(99, 85 + (totalCompetitors > 1 ? 5 : 0)));
-    } else if (rank <= 3) {
-      podiumProbability = Math.max(70, Math.min(100, 100 - (rank - 1) * 15));
-      dangerProbability = Math.max(0, 5);
+    // 1. Charter Penalty Tier Alignment:
+    // Rank 1: "SAFE HAVEN" (0 shots)
+    // Ranks 2–6: "DANGER ZONE" (1 shot exposure)
+    // Ranks 7–9: "THE DROP" (2 shots exposure)
+    // Rank 10: "THE PIT" (2.5 shots / Dead Place Monarch provisional)
+    let tier: ProvisionalStandingEntry['tier'] = 'DANGER_ZONE';
+    if (rank === 1) {
+      tier = 'SAFE_HAVEN';
+    } else if (rank >= 2 && rank <= 6) {
+      if (rank === totalCompetitors && totalCompetitors > 1) {
+        tier = 'PIT';
+      } else {
+        tier = 'DANGER_ZONE';
+      }
+    } else if (rank >= 7 && (totalCompetitors <= 9 ? rank < totalCompetitors : rank <= 9)) {
+      tier = 'THE_DROP';
     } else {
-      const progressRatio = rank / totalCompetitors;
-      podiumProbability = Math.round(Math.max(5, (1 - progressRatio) * 60));
-      dangerProbability = Math.round(Math.max(10, progressRatio * 75));
+      tier = 'PIT';
     }
+
+    // 2. Deterministic point gap status text (eliminating fake percentages)
+    let statusText = '';
+    const points = calc.totalPoints;
+    if (rank === 1) {
+      const rank2 = sorted.find((_, idx) => entriesWithRank[idx]?.rank === 2) || sorted[1];
+      const gap = rank2 ? points - rank2.totalPoints : 0;
+      statusText = gap > 0 ? `Currently ${gap} pt ahead of Danger Zone` : 'Holding Safe Haven on tiebreaker';
+    } else if (tier === 'DANGER_ZONE') {
+      const dropBorder = sorted.find((_, idx) => entriesWithRank[idx]?.rank === 7) || sorted[sorted.length - 1];
+      const gapToDrop = dropBorder ? points - dropBorder.totalPoints : 0;
+      const rank1 = sorted[0];
+      const gapToLeader = rank1 ? rank1.totalPoints - points : 1;
+      statusText = gapToDrop > 0 ? `Currently ${gapToDrop} pt ahead of The Drop` : `${gapToLeader} pt behind Safe Haven`;
+    } else if (tier === 'THE_DROP') {
+      const pitUser = sorted[sorted.length - 1];
+      const gapToPit = pitUser ? points - pitUser.totalPoints : 0;
+      statusText = gapToPit > 0 ? `Currently ${gapToPit} pt ahead of The Pit` : 'Teetering on The Pit boundary';
+    } else {
+      const nonPitUser = sorted.find((_, idx) => entriesWithRank[idx]?.rank < rank) || sorted[0];
+      const gapToSafety = nonPitUser ? nonPitUser.totalPoints - points : 1;
+      statusText = `${gapToSafety} pt to escape The Pit`;
+    }
+
+    const podiumProbability = tier === 'SAFE_HAVEN' ? 100 : (rank <= 3 ? 75 : 0);
+    const dangerProbability = tier === 'PIT' ? 95 : (tier === 'THE_DROP' ? 70 : (tier === 'DANGER_ZONE' ? 40 : 0));
 
     // Determine Swing Game Card (active matchups only; completed games cannot swing)
     let swingGame: SwingGameCard | null = null;
@@ -290,9 +309,9 @@ export function calculateProvisionalStandings(
       const matchupText = `${bestCandidate.game.awayTeam} @ ${bestCandidate.game.homeTeam}`;
 
       let impactDesc = `Victory with ${bestCandidate.pick.selectedTeam} stabilizes rank`;
-      if (tier === 'PIT' || tier === 'DANGER') {
+      if (tier === 'PIT' || tier === 'THE_DROP') {
         impactDesc = `Crucial swing pick: Winning with ${bestCandidate.pick.selectedTeam} lifts user out of The Pit`;
-      } else if (tier === 'PODIUM') {
+      } else if (tier === 'SAFE_HAVEN') {
         impactDesc = `Defensive lock: ${bestCandidate.pick.selectedTeam} secures top podium standing`;
       }
 
@@ -316,6 +335,7 @@ export function calculateProvisionalStandings(
       rankDelta,
       isTied,
       tier,
+      statusText,
       podiumProbability,
       dangerProbability,
       swingGame,

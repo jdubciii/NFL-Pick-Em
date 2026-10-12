@@ -107,7 +107,7 @@ describe('Phase 38 Sunday Sweat & Radar Integration Tests (Ruling P37-P38-2026-1
     expect(jackStanding?.livePoints).toBe(1);
     expect(jackStanding?.totalProvisionalPoints).toBe(2);
     expect(jackStanding?.provisionalRank).toBe(1);
-    expect(jackStanding?.tier).toBe('PODIUM');
+    expect(jackStanding?.tier).toBe('SAFE_HAVEN');
 
     // Dave: picked KC (loss -> 0) + picked DAL (trailing -> 0) = 0 pts -> last place
     const daveStanding = result.find((s) => s.userId === 'u_dave');

@@ -238,7 +238,7 @@ export const WeeklyPicks: React.FC = () => {
    */
   const handleApplyPreset = (updatedPicks: Record<string, string | null>, presetDescription: string) => {
     if (isUserLocked) {
-      setFeedbackMessage({ text: 'Picks are locked. Tap "LOCKED" button to edit picks.', type: 'error' });
+      setFeedbackMessage({ text: 'Matchups locked: kickoff has passed.', type: 'error' });
       return;
     }
     if (!pool) return;
@@ -408,7 +408,7 @@ export const WeeklyPicks: React.FC = () => {
           }`}
         >
           <span>{isUserLocked ? '🔒' : '🔓'}</span>
-          <span>{isUserLocked ? 'LOCKED' : 'LOCK PICKS'}</span>
+          <span>{isUserLocked ? 'Locked (Kickoff passed)' : 'Submitted (Editable until kickoff)'}</span>
         </button>
       </div>
 
