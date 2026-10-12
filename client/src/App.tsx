@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { useAuth } from './context/AuthContext';
+import { useAuth, autoRepairPoolMembership } from './context/AuthContext';
 import { supabase } from './lib/supabase';
 import { BottomNavigation } from './components/BottomNavigation';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -14,6 +14,31 @@ import { PicksPage } from './pages/PicksPage';
 export function resolveNavigationVisibility(session: any, membershipStatus: string | null): boolean {
   return Boolean(session && membershipStatus === 'ACTIVE');
 }
+
+export const PendingApprovalScreen: React.FC = () => {
+  return (
+    <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center px-4 text-center select-none font-mono">
+      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl">
+        <div className="text-4xl mb-4 animate-pulse">⏳</div>
+        <h1 className="text-lg font-black text-white uppercase tracking-wider mb-3">
+          Application Pending Commissioner Approval
+        </h1>
+        <p className="text-slate-400 text-xs leading-relaxed mb-6">
+          Your request to join <span className="text-amber-400 font-bold">Main League</span> with code <span className="text-white font-bold">MAIN26</span> has been registered. The commissioner (Jack) must approve your admission before you can access the league.
+        </p>
+        <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 text-[11px] text-amber-400 font-bold tracking-wide mb-6">
+          STATUS: PENDING COMMISSIONER ADJUDICATION
+        </div>
+        <button
+          onClick={() => supabase.auth.signOut()}
+          className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white text-xs font-black rounded-xl uppercase tracking-wider transition-all shadow-md active:scale-95"
+        >
+          Sign Out
+        </button>
+      </div>
+    </div>
+  );
+};
 
 export const App: React.FC = () => {
   const { user, session, loading } = useAuth();
@@ -39,16 +64,18 @@ export const App: React.FC = () => {
           .maybeSingle();
 
         if (error || !data) {
-          setMembershipStatus('NONE');
+          // Auto-repair missing pool_memberships row on login (Step 2)
+          const repairStatus = await autoRepairPoolMembership(user.id, user.email, session?.access_token);
+          setMembershipStatus(repairStatus || 'PENDING');
         } else {
           setMembershipStatus(data.status as 'ACTIVE' | 'PENDING');
         }
       } catch (err) {
-        setMembershipStatus('NONE');
+        setMembershipStatus('PENDING');
       }
     }
     checkMembership();
-  }, [user]);
+  }, [user, session]);
 
   if (loading || (user && membershipStatus === 'LOADING')) {
     return (
@@ -58,31 +85,14 @@ export const App: React.FC = () => {
     );
   }
 
-  // Pending League Approval Shell
-  if (user && membershipStatus === 'PENDING') {
-    return (
-      <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center px-4 text-center">
-        <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl">
-          <div className="text-3xl mb-4">⏳</div>
-          <h1 className="text-xl font-black text-white uppercase tracking-wider mb-2">Admission Pending</h1>
-          <p className="text-slate-400 text-xs mb-6">
-            Your application to <span className="text-amber-400 font-bold">Main League</span> has been submitted with code <span className="font-mono text-white">MAIN26</span>.
-          </p>
-          <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 text-[11px] text-slate-400 font-mono mb-6">
-            Status: PENDING COMMISSIONER APPROVAL
-          </div>
-          <button
-            onClick={() => supabase.auth.signOut()}
-            className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl uppercase tracking-wider transition-colors"
-          >
-            Sign Out
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   const isAdmitted = resolveNavigationVisibility(session, membershipStatus);
+
+  // Fail-Closed Hard Gate (Decision #55):
+  // If authenticated session exists but membershipStatus !== 'ACTIVE',
+  // trap completely in PendingApprovalScreen—zero access to Picks, Matrix, Radar, or Shame.
+  if (session && !isAdmitted) {
+    return <PendingApprovalScreen />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">

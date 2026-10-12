@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { TargetLockLogo } from '../components/TargetLockLogo';
+import { autoRepairPoolMembership } from '../context/AuthContext';
 
 export const Login: React.FC = () => {
   const [isSignUp, setIsSignUp] = useState(false);
@@ -70,11 +71,20 @@ export const Login: React.FC = () => {
           setInfoMessage('Application registered. Please confirm your email before the commissioner can admit you.');
         }
       } else {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
         if (signInError) throw signInError;
+
+        // Auto-repair missing pool_memberships row on login (Step 2)
+        if (signInData.user) {
+          await autoRepairPoolMembership(
+            signInData.user.id,
+            email,
+            signInData.session?.access_token
+          );
+        }
       }
     } catch (err: any) {
       setError(err.message || 'Authentication failed');

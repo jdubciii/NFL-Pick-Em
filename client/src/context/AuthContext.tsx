@@ -49,6 +49,50 @@ export function stepTiebreakerScore(currentVal: string, delta: number): string {
   return (Math.round((parsed + delta) * 10) / 10).toFixed(1);
 }
 
+export async function autoRepairPoolMembership(
+  userId: string,
+  userEmail: string,
+  token?: string | null
+): Promise<'PENDING' | 'ACTIVE' | null> {
+  const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+  try {
+    const { data, error } = await supabase
+      .from('pool_memberships')
+      .select('status')
+      .eq('pool_id', activePoolId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (error || !data) {
+      // Missing membership row detected! Dispatch join route
+      try {
+        await fetch(`/api/pools/${activePoolId}/join`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            'x-user-email': userEmail,
+          },
+          body: JSON.stringify({ inviteCode: 'MAIN26' }),
+        });
+      } catch (netErr) {
+        console.warn('[AutoRepair] Join API dispatch notice:', netErr);
+      }
+
+      await supabase.from('pool_memberships').upsert({
+        pool_id: activePoolId,
+        user_id: userId,
+        status: 'PENDING',
+      });
+      return 'PENDING';
+    }
+    return data.status as 'ACTIVE' | 'PENDING';
+  } catch (err) {
+    console.warn('[AutoRepair] Execution note:', err);
+    return 'PENDING';
+  }
+}
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const TOKEN_KEY = 'nfl_pickem_jwt_token';

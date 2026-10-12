@@ -92,10 +92,10 @@ export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
     prevLeadSignRef.current = currentSign;
   }, [showdown]);
 
-  if (!activeRival || !showdown) {
+  if (members.length <= 1 || availableRivals.length === 0 || !activeRival || !showdown) {
     return (
-      <div className="p-8 text-center text-slate-400 font-mono text-xs">
-        No active rivals available for head-to-head duel.
+      <div className="p-8 text-center bg-slate-900/60 border border-slate-800 rounded-2xl text-slate-400 font-mono text-xs">
+        Waiting for league members to join...
       </div>
     );
   }

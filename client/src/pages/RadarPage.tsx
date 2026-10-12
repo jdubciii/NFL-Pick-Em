@@ -12,78 +12,6 @@ import {
 } from '../services/sweatProjectionService';
 import { RivalryShowdown } from '../components/radar/RivalryShowdown';
 
-const DEFAULT_MEMBERS: UserStandingRef[] = [
-  { id: 'u1', name: 'Jack (Commissioner)' },
-  { id: 'u2', name: 'Dave M.' },
-  { id: 'u3', name: 'Sarah K.' },
-  { id: 'u4', name: 'Mike T.' },
-  { id: 'u5', name: 'Chris P.' },
-  { id: 'u6', name: 'Alex R.' },
-  { id: 'u7', name: 'Sam B.' },
-  { id: 'u8', name: 'Elena W.' },
-  { id: 'u9', name: 'Dan H.' },
-  { id: 'u10', name: 'Tom C.' },
-];
-
-const DEFAULT_SLATE_GAMES: SlateGame[] = [
-  { id: 'g1', homeTeam: 'BAL', awayTeam: 'KC', spread: -3.5 },
-  { id: 'g2', homeTeam: 'PHI', awayTeam: 'DAL', spread: -6.0 },
-  { id: 'g3', homeTeam: 'SF', awayTeam: 'LAR', spread: -4.5 },
-  { id: 'g4', homeTeam: 'DET', awayTeam: 'GB', spread: -2.5 },
-  { id: 'g5', homeTeam: 'BUF', awayTeam: 'MIA', spread: -7.0 },
-  { id: 'g6', homeTeam: 'CIN', awayTeam: 'CLE', spread: -3.0 },
-  { id: 'g7', homeTeam: 'HOU', awayTeam: 'IND', spread: -1.5 },
-  { id: 'g8', homeTeam: 'MIN', awayTeam: 'CHI', spread: -4.0 },
-  { id: 'g9', homeTeam: 'TB', awayTeam: 'ATL', spread: -1.0 },
-  { id: 'g10', homeTeam: 'SEA', awayTeam: 'ARI', spread: -5.5 },
-  { id: 'g11', homeTeam: 'PIT', awayTeam: 'DEN', spread: -2.0 },
-  { id: 'g12', homeTeam: 'NYJ', awayTeam: 'NE', spread: -6.5 },
-  { id: 'g13', homeTeam: 'NO', awayTeam: 'CAR', spread: -8.0 },
-  { id: 'g14', homeTeam: 'LAC', awayTeam: 'LV', spread: -3.0 },
-];
-
-const DEFAULT_PICKS: UserPickItem[] = [
-  // Jack (u1)
-  { userId: 'u1', gameId: 'g1', selectedTeam: 'BAL', isSubmitted: true },
-  { userId: 'u1', gameId: 'g2', selectedTeam: 'PHI', isSubmitted: true },
-  { userId: 'u1', gameId: 'g3', selectedTeam: 'SF', isSubmitted: true },
-  { userId: 'u1', gameId: 'g4', selectedTeam: 'DET', isSubmitted: true },
-  { userId: 'u1', gameId: 'g5', selectedTeam: 'BUF', isSubmitted: true },
-  // Dave (u2)
-  { userId: 'u2', gameId: 'g1', selectedTeam: 'KC', isSubmitted: true },
-  { userId: 'u2', gameId: 'g2', selectedTeam: 'DAL', isSubmitted: true },
-  { userId: 'u2', gameId: 'g3', selectedTeam: 'SF', isSubmitted: true },
-  { userId: 'u2', gameId: 'g4', selectedTeam: 'GB', isSubmitted: true },
-  { userId: 'u2', gameId: 'g5', selectedTeam: 'BUF', isSubmitted: true },
-  // Sarah (u3)
-  { userId: 'u3', gameId: 'g1', selectedTeam: 'BAL', isSubmitted: true },
-  { userId: 'u3', gameId: 'g2', selectedTeam: 'PHI', isSubmitted: true },
-  { userId: 'u3', gameId: 'g3', selectedTeam: 'LAR', isSubmitted: true },
-  { userId: 'u3', gameId: 'g4', selectedTeam: 'DET', isSubmitted: true },
-  // Mike (u4)
-  { userId: 'u4', gameId: 'g1', selectedTeam: 'KC', isSubmitted: true },
-  { userId: 'u4', gameId: 'g2', selectedTeam: 'PHI', isSubmitted: true },
-  { userId: 'u4', gameId: 'g3', selectedTeam: 'SF', isSubmitted: true },
-  // Chris (u5)
-  { userId: 'u5', gameId: 'g1', selectedTeam: 'BAL', isSubmitted: true },
-  { userId: 'u5', gameId: 'g2', selectedTeam: 'DAL', isSubmitted: true },
-  // Alex (u6)
-  { userId: 'u6', gameId: 'g1', selectedTeam: 'KC', isSubmitted: true },
-  { userId: 'u6', gameId: 'g2', selectedTeam: 'PHI', isSubmitted: true },
-  // Sam (u7)
-  { userId: 'u7', gameId: 'g1', selectedTeam: 'BAL', isSubmitted: true },
-  { userId: 'u7', gameId: 'g2', selectedTeam: 'DAL', isSubmitted: true },
-  // Elena (u8)
-  { userId: 'u8', gameId: 'g1', selectedTeam: 'KC', isSubmitted: true },
-  { userId: 'u8', gameId: 'g2', selectedTeam: 'PHI', isSubmitted: true },
-  // Dan (u9)
-  { userId: 'u9', gameId: 'g1', selectedTeam: 'KC', isSubmitted: true },
-  { userId: 'u9', gameId: 'g2', selectedTeam: 'DAL', isSubmitted: true },
-  // Tom (u10)
-  { userId: 'u10', gameId: 'g1', selectedTeam: 'KC', isSubmitted: true },
-  { userId: 'u10', gameId: 'g2', selectedTeam: 'DAL', isSubmitted: true },
-];
-
 export const RadarPage: React.FC = () => {
   const { user, token } = useAuth();
   const [activeViewMode, setActiveViewMode] = useState<'LEAGUE' | 'RIVALRY'>('LEAGUE');
@@ -98,14 +26,11 @@ export const RadarPage: React.FC = () => {
   const [isSimulationActive, setIsSimulationActive] = useState<boolean>(false);
   const [simulationFlippedPicks, setSimulationFlippedPicks] = useState<boolean>(false);
 
-  // Pool & slate data
-  const [members, setMembers] = useState<UserStandingRef[]>(DEFAULT_MEMBERS);
-  const [games, setGames] = useState<SlateGame[]>(DEFAULT_SLATE_GAMES);
-  const [picks, setPicks] = useState<UserPickItem[]>(DEFAULT_PICKS);
-  const [tiebreakers] = useState<TiebreakerData | undefined>({
-    actualTotalScore: 48.0,
-    userPredictions: { u1: 47.5, u2: 44.0, u3: 51.0, u10: 42.0 },
-  });
+  // Pool & slate data (bound strictly to live database pool state)
+  const [members, setMembers] = useState<UserStandingRef[]>([]);
+  const [games, setGames] = useState<SlateGame[]>([]);
+  const [picks, setPicks] = useState<UserPickItem[]>([]);
+  const [tiebreakers] = useState<TiebreakerData | undefined>(undefined);
 
   // Track live scores with fallback to retain last-good telemetry
   useEffect(() => {
@@ -539,7 +464,16 @@ export const RadarPage: React.FC = () => {
               <div className="col-span-2 text-right">TOTAL</div>
             </div>
 
-            {provisionalResult.map((p, idx) => {
+            {members.length <= 1 ? (
+              <div className="p-8 text-center bg-slate-900/60 border border-slate-800 rounded-2xl font-mono space-y-2">
+                <span className="text-3xl block animate-pulse">⏳</span>
+                <p className="text-sm font-bold text-slate-300">Waiting for league members to join...</p>
+                <p className="text-xs text-slate-500">
+                  Live provisional standings and rivalry duel projections activate once competitors are admitted.
+                </p>
+              </div>
+            ) : (
+              provisionalResult.map((p, idx) => {
               const isUser =
                 (user?.email === 'jack.w.cone@gmail.com' && (p.userId === user?.id || p.userName.toLowerCase().includes('jack'))) ||
                 p.userId === currentUserId ||
@@ -624,7 +558,8 @@ export const RadarPage: React.FC = () => {
                   )}
                 </React.Fragment>
               );
-            })}
+            })
+          )}
 
             <div className="pt-2 text-center">
               <p className="text-[9px] text-slate-500 font-mono">

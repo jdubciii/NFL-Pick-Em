@@ -136,6 +136,16 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
 
   const nextUnderCard = matchups[getNextUnpickedIndex(currentIndex)];
 
+  if (matchups.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center p-8 bg-slate-900/90 border border-slate-800 rounded-3xl text-center space-y-3 font-mono shadow-2xl">
+        <span className="text-3xl animate-pulse">🏈</span>
+        <h4 className="text-sm font-black text-white uppercase tracking-wider">Slate Unavailable</h4>
+        <p className="text-xs text-slate-400">No active matchup slate available for this week.</p>
+      </div>
+    );
+  }
+
   if (!activeCard) {
     return (
       <div className="flex flex-col items-center justify-center p-6 bg-slate-900/90 border border-slate-800 rounded-3xl text-center space-y-3 font-mono shadow-2xl">

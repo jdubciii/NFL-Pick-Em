@@ -418,6 +418,12 @@ export const WeeklyPicks: React.FC = () => {
           <div className="w-10 h-10 border-3 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-sm text-slate-400 font-medium">Loading NFL matchups and live odds...</p>
         </div>
+      ) : games.length === 0 ? (
+        <div className="py-20 text-center font-mono text-sm text-slate-400 bg-slate-900/60 border border-slate-800 rounded-2xl p-8 shadow-xl max-w-md mx-auto">
+          <span className="text-3xl mb-3 block animate-pulse">🏈</span>
+          <p className="font-bold text-slate-200 uppercase tracking-wide mb-1">Slate Unavailable</p>
+          <p className="text-xs text-slate-400">No active matchup slate available for this week.</p>
+        </div>
       ) : (
         <div className="space-y-4">
           {/* Quick-Fill Presets Toolbar */}
