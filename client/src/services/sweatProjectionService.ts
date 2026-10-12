@@ -55,6 +55,16 @@ export interface ProvisionalStandingEntry {
   swingGame: SwingGameCard | null;
 }
 
+export type ProvisionalStanding = ProvisionalStandingEntry;
+export type SwingGameInfo = SwingGameCard;
+
+export interface ProvisionalStandingsResult extends Array<ProvisionalStanding> {
+  standings: ProvisionalStanding[];
+  swingGame: SwingGameInfo | null;
+  lastUpdated?: string;
+  isStale?: boolean;
+}
+
 /**
  * Pure, non-mutating Sunday Sweat projection engine (Phase 38).
  * Answers core gameday live questions:
@@ -73,9 +83,14 @@ export function calculateProvisionalStandings(
   userPicks: readonly UserPickItem[],
   tiebreakers?: TiebreakerData,
   previousSnapshot?: readonly PreviousSnapshotEntry[]
-): ProvisionalStandingEntry[] {
+): ProvisionalStandingsResult {
   if (!users || users.length === 0) {
-    return [];
+    const emptyResult = [] as unknown as ProvisionalStandingsResult;
+    emptyResult.standings = [];
+    emptyResult.swingGame = null;
+    emptyResult.lastUpdated = new Date().toISOString();
+    emptyResult.isStale = false;
+    return emptyResult;
   }
 
   // Build live scores map for fast, immutable O(1) lookup
@@ -145,7 +160,7 @@ export function calculateProvisionalStandings(
         if ((homeScore > awayScore && isHomePick) || (awayScore > homeScore && isAwayPick)) {
           bankedPoints += 1;
         }
-      } else if (live.status === 'IN_PROGRESS' || live.status === 'HALFTIME') {
+      } else if (live.status === 'IN_PROGRESS') {
         if ((homeScore > awayScore && isHomePick) || (awayScore > homeScore && isAwayPick)) {
           livePoints += 1;
         }
@@ -216,7 +231,7 @@ export function calculateProvisionalStandings(
   }
 
   // 4. Build ProvisionalStandingEntry items
-  return entriesWithRank.map(({ calc, rank, isTied }) => {
+  const standings = entriesWithRank.map(({ calc, rank, isTied }) => {
     const prevRank = prevRankMap.get(calc.user.id);
     const rankDelta = prevRank !== undefined ? prevRank - rank : 0;
 
@@ -248,14 +263,18 @@ export function calculateProvisionalStandings(
       dangerProbability = Math.round(Math.max(10, progressRatio * 75));
     }
 
-    // Determine Swing Game Card
+    // Determine Swing Game Card (active matchups only; completed games cannot swing)
     let swingGame: SwingGameCard | null = null;
-    if (calc.userActivePicks.length > 0) {
+    const activeCandidates = calc.userActivePicks.filter(
+      (p) => !p.live || p.live.status !== 'FINAL'
+    );
+
+    if (activeCandidates.length > 0) {
       // Find highest leverage matchup (e.g. game in progress with tight score or spread)
-      let bestCandidate = calc.userActivePicks[0];
+      let bestCandidate = activeCandidates[0];
       let maxLeverage = 1;
 
-      for (const item of calc.userActivePicks) {
+      for (const item of activeCandidates) {
         const spreadWeight = item.game.spread ? Math.abs(item.game.spread) : 1;
         let leverage = spreadWeight;
         if (item.live && item.live.status === 'IN_PROGRESS') {
@@ -302,4 +321,12 @@ export function calculateProvisionalStandings(
       swingGame,
     };
   });
+
+  const result = standings as unknown as ProvisionalStandingsResult;
+  result.standings = standings;
+  result.swingGame = standings.find((s) => s.swingGame !== null)?.swingGame ?? null;
+  result.lastUpdated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  result.isStale = false;
+
+  return result;
 }
