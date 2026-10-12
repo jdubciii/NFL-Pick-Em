@@ -8,35 +8,66 @@ export const Login: React.FC = () => {
   const [password, setPassword] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setInfoMessage(null);
     setLoading(true);
 
     try {
       if (isSignUp) {
-        if (inviteCode.trim().toUpperCase() !== 'MAIN26') {
+        const cleanInvite = inviteCode.trim().toUpperCase();
+        if (cleanInvite !== 'MAIN26') {
           throw new Error('Invalid League Invite Code. Contact commissioner for entry.');
         }
+
         const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
         });
         if (signUpError) throw signUpError;
 
-        if (signUpData.user) {
-          // Request PENDING membership in pool_memberships
-          const { error: memberError } = await supabase.from('pool_memberships').insert({
-            pool_id: activePoolId,
-            user_id: signUpData.user.id,
-            status: 'PENDING'
+        // If session is immediately active (auto-confirm enabled)
+        if (signUpData.session) {
+          const token = signUpData.session.access_token;
+
+          // Dispatch POST /api/pools/:pool_id/join with { inviteCode: 'MAIN26' }
+          const joinRes = await fetch(`/api/pools/${activePoolId}/join`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+              'x-user-email': email,
+            },
+            body: JSON.stringify({ inviteCode: cleanInvite }),
           });
-          if (memberError && !memberError.message.includes('duplicate')) {
-            console.warn('[SignUp] Membership registration note:', memberError.message);
+
+          if (!joinRes.ok) {
+            const errData = await joinRes.json().catch(() => ({}));
+            if (joinRes.status === 403) {
+              throw new Error(errData.error || 'Registration rejected: Invalid invite code or access denied.');
+            }
+            throw new Error(errData.error || `Server registration failed with HTTP ${joinRes.status}.`);
           }
+
+          // Guarantee database membership record via Supabase client as well
+          if (signUpData.user) {
+            const { error: memberError } = await supabase.from('pool_memberships').upsert({
+              pool_id: activePoolId,
+              user_id: signUpData.user.id,
+              status: 'PENDING',
+            });
+            if (memberError && !memberError.message.includes('duplicate')) {
+              console.warn('[SignUp] Supabase membership registration note:', memberError.message);
+            }
+          }
+        } else {
+          // If Supabase requires email confirmation first
+          setInfoMessage('Application registered. Please confirm your email before the commissioner can admit you.');
         }
       } else {
         const { error: signInError } = await supabase.auth.signInWithPassword({
@@ -68,7 +99,7 @@ export const Login: React.FC = () => {
         <div className="flex bg-slate-950 p-1 rounded-xl mb-6 border border-slate-800">
           <button
             type="button"
-            onClick={() => { setIsSignUp(false); setError(null); }}
+            onClick={() => { setIsSignUp(false); setError(null); setInfoMessage(null); }}
             className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
               !isSignUp ? 'bg-amber-500 text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'
             }`}
@@ -77,7 +108,7 @@ export const Login: React.FC = () => {
           </button>
           <button
             type="button"
-            onClick={() => { setIsSignUp(true); setError(null); }}
+            onClick={() => { setIsSignUp(true); setError(null); setInfoMessage(null); }}
             className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
               isSignUp ? 'bg-amber-500 text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'
             }`}
@@ -86,8 +117,20 @@ export const Login: React.FC = () => {
           </button>
         </div>
 
+        {infoMessage && (
+          <div 
+            data-testid="signup-info-banner"
+            className="mb-4 p-3 bg-amber-950/60 border border-amber-800/80 rounded-xl text-amber-300 text-xs text-center font-medium shadow-md leading-relaxed"
+          >
+            {infoMessage}
+          </div>
+        )}
+
         {error && (
-          <div className="mb-4 p-3 bg-red-950/60 border border-red-800/80 rounded-xl text-red-300 text-xs text-center font-medium">
+          <div 
+            data-testid="auth-error-banner"
+            className="mb-4 p-3 bg-red-950/60 border border-red-800/80 rounded-xl text-red-300 text-xs text-center font-medium shadow-md"
+          >
             {error}
           </div>
         )}

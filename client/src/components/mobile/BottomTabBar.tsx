@@ -16,12 +16,13 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'profile', label: 'Profile', path: '/profile', icon: '🪪' }
 ];
 
-interface BottomTabBarProps {
+export interface BottomTabBarProps {
   currentPath: string;
   onNavigate: (path: string) => void;
+  pendingCount?: number;
 }
 
-export const BottomTabBar: React.FC<BottomTabBarProps> = ({ currentPath, onNavigate }) => {
+export const BottomTabBar: React.FC<BottomTabBarProps> = ({ currentPath, onNavigate, pendingCount = 0 }) => {
   const handleTabClick = (path: string) => {
     triggerHaptic('selection');
     onNavigate(path);
@@ -41,13 +42,24 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({ currentPath, onNavig
             <button
               key={item.id}
               onClick={() => handleTabClick(item.path)}
-              className={`flex flex-col items-center justify-center flex-1 py-1 transition-all duration-200 select-none ${
+              className={`flex flex-col items-center justify-center flex-1 py-1 transition-all duration-200 select-none relative ${
                 isActive 
                   ? 'text-cyan-400 font-bold scale-105' 
                   : 'text-slate-400 hover:text-slate-200 font-medium'
               }`}
             >
-              <span className="text-xl mb-0.5 leading-none">{item.icon}</span>
+              <div className="relative inline-flex items-center justify-center">
+                <span className="text-xl mb-0.5 leading-none">{item.icon}</span>
+                {item.id === 'profile' && pendingCount > 0 && (
+                  <span
+                    data-testid="pending-admission-badge"
+                    className="absolute -top-1 -right-2.5 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 border border-slate-950 text-white font-mono text-[9px] font-black flex items-center justify-center animate-pulse shadow-md"
+                    title={`${pendingCount} pending applicant${pendingCount > 1 ? 's' : ''}`}
+                  >
+                    {pendingCount > 9 ? '9+' : pendingCount}
+                  </span>
+                )}
+              </div>
               <span className="text-[10px] tracking-wider uppercase">{item.label}</span>
               {isActive && (
                 <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 mt-0.5 animate-pulse" />
@@ -59,3 +71,5 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({ currentPath, onNavig
     </nav>
   );
 };
+
+export default BottomTabBar;
