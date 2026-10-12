@@ -2,11 +2,13 @@ import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { TargetLockLogo } from '../components/TargetLockLogo';
 import { autoRepairPoolMembership } from '../context/AuthContext';
+import { Eye, EyeOff } from 'lucide-react';
 
 export const Login: React.FC = () => {
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
@@ -32,10 +34,16 @@ export const Login: React.FC = () => {
         });
         if (signUpError) throw signUpError;
 
-        // If session is immediately active (auto-confirm enabled)
-        if (signUpData.session) {
-          const token = signUpData.session.access_token;
+        let token = signUpData.session?.access_token;
+        let userId = signUpData.user?.id;
+        if (!token) {
+          const { data: sessData } = await supabase.auth.getSession();
+          token = sessData.session?.access_token;
+          if (!userId) userId = sessData.session?.user?.id;
+        }
 
+        // If session is immediately active (auto-confirm enabled)
+        if (token) {
           // Dispatch POST /api/pools/:pool_id/join with { inviteCode: 'MAIN26' }
           const joinRes = await fetch(`/api/pools/${activePoolId}/join`, {
             method: 'POST',
@@ -56,10 +64,10 @@ export const Login: React.FC = () => {
           }
 
           // Guarantee database membership record via Supabase client as well
-          if (signUpData.user) {
+          if (userId) {
             const { error: memberError } = await supabase.from('pool_memberships').upsert({
               pool_id: activePoolId,
-              user_id: signUpData.user.id,
+              user_id: userId,
               status: 'PENDING',
             });
             if (memberError && !memberError.message.includes('duplicate')) {
@@ -87,7 +95,11 @@ export const Login: React.FC = () => {
         }
       }
     } catch (err: any) {
-      setError(err.message || 'Authentication failed');
+      if (!isSignUp) {
+        setError('Invalid email/password, or account setup incomplete.');
+      } else {
+        setError(err.message || 'Authentication failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -164,14 +176,24 @@ export const Login: React.FC = () => {
             <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1">
               Password
             </label>
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-sm focus:outline-none focus:border-amber-500"
-              placeholder="••••••••••••"
-            />
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-4 py-3 pr-11 bg-slate-950 border border-slate-800 rounded-xl text-white text-sm focus:outline-none focus:border-amber-500 placeholder:text-zinc-600"
+                placeholder="Enter password (min 6 characters)"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 transition-colors p-1"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
 
           {isSignUp && (
@@ -184,10 +206,13 @@ export const Login: React.FC = () => {
                 required
                 value={inviteCode}
                 onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
-                className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-sm focus:outline-none focus:border-amber-500 uppercase tracking-widest font-mono text-center"
-                placeholder="MAIN26"
+                className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-sm focus:outline-none focus:border-amber-500 uppercase tracking-widest font-mono text-center placeholder:text-zinc-600 placeholder:italic"
+                placeholder="Enter league invite code"
                 maxLength={8}
               />
+              <p className="text-xs text-amber-400/80 mt-1">
+                Private Pilot Code: <span className="font-mono font-bold text-amber-300">MAIN26</span>
+              </p>
             </div>
           )}
 

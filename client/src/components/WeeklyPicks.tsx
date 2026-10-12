@@ -370,7 +370,7 @@ export const WeeklyPicks: React.FC = () => {
   return (
     <div className="space-y-4 sm:space-y-6">
       {/* Streamlined Mobile Top Bar: Week Tag + View Switcher + Lock Pill */}
-      <div className="flex items-center justify-between gap-2 p-2 glass-panel rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl select-none">
+      <div className="flex flex-wrap items-center justify-between gap-1.5 p-2 glass-panel rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl select-none">
         <div className="flex items-center space-x-2 shrink-0">
           <span className="text-[11px] font-mono font-black text-cyan-400 bg-slate-950 px-2 py-0.5 rounded-lg border border-slate-800">
             WEEK 5
@@ -401,14 +401,14 @@ export const WeeklyPicks: React.FC = () => {
         <button
           type="button"
           onClick={toggleUserLock}
-          className={`flex items-center space-x-1.5 px-3 py-1 rounded-xl border text-xs font-mono font-black transition-all shadow-sm shrink-0 ${
+          className={`whitespace-nowrap text-xs px-2.5 py-1 max-w-[140px] truncate rounded-xl border font-mono font-black transition-all shadow-sm shrink-0 ${
             isUserLocked
               ? 'bg-amber-950/90 border-amber-500/80 text-amber-300 ring-1 ring-amber-500/30'
               : 'bg-cyan-950/80 border-cyan-600/80 text-cyan-300 hover:bg-cyan-900'
           }`}
+          title={isUserLocked ? '🔒 Locked (Kickoff)' : '🔒 Submitted (Open)'}
         >
-          <span>{isUserLocked ? '🔒' : '🔓'}</span>
-          <span>{isUserLocked ? 'Locked (Kickoff passed)' : 'Submitted (Editable until kickoff)'}</span>
+          <span className="truncate">{isUserLocked ? '🔒 Locked (Kickoff)' : '🔒 Submitted (Open)'}</span>
         </button>
       </div>
 

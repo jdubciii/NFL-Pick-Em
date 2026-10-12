@@ -189,7 +189,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
 
       {/* Stepper Progress Ledger Header */}
       <div className="w-full px-1 mb-2 space-y-1">
-        <div className="flex items-center justify-between text-[11px] font-black tracking-wide">
+        <div className="flex flex-wrap items-center justify-between gap-1.5 text-[11px] font-black tracking-wide">
           <div className="flex items-center space-x-1.5 text-cyan-400">
             <span>MATCHUP {currentIndex + 1} OF {totalGames}</span>
           </div>
@@ -560,8 +560,11 @@ const SwipeCardItem: React.FC<{
         </div>
 
         {isUserLocked && (
-          <div className="p-1.5 rounded-xl bg-amber-950/80 border border-amber-500/50 text-[10px] text-amber-300 font-black tracking-wide uppercase shadow-inner">
-            🔒 Locked (Kickoff passed)
+          <div
+            className="whitespace-nowrap text-xs px-2.5 py-1 max-w-[140px] truncate mx-auto rounded-xl bg-amber-950/80 border border-amber-500/50 text-amber-300 font-black tracking-wide uppercase shadow-inner"
+            title="🔒 Locked (Kickoff)"
+          >
+            🔒 Locked (Kickoff)
           </div>
         )}
       </div>

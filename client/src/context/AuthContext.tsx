@@ -131,6 +131,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           };
           setUser(authUser);
           setToken(currentSession.access_token);
+          // Auto-repair missing pool_memberships on confirmed session login (Step 2)
+          autoRepairPoolMembership(currentSession.user.id, currentSession.user.email || '', currentSession.access_token).catch(() => {});
         }
       } catch (err) {
         console.warn('Failed to fetch Supabase session:', err);
@@ -151,6 +153,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
         setUser(authUser);
         setToken(newSession.access_token);
+        // Auto-repair missing pool_memberships on auth state change (Step 2)
+        autoRepairPoolMembership(newSession.user.id, newSession.user.email || '', newSession.access_token).catch(() => {});
       } else {
         setUser(null);
         setToken(null);
