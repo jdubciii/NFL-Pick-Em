@@ -409,9 +409,10 @@ export const WeeklyPicks: React.FC = () => {
               LOCKED
             </span>
           ) : (
-            <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 whitespace-nowrap">
-              OPEN
-            </span>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 text-xs font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>SLATE OPEN</span>
+            </div>
           )}
         </button>
       </div>

@@ -41,31 +41,43 @@ export const ProfilePage: React.FC = () => {
       return;
     }
     try {
-      const { data: memberships, error } = await supabase
+      let memberships: any[] | null = null;
+      const res = await supabase
         .from('pool_memberships')
-        .select('user_id, status')
+        .select('user_id, status, role, users(email, display_name)')
         .eq('pool_id', activePoolId)
         .eq('status', 'PENDING');
 
-      if (error || !memberships || memberships.length === 0) {
+      if (!res.error && res.data) {
+        memberships = res.data;
+      } else {
+        // Schema fallback if role / display_name columns are not defined in PostgreSQL
+        const fallbackRes = await supabase
+          .from('pool_memberships')
+          .select('user_id, status, users(email)')
+          .eq('pool_id', activePoolId)
+          .eq('status', 'PENDING');
+        if (!fallbackRes.error && fallbackRes.data) {
+          memberships = fallbackRes.data;
+        } else {
+          // Additional fallback if relation nesting is not supported
+          const simpleRes = await supabase
+            .from('pool_memberships')
+            .select('user_id, status')
+            .eq('pool_id', activePoolId)
+            .eq('status', 'PENDING');
+          memberships = simpleRes.data || [];
+        }
+      }
+
+      if (!memberships || memberships.length === 0) {
         setPendingApplicants([]);
         return;
       }
 
-      const userIds = memberships.map((m: any) => m.user_id);
-      const { data: usersData } = await supabase
-        .from('users')
-        .select('id, email')
-        .in('id', userIds);
-
-      const emailMap = new Map<string, string>();
-      usersData?.forEach((u: any) => {
-        emailMap.set(u.id, u.email);
-      });
-
       const applicants: PendingApplicant[] = memberships.map((m: any) => {
-        const email = emailMap.get(m.user_id) || m.user_id;
-        const displayName = email.includes('@') ? email.split('@')[0] : email;
+        const email = m.users?.email || m.email || m.user_id;
+        const displayName = m.users?.display_name || (typeof email === 'string' && email.includes('@') ? email.split('@')[0] : email);
         return {
           userId: m.user_id,
           email,

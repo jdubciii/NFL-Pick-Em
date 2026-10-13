@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { TargetLockLogo } from '../components/TargetLockLogo';
 import { autoRepairPoolMembership } from '../context/AuthContext';
 import { Eye, EyeOff } from 'lucide-react';
+import { PendingApprovalScreen } from '../components/PendingApprovalScreen';
 
 export const Login: React.FC = () => {
   const [isSignUp, setIsSignUp] = useState(false);
@@ -10,6 +11,7 @@ export const Login: React.FC = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [inviteCode, setInviteCode] = useState('MAIN26');
+  const [isPendingApproval, setIsPendingApproval] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -40,26 +42,39 @@ export const Login: React.FC = () => {
         }
 
         // 1) Direct cloud database upsert for public.users:
-        const { error: userUpsertError } = await supabase.from('users').upsert({
+        const userUpsertPayload: any = {
           id: user.id,
           email: user.email,
           display_name: user.email.split('@')[0],
           role: 'MEMBER'
-        });
+        };
+        const { error: userUpsertError } = await supabase.from('users').upsert(userUpsertPayload);
         if (userUpsertError) {
-          throw userUpsertError;
+          const { error: retryErr } = await supabase.from('users').upsert({
+            id: user.id,
+            email: user.email,
+          });
+          if (retryErr) throw retryErr;
         }
 
         // 2) Direct cloud database upsert for public.pool_memberships:
-        const { error: memberUpsertError } = await supabase.from('pool_memberships').upsert({
+        const memberUpsertPayload: any = {
           pool_id: activePoolId,
           user_id: user.id,
           status: 'PENDING',
           role: 'MEMBER'
-        });
+        };
+        const { error: memberUpsertError } = await supabase.from('pool_memberships').upsert(memberUpsertPayload);
         if (memberUpsertError) {
-          throw memberUpsertError;
+          const { error: retryErr } = await supabase.from('pool_memberships').upsert({
+            pool_id: activePoolId,
+            user_id: user.id,
+            status: 'PENDING',
+          });
+          if (retryErr) throw retryErr;
         }
+
+        setIsPendingApproval(true);
 
         // Also proxy through join route if session token exists
         let token = signUpData.session?.access_token;
@@ -110,6 +125,10 @@ export const Login: React.FC = () => {
       setLoading(false);
     }
   };
+
+  if (isPendingApproval) {
+    return <PendingApprovalScreen />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center px-4">
