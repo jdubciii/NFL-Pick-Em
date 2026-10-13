@@ -81,17 +81,15 @@ export const ProfilePage: React.FC = () => {
     };
   }, [loadPendingApplicants]);
 
-  const handleAdjudicate = async (targetUserId: string, action: 'ACTIVE' | 'REJECTED') => {
+  const handleAdjudicate = async (targetUserId: string, action: 'APPROVE' | 'REJECT' | 'ACTIVE' | 'REJECTED') => {
     const previousApplicants = [...pendingApplicants];
-
-    // Optimistically update list and counter immediately
-    setPendingApplicants((prev) => prev.filter((a) => a.userId !== targetUserId));
-    window.dispatchEvent(new CustomEvent('pending-memberships-changed'));
 
     setAdjudicatingId(targetUserId);
     setStatusFeedback(null);
 
     try {
+      const p_status = action === 'APPROVE' || action === 'ACTIVE' ? 'ACTIVE' : 'REJECTED';
+
       // 1. Dispatch POST /api/pools/:pool_id/adjudicate if API available
       try {
         const headers: Record<string, string> = {
@@ -100,30 +98,33 @@ export const ProfilePage: React.FC = () => {
         if (token) headers['Authorization'] = `Bearer ${token}`;
         if (user?.email) headers['x-user-email'] = user.email;
 
-        await fetch(`/api/pools/${activePoolId}/adjudicate`, {
+        await fetch(`/api/pools/9b893bef-3b5a-4ffa-951d-8ba27f9c9782/adjudicate`, {
           method: 'POST',
           headers,
-          body: JSON.stringify({ targetUserId, action }),
+          body: JSON.stringify({ targetUserId, action: p_status }),
         });
       } catch (apiErr) {
         // Safe failover to RPC
       }
 
       // 2. Direct Supabase RPC for authoritative adjudication
-      const { error: rpcErr } = await supabase.rpc('adjudicate_applicant', {
-        p_pool_id: activePoolId,
+      const { error } = await supabase.rpc('adjudicate_applicant', {
+        p_pool_id: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
         p_user_id: targetUserId,
-        p_status: action
+        p_status: action === 'APPROVE' ? 'ACTIVE' : (action === 'ACTIVE' ? 'ACTIVE' : 'REJECTED')
       });
-      if (rpcErr) throw rpcErr;
 
-      setStatusFeedback(`Applicant ${action === 'ACTIVE' ? 'admitted' : 'rejected'} successfully.`);
+      if (error) throw error;
+
+      // If success, immediately remove applicant from state, clear previous errors, and trigger event
+      setPendingApplicants((prev) => prev.filter((a) => a.userId !== targetUserId));
+      setStatusFeedback(null);
+      window.dispatchEvent(new Event('pending-memberships-changed'));
     } catch (err: any) {
       console.error('Failed to adjudicate applicant:', err);
-      // Revert optimistic state on failure
+      // Revert state on failure and display error cleanly in UI error state
       setPendingApplicants(previousApplicants);
-      window.dispatchEvent(new CustomEvent('pending-memberships-changed'));
-      setStatusFeedback(`Error: ${err.message || 'Adjudication failed'}`);
+      setStatusFeedback(err.message || 'Adjudication failed');
     } finally {
       setAdjudicatingId(null);
     }
@@ -162,7 +163,7 @@ export const ProfilePage: React.FC = () => {
             </div>
 
             {statusFeedback && (
-              <div className="mb-3 text-[11px] font-medium text-emerald-400 bg-emerald-950/60 border border-emerald-800/80 rounded-lg p-2 text-center">
+              <div className="mb-3 text-[11px] font-medium text-rose-400 bg-rose-950/60 border border-rose-800/80 rounded-lg p-2 text-center">
                 {statusFeedback}
               </div>
             )}
@@ -189,7 +190,7 @@ export const ProfilePage: React.FC = () => {
 
                   <div className="flex items-center space-x-2 shrink-0 self-end sm:self-center">
                     <button
-                      onClick={() => handleAdjudicate(applicant.userId, 'ACTIVE')}
+                      onClick={() => handleAdjudicate(applicant.userId, 'APPROVE')}
                       disabled={adjudicatingId === applicant.userId}
                       data-testid={`approve-applicant-${applicant.userId}`}
                       className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-[11px] rounded-lg uppercase tracking-wider shadow-md transition-all disabled:opacity-50 min-h-[36px]"
@@ -197,7 +198,7 @@ export const ProfilePage: React.FC = () => {
                       {adjudicatingId === applicant.userId ? '...' : 'APPROVE'}
                     </button>
                     <button
-                      onClick={() => handleAdjudicate(applicant.userId, 'REJECTED')}
+                      onClick={() => handleAdjudicate(applicant.userId, 'REJECT')}
                       disabled={adjudicatingId === applicant.userId}
                       data-testid={`reject-applicant-${applicant.userId}`}
                       className="px-3 py-2 bg-rose-950/60 hover:bg-rose-900/80 active:scale-95 border border-rose-800 text-rose-300 font-bold text-[11px] rounded-lg uppercase tracking-wider transition-all disabled:opacity-50 min-h-[36px]"

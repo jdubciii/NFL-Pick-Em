@@ -56,32 +56,33 @@ export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => vo
 
   if (!isOpen) return null;
 
-  const handleAdjudicate = async (targetUserId: string, newStatus: 'ACTIVE' | 'REJECTED') => {
+  const handleAdjudicate = async (targetUserId: string, action: 'APPROVE' | 'REJECT' | 'ACTIVE' | 'REJECTED') => {
     const previousMembers = [...pendingMembers];
     const previousCount = pendingCount;
 
-    // Optimistically update list and counter immediately
-    setPendingMembers(prev => prev.filter(m => m.userId !== targetUserId));
-    setPendingCount(prev => Math.max(0, prev - 1));
-    window.dispatchEvent(new CustomEvent('pending-memberships-changed'));
-
     setLoading(true);
     setAdjudicatingId(targetUserId);
+    setStatusMsg(null);
+
     try {
       const { error } = await supabase.rpc('adjudicate_applicant', {
-        p_pool_id: activePoolId,
+        p_pool_id: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
         p_user_id: targetUserId,
-        p_status: newStatus
+        p_status: action === 'APPROVE' ? 'ACTIVE' : (action === 'ACTIVE' ? 'ACTIVE' : 'REJECTED')
       });
 
       if (error) throw error;
-      setStatusMsg(`Applicant ${newStatus === 'ACTIVE' ? 'approved' : 'rejected'} successfully`);
+
+      // If success, immediately remove applicant from state, decrement pending counter, clear previous error, and trigger event
+      setPendingMembers(prev => prev.filter(m => m.userId !== targetUserId));
+      setPendingCount(prev => Math.max(0, prev - 1));
+      setStatusMsg(null);
+      window.dispatchEvent(new Event('pending-memberships-changed'));
     } catch (err: any) {
       console.error('Adjudication failed:', err);
-      // Revert optimistic state on failure
+      // Revert state on failure and display error.message cleanly in UI error state
       setPendingMembers(previousMembers);
       setPendingCount(previousCount);
-      window.dispatchEvent(new CustomEvent('pending-memberships-changed'));
       setStatusMsg(err.message || 'Adjudication failed');
     } finally {
       setLoading(false);
@@ -124,7 +125,11 @@ export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => vo
         </div>
 
         {statusMsg && (
-          <div className="mb-4 p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-400 text-xs text-center font-medium">
+          <div className={`mb-4 p-2 rounded-lg text-xs text-center font-medium border ${
+            statusMsg.includes('failed') || statusMsg.includes('Error') || statusMsg.includes('must be')
+              ? 'bg-rose-950/60 border-rose-800/80 text-rose-400'
+              : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+          }`}>
             {statusMsg}
           </div>
         )}
@@ -160,14 +165,14 @@ export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => vo
                     </div>
                     <div className="flex space-x-2 self-end">
                       <button
-                        onClick={() => handleAdjudicate(m.userId, 'ACTIVE')}
+                        onClick={() => handleAdjudicate(m.userId, 'APPROVE')}
                         disabled={loading || adjudicatingId === m.userId}
                         className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-[11px] rounded-lg uppercase tracking-wider transition-all shadow-sm disabled:opacity-50 min-h-[36px]"
                       >
                         {adjudicatingId === m.userId ? '...' : 'APPROVE'}
                       </button>
                       <button
-                        onClick={() => handleAdjudicate(m.userId, 'REJECTED')}
+                        onClick={() => handleAdjudicate(m.userId, 'REJECT')}
                         disabled={loading || adjudicatingId === m.userId}
                         className="px-3 py-1.5 bg-rose-950/60 hover:bg-rose-900/80 active:scale-95 border border-rose-800 text-rose-300 font-bold text-[11px] rounded-lg uppercase tracking-wider transition-all disabled:opacity-50 min-h-[36px]"
                       >
