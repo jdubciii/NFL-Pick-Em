@@ -10,6 +10,7 @@ import { quickFillSafetyEngine, SlateGameItem } from '../services/QuickFillSafet
 import { formatGameKickoff } from '../utils/dateUtils';
 import { triggerHaptic } from '../utils/haptics';
 import { isKickoffLocked } from '../services/lockEnforcementService';
+import { fetchLiveNFLScores } from '../services/liveScoreService';
 import type { MatrixResponsePayload } from './LeagueMatrixView';
 
 export interface GameItem {
@@ -25,7 +26,9 @@ export interface GameItem {
   userPick: string | null;
   pickId: string | null;
   isLive?: boolean;
-  gameStatus?: string;
+  gameStatus?: 'FINAL' | 'LIVE' | 'SCHEDULED' | string;
+  displayClock?: string;
+  periodLabel?: string;
   possession?: string;
   inRedZone?: boolean;
 }
@@ -161,7 +164,18 @@ export const WeeklyPicks: React.FC = () => {
     } catch (_) {}
 
     try {
-      // 2. Fetch directly from ESPN scoreboard API for selectedWeek
+      // 2. Fetch live scores and ESPN scoreboard API for selectedWeek
+      let liveScoresMap = new Map<string, any>();
+      try {
+        const liveScores = await fetchLiveNFLScores(selectedWeek);
+        liveScores.forEach((ls) => {
+          liveScoresMap.set(ls.id, ls);
+          liveScoresMap.set(`${ls.awayTeam.code}@${ls.homeTeam.code}`, ls);
+        });
+      } catch (scoreErr) {
+        console.warn('Live score fetch warning:', scoreErr);
+      }
+
       const espnUrl = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${selectedWeek}`;
       const response = await fetch(espnUrl);
 
@@ -172,22 +186,57 @@ export const WeeklyPicks: React.FC = () => {
       const data = await response.json();
       setIsOffline(false);
 
-      // Map ESPN events to GameItem
+      // Map ESPN events to GameItem enriched with live scores
       const espnGames: GameItem[] = (data.events || []).map((event: any) => {
         const competition = event.competitions?.[0];
         const competitors = competition?.competitors || [];
         const home = competitors.find((c: any) => c.homeAway === 'home') || {};
         const away = competitors.find((c: any) => c.homeAway === 'away') || {};
+        const homeAbbr = home.team?.abbreviation || 'HOM';
+        const awayAbbr = away.team?.abbreviation || 'AWY';
         const statusName = event.status?.type?.name || '';
         const statusDetail = event.status?.type?.detail || event.status?.type?.description || event.status?.type?.shortDetail || '';
         const isHalftime = statusName === 'STATUS_HALFTIME' || statusDetail.toLowerCase().includes('halftime');
 
+        const liveScore =
+          liveScoresMap.get(event.id) ||
+          liveScoresMap.get(`${awayAbbr}@${homeAbbr}`);
+
         let mappedStatus: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL' = 'SCHEDULED';
-        if (statusName === 'STATUS_FINAL') {
+        if (liveScore?.status) {
+          mappedStatus = liveScore.status;
+        } else if (statusName === 'STATUS_FINAL') {
           mappedStatus = 'FINAL';
         } else if (isHalftime || statusName === 'STATUS_IN_PROGRESS') {
           mappedStatus = 'IN_PROGRESS';
         }
+
+        let gameStatus: 'FINAL' | 'LIVE' | 'SCHEDULED' = 'SCHEDULED';
+        if (mappedStatus === 'FINAL') {
+          gameStatus = 'FINAL';
+        } else if (mappedStatus === 'IN_PROGRESS') {
+          gameStatus = 'LIVE';
+        }
+
+        const homeScoreVal =
+          liveScore?.homeTeam?.score != null && !isNaN(parseInt(liveScore.homeTeam.score, 10))
+            ? parseInt(liveScore.homeTeam.score, 10)
+            : home.score
+            ? parseInt(home.score, 10)
+            : null;
+        const awayScoreVal =
+          liveScore?.awayTeam?.score != null && !isNaN(parseInt(liveScore.awayTeam.score, 10))
+            ? parseInt(liveScore.awayTeam.score, 10)
+            : away.score
+            ? parseInt(away.score, 10)
+            : null;
+
+        const displayClockVal =
+          liveScore?.displayClock ||
+          (isHalftime ? 'HALFTIME' : event.status?.displayClock || '0:00');
+        const periodLabelVal =
+          liveScore?.periodLabel ||
+          (mappedStatus === 'FINAL' ? 'FINAL' : isHalftime ? 'HALF' : `Q${event.status?.period || 1}`);
 
         let spread: number | null = null;
         const oddsDetail = competition?.odds?.[0]?.details;
@@ -199,17 +248,19 @@ export const WeeklyPicks: React.FC = () => {
         return {
           id: event.id,
           externalGameId: event.id,
-          homeTeamId: home.team?.abbreviation || 'HOM',
-          awayTeamId: away.team?.abbreviation || 'AWY',
+          homeTeamId: homeAbbr,
+          awayTeamId: awayAbbr,
           kickoffTime: event.date,
           status: mappedStatus,
-          homeScore: home.score ? parseInt(home.score, 10) : null,
-          awayScore: away.score ? parseInt(away.score, 10) : null,
+          homeScore: homeScoreVal,
+          awayScore: awayScoreVal,
           spread,
           userPick: null,
           pickId: null,
           isLive: mappedStatus === 'IN_PROGRESS',
-          gameStatus: isHalftime ? 'HALFTIME' : (mappedStatus === 'IN_PROGRESS' ? 'LIVE' : mappedStatus),
+          gameStatus,
+          displayClock: displayClockVal,
+          periodLabel: periodLabelVal,
           possession: competition?.situation?.possession,
           inRedZone: Boolean(competition?.situation?.isRedZone),
         };
@@ -684,33 +735,24 @@ export const WeeklyPicks: React.FC = () => {
           </div>
         </div>
 
-        {/* Dedicated Compact Lock Pill - Fits comfortably within 100vw */}
-        <button
-          type="button"
-          onClick={toggleUserLock}
-          className="shrink-0 transition-transform active:scale-95"
-          title={isUserLocked ? 'Picks locked (Click to toggle)' : 'Picks open (Click to toggle)'}
-        >
-          {isUserLocked ? (
-            <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 whitespace-nowrap">
-              LOCKED
-            </span>
-          ) : allLocked ? (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400 text-xs font-semibold">
+        {/* Unambiguous Static Slate Lock Status Badge (Decision #66 Non-Interactive) */}
+        <div className="shrink-0 select-none">
+          {allLocked ? (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-800/90 border border-zinc-700 text-zinc-400 text-xs font-semibold">
               <Lock className="w-3 h-3 text-zinc-400" />
               <span>SLATE LOCKED</span>
             </div>
-          ) : lockedCount > 0 ? (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-semibold">
-              <span>{games.length - lockedCount} OPEN • {lockedCount} LOCKED</span>
-            </div>
-          ) : (
+          ) : lockedCount === 0 ? (
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 text-xs font-semibold">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               <span>SLATE OPEN</span>
             </div>
+          ) : (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-semibold">
+              <span>{games.length - lockedCount} OPEN • {lockedCount} LOCKED</span>
+            </div>
           )}
-        </button>
+        </div>
       </div>
 
       {feedbackMessage && (
@@ -768,8 +810,10 @@ export const WeeklyPicks: React.FC = () => {
                 homeTeam: g.homeTeamId,
                 awayScore: g.awayScore ?? undefined,
                 homeScore: g.homeScore ?? undefined,
-                isLive: Boolean(g.isLive || g.status === 'IN_PROGRESS'),
-                gameStatus: g.gameStatus || g.status,
+                isLive: Boolean(g.isLive || g.status === 'IN_PROGRESS' || g.gameStatus === 'LIVE'),
+                gameStatus: (g.gameStatus === 'FINAL' || g.status === 'FINAL' ? 'FINAL' : g.gameStatus === 'LIVE' || g.status === 'IN_PROGRESS' || g.isLive ? 'LIVE' : 'SCHEDULED'),
+                displayClock: g.displayClock,
+                periodLabel: g.periodLabel,
                 possession: g.possession,
                 inRedZone: g.inRedZone,
                 startTime: formatKickoff(g.kickoffTime),
@@ -800,6 +844,11 @@ export const WeeklyPicks: React.FC = () => {
                 kickoffTime: formatKickoff(g.kickoffTime),
                 isLocked: isGameLocked(g) || isGameKickoffLocked(g),
                 spread: typeof g.spread === 'number' ? `${g.spread}` : undefined,
+                gameStatus: (g.gameStatus === 'FINAL' || g.status === 'FINAL' ? 'FINAL' : g.gameStatus === 'LIVE' || g.status === 'IN_PROGRESS' || g.isLive ? 'LIVE' : 'SCHEDULED') as 'FINAL' | 'LIVE' | 'SCHEDULED',
+                homeScore: g.homeScore,
+                awayScore: g.awayScore,
+                displayClock: g.displayClock,
+                periodLabel: g.periodLabel,
               }))}
               selectedPicks={games.reduce((acc, g) => {
                 if (g.userPick) acc[g.id] = g.userPick;
@@ -808,13 +857,6 @@ export const WeeklyPicks: React.FC = () => {
               onSelectTeam={(gameId, team) => {
                 const targetGame = games.find((g) => g.id === gameId);
                 if (targetGame) handlePick(targetGame, team);
-              }}
-              onLockedClick={(g) => {
-                setFeedbackMessage({
-                  text: `Matchup locked: Kickoff passed on ${g.kickoffTime}.`,
-                  type: 'error',
-                });
-                setTimeout(() => setFeedbackMessage(null), 3500);
               }}
             />
           )}

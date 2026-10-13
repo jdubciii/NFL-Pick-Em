@@ -41,43 +41,22 @@ export const ProfilePage: React.FC = () => {
       return;
     }
     try {
-      const { data: pendingMemberships, error: memError } = await supabase
-        .from('pool_memberships')
-        .select('id, user_id, status, role, created_at')
-        .eq('pool_id', activePoolId)
-        .eq('status', 'PENDING');
+      const { data, error } = await supabase.rpc('get_pending_applicants', {
+        p_pool_id: activePoolId
+      });
 
-      if (pendingMemberships && pendingMemberships.length > 0) {
-        const userIds = pendingMemberships.map((m: any) => m.user_id);
-        const { data: userData } = await supabase
-          .from('users')
-          .select('id, email, display_name')
-          .in('id', userIds);
-
-        const userMap = new Map((userData || []).map((u: any) => [u.id, u]));
-        const resolvedApplicants: PendingApplicant[] = pendingMemberships.map((m: any) => {
-          const u = userMap.get(m.user_id);
-          return {
-            userId: m.user_id,
-            email: u?.email || 'Unknown Applicant',
-            displayName: u?.display_name || (u?.email ? u.email.split('@')[0] : 'Applicant'),
-          };
-        });
-        setPendingApplicants(resolvedApplicants);
-      } else if (memError) {
-        // Fallback to RPC if direct table select was blocked
-        const { data: rpcData } = await supabase.rpc('get_pending_applicants', {
-          p_pool_id: activePoolId
-        });
-        const applicants: PendingApplicant[] = (rpcData || []).map((m: any) => ({
-          userId: m.user_id,
-          email: m.email,
-          displayName: m.display_name,
-        }));
-        setPendingApplicants(applicants);
-      } else {
-        setPendingApplicants([]);
+      if (error) {
+        console.warn('Failed to load pending applicants via RPC:', error);
+        return;
       }
+
+      const applicants: PendingApplicant[] = (data || []).map((m: any) => ({
+        userId: m.user_id,
+        email: m.email,
+        displayName: m.display_name,
+      }));
+
+      setPendingApplicants(applicants);
     } catch (err) {
       console.warn('Failed to load pending applicants:', err);
     }

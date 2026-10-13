@@ -14,6 +14,8 @@ export interface SwipeMatchup {
   homeScore?: number;
   isLive?: boolean;
   gameStatus?: string;
+  displayClock?: string;
+  periodLabel?: string;
   possession?: string;
   inRedZone?: boolean;
   startTime: string;
@@ -408,11 +410,28 @@ const SwipeCardItem: React.FC<{
   const awayMeta = NFL_TEAMS[matchup.awayTeam];
   const homeMeta = NFL_TEAMS[matchup.homeTeam];
 
+  const isFinal = matchup.gameStatus === 'FINAL';
   const isCardLocked = Boolean(
+    isFinal ||
     matchup.isLocked ||
     (matchup.kickoffTime && isKickoffLocked(matchup.kickoffTime)) ||
     isUserLocked
   );
+
+  const winningTeam =
+    isFinal && matchup.homeScore != null && matchup.awayScore != null
+      ? matchup.homeScore > matchup.awayScore
+        ? matchup.homeTeam
+        : matchup.awayScore > matchup.homeScore
+        ? matchup.awayTeam
+        : null
+      : null;
+
+  const awayIsWin = isFinal && matchup.selectedTeam === matchup.awayTeam && winningTeam === matchup.awayTeam;
+  const awayIsLoss = isFinal && matchup.selectedTeam === matchup.awayTeam && winningTeam !== null && winningTeam !== matchup.awayTeam;
+
+  const homeIsWin = isFinal && matchup.selectedTeam === matchup.homeTeam && winningTeam === matchup.homeTeam;
+  const homeIsLoss = isFinal && matchup.selectedTeam === matchup.homeTeam && winningTeam !== null && winningTeam !== matchup.homeTeam;
 
   return (
     <motion.div
@@ -470,22 +489,31 @@ const SwipeCardItem: React.FC<{
         </>
       )}
 
-      {/* Header Info with Live Gameday Scoreboard / Locked Indicator */}
+      {/* Header Info with Live Gameday Scoreboard / Status Indicator */}
       <div className="flex items-center justify-between border-b border-slate-800 pb-2.5 text-xs">
-        {isCardLocked ? (
+        {isFinal ? (
+          <div className="flex items-center space-x-2">
+            <span className="px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400 font-bold text-[10px]">
+              FINAL
+            </span>
+            <span className="font-mono text-zinc-200 text-xs font-bold">
+              {matchup.awayScore ?? 0} - {matchup.homeScore ?? 0}
+            </span>
+          </div>
+        ) : (matchup.gameStatus === 'LIVE' || matchup.isLive) ? (
+          <div className="flex items-center space-x-2">
+            <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-400 font-bold text-[10px] animate-pulse">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+              <span>LIVE • {matchup.displayClock || 'LIVE'}</span>
+            </span>
+            <span className="font-mono font-bold text-amber-300 text-xs">
+              {matchup.awayScore ?? 0} - {matchup.homeScore ?? 0}
+            </span>
+          </div>
+        ) : isCardLocked ? (
           <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-zinc-800/90 border border-zinc-700 text-zinc-300 text-xs font-semibold">
             <Lock className="w-3.5 h-3.5 text-amber-400" />
             <span>KICKOFF LOCKED</span>
-          </div>
-        ) : matchup.isLive ? (
-          <div className="flex items-center space-x-2">
-            <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-rose-500/20 border border-rose-500 text-rose-400 font-black text-[10px] animate-pulse">
-              <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
-              <span>LIVE · {matchup.gameStatus || 'IN PROGRESS'}</span>
-            </span>
-            <span className="font-black text-amber-300 text-xs">
-              {matchup.awayScore ?? 0} - {matchup.homeScore ?? 0}
-            </span>
           </div>
         ) : (
           <div className="flex items-center space-x-1.5">
@@ -501,12 +529,40 @@ const SwipeCardItem: React.FC<{
       {/* Team Confrontation Card */}
       <div className="flex items-center justify-around my-1 py-3 px-2 bg-slate-950/60 rounded-2xl border border-slate-800/80">
         <div className="flex flex-col items-center space-y-1.5 text-center">
-          <div className={`p-2 rounded-2xl bg-slate-900 border shadow-md ${matchup.selectedTeam === matchup.awayTeam ? 'border-cyan-400 ring-2 ring-cyan-500/40' : 'border-slate-700/80'}`}>
+          <div className={`p-2 rounded-2xl bg-slate-900 border shadow-md ${
+            matchup.selectedTeam === matchup.awayTeam 
+              ? isFinal
+                ? awayIsWin
+                  ? 'border-emerald-500 ring-2 ring-emerald-500/50'
+                  : awayIsLoss
+                  ? 'border-rose-500 ring-2 ring-rose-500/50'
+                  : 'border-cyan-400 ring-2 ring-cyan-500/40'
+                : 'border-cyan-400 ring-2 ring-cyan-500/40' 
+              : 'border-slate-700/80'
+          }`}>
             <TeamLogo abbr={matchup.awayTeam} size="lg" />
           </div>
           <span className="text-lg font-black text-white">{matchup.awayTeam}</span>
           <span className="text-[10px] text-slate-400 font-bold">{awayMeta?.name || 'Away'}</span>
-          {!isCardLocked ? (
+          {isFinal ? (
+            matchup.selectedTeam === matchup.awayTeam ? (
+              awayIsWin ? (
+                <div className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-black">
+                  ✔ WIN (+1)
+                </div>
+              ) : awayIsLoss ? (
+                <div className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[9px] font-black">
+                  ✘ LOSS
+                </div>
+              ) : (
+                <div className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700 text-[9px] font-black">
+                  ✔ PICKED
+                </div>
+              )
+            ) : (
+              <div className="h-5" />
+            )
+          ) : !isCardLocked ? (
             <div className={`px-2 py-0.5 rounded border text-[9px] font-black ${
               matchup.selectedTeam === matchup.awayTeam
                 ? 'bg-cyan-500 text-slate-950 border-cyan-400 font-black'
@@ -526,12 +582,40 @@ const SwipeCardItem: React.FC<{
         <span className="text-slate-600 font-black text-xs uppercase">VS</span>
 
         <div className="flex flex-col items-center space-y-1.5 text-center">
-          <div className={`p-2 rounded-2xl bg-slate-900 border shadow-md ${matchup.selectedTeam === matchup.homeTeam ? 'border-rose-400 ring-2 ring-rose-500/40' : 'border-slate-700/80'}`}>
+          <div className={`p-2 rounded-2xl bg-slate-900 border shadow-md ${
+            matchup.selectedTeam === matchup.homeTeam 
+              ? isFinal
+                ? homeIsWin
+                  ? 'border-emerald-500 ring-2 ring-emerald-500/50'
+                  : homeIsLoss
+                  ? 'border-rose-500 ring-2 ring-rose-500/50'
+                  : 'border-rose-400 ring-2 ring-rose-500/40'
+                : 'border-rose-400 ring-2 ring-rose-500/40' 
+              : 'border-slate-700/80'
+          }`}>
             <TeamLogo abbr={matchup.homeTeam} size="lg" />
           </div>
           <span className="text-lg font-black text-white">{matchup.homeTeam}</span>
           <span className="text-[10px] text-slate-400 font-bold">{homeMeta?.name || 'Home'}</span>
-          {!isCardLocked ? (
+          {isFinal ? (
+            matchup.selectedTeam === matchup.homeTeam ? (
+              homeIsWin ? (
+                <div className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-black">
+                  ✔ WIN (+1)
+                </div>
+              ) : homeIsLoss ? (
+                <div className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[9px] font-black">
+                  ✘ LOSS
+                </div>
+              ) : (
+                <div className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700 text-[9px] font-black">
+                  ✔ PICKED
+                </div>
+              )
+            ) : (
+              <div className="h-5" />
+            )
+          ) : !isCardLocked ? (
             <div className={`px-2 py-0.5 rounded border text-[9px] font-black ${
               matchup.selectedTeam === matchup.homeTeam
                 ? 'bg-rose-500 text-slate-950 border-rose-400 font-black'
@@ -549,8 +633,30 @@ const SwipeCardItem: React.FC<{
         </div>
       </div>
 
-      {/* Clear Non-Clickable Status Banner when Matchup is Locked */}
-      {isCardLocked && (
+      {/* Clear Status Banner when Matchup is Final or Locked */}
+      {isFinal ? (
+        <div className="my-1">
+          {matchup.selectedTeam ? (
+            winningTeam === matchup.selectedTeam ? (
+              <div className="flex items-center justify-center gap-2 py-2 px-4 rounded-xl bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 text-sm font-semibold">
+                <span>RESULT: <strong className="text-emerald-400">WIN (+1)</strong> ({matchup.selectedTeam})</span>
+              </div>
+            ) : winningTeam !== null ? (
+              <div className="flex items-center justify-center gap-2 py-2 px-4 rounded-xl bg-rose-950/80 border border-rose-500/50 text-rose-300 text-sm font-semibold">
+                <span>RESULT: <strong className="text-rose-400">LOSS</strong> ({matchup.selectedTeam})</span>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center gap-2 py-2 px-4 rounded-xl bg-zinc-800/80 border border-zinc-700 text-zinc-300 text-sm font-semibold">
+                <span>RESULT: FINAL TIE ({matchup.selectedTeam})</span>
+              </div>
+            )
+          ) : (
+            <div className="flex items-center justify-center gap-2 py-2 px-4 rounded-xl bg-zinc-900/80 border border-zinc-800 text-zinc-500 text-sm font-semibold">
+              <span>NO PICK SUBMITTED (FINAL)</span>
+            </div>
+          )}
+        </div>
+      ) : isCardLocked ? (
         <div className="my-1">
           {matchup.selectedTeam ? (
             <div className="flex items-center justify-center gap-2 py-2 px-4 rounded-xl bg-zinc-800/80 border border-zinc-700 text-zinc-300 text-sm font-semibold">
@@ -564,7 +670,7 @@ const SwipeCardItem: React.FC<{
             </div>
           )}
         </div>
-      )}
+      ) : null}
 
       {/* Footer Controls */}
       <div className="border-t border-slate-800 pt-2.5 space-y-2 text-center">

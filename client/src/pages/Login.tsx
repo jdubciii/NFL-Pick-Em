@@ -41,63 +41,19 @@ export const Login: React.FC = () => {
           throw new Error('User creation returned empty profile.');
         }
 
-        // 1) Direct cloud database upsert for public.users:
-        const userUpsertPayload: any = {
-          id: user.id,
-          email: user.email,
-          display_name: user.email.split('@')[0],
-          role: 'MEMBER'
-        };
-        const { error: userUpsertError } = await supabase.from('users').upsert(userUpsertPayload);
-        if (userUpsertError) {
-          const { error: retryErr } = await supabase.from('users').upsert({
-            id: user.id,
-            email: user.email,
-          });
-          if (retryErr) throw retryErr;
-        }
+        // Call atomic, RLS-bypassing application RPC
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('apply_for_league', {
+          p_invite_code: cleanInvite
+        });
 
-        // 2) Direct cloud database upsert for public.pool_memberships:
-        const memberUpsertPayload: any = {
-          pool_id: activePoolId,
-          user_id: user.id,
-          status: 'PENDING',
-          role: 'MEMBER'
-        };
-        const { error: memberUpsertError } = await supabase.from('pool_memberships').upsert(memberUpsertPayload);
-        if (memberUpsertError) {
-          const { error: retryErr } = await supabase.from('pool_memberships').upsert({
-            pool_id: activePoolId,
-            user_id: user.id,
-            status: 'PENDING',
-          });
-          if (retryErr) throw retryErr;
+        if (rpcErr) {
+          throw new Error(rpcErr.message || 'League application failed');
+        }
+        if (rpcRes && rpcRes.success === false) {
+          throw new Error(rpcRes.error || 'Failed to apply for league');
         }
 
         setIsPendingApproval(true);
-
-        // Also proxy through join route if session token exists
-        let token = signUpData.session?.access_token;
-        if (!token) {
-          const { data: sessData } = await supabase.auth.getSession();
-          token = sessData.session?.access_token;
-        }
-        if (token) {
-          try {
-            await fetch(`/api/pools/${activePoolId}/join`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`,
-                'x-user-email': email,
-              },
-              body: JSON.stringify({ inviteCode: cleanInvite }),
-            });
-          } catch (netErr) {
-            console.warn('[SignUp] Join API proxy notice:', netErr);
-          }
-        }
-
         setInfoMessage('Application registered in PENDING status. The commissioner (Jack) must approve your admission before access is granted.');
       } else {
         const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
@@ -105,6 +61,21 @@ export const Login: React.FC = () => {
           password,
         });
         if (signInError) throw signInError;
+
+        // Ensure user application RPC is called
+        const codeToPass = inviteCode ? inviteCode.trim().toUpperCase() : 'MAIN26';
+        try {
+          const { data: rpcRes, error: rpcErr } = await supabase.rpc('apply_for_league', {
+            p_invite_code: codeToPass
+          });
+          if (rpcErr) {
+            console.warn('[SignIn] League application notice:', rpcErr);
+          } else if (rpcRes && rpcRes.success === false) {
+            console.warn('[SignIn] League application response:', rpcRes.error);
+          }
+        } catch (rpcCatch) {
+          console.warn('[SignIn] RPC application error:', rpcCatch);
+        }
 
         // Auto-repair missing pool_memberships row on login (Step 2)
         if (signInData.user) {
@@ -116,11 +87,7 @@ export const Login: React.FC = () => {
         }
       }
     } catch (err: any) {
-      if (!isSignUp) {
-        setError('Invalid email/password, or account setup incomplete.');
-      } else {
-        setError(err.message || 'Authentication failed');
-      }
+      setError(err.message || 'Authentication failed');
     } finally {
       setLoading(false);
     }
