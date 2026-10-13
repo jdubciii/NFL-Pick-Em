@@ -8,8 +8,16 @@ export function WallOfShamePage() {
 
   return (
     <div className="flex flex-col min-h-screen bg-[#0a0f1d] text-slate-100 pb-24">
+      {/* Unified Top Branding Banner */}
+      <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-zinc-800/80 bg-[#0a0f1d]/95 backdrop-blur-md">
+        <div className="flex items-center gap-2">
+          <span className="text-base font-black tracking-wider text-white">NFL PICK'EM</span>
+          <span className="text-xs px-2 py-0.5 rounded bg-rose-500/10 border border-rose-500/30 text-rose-400 font-bold">WALL OF SHAME</span>
+        </div>
+      </div>
+
       {/* Persistent 3-Tab Segmented Header */}
-      <div className="sticky top-0 z-30 bg-[#0a0f1d]/95 backdrop-blur-md px-4 pt-3 pb-2 border-b border-slate-800">
+      <div className="sticky top-0 z-30 bg-[#0a0f1d]/95 backdrop-blur-md px-4 pt-2 pb-2 border-b border-slate-800">
         <ShameSegmentedHeader activeTab={activeTab} onSelectTab={setActiveTab} />
       </div>
 

@@ -304,7 +304,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
           fetchLiveNFLScores(weekNum),
           supabase
             .from('picks')
-            .select('user_id, matchup_id, selected_team, week')
+            .select('user_id, matchup_id, game_id, selected_team, week')
             .eq('pool_id', selectedPoolId)
             .eq('week', weekNum),
         ]);
@@ -336,11 +336,12 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
         }
 
         for (const p of dbPicks) {
-          if (!cells[p.matchup_id]) {
-            cells[p.matchup_id] = {};
+          const gId = String(p.game_id || p.matchup_id);
+          if (!cells[gId]) {
+            cells[gId] = {};
           }
-          cells[p.matchup_id][p.user_id] = {
-            pick_id: `${p.user_id}_${p.matchup_id}`,
+          cells[gId][p.user_id] = {
+            pick_id: `${p.user_id}_${gId}`,
             selected_team_id: p.selected_team,
             is_masked: false,
           };

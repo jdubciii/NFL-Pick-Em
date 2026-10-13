@@ -25,7 +25,7 @@ export async function fetchUserPicks(
   try {
     const { data: dbPicks, error } = await supabase
       .from('picks')
-      .select('matchup_id, selected_team')
+      .select('game_id, selected_team')
       .eq('pool_id', poolId)
       .eq('user_id', userId)
       .eq('week', week);
@@ -38,8 +38,9 @@ export async function fetchUserPicks(
     const picksMap: Record<string, string> = {};
     if (dbPicks && Array.isArray(dbPicks)) {
       dbPicks.forEach((p: any) => {
-        if (p.matchup_id && p.selected_team) {
-          picksMap[p.matchup_id] = p.selected_team;
+        const gId = p.game_id || p.matchup_id;
+        if (gId && p.selected_team) {
+          picksMap[String(gId)] = p.selected_team;
         }
       });
     }
@@ -68,43 +69,26 @@ export async function persistUserPick(
         pool_id: poolId,
         user_id: userId,
         week: week,
-        matchup_id: gameId,
+        game_id: String(gameId),
         selected_team: teamName,
         updated_at: new Date().toISOString(),
       },
       {
-        onConflict: 'pool_id,user_id,matchup_id',
+        onConflict: 'pool_id,user_id,week,game_id',
       }
     );
     if (error) {
-      console.warn('Supabase pick upsert warning:', error);
+      console.error('Failed to persist pick to Supabase:', error);
     }
   } else {
     const { error } = await supabase.from('picks').delete().match({
       pool_id: poolId,
       user_id: userId,
-      matchup_id: gameId,
+      week: week,
+      game_id: String(gameId),
     });
     if (error) {
       console.warn('Supabase pick delete warning:', error);
     }
-  }
-}
-
-/**
- * Clears all localStorage keys matching picks_* (e.g. on logout or user switch).
- */
-export function clearAllPicksLocalStorage(): void {
-  try {
-    const keysToRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && (key.startsWith('picks_') || key.startsWith('nfl_picks_'))) {
-        keysToRemove.push(key);
-      }
-    }
-    keysToRemove.forEach((k) => localStorage.removeItem(k));
-  } catch (e) {
-    console.warn('Error clearing localStorage picks:', e);
   }
 }

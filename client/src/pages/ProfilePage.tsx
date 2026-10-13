@@ -132,11 +132,15 @@ export const ProfilePage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-950 pb-24 text-white">
-      <div className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur-md border-b border-slate-800 px-4 py-3 flex items-center justify-between">
-        <h1 className="text-sm font-black uppercase tracking-wider text-white">Member Profile</h1>
+      {/* Unified Top Branding Banner */}
+      <div className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur-md border-b border-zinc-800/80 px-4 pt-3 pb-2 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-base font-black tracking-wider text-white">NFL PICK'EM</span>
+          <span className="text-xs px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold">PROFILE</span>
+        </div>
         <button
           onClick={() => setSettingsOpen(true)}
-          className="min-h-[48px] min-w-[48px] flex items-center justify-center text-slate-400 hover:text-white transition-colors"
+          className="min-h-[36px] min-w-[36px] flex items-center justify-center text-slate-400 hover:text-white transition-colors"
           title="Account Settings"
         >
           ⚙️

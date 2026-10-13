@@ -83,7 +83,7 @@ export const MatrixPage: React.FC = () => {
         // Query submitted picks for selectedWeek
         const { data: dbPicks } = await supabase
           .from('picks')
-          .select('user_id, matchup_id, selected_team, week')
+          .select('user_id, matchup_id, game_id, selected_team, week')
           .eq('pool_id', activePoolId)
           .eq('week', selectedWeek);
 
@@ -96,7 +96,7 @@ export const MatrixPage: React.FC = () => {
           const mappedPicks: UserSubmittedPick[] = dbPicks.map((p: any) => ({
             userId: p.user_id,
             userName: memberNameMap.get(p.user_id) || (p.user_id === user?.id ? currentUserName : p.user_id.slice(0, 8)),
-            gameId: p.matchup_id,
+            gameId: String(p.game_id || p.matchup_id),
             selectedTeam: p.selected_team,
             isAutopilot: false,
           }));
@@ -195,6 +195,14 @@ export const MatrixPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 pb-24 max-w-md mx-auto font-sans">
+      {/* Unified Top Branding Banner */}
+      <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-zinc-800/80 -mx-4 -mt-4 mb-3 bg-slate-950">
+        <div className="flex items-center gap-2">
+          <span className="text-base font-black tracking-wider text-white">NFL PICK'EM</span>
+          <span className="text-xs px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 font-bold">THE MATRIX</span>
+        </div>
+      </div>
+
       {/* Sticky Gameday Live / Lock Countdown */}
       <LockCountdownTimer
         isLocked={isSlateLocked}
@@ -375,6 +383,29 @@ export const MatrixPage: React.FC = () => {
                           <LoneWolfBadge team={gameDist.loneWolfTeam || ''} />
                         )}
                       </div>
+
+                      {/* Pick Distribution Percentages Bar */}
+                      {(awayCamp.length + homeCamp.length) > 0 && (
+                        <div className="mb-2">
+                          {(() => {
+                            const total = awayCamp.length + homeCamp.length;
+                            const awayPct = Math.round((awayCamp.length / total) * 100);
+                            const homePct = 100 - awayPct;
+                            return (
+                              <>
+                                <div className="flex justify-between text-[10px] font-mono font-bold mb-1">
+                                  <span className="text-cyan-400">{game.awayTeam} {awayPct}% ({awayCamp.length})</span>
+                                  <span className="text-amber-400">{homePct}% ({homeCamp.length}) {game.homeTeam}</span>
+                                </div>
+                                <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden flex border border-slate-800">
+                                  <div style={{ width: `${awayPct}%` }} className="bg-cyan-500 h-full transition-all duration-500" />
+                                  <div style={{ width: `${homePct}%` }} className="bg-amber-500 h-full transition-all duration-500" />
+                                </div>
+                              </>
+                            );
+                          })()}
+                        </div>
+                      )}
 
                       {/* Stacked Avatar Camp Clusters */}
                       <div

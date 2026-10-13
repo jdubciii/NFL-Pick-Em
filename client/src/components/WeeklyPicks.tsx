@@ -255,22 +255,32 @@ export const WeeklyPicks: React.FC = () => {
         try {
           const { data: dbPicks, error } = await supabase
             .from('picks')
-            .select('matchup_id, selected_team')
+            .select('game_id, matchup_id, selected_team')
             .eq('pool_id', activePoolId)
             .eq('user_id', user.id)
             .eq('week', selectedWeek);
 
-          if (dbPicks && Array.isArray(dbPicks)) {
+          if (dbPicks && Array.isArray(dbPicks) && dbPicks.length > 0) {
             const cloudMap: Record<string, string> = {};
             dbPicks.forEach((p: any) => {
-              if (p.matchup_id && p.selected_team) {
-                cloudMap[p.matchup_id] = p.selected_team;
+              const gId = p.game_id || p.matchup_id;
+              if (gId && p.selected_team) {
+                cloudMap[String(gId)] = p.selected_team;
               }
             });
-            userPicksMap = { ...userPicksMap, ...cloudMap };
-            setUserPicks(userPicksMap);
+            userPicksMap = cloudMap;
+            setUserPicks(cloudMap);
             try {
-              localStorage.setItem(userPicksCacheKey, JSON.stringify(userPicksMap));
+              localStorage.setItem(userPicksCacheKey, JSON.stringify(cloudMap));
+            } catch (_) {}
+          } else {
+            // If cloud returns empty array, check user-scoped localStorage cache before defaulting to empty
+            try {
+              const saved = localStorage.getItem(userPicksCacheKey);
+              if (saved) {
+                userPicksMap = JSON.parse(saved);
+                setUserPicks(userPicksMap);
+              }
             } catch (_) {}
           }
         } catch (sbErr) {
@@ -408,20 +418,25 @@ export const WeeklyPicks: React.FC = () => {
     if (user?.id) {
       try {
         if (teamToSend) {
-          await supabase.from('picks').upsert({
+          const { error } = await supabase.from('picks').upsert({
             pool_id: activePoolId,
             user_id: user.id,
             week: selectedWeek,
-            matchup_id: game.id,
+            game_id: String(game.id),
             selected_team: teamToSend,
             updated_at: new Date().toISOString()
-          }, { onConflict: 'pool_id,user_id,matchup_id' });
+          }, {
+            onConflict: 'pool_id,user_id,week,game_id'
+          });
+          if (error) console.error('Failed to persist pick to Supabase:', error);
         } else {
-          await supabase.from('picks').delete().match({
+          const { error } = await supabase.from('picks').delete().match({
             pool_id: activePoolId,
             user_id: user.id,
-            matchup_id: game.id,
+            week: selectedWeek,
+            game_id: String(game.id),
           });
+          if (error) console.warn('Supabase pick delete warning:', error);
         }
       } catch (sbErr) {
         console.warn('Supabase pick persist warning:', sbErr);
@@ -446,11 +461,6 @@ export const WeeklyPicks: React.FC = () => {
     }
 
     triggerHaptic('impactLight');
-    setFeedbackMessage({
-      text: teamToSend ? `Selected ${teamToSend} to win!` : 'Pick cleared.',
-      type: 'success',
-    });
-    setTimeout(() => setFeedbackMessage(null), 3000);
     setSavingPickForGameId(null);
   };
 
@@ -585,11 +595,11 @@ export const WeeklyPicks: React.FC = () => {
                 pool_id: activePoolId,
                 user_id: user.id,
                 week: selectedWeek,
-                matchup_id: gameId,
+                game_id: String(gameId),
                 selected_team: selectedTeamId,
                 updated_at: new Date().toISOString(),
               }));
-              await supabase.from('picks').upsert(upsertRows, { onConflict: 'pool_id,user_id,matchup_id' });
+              await supabase.from('picks').upsert(upsertRows, { onConflict: 'pool_id,user_id,week,game_id' });
             } catch (sbErr) {
               console.warn('Supabase preset save warning:', sbErr);
             }
@@ -693,51 +703,13 @@ export const WeeklyPicks: React.FC = () => {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* Streamlined Mobile Top Bar: Week Dropdown + View Switcher + Control A/B */}
-      <div className="flex flex-wrap items-center justify-between gap-2 w-full p-2 glass-panel rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl select-none">
-        <div className="flex items-center space-x-2 shrink-0">
-          {/* Interactive Week Selector Button */}
-          <button
-            type="button"
-            onClick={() => setIsWeekModalOpen(true)}
-            className="flex items-center gap-1 text-[11px] font-mono font-black text-cyan-400 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all active:scale-95"
-            title="Click to select NFL slate week"
-          >
-            <span>WEEK {selectedWeek}</span>
-            <ChevronDown className="w-3.5 h-3.5 text-cyan-400" />
-          </button>
-
-          {isOffline && (
-            <div className="flex items-center gap-1 text-[10px] font-mono font-bold text-amber-400 bg-amber-500/15 px-2 py-0.5 rounded-md border border-amber-500/30">
-              <WifiOff className="w-3 h-3 text-amber-400" />
-              <span className="hidden xs:inline">OFFLINE</span>
-            </div>
-          )}
-
-          <div className="inline-flex rounded-xl bg-slate-950 p-0.5 border border-slate-800 shadow-inner">
-            <button
-              type="button"
-              onClick={() => handleTogglePicksView('swipe')}
-              className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
-                picksViewMode === 'swipe' ? 'bg-cyan-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Swipe
-            </button>
-            <button
-              type="button"
-              onClick={() => handleTogglePicksView('list')}
-              className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
-                picksViewMode === 'list' ? 'bg-cyan-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              List
-            </button>
-          </div>
+      {/* Unified Top Branding Banner */}
+      <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-zinc-800/80 -mx-4 -mt-4 bg-slate-950">
+        <div className="flex items-center gap-2">
+          <span className="text-base font-black tracking-wider text-white">NFL PICK'EM</span>
+          <span className="text-xs px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold">WEEKLY PICKS</span>
         </div>
-
-        {/* Control A: System Slate Status (Informational Pill) & Control B: User Safety Lock (Interactive Padlock Button) */}
-        <div className="flex items-center gap-2 shrink-0 select-none">
+        <div className="flex items-center gap-2">
           {/* Control A: System Slate Status */}
           {allCompleted ? (
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-800/90 border border-zinc-700 text-zinc-400 text-xs font-semibold">
@@ -780,15 +752,55 @@ export const WeeklyPicks: React.FC = () => {
         </div>
       </div>
 
-      {feedbackMessage && (
+      {/* Sub-Navigation Row: Week Dropdown & View Toggle */}
+      <div className="flex items-center justify-between px-1 py-1">
+        <div className="flex items-center space-x-2">
+          {/* Interactive Week Selector Button */}
+          <button
+            type="button"
+            onClick={() => setIsWeekModalOpen(true)}
+            className="flex items-center gap-1 text-[11px] font-mono font-black text-cyan-400 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all active:scale-95"
+            title="Click to select NFL slate week"
+          >
+            <span>WEEK {selectedWeek}</span>
+            <ChevronDown className="w-3.5 h-3.5 text-cyan-400" />
+          </button>
+
+          {isOffline && (
+            <div className="flex items-center gap-1 text-[10px] font-mono font-bold text-amber-400 bg-amber-500/15 px-2 py-0.5 rounded-md border border-amber-500/30">
+              <WifiOff className="w-3 h-3 text-amber-400" />
+              <span className="hidden xs:inline">OFFLINE</span>
+            </div>
+          )}
+        </div>
+
+        <div className="inline-flex rounded-xl bg-slate-950 p-0.5 border border-slate-800 shadow-inner">
+          <button
+            type="button"
+            onClick={() => handleTogglePicksView('swipe')}
+            className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
+              picksViewMode === 'swipe' ? 'bg-cyan-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            Swipe
+          </button>
+          <button
+            type="button"
+            onClick={() => handleTogglePicksView('list')}
+            className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
+              picksViewMode === 'list' ? 'bg-cyan-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            List
+          </button>
+        </div>
+      </div>
+
+      {/* Non-reflowing floating error toast */}
+      {feedbackMessage?.type === 'error' && (
         <div
-          role="status"
-          aria-live="polite"
-          className={`p-3 rounded-xl border text-xs font-mono font-bold text-center transition-all ${
-            feedbackMessage.type === 'error'
-              ? 'bg-rose-950/80 border-rose-800 text-rose-300'
-              : 'bg-emerald-950/80 border-emerald-800 text-emerald-300'
-          }`}
+          role="alert"
+          className="fixed top-14 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl border text-xs font-mono font-bold text-center transition-all bg-rose-950/90 border-rose-700 text-rose-200 shadow-2xl backdrop-blur-md animate-fade-in"
         >
           {feedbackMessage.text}
         </div>

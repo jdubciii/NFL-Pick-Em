@@ -40,7 +40,8 @@ export const RadarPage: React.FC = () => {
 
     const pullTelemetry = async () => {
       try {
-        const data = await fetchLiveNFLScores();
+        const activeWeek = getCurrentNFLWeek();
+        const data = await fetchLiveNFLScores(activeWeek);
         if (!isMounted) return;
         if (data && data.length > 0) {
           setLiveScores(data);
@@ -117,7 +118,7 @@ export const RadarPage: React.FC = () => {
         // 2. Fetch picks from public.picks for the active week
         const { data: dbPicks } = await supabase
           .from('picks')
-          .select('user_id, matchup_id, selected_team, week')
+          .select('user_id, matchup_id, game_id, selected_team, week')
           .eq('pool_id', activePoolId)
           .eq('week', activeWeek);
 
@@ -126,7 +127,7 @@ export const RadarPage: React.FC = () => {
         if (dbPicks && dbPicks.length > 0) {
           const mappedPicks: UserPickItem[] = dbPicks.map((p: any) => ({
             userId: p.user_id,
-            gameId: p.matchup_id,
+            gameId: String(p.game_id || p.matchup_id),
             selectedTeam: p.selected_team,
             isSubmitted: true,
             isHidden: false,
@@ -293,6 +294,13 @@ export const RadarPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 pb-28 max-w-md mx-auto font-sans">
+      {/* Unified Top Branding Banner */}
+      <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-zinc-800/80 -mx-4 -mt-4 mb-3 bg-slate-950">
+        <div className="flex items-center gap-2">
+          <span className="text-base font-black tracking-wider text-white">NFL PICK'EM</span>
+          <span className="text-xs px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 font-bold">SUNDAY RADAR</span>
+        </div>
+      </div>
       {/* 1. Sticky Simulation Warning Banner */}
       {isSimulationActive && (
         <div className="sticky top-0 z-40 -mx-4 px-4 py-2 bg-amber-950/95 border-b border-amber-400 font-mono text-xs flex items-center justify-between shadow-lg">
