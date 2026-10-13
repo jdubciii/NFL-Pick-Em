@@ -152,7 +152,10 @@ export const WeeklyPicks: React.FC = () => {
     try {
       const cachedStr = localStorage.getItem(cacheKey);
       if (cachedStr) {
-        cachedGames = JSON.parse(cachedStr);
+        const parsed = JSON.parse(cachedStr);
+        cachedGames = [...parsed].sort(
+          (a, b) => new Date(a.kickoffTime || a.kickoff_time).getTime() - new Date(b.kickoffTime || b.kickoff_time).getTime()
+        );
         setGames(cachedGames);
       }
     } catch (_) {}
@@ -247,9 +250,14 @@ export const WeeklyPicks: React.FC = () => {
         userPick: userPicksMap[g.id] || null,
       }));
 
-      setGames(mergedGames);
+      // Strictly sort chronologically by kickoff timestamp (Decision #66)
+      const sortedGames = [...mergedGames].sort(
+        (a, b) => new Date(a.kickoffTime || (a as any).kickoff_time).getTime() - new Date(b.kickoffTime || (b as any).kickoff_time).getTime()
+      );
+
+      setGames(sortedGames);
       try {
-        localStorage.setItem(cacheKey, JSON.stringify(mergedGames));
+        localStorage.setItem(cacheKey, JSON.stringify(sortedGames));
       } catch (_) {}
 
       // 4. Load pool info & prefetch matrix if available
@@ -290,7 +298,11 @@ export const WeeklyPicks: React.FC = () => {
         try {
           const fallbackCached = localStorage.getItem(cacheKey);
           if (fallbackCached) {
-            setGames(JSON.parse(fallbackCached));
+            const parsed = JSON.parse(fallbackCached);
+            const sortedFallback = [...parsed].sort(
+              (a, b) => new Date(a.kickoffTime || a.kickoff_time).getTime() - new Date(b.kickoffTime || b.kickoff_time).getTime()
+            );
+            setGames(sortedFallback);
           }
         } catch (_) {}
       }
@@ -748,6 +760,7 @@ export const WeeklyPicks: React.FC = () => {
           {picksViewMode === 'swipe' ? (
             /* Fast-Decision Tinder-Style Swipe Deck */
             <SwipePickDeck
+              key={`swipe-deck-week-${selectedWeek}`}
               matchups={games.map((g: any) => ({
                 id: g.id,
                 gameId: g.id,
@@ -760,9 +773,10 @@ export const WeeklyPicks: React.FC = () => {
                 possession: g.possession,
                 inRedZone: g.inRedZone,
                 startTime: formatKickoff(g.kickoffTime),
+                kickoffTime: g.kickoffTime,
                 spread: typeof g.spread === 'number' ? `${g.spread}` : (typeof g.spread === 'string' ? g.spread : undefined),
                 selectedTeam: g.userPick,
-                isLocked: isGameLocked(g),
+                isLocked: isGameLocked(g) || isGameKickoffLocked(g),
               }))}
               onSelectPick={(gameId, team) => {
                 const targetGame = games.find((g) => g.id === gameId);

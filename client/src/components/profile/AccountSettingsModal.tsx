@@ -33,19 +33,41 @@ export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => vo
       setIsAdmin(adminRole);
 
       if (adminRole) {
-        const { data, error } = await supabase.rpc('get_pending_applicants', {
-          p_pool_id: activePoolId
-        });
+        // Query memberships directly without relying on fragile client joins
+        const { data: pendingMemberships, error: memError } = await supabase
+          .from('pool_memberships')
+          .select('id, user_id, status, role, created_at')
+          .eq('pool_id', activePoolId)
+          .eq('status', 'PENDING');
 
-        if (error) {
-          console.error('[Commissioner Queue] RPC error:', error);
+        let applicants: PendingApplicant[] = [];
+
+        if (pendingMemberships && pendingMemberships.length > 0) {
+          const userIds = pendingMemberships.map((m: any) => m.user_id);
+          const { data: userData } = await supabase
+            .from('users')
+            .select('id, email, display_name')
+            .in('id', userIds);
+
+          const userMap = new Map((userData || []).map((u: any) => [u.id, u]));
+          applicants = pendingMemberships.map((m: any) => {
+            const u = userMap.get(m.user_id);
+            return {
+              userId: m.user_id,
+              email: u?.email || 'Unknown Applicant',
+              displayName: u?.display_name || (u?.email ? u.email.split('@')[0] : 'Applicant'),
+            };
+          });
+        } else if (memError) {
+          const { data: rpcData } = await supabase.rpc('get_pending_applicants', {
+            p_pool_id: activePoolId
+          });
+          applicants = (rpcData || []).map((p: any) => ({
+            userId: p.user_id,
+            email: p.email,
+            displayName: p.display_name
+          }));
         }
-
-        const applicants: PendingApplicant[] = (data || []).map((p: any) => ({
-          userId: p.user_id,
-          email: p.email,
-          displayName: p.display_name
-        }));
 
         setPendingMembers(applicants);
         setPendingCount(applicants.length);

@@ -3,6 +3,7 @@ import { motion, useMotionValue, useTransform, AnimatePresence } from 'framer-mo
 import { TeamLogo } from '../common/TeamLogo';
 import { NFL_TEAMS } from '../../utils/teamAssets';
 import { Lock } from 'lucide-react';
+import { isKickoffLocked } from '../../services/lockEnforcementService';
 
 export interface SwipeMatchup {
   id: string;
@@ -16,6 +17,7 @@ export interface SwipeMatchup {
   possession?: string;
   inRedZone?: boolean;
   startTime: string;
+  kickoffTime?: string;
   spread?: string;
   overUnder?: string;
   venue?: string;
@@ -47,19 +49,12 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
   const [showIntel, setShowIntel] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [currentIndex, setCurrentIndex] = useState<number>(0);
 
-  const getInitialIndex = () => {
-    const firstUnpicked = matchups.findIndex(m => !m.selectedTeam);
-    return firstUnpicked !== -1 ? firstUnpicked : 0;
-  };
-
-  const [currentIndex, setCurrentIndex] = useState<number>(getInitialIndex);
-
+  // When slate changes, immediately reset to 0
   useEffect(() => {
-    if (currentIndex >= matchups.length && matchups.length > 0) {
-      setCurrentIndex(0);
-    }
-  }, [matchups.length]);
+    setCurrentIndex(0);
+  }, [matchups[0]?.gameId]);
 
   useEffect(() => {
     if (toast) {
@@ -79,63 +74,55 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
     setToast({ id: Date.now(), message, type, team });
   };
 
-  const activeCard = matchups[currentIndex] || matchups[0];
-
-  const getNextUnpickedIndex = (fromIdx: number): number => {
-    const total = matchups.length;
-    if (total === 0) return 0;
-    for (let i = fromIdx + 1; i < total; i++) {
-      if (!matchups[i].selectedTeam) return i;
-    }
-    for (let i = 0; i < fromIdx; i++) {
-      if (!matchups[i].selectedTeam) return i;
-    }
-    return (fromIdx + 1) % total;
-  };
-
-  const getPrevUnpickedIndex = (fromIdx: number): number => {
-    const total = matchups.length;
-    if (total === 0) return 0;
-    for (let i = fromIdx - 1; i >= 0; i--) {
-      if (!matchups[i].selectedTeam) return i;
-    }
-    for (let i = total - 1; i > fromIdx; i--) {
-      if (!matchups[i].selectedTeam) return i;
-    }
-    return (fromIdx - 1 + total) % total;
-  };
-
   const totalGames = matchups.length;
   const pickedCount = matchups.filter(m => !!m.selectedTeam).length;
+  const activeCard = matchups[currentIndex] || matchups[0];
+
+  const checkCardLocked = (card: SwipeMatchup | undefined): boolean => {
+    if (!card) return false;
+    return Boolean(
+      card.isLocked ||
+      (card.kickoffTime && isKickoffLocked(card.kickoffTime)) ||
+      isUserLocked
+    );
+  };
 
   const handleCardExit = (direction: 'LEFT' | 'RIGHT' | 'UP' | 'DOWN') => {
-    if (!activeCard || isUserLocked) return;
+    if (!activeCard) return;
+    const locked = checkCardLocked(activeCard);
 
     if (direction === 'LEFT') {
-      if (!activeCard.isLocked) {
+      if (!locked) {
         if (activeCard.selectedTeam !== activeCard.awayTeam) {
           onSelectPick(activeCard.gameId, activeCard.awayTeam);
         }
         triggerToast(`Picked ${activeCard.awayTeam}`, 'AWAY', activeCard.awayTeam);
+      } else {
+        triggerToast('Matchup Locked', 'SKIP');
       }
-      setCurrentIndex(prev => getNextUnpickedIndex(prev));
+      // Clamp navigation to totalGames - 1 (never bleed into next week)
+      setCurrentIndex(prev => Math.min(prev + 1, totalGames - 1));
     } else if (direction === 'RIGHT') {
-      if (!activeCard.isLocked) {
+      if (!locked) {
         if (activeCard.selectedTeam !== activeCard.homeTeam) {
           onSelectPick(activeCard.gameId, activeCard.homeTeam);
         }
         triggerToast(`Picked ${activeCard.homeTeam}`, 'HOME', activeCard.homeTeam);
+      } else {
+        triggerToast('Matchup Locked', 'SKIP');
       }
-      setCurrentIndex(prev => getNextUnpickedIndex(prev));
+      // Clamp navigation to totalGames - 1 (never bleed into next week)
+      setCurrentIndex(prev => Math.min(prev + 1, totalGames - 1));
     } else if (direction === 'UP') {
       triggerToast('Skipped Matchup', 'SKIP');
-      setCurrentIndex(prev => getNextUnpickedIndex(prev));
+      setCurrentIndex(prev => Math.min(prev + 1, totalGames - 1));
     } else if (direction === 'DOWN') {
       setShowIntel(true);
     }
   };
 
-  const nextUnderCard = matchups[getNextUnpickedIndex(currentIndex)];
+  // Only render next card if not at the very end of the slate
+  const nextUnderCard = currentIndex < totalGames - 1 ? matchups[currentIndex + 1] : null;
 
   if (matchups.length === 0) {
     return (
@@ -234,9 +221,10 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
         <div className="flex items-center space-x-2 w-full pt-0.5">
           <button
             type="button"
-            onClick={() => setCurrentIndex(prev => getPrevUnpickedIndex(prev))}
-            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 border border-slate-700 text-cyan-400 hover:text-white active:scale-90 transition-all shrink-0 text-sm font-black shadow-sm"
-            title="Previous Unpicked"
+            disabled={currentIndex === 0}
+            onClick={() => setCurrentIndex(prev => Math.max(0, prev - 1))}
+            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 border border-slate-700 text-cyan-400 hover:text-white active:scale-90 transition-all shrink-0 text-sm font-black shadow-sm disabled:opacity-30 disabled:cursor-not-allowed"
+            title="Previous Matchup"
           >
             ◀
           </button>
@@ -269,9 +257,10 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
 
           <button
             type="button"
-            onClick={() => setCurrentIndex(prev => getNextUnpickedIndex(prev))}
-            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 border border-slate-700 text-cyan-400 hover:text-white active:scale-90 transition-all shrink-0 text-sm font-black shadow-sm"
-            title="Next Unpicked"
+            disabled={currentIndex >= totalGames - 1}
+            onClick={() => setCurrentIndex(prev => Math.min(totalGames - 1, prev + 1))}
+            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 border border-slate-700 text-cyan-400 hover:text-white active:scale-90 transition-all shrink-0 text-sm font-black shadow-sm disabled:opacity-30 disabled:cursor-not-allowed"
+            title="Next Matchup"
           >
             ▶
           </button>
@@ -279,10 +268,10 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
       </div>
 
       {/* Main Swipe Deck Container */}
-      <div className="relative w-full h-[450px] flex items-center justify-center">
+      <div className="relative w-full h-[465px] flex items-center justify-center">
         {nextUnderCard && nextUnderCard.gameId !== activeCard.gameId && (
           <div
-            className="absolute w-[92%] h-[405px] bg-slate-950/80 border border-slate-800 rounded-3xl p-5 shadow-xl scale-95 translate-y-3 opacity-50 blur-[0.5px] pointer-events-none flex flex-col justify-between"
+            className="absolute w-[92%] h-[420px] bg-slate-950/80 border border-slate-800 rounded-3xl p-5 shadow-xl scale-95 translate-y-3 opacity-50 blur-[0.5px] pointer-events-none flex flex-col justify-between"
             style={{ willChange: 'transform, opacity' }}
           >
             <div className="flex justify-between text-xs text-slate-500 font-bold">
@@ -419,17 +408,22 @@ const SwipeCardItem: React.FC<{
   const awayMeta = NFL_TEAMS[matchup.awayTeam];
   const homeMeta = NFL_TEAMS[matchup.homeTeam];
 
+  const isCardLocked = Boolean(
+    matchup.isLocked ||
+    (matchup.kickoffTime && isKickoffLocked(matchup.kickoffTime)) ||
+    isUserLocked
+  );
+
   return (
     <motion.div
       style={{ x, y, rotate, willChange: 'transform, opacity' }}
-      drag={!isUserLocked}
+      drag="x"
       dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
       dragElastic={0.65}
       initial={{ scale: 0.94, opacity: 0 }}
       animate={{ scale: 1, opacity: 1, transition: { duration: 0.18, ease: 'easeOut' } }}
       exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2, ease: 'easeIn' } }}
       onDragEnd={(_, info) => {
-        if (isUserLocked) return;
         const absX = Math.abs(info.offset.x);
         const absY = Math.abs(info.offset.y);
 
@@ -447,11 +441,11 @@ const SwipeCardItem: React.FC<{
           }
         }
       }}
-      className={`absolute w-full h-[435px] bg-slate-900/95 border-2 rounded-3xl p-4 shadow-2xl flex flex-col justify-between backdrop-blur-2xl z-20 select-none ${
-        isUserLocked ? 'border-amber-600/50 cursor-not-allowed' : 'border-slate-700/80 cursor-grab active:cursor-grabbing'
+      className={`absolute w-full h-[450px] bg-slate-900/95 border-2 rounded-3xl p-4 shadow-2xl flex flex-col justify-between backdrop-blur-2xl z-20 select-none ${
+        isCardLocked ? 'border-amber-600/50 cursor-grab active:cursor-grabbing' : 'border-slate-700/80 cursor-grab active:cursor-grabbing'
       }`}
     >
-      {!isUserLocked && (
+      {!isCardLocked && (
         <>
           <motion.div
             style={{ opacity: awayOpacity }}
@@ -476,9 +470,14 @@ const SwipeCardItem: React.FC<{
         </>
       )}
 
-      {/* Header Info with Live Gameday Scoreboard */}
+      {/* Header Info with Live Gameday Scoreboard / Locked Indicator */}
       <div className="flex items-center justify-between border-b border-slate-800 pb-2.5 text-xs">
-        {matchup.isLive ? (
+        {isCardLocked ? (
+          <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-zinc-800/90 border border-zinc-700 text-zinc-300 text-xs font-semibold">
+            <Lock className="w-3.5 h-3.5 text-amber-400" />
+            <span>KICKOFF LOCKED</span>
+          </div>
+        ) : matchup.isLive ? (
           <div className="flex items-center space-x-2">
             <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-rose-500/20 border border-rose-500 text-rose-400 font-black text-[10px] animate-pulse">
               <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
@@ -507,13 +506,21 @@ const SwipeCardItem: React.FC<{
           </div>
           <span className="text-lg font-black text-white">{matchup.awayTeam}</span>
           <span className="text-[10px] text-slate-400 font-bold">{awayMeta?.name || 'Away'}</span>
-          <div className={`px-2 py-0.5 rounded border text-[9px] font-black ${
-            matchup.selectedTeam === matchup.awayTeam
-              ? 'bg-cyan-500 text-slate-950 border-cyan-400 font-black'
-              : 'bg-cyan-950/80 border-cyan-800 text-cyan-400'
-          }`}>
-            {matchup.selectedTeam === matchup.awayTeam ? '✔ SELECTED' : 'SWIPE ◀'}
-          </div>
+          {!isCardLocked ? (
+            <div className={`px-2 py-0.5 rounded border text-[9px] font-black ${
+              matchup.selectedTeam === matchup.awayTeam
+                ? 'bg-cyan-500 text-slate-950 border-cyan-400 font-black'
+                : 'bg-cyan-950/80 border-cyan-800 text-cyan-400'
+            }`}>
+              {matchup.selectedTeam === matchup.awayTeam ? '✔ SELECTED' : 'SWIPE ◀'}
+            </div>
+          ) : matchup.selectedTeam === matchup.awayTeam ? (
+            <div className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-black">
+              ✔ LOCKED
+            </div>
+          ) : (
+            <div className="h-5" />
+          )}
         </div>
 
         <span className="text-slate-600 font-black text-xs uppercase">VS</span>
@@ -524,31 +531,51 @@ const SwipeCardItem: React.FC<{
           </div>
           <span className="text-lg font-black text-white">{matchup.homeTeam}</span>
           <span className="text-[10px] text-slate-400 font-bold">{homeMeta?.name || 'Home'}</span>
-          <div className={`px-2 py-0.5 rounded border text-[9px] font-black ${
-            matchup.selectedTeam === matchup.homeTeam
-              ? 'bg-rose-500 text-slate-950 border-rose-400 font-black'
-              : 'bg-rose-950/80 border-rose-800 text-rose-400'
-          }`}>
-            {matchup.selectedTeam === matchup.homeTeam ? '✔ SELECTED' : '▶ SWIPE'}
-          </div>
+          {!isCardLocked ? (
+            <div className={`px-2 py-0.5 rounded border text-[9px] font-black ${
+              matchup.selectedTeam === matchup.homeTeam
+                ? 'bg-rose-500 text-slate-950 border-rose-400 font-black'
+                : 'bg-rose-950/80 border-rose-800 text-rose-400'
+            }`}>
+              {matchup.selectedTeam === matchup.homeTeam ? '✔ SELECTED' : '▶ SWIPE'}
+            </div>
+          ) : matchup.selectedTeam === matchup.homeTeam ? (
+            <div className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-black">
+              ✔ LOCKED
+            </div>
+          ) : (
+            <div className="h-5" />
+          )}
         </div>
       </div>
+
+      {/* Clear Non-Clickable Status Banner when Matchup is Locked */}
+      {isCardLocked && (
+        <div className="my-1">
+          {matchup.selectedTeam ? (
+            <div className="flex items-center justify-center gap-2 py-2 px-4 rounded-xl bg-zinc-800/80 border border-zinc-700 text-zinc-300 text-sm font-semibold">
+              <Lock className="w-4 h-4 text-amber-400" />
+              <span>PICK LOCKED: <strong className="text-amber-300">{matchup.selectedTeam}</strong></span>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center gap-2 py-2 px-4 rounded-xl bg-zinc-900/80 border border-zinc-800 text-zinc-500 text-sm font-semibold">
+              <Lock className="w-4 h-4 text-zinc-500" />
+              <span>NO PICK SUBMITTED (LOCKED)</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Footer Controls */}
       <div className="border-t border-slate-800 pt-2.5 space-y-2 text-center">
         <div className="grid grid-cols-2 gap-2 text-xs font-bold">
           <button
             type="button"
-            disabled={isUserLocked}
             onClick={() => onSwipe('UP')}
-            className={`flex items-center justify-center space-x-1 py-1.5 px-2 rounded-xl border transition-all ${
-              isUserLocked
-                ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
-                : 'bg-slate-800/90 border-slate-700 text-amber-300 hover:bg-slate-700 active:scale-95'
-            }`}
+            className="flex items-center justify-center space-x-1 py-1.5 px-2 rounded-xl bg-slate-800/90 border border-slate-700 text-amber-300 hover:bg-slate-700 active:scale-95"
           >
             <span>▲</span>
-            <span>SKIP (UP)</span>
+            <span>{isCardLocked ? 'NEXT (UP)' : 'SKIP (UP)'}</span>
           </button>
           <button
             type="button"
@@ -559,13 +586,6 @@ const SwipeCardItem: React.FC<{
             <span>INTEL (DOWN)</span>
           </button>
         </div>
-
-        {isUserLocked && (
-          <div className="flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-full bg-zinc-900/90 border border-amber-500/40 text-amber-400 text-xs font-semibold tracking-wide">
-            <Lock className="w-3.5 h-3.5" />
-            <span>KICKOFF LOCKED</span>
-          </div>
-        )}
       </div>
     </motion.div>
   );
