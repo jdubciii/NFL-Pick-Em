@@ -39,14 +39,16 @@ interface SwipePickDeckProps {
   matchups: SwipeMatchup[];
   onSelectPick: (gameId: string, team: string) => void;
   onClearAllPicks?: () => void;
-  isUserLocked: boolean;
+  isUserLocked?: boolean;
+  isPicksProtected?: boolean;
 }
 
 export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
   matchups,
   onSelectPick,
   onClearAllPicks,
-  isUserLocked
+  isUserLocked = false,
+  isPicksProtected = false,
 }) => {
   const [showIntel, setShowIntel] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -80,38 +82,41 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
   const pickedCount = matchups.filter(m => !!m.selectedTeam).length;
   const activeCard = matchups[currentIndex] || matchups[0];
 
-  const checkCardLocked = (card: SwipeMatchup | undefined): boolean => {
+  const checkKickoffLocked = (card: SwipeMatchup | undefined): boolean => {
     if (!card) return false;
     return Boolean(
       card.isLocked ||
-      (card.kickoffTime && isKickoffLocked(card.kickoffTime)) ||
-      isUserLocked
+      (card.kickoffTime && isKickoffLocked(card.kickoffTime))
     );
   };
 
   const handleCardExit = (direction: 'LEFT' | 'RIGHT' | 'UP' | 'DOWN') => {
     if (!activeCard) return;
-    const locked = checkCardLocked(activeCard);
+    const kickoffLocked = checkKickoffLocked(activeCard);
 
     if (direction === 'LEFT') {
-      if (!locked) {
+      if (kickoffLocked) {
+        triggerToast('Matchup Locked', 'SKIP');
+      } else if (isPicksProtected) {
+        triggerToast('Picks are protected against accidental edits. Tap PICKS PROTECTED at the top to unlock.', 'SKIP');
+      } else {
         if (activeCard.selectedTeam !== activeCard.awayTeam) {
           onSelectPick(activeCard.gameId, activeCard.awayTeam);
         }
         triggerToast(`Picked ${activeCard.awayTeam}`, 'AWAY', activeCard.awayTeam);
-      } else {
-        triggerToast('Matchup Locked', 'SKIP');
       }
       // Clamp navigation to totalGames - 1 (never bleed into next week)
       setCurrentIndex(prev => Math.min(prev + 1, totalGames - 1));
     } else if (direction === 'RIGHT') {
-      if (!locked) {
+      if (kickoffLocked) {
+        triggerToast('Matchup Locked', 'SKIP');
+      } else if (isPicksProtected) {
+        triggerToast('Picks are protected against accidental edits. Tap PICKS PROTECTED at the top to unlock.', 'SKIP');
+      } else {
         if (activeCard.selectedTeam !== activeCard.homeTeam) {
           onSelectPick(activeCard.gameId, activeCard.homeTeam);
         }
         triggerToast(`Picked ${activeCard.homeTeam}`, 'HOME', activeCard.homeTeam);
-      } else {
-        triggerToast('Matchup Locked', 'SKIP');
       }
       // Clamp navigation to totalGames - 1 (never bleed into next week)
       setCurrentIndex(prev => Math.min(prev + 1, totalGames - 1));
@@ -295,6 +300,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
             matchup={activeCard}
             onSwipe={handleCardExit}
             isUserLocked={isUserLocked}
+            isPicksProtected={isPicksProtected}
             onOpenIntel={() => setShowIntel(true)}
           />
         </AnimatePresence>
@@ -396,9 +402,10 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
 const SwipeCardItem: React.FC<{
   matchup: SwipeMatchup;
   onSwipe: (dir: 'LEFT' | 'RIGHT' | 'UP' | 'DOWN') => void;
-  isUserLocked: boolean;
+  isUserLocked?: boolean;
+  isPicksProtected?: boolean;
   onOpenIntel: () => void;
-}> = ({ matchup, onSwipe, isUserLocked, onOpenIntel }) => {
+}> = ({ matchup, onSwipe, isUserLocked = false, isPicksProtected = false, onOpenIntel }) => {
   const x = useMotionValue(0);
   const y = useMotionValue(0);
   const rotate = useTransform(x, [-240, 240], [-16, 16]);
@@ -411,12 +418,12 @@ const SwipeCardItem: React.FC<{
   const homeMeta = NFL_TEAMS[matchup.homeTeam];
 
   const isFinal = matchup.gameStatus === 'FINAL';
-  const isCardLocked = Boolean(
+  const isKickoffPassed = Boolean(
     isFinal ||
     matchup.isLocked ||
-    (matchup.kickoffTime && isKickoffLocked(matchup.kickoffTime)) ||
-    isUserLocked
+    (matchup.kickoffTime && isKickoffLocked(matchup.kickoffTime))
   );
+  const isCardLocked = isKickoffPassed;
 
   const winningTeam =
     isFinal && matchup.homeScore != null && matchup.awayScore != null
@@ -515,6 +522,11 @@ const SwipeCardItem: React.FC<{
             <Lock className="w-3.5 h-3.5 text-amber-400" />
             <span>KICKOFF LOCKED</span>
           </div>
+        ) : isPicksProtected ? (
+          <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-semibold">
+            <Lock className="w-3.5 h-3.5 text-amber-400" />
+            <span>PICKS PROTECTED</span>
+          </div>
         ) : (
           <div className="flex items-center space-x-1.5">
             <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
@@ -563,12 +575,16 @@ const SwipeCardItem: React.FC<{
               <div className="h-5" />
             )
           ) : !isCardLocked ? (
-            <div className={`px-2 py-0.5 rounded border text-[9px] font-black ${
+            <div className={`px-2 py-0.5 rounded border text-[9px] font-black transition-all ${
               matchup.selectedTeam === matchup.awayTeam
-                ? 'bg-cyan-500 text-slate-950 border-cyan-400 font-black'
+                ? isPicksProtected
+                  ? 'bg-cyan-500/80 text-slate-950 border-cyan-400'
+                  : 'bg-cyan-500 text-slate-950 border-cyan-400 font-black'
+                : isPicksProtected
+                ? 'bg-slate-950/80 border-slate-800 text-slate-500'
                 : 'bg-cyan-950/80 border-cyan-800 text-cyan-400'
             }`}>
-              {matchup.selectedTeam === matchup.awayTeam ? '✔ SELECTED' : 'SWIPE ◀'}
+              {matchup.selectedTeam === matchup.awayTeam ? '✔ SELECTED' : isPicksProtected ? 'PROTECTED' : 'SWIPE ◀'}
             </div>
           ) : matchup.selectedTeam === matchup.awayTeam ? (
             <div className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-black">
@@ -616,12 +632,16 @@ const SwipeCardItem: React.FC<{
               <div className="h-5" />
             )
           ) : !isCardLocked ? (
-            <div className={`px-2 py-0.5 rounded border text-[9px] font-black ${
+            <div className={`px-2 py-0.5 rounded border text-[9px] font-black transition-all ${
               matchup.selectedTeam === matchup.homeTeam
-                ? 'bg-rose-500 text-slate-950 border-rose-400 font-black'
+                ? isPicksProtected
+                  ? 'bg-rose-500/80 text-slate-950 border-rose-400'
+                  : 'bg-rose-500 text-slate-950 border-rose-400 font-black'
+                : isPicksProtected
+                ? 'bg-slate-950/80 border-slate-800 text-slate-500'
                 : 'bg-rose-950/80 border-rose-800 text-rose-400'
             }`}>
-              {matchup.selectedTeam === matchup.homeTeam ? '✔ SELECTED' : '▶ SWIPE'}
+              {matchup.selectedTeam === matchup.homeTeam ? '✔ SELECTED' : isPicksProtected ? 'PROTECTED' : '▶ SWIPE'}
             </div>
           ) : matchup.selectedTeam === matchup.homeTeam ? (
             <div className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-black">

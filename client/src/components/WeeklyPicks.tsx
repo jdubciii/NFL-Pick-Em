@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Lock, CheckCircle2, AlertCircle, RefreshCw, Shield, ChevronDown, WifiOff, X, Calendar } from 'lucide-react';
+import { Lock, Unlock, CheckCircle2, AlertCircle, RefreshCw, Shield, ChevronDown, WifiOff, X, Calendar } from 'lucide-react';
 import { PickPresetControls } from './PickPresetControls';
 import { CompactPicksList } from './picks/CompactPicksList';
 import { SwipePickDeck } from './picks/SwipePickDeck';
@@ -83,48 +83,18 @@ export const WeeklyPicks: React.FC = () => {
     message: ''
   });
 
-  const [isUserLocked, setIsUserLocked] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(`nfl_picks_user_locked_w${selectedWeek}`) === 'true';
-    } catch {
-      return false;
-    }
+  const [isPicksProtected, setIsPicksProtected] = useState<boolean>(() => {
+    return localStorage.getItem('user_picks_protected') === 'true';
   });
 
-  // Sync user lock when switching weeks
-  useEffect(() => {
-    try {
-      const locked = localStorage.getItem(`nfl_picks_user_locked_w${selectedWeek}`) === 'true';
-      setIsUserLocked(locked);
-    } catch {
-      setIsUserLocked(false);
-    }
-  }, [selectedWeek]);
+  const togglePicksProtection = () => {
+    const next = !isPicksProtected;
+    setIsPicksProtected(next);
+    localStorage.setItem('user_picks_protected', String(next));
+    triggerHaptic('selection');
+  };
 
   // Network online/offline detection
-  useEffect(() => {
-    const handleOnline = () => setIsOffline(false);
-    const handleOffline = () => setIsOffline(true);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
-
-  const toggleUserLock = () => {
-    setIsUserLocked((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(`nfl_picks_user_locked_w${selectedWeek}`, String(next));
-      } catch (e) {
-        console.error(e);
-      }
-      triggerHaptic('selection');
-      return next;
-    });
-  };
 
   const handleTogglePicksView = (mode: 'swipe' | 'list') => {
     setPicksViewMode(mode);
@@ -374,8 +344,13 @@ export const WeeklyPicks: React.FC = () => {
   }, [games, fetchGames, isOffline]);
 
   const handlePick = async (game: GameItem, selectedTeamId: string) => {
-    if (isUserLocked) {
-      setFeedbackMessage({ text: 'Picks are locked. Tap "LOCKED" button to edit picks.', type: 'error' });
+    if (isPicksProtected) {
+      setFeedbackMessage({
+        text: 'Picks are protected against accidental edits. Tap PICKS PROTECTED at the top to unlock.',
+        type: 'error'
+      });
+      setTimeout(() => setFeedbackMessage(null), 3500);
+      triggerHaptic('impactHeavy');
       return;
     }
     if (!pool) return;
@@ -462,7 +437,7 @@ export const WeeklyPicks: React.FC = () => {
    * Clears all unlocked picks across the active slate.
    */
   const handleClearAllPicks = async () => {
-    if (isUserLocked || !pool) return;
+    if (isPicksProtected || !pool) return;
     const unlockedPickedGames = games.filter((g) => !isGameLocked(g) && g.userPick);
     if (unlockedPickedGames.length === 0) return;
 
@@ -526,8 +501,13 @@ export const WeeklyPicks: React.FC = () => {
    * Applies quick-fill presets through the QuickFillSafetyEngine with a 7-second undo grace period.
    */
   const handleApplyPreset = (updatedPicks: Record<string, string | null>, presetDescription: string) => {
-    if (isUserLocked) {
-      setFeedbackMessage({ text: 'Matchups locked: kickoff has passed.', type: 'error' });
+    if (isPicksProtected) {
+      setFeedbackMessage({
+        text: 'Picks are protected against accidental edits. Tap PICKS PROTECTED at the top to unlock.',
+        type: 'error'
+      });
+      setTimeout(() => setFeedbackMessage(null), 3500);
+      triggerHaptic('impactHeavy');
       return;
     }
     if (!pool) return;
@@ -683,11 +663,13 @@ export const WeeklyPicks: React.FC = () => {
   const isGameKickoffLocked = (g: GameItem) => isKickoffLocked(g.kickoffTime || (g as any).kickoff_time, now);
   const allLocked = games.length > 0 && games.every(g => isGameKickoffLocked(g));
   const lockedCount = games.filter(g => isGameKickoffLocked(g)).length;
+  const openCount = games.length - lockedCount;
+  const allCompleted = games.length > 0 && games.every(g => g.status === 'FINAL' || g.gameStatus === 'FINAL');
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* Streamlined Mobile Top Bar: Week Dropdown + View Switcher + Lock Pill */}
-      <div className="flex items-center justify-between gap-1 w-full p-2 glass-panel rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl select-none">
+      {/* Streamlined Mobile Top Bar: Week Dropdown + View Switcher + Control A/B */}
+      <div className="flex flex-wrap items-center justify-between gap-2 w-full p-2 glass-panel rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl select-none">
         <div className="flex items-center space-x-2 shrink-0">
           {/* Interactive Week Selector Button */}
           <button
@@ -729,23 +711,47 @@ export const WeeklyPicks: React.FC = () => {
           </div>
         </div>
 
-        {/* Unambiguous Static Slate Lock Status Badge (Decision #66 Non-Interactive) */}
-        <div className="shrink-0 select-none">
-          {allLocked ? (
+        {/* Control A: System Slate Status (Informational Pill) & Control B: User Safety Lock (Interactive Padlock Button) */}
+        <div className="flex items-center gap-2 shrink-0 select-none">
+          {/* Control A: System Slate Status */}
+          {allCompleted ? (
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-800/90 border border-zinc-700 text-zinc-400 text-xs font-semibold">
-              <Lock className="w-3 h-3 text-zinc-400" />
-              <span>SLATE LOCKED</span>
+              <span>WEEK {selectedWeek} FINAL</span>
             </div>
-          ) : lockedCount === 0 ? (
+          ) : lockedCount === 0 && games.length > 0 ? (
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 text-xs font-semibold">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               <span>SLATE OPEN</span>
             </div>
           ) : (
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-semibold">
-              <span>{games.length - lockedCount} OPEN • {lockedCount} LOCKED</span>
+              <span>{openCount} OPEN</span>
             </div>
           )}
+
+          {/* Control B: User Safety Lock */}
+          <button
+            type="button"
+            onClick={togglePicksProtection}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold transition-all active:scale-95 border ${
+              isPicksProtected
+                ? 'bg-amber-500/15 border-amber-500/40 text-amber-400 hover:bg-amber-500/25'
+                : 'bg-zinc-800/90 border-zinc-700 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
+            }`}
+            title={isPicksProtected ? 'Picks are protected from accidental edits' : 'Editing allowed'}
+          >
+            {isPicksProtected ? (
+              <>
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
+                <span>PICKS PROTECTED</span>
+              </>
+            ) : (
+              <>
+                <Unlock className="w-3.5 h-3.5 text-zinc-400" />
+                <span>EDITING ALLOWED</span>
+              </>
+            )}
+          </button>
         </div>
       </div>
 
@@ -826,7 +832,8 @@ export const WeeklyPicks: React.FC = () => {
                 } catch (_) {}
               }}
               onClearAllPicks={handleClearAllPicks}
-              isUserLocked={isUserLocked}
+              isUserLocked={isPicksProtected}
+              isPicksProtected={isPicksProtected}
             />
           ) : (
             /* High-Density Compact List View */
@@ -851,6 +858,24 @@ export const WeeklyPicks: React.FC = () => {
               onSelectTeam={(gameId, team) => {
                 const targetGame = games.find((g) => g.id === gameId);
                 if (targetGame) handlePick(targetGame, team);
+              }}
+              isPicksProtected={isPicksProtected}
+              onLockedClick={(g) => {
+                if (isPicksProtected) {
+                  setFeedbackMessage({
+                    text: 'Picks are protected against accidental edits. Tap PICKS PROTECTED at the top to unlock.',
+                    type: 'error',
+                  });
+                  setTimeout(() => setFeedbackMessage(null), 3500);
+                  triggerHaptic('impactHeavy');
+                } else if (g.isLocked) {
+                  setFeedbackMessage({
+                    text: `Matchup locked: Kickoff passed on ${g.kickoffTime}.`,
+                    type: 'error',
+                  });
+                  setTimeout(() => setFeedbackMessage(null), 3500);
+                  triggerHaptic('impactHeavy');
+                }
               }}
             />
           )}
