@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { TeamLogo } from '../common/TeamLogo';
 
 export interface CompactGameRow {
@@ -14,15 +14,36 @@ interface CompactPicksListProps {
   games: CompactGameRow[];
   selectedPicks: Record<string, string>;
   onSelectTeam: (gameId: string, team: string) => void;
+  onLockedClick?: (game: CompactGameRow) => void;
 }
 
 export const CompactPicksList: React.FC<CompactPicksListProps> = ({
   games,
   selectedPicks,
-  onSelectTeam
+  onSelectTeam,
+  onLockedClick
 }) => {
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const handleLockedTap = (game: CompactGameRow) => {
+    const msg = `Matchup locked: Kickoff passed on ${game.kickoffTime}.`;
+    setToastMessage(msg);
+    onLockedClick?.(game);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
   return (
-    <div className="space-y-2 pb-24">
+    <div className="space-y-2 pb-24 relative">
+      {toastMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-20 left-4 right-4 z-50 p-3 bg-amber-950/95 border border-amber-700/80 rounded-xl text-amber-300 text-xs text-center font-bold shadow-2xl backdrop-blur-md font-mono"
+        >
+          {toastMessage}
+        </div>
+      )}
+
       {games.map((g) => {
         const selected = selectedPicks[g.gameId];
         return (
@@ -32,8 +53,14 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
           >
             {/* Away Team Select Button */}
             <button
-              disabled={g.isLocked}
-              onClick={() => onSelectTeam(g.gameId, g.awayTeam)}
+              type="button"
+              onClick={() => {
+                if (g.isLocked) {
+                  handleLockedTap(g);
+                  return;
+                }
+                onSelectTeam(g.gameId, g.awayTeam);
+              }}
               className={`flex-1 py-2 px-3 rounded-lg border font-black transition-all flex items-center justify-between ${
                 selected === g.awayTeam
                   ? 'bg-cyan-500 border-cyan-400 text-slate-950 shadow-md shadow-cyan-500/20'
@@ -47,16 +74,34 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
               {selected === g.awayTeam && <span>✓</span>}
             </button>
 
-            {/* At Separator / Kickoff Info */}
-            <div className="px-3 flex flex-col items-center justify-center shrink-0 text-[10px] text-slate-500 font-bold">
+            {/* At Separator / Kickoff Info & Lock Badge */}
+            <div
+              onClick={() => { if (g.isLocked) handleLockedTap(g); }}
+              className={`px-3 flex flex-col items-center justify-center shrink-0 text-[10px] text-slate-500 font-bold select-none ${
+                g.isLocked ? 'cursor-pointer' : ''
+              }`}
+            >
               <span>@</span>
-              <span>{g.kickoffTime}</span>
+              <div className="flex items-center gap-1">
+                <span>{g.kickoffTime}</span>
+              </div>
+              {g.isLocked && (
+                <span className="text-[9px] text-amber-400 font-semibold mt-0.5 whitespace-nowrap">
+                  🔒 Locked
+                </span>
+              )}
             </div>
 
             {/* Home Team Select Button */}
             <button
-              disabled={g.isLocked}
-              onClick={() => onSelectTeam(g.gameId, g.homeTeam)}
+              type="button"
+              onClick={() => {
+                if (g.isLocked) {
+                  handleLockedTap(g);
+                  return;
+                }
+                onSelectTeam(g.gameId, g.homeTeam);
+              }}
               className={`flex-1 py-2 px-3 rounded-lg border font-black transition-all flex items-center justify-between ${
                 selected === g.homeTeam
                   ? 'bg-indigo-500 border-indigo-400 text-white shadow-md shadow-indigo-500/20'

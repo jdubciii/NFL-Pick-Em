@@ -155,6 +155,58 @@ describe('ESPN Live Score Adapter & Circuit Breakers (Ruling C8 Compliance)', ()
     expect(warnSpy).toHaveBeenCalled();
   });
 
+  // 3. Halftime Status Mapping & Week Pinning (Step 1 Compliance)
+  it('maps STATUS_HALFTIME accurately to IN_PROGRESS/LIVE and pins scoreboard week query', async () => {
+    const mockHalftimePayload = {
+      events: [
+        {
+          id: '401671803',
+          name: 'Green Bay Packers at Chicago Bears',
+          shortName: 'GB @ CHI',
+          status: {
+            displayClock: '00:00',
+            period: 2,
+            type: {
+              name: 'STATUS_HALFTIME',
+              detail: 'Halftime',
+              description: 'Halftime'
+            }
+          },
+          competitions: [
+            {
+              situation: { downDistanceText: '', isRedZone: false },
+              competitors: [
+                { homeAway: 'home', team: { abbreviation: 'CHI', displayName: 'Chicago Bears' }, score: '10' },
+                { homeAway: 'away', team: { abbreviation: 'GB', displayName: 'Green Bay Packers' }, score: '14' }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+
+    let requestedUrl = '';
+    const mockFetch = vi.fn().mockImplementation((url: string) => {
+      requestedUrl = url;
+      return Promise.resolve({
+        ok: true,
+        json: async () => mockHalftimePayload
+      });
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const games: LiveGame[] = await fetchLiveNFLScores(5);
+
+    expect(requestedUrl).toBe('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=5');
+    expect(games).toHaveLength(1);
+    expect(games[0].id).toBe('401671803');
+    expect(games[0].status).toBe('IN_PROGRESS');
+    expect(games[0].status).not.toBe('SCHEDULED');
+    expect(games[0].state).toBe('LIVE');
+    expect(games[0].displayClock).toBe('HALFTIME');
+    expect(games[0].periodLabel).toBe('HALF');
+  });
+
   // 3. Integrated Feed Isolation & State Preservation (Ruling C9 Compliance)
   it('exercises integrated consumer state preservation: isolates telemetry from user picks and kickoff locks', async () => {
     const referenceNow = new Date('2026-10-11T17:05:00.000Z');

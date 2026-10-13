@@ -2,15 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 
-interface PendingMember {
-  user_id: string;
+interface PendingApplicant {
+  userId: string;
   email: string;
+  displayName: string;
 }
 
 export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
   const { user, signOut } = useAuth();
   const [isAdmin, setIsAdmin] = useState(() => user?.role === 'ADMIN' || user?.email === 'jack.w.cone@gmail.com');
-  const [pendingMembers, setPendingMembers] = useState<PendingMember[]>([]);
+  const [pendingMembers, setPendingMembers] = useState<PendingApplicant[]>([]);
+  const [pendingCount, setPendingCount] = useState<number>(0);
+  const [adjudicatingId, setAdjudicatingId] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -30,18 +33,47 @@ export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => vo
       setIsAdmin(adminRole);
 
       if (adminRole) {
-        const { data: pendingData } = await supabase
+        let membersData: any[] | null = null;
+        const { data, error } = await supabase
           .from('pool_memberships')
-          .select('user_id, users(email)')
-          .eq('pool_id', activePoolId)
+          .select('user_id, status, role, users(email, display_name)')
+          .eq('pool_id', '9b893bef-3b5a-4ffa-951d-8ba27f9c9782')
           .eq('status', 'PENDING');
 
-        if (pendingData) {
-          const formatted = pendingData.map((p: any) => ({
-            user_id: p.user_id,
-            email: p.users?.email || p.user_id
-          }));
+        if (error) {
+          console.error('[Commissioner Queue] Query failed with error:', error);
+          const fallbackRes = await supabase
+            .from('pool_memberships')
+            .select('user_id, status, users(email)')
+            .eq('pool_id', activePoolId)
+            .eq('status', 'PENDING');
+          if (fallbackRes.error) {
+            console.error('[Commissioner Queue Fallback] Failed:', fallbackRes.error);
+          } else {
+            membersData = fallbackRes.data;
+          }
+        } else {
+          membersData = data;
+        }
+
+        const count = membersData?.length || 0;
+        setPendingCount(count);
+
+        if (membersData) {
+          const formatted: PendingApplicant[] = membersData.map((p: any) => {
+            const email = p.users?.email || p.email || p.user_id;
+            const displayName = p.users?.display_name || (typeof email === 'string' && email.includes('@') ? email.split('@')[0] : email);
+            return {
+              userId: p.user_id,
+              email,
+              displayName
+            };
+          });
           setPendingMembers(formatted);
+          setPendingCount(formatted.length);
+        } else {
+          setPendingMembers([]);
+          setPendingCount(0);
         }
       }
     }
@@ -52,6 +84,7 @@ export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => vo
 
   const handleAdjudicate = async (targetUserId: string, newStatus: 'ACTIVE' | 'REJECTED') => {
     setLoading(true);
+    setAdjudicatingId(targetUserId);
     try {
       const { error } = await supabase
         .from('pool_memberships')
@@ -60,12 +93,16 @@ export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => vo
         .eq('user_id', targetUserId);
 
       if (error) throw error;
-      setPendingMembers(prev => prev.filter(m => m.user_id !== targetUserId));
-      setStatusMsg(`Member ${newStatus.toLowerCase()} successfully`);
+      setPendingMembers(prev => prev.filter(m => m.userId !== targetUserId));
+      setPendingCount(prev => Math.max(0, prev - 1));
+      window.dispatchEvent(new CustomEvent('pending-memberships-changed'));
+      setStatusMsg(`Applicant ${newStatus === 'ACTIVE' ? 'approved' : 'rejected'} successfully`);
     } catch (err: any) {
+      console.error('Adjudication failed:', err);
       setStatusMsg(err.message || 'Adjudication failed');
     } finally {
       setLoading(false);
+      setAdjudicatingId(null);
     }
   };
 
@@ -115,7 +152,7 @@ export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => vo
             <div className="flex justify-between items-center mb-2">
               <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">COMMISSIONER APPLICANT QUEUE</span>
               <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 text-[10px] font-bold rounded-full">
-                {pendingMembers.length}
+                {pendingCount}
               </span>
             </div>
             {pendingMembers.length === 0 ? (
@@ -123,24 +160,35 @@ export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => vo
                 <p className="text-xs text-slate-400">0 Pending Applicants awaiting admission.</p>
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 {pendingMembers.map((m) => (
-                  <div key={m.user_id} className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between">
-                    <span className="text-xs font-mono text-slate-300 truncate max-w-[140px]">{m.email}</span>
-                    <div className="flex space-x-1.5">
+                  <div
+                    key={m.userId}
+                    className="p-3 bg-slate-950 border border-slate-800 rounded-xl flex flex-col gap-2.5 shadow-md"
+                  >
+                    <div className="flex items-center space-x-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-full bg-amber-500/15 border border-amber-500/40 flex items-center justify-center text-xs font-black text-amber-300 shrink-0">
+                        {m.displayName.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-white truncate">{m.displayName}</div>
+                        <div className="text-[10px] text-slate-400 font-mono truncate">{m.email}</div>
+                      </div>
+                    </div>
+                    <div className="flex space-x-2 self-end">
                       <button
-                        onClick={() => handleAdjudicate(m.user_id, 'ACTIVE')}
-                        disabled={loading}
-                        className="min-h-[48px] px-3 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold rounded-lg transition-colors"
+                        onClick={() => handleAdjudicate(m.userId, 'ACTIVE')}
+                        disabled={loading || adjudicatingId === m.userId}
+                        className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-[11px] rounded-lg uppercase tracking-wider transition-all shadow-sm disabled:opacity-50 min-h-[36px]"
                       >
-                        Approve
+                        {adjudicatingId === m.userId ? '...' : 'APPROVE'}
                       </button>
                       <button
-                        onClick={() => handleAdjudicate(m.user_id, 'REJECTED')}
-                        disabled={loading}
-                        className="min-h-[48px] px-3 bg-red-600 hover:bg-red-500 text-white text-[11px] font-bold rounded-lg transition-colors"
+                        onClick={() => handleAdjudicate(m.userId, 'REJECTED')}
+                        disabled={loading || adjudicatingId === m.userId}
+                        className="px-3 py-1.5 bg-rose-950/60 hover:bg-rose-900/80 active:scale-95 border border-rose-800 text-rose-300 font-bold text-[11px] rounded-lg uppercase tracking-wider transition-all disabled:opacity-50 min-h-[36px]"
                       >
-                        Reject
+                        {adjudicatingId === m.userId ? '...' : 'REJECT'}
                       </button>
                     </div>
                   </div>
@@ -160,22 +208,22 @@ export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => vo
               type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="New password (min 8 chars)"
-              className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-xs focus:outline-none focus:border-amber-500"
+              placeholder="New password (min 8 characters)"
+              className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs focus:outline-none focus:border-amber-500 font-mono"
             />
           </div>
           <button
             type="submit"
             disabled={loading}
-            className="w-full min-h-[48px] bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-lg text-xs uppercase transition-colors"
+            className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 text-xs font-black rounded-xl uppercase tracking-wider transition-all shadow-md disabled:opacity-50"
           >
             Update Password
           </button>
         </form>
 
         <button
-          onClick={async () => { await signOut(); onClose(); }}
-          className="w-full min-h-[48px] bg-red-950/80 hover:bg-red-900 border border-red-800 text-red-200 font-bold rounded-xl text-xs uppercase tracking-wider transition-colors"
+          onClick={signOut}
+          className="w-full py-2.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white text-xs font-bold rounded-xl uppercase tracking-wider transition-colors"
         >
           Sign Out
         </button>

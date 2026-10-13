@@ -18,21 +18,22 @@ export interface LiveGameflowCardData {
 
 interface LiveGametrackStreamProps {
   games?: (LiveGame | LiveGameflowCardData)[];
+  weekNumber?: number;
 }
 
-export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({ games: propGames }) => {
+export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({ games: propGames, weekNumber = 5 }) => {
   const [liveGames, setLiveGames] = useState<LiveGame[]>([]);
 
   useEffect(() => {
     let isMounted = true;
-    fetchLiveNFLScores().then((data) => {
+    fetchLiveNFLScores(weekNumber).then((data) => {
       if (isMounted) {
         setLiveGames((prev) => processLiveScoreUpdate(prev, data));
       }
     });
 
     const interval = setInterval(() => {
-      fetchLiveNFLScores().then((data) => {
+      fetchLiveNFLScores(weekNumber).then((data) => {
         if (isMounted) {
           setLiveGames((prev) => processLiveScoreUpdate(prev, data));
         }
@@ -43,7 +44,7 @@ export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({ games:
       isMounted = false;
       clearInterval(interval);
     };
-  }, []);
+  }, [weekNumber]);
 
   const activeGames: (LiveGame | LiveGameflowCardData)[] =
     propGames && propGames.length > 0 ? propGames : liveGames;
@@ -77,24 +78,32 @@ export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({ games:
         const homeCode = isEspnGame ? (item as LiveGame).homeTeam.code : (item as LiveGameflowCardData).homeTeam;
         const awayScore = isEspnGame ? (item as LiveGame).awayTeam.score : (item as LiveGameflowCardData).awayScore;
         const homeScore = isEspnGame ? (item as LiveGame).homeTeam.score : (item as LiveGameflowCardData).homeScore;
+        const espnGame = item as LiveGame;
         const isFinal = isEspnGame
-          ? (item as LiveGame).status === 'FINAL'
+          ? espnGame.status === 'FINAL'
           : (item as LiveGameflowCardData).isFinal;
-        const isScheduled = isEspnGame && (item as LiveGame).status === 'SCHEDULED';
+        const isScheduled = isEspnGame && espnGame.status === 'SCHEDULED';
+        const isHalftime = isEspnGame && (
+          espnGame.displayClock === 'HALFTIME' ||
+          espnGame.clock === 'HALFTIME' ||
+          espnGame.periodLabel === 'HALF'
+        );
         const isRedZone = isEspnGame
-          ? Boolean((item as LiveGame).isRedZone)
+          ? Boolean(espnGame.isRedZone)
           : (item as LiveGameflowCardData).yardLine <= 20 && !isFinal;
         const timeHeader = isEspnGame
           ? isFinal
             ? 'FINAL'
+            : isHalftime
+            ? 'HALFTIME'
             : isScheduled
             ? 'SCHEDULED'
-            : `Q${(item as LiveGame).period} - ${(item as LiveGame).clock}`
+            : `${espnGame.periodLabel || `Q${espnGame.period}`} - ${espnGame.displayClock || espnGame.clock}`
           : isFinal
           ? 'FINAL'
           : `${(item as LiveGameflowCardData).quarter} - ${(item as LiveGameflowCardData).timeRemaining}`;
         const situation = isEspnGame
-          ? (item as LiveGame).downDistanceText
+          ? espnGame.downDistanceText
           : `${(item as LiveGameflowCardData).possession} ball: ${(item as LiveGameflowCardData).downAndDistance} (Ball on ${(item as LiveGameflowCardData).yardLine} YD)`;
 
         return (

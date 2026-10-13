@@ -9,11 +9,15 @@ export interface LiveGame {
   period: number;
   downDistanceText?: string;
   isRedZone?: boolean;
+  state?: string;
+  displayClock?: string;
+  periodLabel?: string;
 }
 
-export async function fetchLiveNFLScores(): Promise<LiveGame[]> {
+export async function fetchLiveNFLScores(weekNumber: number = 5): Promise<LiveGame[]> {
   try {
-    const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard');
+    const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${weekNumber}`;
+    const res = await fetch(url);
     if (!res.ok) throw new Error('Failed to fetch ESPN scores');
     const data = await res.json();
     
@@ -22,11 +26,28 @@ export async function fetchLiveNFLScores(): Promise<LiveGame[]> {
       const competitors = competition?.competitors || [];
       const home = competitors.find((c: any) => c.homeAway === 'home') || {};
       const away = competitors.find((c: any) => c.homeAway === 'away') || {};
-      const statusType = event.status?.type?.name;
+      const statusName = event.status?.type?.name || '';
+      const statusDetail = event.status?.type?.detail || event.status?.type?.description || event.status?.type?.shortDetail || '';
       
+      const isHalftime = statusName === 'STATUS_HALFTIME' || statusDetail.toLowerCase().includes('halftime');
       let mappedStatus: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL' = 'SCHEDULED';
-      if (statusType === 'STATUS_FINAL') mappedStatus = 'FINAL';
-      else if (statusType === 'STATUS_IN_PROGRESS') mappedStatus = 'IN_PROGRESS';
+      let state = 'PRE';
+      let displayClock = event.status?.displayClock || '0:00';
+      let periodLabel = `Q${event.status?.period || 1}`;
+
+      if (statusName === 'STATUS_FINAL') {
+        mappedStatus = 'FINAL';
+        state = 'POST';
+        periodLabel = 'FINAL';
+      } else if (isHalftime) {
+        mappedStatus = 'IN_PROGRESS';
+        state = 'LIVE';
+        displayClock = 'HALFTIME';
+        periodLabel = 'HALF';
+      } else if (statusName === 'STATUS_IN_PROGRESS') {
+        mappedStatus = 'IN_PROGRESS';
+        state = 'LIVE';
+      }
 
       return {
         id: event.id,
@@ -43,10 +64,13 @@ export async function fetchLiveNFLScores(): Promise<LiveGame[]> {
           score: away.score || '0'
         },
         status: mappedStatus,
-        clock: event.status?.displayClock || '0:00',
-        period: event.status?.period || 1,
+        clock: displayClock,
+        period: event.status?.period || (isHalftime ? 2 : 1),
         downDistanceText: competition?.situation?.downDistanceText || '',
-        isRedZone: Boolean(competition?.situation?.isRedZone)
+        isRedZone: Boolean(competition?.situation?.isRedZone),
+        state,
+        displayClock,
+        periodLabel,
       };
     });
   } catch (err) {

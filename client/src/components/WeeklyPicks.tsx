@@ -8,6 +8,7 @@ import { UndoSnackbar } from './picks/UndoSnackbar';
 import { quickFillSafetyEngine, SlateGameItem } from '../services/QuickFillSafetyEngine';
 import { formatGameKickoff } from '../utils/dateUtils';
 import { triggerHaptic } from '../utils/haptics';
+import { isKickoffLocked } from '../services/lockEnforcementService';
 import type { MatrixResponsePayload } from './LeagueMatrixView';
 
 export interface GameItem {
@@ -149,8 +150,10 @@ export const WeeklyPicks: React.FC = () => {
       return;
     }
     if (!pool) return;
-    if (isGameLocked(game)) {
-      setFeedbackMessage({ text: 'This game is locked.', type: 'error' });
+    if (isGameLocked(game) || isKickoffLocked(game.kickoffTime, now)) {
+      const formattedTime = formatKickoff(game.kickoffTime);
+      setFeedbackMessage({ text: `Matchup locked: Kickoff passed on ${formattedTime}.`, type: 'error' });
+      setTimeout(() => setFeedbackMessage(null), 3500);
       return;
     }
 
@@ -367,6 +370,10 @@ export const WeeklyPicks: React.FC = () => {
 
   const formatKickoff = (isoString: string) => formatGameKickoff(isoString);
 
+  const isGameKickoffLocked = (g: GameItem) => isKickoffLocked(g.kickoffTime || (g as any).kickoff_time, now);
+  const allLocked = games.length > 0 && games.every(g => isGameKickoffLocked(g));
+  const lockedCount = games.filter(g => isGameKickoffLocked(g)).length;
+
   return (
     <div className="space-y-4 sm:space-y-6">
       {/* Streamlined Mobile Top Bar: Week Tag + View Switcher + Lock Pill */}
@@ -408,6 +415,15 @@ export const WeeklyPicks: React.FC = () => {
             <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 whitespace-nowrap">
               LOCKED
             </span>
+          ) : allLocked ? (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400 text-xs font-semibold">
+              <Lock className="w-3 h-3 text-zinc-400" />
+              <span>SLATE LOCKED</span>
+            </div>
+          ) : lockedCount > 0 ? (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-semibold">
+              <span>{games.length - lockedCount} OPEN • {lockedCount} LOCKED</span>
+            </div>
           ) : (
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 text-xs font-semibold">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -416,6 +432,20 @@ export const WeeklyPicks: React.FC = () => {
           )}
         </button>
       </div>
+
+      {feedbackMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`p-3 rounded-xl border text-xs font-mono font-bold text-center transition-all ${
+            feedbackMessage.type === 'error'
+              ? 'bg-rose-950/80 border-rose-800 text-rose-300'
+              : 'bg-emerald-950/80 border-emerald-800 text-emerald-300'
+          }`}
+        >
+          {feedbackMessage.text}
+        </div>
+      )}
 
       {/* Content Rendering */}
       {loading && games.length === 0 ? (
@@ -486,7 +516,7 @@ export const WeeklyPicks: React.FC = () => {
                 awayTeam: g.awayTeamId,
                 homeTeam: g.homeTeamId,
                 kickoffTime: formatKickoff(g.kickoffTime),
-                isLocked: isGameLocked(g),
+                isLocked: isGameLocked(g) || isGameKickoffLocked(g),
                 spread: typeof g.spread === 'number' ? `${g.spread}` : undefined,
               }))}
               selectedPicks={games.reduce((acc, g) => {
@@ -496,6 +526,13 @@ export const WeeklyPicks: React.FC = () => {
               onSelectTeam={(gameId, team) => {
                 const targetGame = games.find((g) => g.id === gameId);
                 if (targetGame) handlePick(targetGame, team);
+              }}
+              onLockedClick={(g) => {
+                setFeedbackMessage({
+                  text: `Matchup locked: Kickoff passed on ${g.kickoffTime}.`,
+                  type: 'error',
+                });
+                setTimeout(() => setFeedbackMessage(null), 3500);
               }}
             />
           )}
