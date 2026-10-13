@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { TargetLockLogo } from '../components/TargetLockLogo';
-import { autoRepairPoolMembership } from '../context/AuthContext';
 import { Eye, EyeOff } from 'lucide-react';
 import { PendingApprovalScreen } from '../components/PendingApprovalScreen';
 
@@ -62,28 +61,21 @@ export const Login: React.FC = () => {
         });
         if (signInError) throw signInError;
 
-        // Ensure user application RPC is called
-        const codeToPass = inviteCode ? inviteCode.trim().toUpperCase() : 'MAIN26';
-        try {
-          const { data: rpcRes, error: rpcErr } = await supabase.rpc('apply_for_league', {
-            p_invite_code: codeToPass
-          });
-          if (rpcErr) {
-            console.warn('[SignIn] League application notice:', rpcErr);
-          } else if (rpcRes && rpcRes.success === false) {
-            console.warn('[SignIn] League application response:', rpcRes.error);
-          }
-        } catch (rpcCatch) {
-          console.warn('[SignIn] RPC application error:', rpcCatch);
-        }
-
-        // Auto-repair missing pool_memberships row on login (Step 2)
+        // Query existing status from pool_memberships (existing users do not re-apply)
         if (signInData.user) {
-          await autoRepairPoolMembership(
-            signInData.user.id,
-            email,
-            signInData.session?.access_token
-          );
+          const { data: memData } = await supabase
+            .from('pool_memberships')
+            .select('status')
+            .eq('pool_id', activePoolId)
+            .eq('user_id', signInData.user.id)
+            .maybeSingle();
+
+          if (memData && memData.status === 'PENDING') {
+            setIsPendingApproval(true);
+            setInfoMessage('Application registered in PENDING status. The commissioner (Jack) must approve your admission before access is granted.');
+          } else {
+            setIsPendingApproval(false);
+          }
         }
       }
     } catch (err: any) {
