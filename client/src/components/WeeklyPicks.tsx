@@ -11,6 +11,7 @@ import { formatGameKickoff } from '../utils/dateUtils';
 import { triggerHaptic } from '../utils/haptics';
 import { isKickoffLocked } from '../services/lockEnforcementService';
 import { fetchLiveNFLScores } from '../services/liveScoreService';
+import { getCurrentNFLWeek } from '../services/nflCalendarService';
 import type { MatrixResponsePayload } from './LeagueMatrixView';
 
 export interface GameItem {
@@ -60,14 +61,7 @@ const getApiUrl = (endpoint: string): string | null => {
 
 export const WeeklyPicks: React.FC = () => {
   const { token, user } = useAuth();
-  const [selectedWeek, setSelectedWeek] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('nfl_picks_active_week');
-      return saved ? parseInt(saved, 10) : 5;
-    } catch {
-      return 5;
-    }
-  });
+  const [selectedWeek, setSelectedWeek] = useState<number>(() => getCurrentNFLWeek());
   const [isWeekModalOpen, setIsWeekModalOpen] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
 

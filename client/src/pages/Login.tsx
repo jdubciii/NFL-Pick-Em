@@ -33,27 +33,28 @@ export const Login: React.FC = () => {
           email,
           password,
         });
-        if (signUpError) throw signUpError;
-
-        const user = signUpData.user;
-        if (!user || !user.email) {
-          throw new Error('User creation returned empty profile.');
+        if (signUpError) {
+          throw signUpError;
         }
 
-        // Call atomic, RLS-bypassing application RPC
+        const newUser = signUpData.user;
+
+        // Invoke the RPC with explicit fallbacks
         const { data: rpcRes, error: rpcErr } = await supabase.rpc('apply_for_league', {
-          p_invite_code: cleanInvite
+          p_invite_code: cleanInvite,
+          p_user_id: newUser?.id,
+          p_email: newUser?.email
         });
 
-        if (rpcErr) {
-          throw new Error(rpcErr.message || 'League application failed');
-        }
-        if (rpcRes && rpcRes.success === false) {
-          throw new Error(rpcRes.error || 'Failed to apply for league');
+        if (rpcErr || (rpcRes && !(rpcRes as any).success)) {
+          const errMsg = rpcErr?.message || (rpcRes && (rpcRes as any).error) || 'Failed to apply for league';
+          throw new Error(errMsg);
         }
 
-        setIsPendingApproval(true);
-        setInfoMessage('Application registered in PENDING status. The commissioner (Jack) must approve your admission before access is granted.');
+        if (rpcRes && (rpcRes as any).success === true) {
+          setIsPendingApproval(true);
+          setInfoMessage('Application registered in PENDING status. The commissioner (Jack) must approve your admission before access is granted.');
+        }
       } else {
         const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
           email,

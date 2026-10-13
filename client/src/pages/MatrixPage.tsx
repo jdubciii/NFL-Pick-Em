@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { RivalCrosshairsDuel } from '../components/matrix/RivalCrosshairsDuel';
 import { LoneWolfBadge } from '../components/matrix/LoneWolfBadge';
 import { StackedAvatarCluster, CampParticipant } from '../components/matrix/StackedAvatarCluster';
@@ -18,6 +18,8 @@ import {
 } from '../services/autopilotTopologyService';
 import { isKickoffLocked } from '../services/lockEnforcementService';
 import { evaluatePickVisibility } from '../services/openSlatePolicyService';
+import { getCurrentNFLWeek } from '../services/nflCalendarService';
+import { fetchLiveNFLScores, LiveGame } from '../services/liveScoreService';
 
 const SAMPLE_GAMES: RawGameDefinition[] = [];
 
@@ -30,19 +32,61 @@ const SAMPLE_PICKS: UserSubmittedPick[] = [];
 const SAMPLE_LIVE_GAMES: LiveGameflowCardData[] = [];
 
 export const MatrixPage: React.FC = () => {
-  // Decision #66: authoritative kickoff lock evaluation
-  const isSlateLocked = isKickoffLocked('2026-10-11T17:00:00.000Z');
+  const [selectedWeek, setSelectedWeek] = useState<number>(() => getCurrentNFLWeek());
+  const [liveGames, setLiveGames] = useState<LiveGame[]>([]);
+  const [loadingGames, setLoadingGames] = useState<boolean>(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    setLoadingGames(true);
+    fetchLiveNFLScores(selectedWeek).then((data) => {
+      if (isMounted) {
+        setLiveGames(data);
+        setLoadingGames(false);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedWeek]);
+
+  const currentNFLWeek = getCurrentNFLWeek();
+  const isPastWeek = selectedWeek < currentNFLWeek;
+  const isCurrentOrFutureWeek = selectedWeek >= currentNFLWeek;
+
+  const allGamesFinal =
+    liveGames.length > 0
+      ? liveGames.every((g) => g.status === 'FINAL')
+      : isPastWeek;
+
+  const allGamesUpcoming =
+    liveGames.length > 0
+      ? liveGames.every((g) => g.status === 'SCHEDULED')
+      : (isCurrentOrFutureWeek && !allGamesFinal);
+
+  const isSlateLocked = isPastWeek || (!allGamesUpcoming && liveGames.some((g) => g.status !== 'SCHEDULED'));
   const currentUserId = 'u1';
   const currentUserName = 'Jack';
 
-  const [activeTab, setActiveTab] = useState<'LEVERAGE' | 'GAMETRACK'>(isSlateLocked ? 'GAMETRACK' : 'LEVERAGE');
+  const [activeTab, setActiveTab] = useState<'LEVERAGE' | 'GAMETRACK'>(
+    allGamesUpcoming ? 'LEVERAGE' : 'GAMETRACK'
+  );
+
+  useEffect(() => {
+    if (allGamesUpcoming) {
+      setActiveTab('LEVERAGE');
+    } else {
+      setActiveTab('GAMETRACK');
+    }
+  }, [allGamesUpcoming, selectedWeek]);
+
   const [selectedRivalId, setSelectedRivalId] = useState<string | null>(null);
   const [expandedTugGameId, setExpandedTugGameId] = useState<string | null>(null);
   const [showTopologyToast, setShowTopologyToast] = useState<boolean>(true);
 
   const topology = useMemo(() => {
-    return computeSlateTopology('pool_alpha', 5, SAMPLE_PICKS, SAMPLE_GAMES, 3);
-  }, []);
+    return computeSlateTopology('pool_alpha', selectedWeek, SAMPLE_PICKS, SAMPLE_GAMES, 3);
+  }, [selectedWeek]);
 
   const autopilotUsers = useMemo(() => {
     const map = new Map<string, boolean>();
@@ -70,14 +114,42 @@ export const MatrixPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 pb-24 max-w-md mx-auto font-sans">
       {/* Sticky Gameday Live / Lock Countdown */}
-      <LockCountdownTimer isLocked={isSlateLocked} onLockExpired={() => setActiveTab('GAMETRACK')} />
+      <LockCountdownTimer
+        isLocked={isSlateLocked}
+        allUpcoming={allGamesUpcoming}
+        allFinal={allGamesFinal}
+        weekNumber={selectedWeek}
+        onLockExpired={() => setActiveTab('GAMETRACK')}
+      />
 
       {/* Header & Persistent Tab Switcher (Leverage vs Gametrack) */}
       <header className="my-3 border-b border-slate-800 pb-2 flex items-center justify-between font-mono">
         <div>
-          <h1 className="text-lg font-black tracking-wider text-cyan-400">
-            THE MATRIX // GAMEDAY LIVE
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-lg font-black tracking-wider text-cyan-400">
+              THE MATRIX
+            </h1>
+            <div className="inline-flex rounded-lg bg-slate-900 p-0.5 border border-slate-800 text-[10px]">
+              <button
+                type="button"
+                onClick={() => setSelectedWeek(5)}
+                className={`px-2 py-0.5 rounded transition ${
+                  selectedWeek === 5 ? 'bg-zinc-700 text-white font-bold' : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                W5
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedWeek(6)}
+                className={`px-2 py-0.5 rounded transition ${
+                  selectedWeek === 6 ? 'bg-cyan-600 text-white font-bold' : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                W6
+              </button>
+            </div>
+          </div>
           <p className="text-xs text-slate-400">
             {activeTab === 'LEVERAGE' ? 'Pre-Lock Leverage Board' : 'Live Drive Progression'}
           </p>
@@ -123,7 +195,7 @@ export const MatrixPage: React.FC = () => {
 
       {/* TAB 1: LIVE GAMETRACK & DRIVE FLOW */}
       {activeTab === 'GAMETRACK' && (
-        <LiveGametrackStream />
+        <LiveGametrackStream weekNumber={selectedWeek} />
       )}
 
       {/* TAB 2: PRE-LOCK LEVERAGE BOARD */}

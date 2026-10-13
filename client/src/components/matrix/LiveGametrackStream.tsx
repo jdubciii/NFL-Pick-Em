@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { fetchLiveNFLScores, processLiveScoreUpdate, LiveGame } from '../../services/liveScoreService';
+import { getCurrentNFLWeek } from '../../services/nflCalendarService';
 
 export interface LiveGameflowCardData {
   gameId: string;
@@ -21,7 +22,10 @@ interface LiveGametrackStreamProps {
   weekNumber?: number;
 }
 
-export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({ games: propGames, weekNumber = 5 }) => {
+export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({
+  games: propGames,
+  weekNumber = getCurrentNFLWeek()
+}) => {
   const [liveGames, setLiveGames] = useState<LiveGame[]>([]);
 
   useEffect(() => {
@@ -49,11 +53,48 @@ export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({ games:
   const activeGames: (LiveGame | LiveGameflowCardData)[] =
     propGames && propGames.length > 0 ? propGames : liveGames;
 
+  const allFinal =
+    activeGames.length > 0 &&
+    activeGames.every((item) => {
+      const isEspnGame = 'homeTeam' in item && typeof item.homeTeam === 'object';
+      return isEspnGame
+        ? (item as LiveGame).status === 'FINAL'
+        : (item as LiveGameflowCardData).isFinal;
+    });
+
+  const allUpcoming =
+    activeGames.length > 0 &&
+    activeGames.every((item) => {
+      const isEspnGame = 'homeTeam' in item && typeof item.homeTeam === 'object';
+      return isEspnGame
+        ? (item as LiveGame).status === 'SCHEDULED'
+        : !(item as LiveGameflowCardData).isFinal;
+    });
+
   if (!activeGames || activeGames.length === 0) {
+    if (weekNumber < getCurrentNFLWeek()) {
+      return (
+        <div className="flex flex-col items-center justify-center p-8 text-center border border-dashed border-slate-800 rounded-xl bg-slate-900/40 my-4 font-mono">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400 text-xs font-semibold mb-2">
+            <span>WEEK {weekNumber} FINAL</span>
+          </div>
+          <p className="text-zinc-500 text-xs">All Week {weekNumber} games have concluded.</p>
+        </div>
+      );
+    }
+
     return (
       <div className="flex flex-col items-center justify-center p-8 text-center border border-dashed border-slate-800 rounded-xl bg-slate-900/40 my-4 font-mono">
-        <div className="text-emerald-400 font-bold tracking-widest uppercase text-xs mb-1">[ NO GAMES IN PROGRESS ]</div>
-        <p className="text-slate-400 text-xs">Live drive progression and red zone telemetry activate at 1:00 PM ET kickoff.</p>
+        <div className="flex items-center gap-2 mb-2">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-semibold">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            <span>AWAITING KICKOFF</span>
+          </div>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 text-xs font-semibold">
+            <span>SLATE OPEN</span>
+          </div>
+        </div>
+        <p className="text-slate-400 text-xs">Live drive progression and red zone telemetry activate at kickoff.</p>
       </div>
     );
   }
@@ -61,13 +102,41 @@ export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({ games:
   return (
     <div className="space-y-3 font-mono">
       <div className="flex items-center justify-between px-1 mb-1">
-        <span className="text-[10px] font-black tracking-widest text-emerald-400 uppercase">
-          🏈 LIVE GAMETRACK &amp; DRIVE PROGRESSION
-        </span>
-        <span className="text-[9px] text-emerald-400 flex items-center gap-1 font-bold">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          ESPN LIVE FEED
-        </span>
+        {allFinal ? (
+          <>
+            <span className="text-[10px] font-black tracking-widest text-zinc-400 uppercase">
+              🏈 WEEK {weekNumber} FINAL SCORES
+            </span>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400 text-xs font-semibold">
+              <span>WEEK {weekNumber} FINAL</span>
+            </div>
+          </>
+        ) : allUpcoming ? (
+          <>
+            <span className="text-[10px] font-black tracking-widest text-cyan-400 uppercase">
+              🏈 WEEK {weekNumber} SLATE
+            </span>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[10px] font-semibold">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                <span>AWAITING KICKOFF</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 text-[10px] font-semibold">
+                <span>SLATE OPEN</span>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <span className="text-[10px] font-black tracking-widest text-emerald-400 uppercase">
+              🏈 LIVE GAMETRACK &amp; DRIVE PROGRESSION
+            </span>
+            <span className="text-[9px] text-emerald-400 flex items-center gap-1 font-bold">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              ESPN LIVE FEED
+            </span>
+          </>
+        )}
       </div>
 
       {activeGames.map((item) => {
@@ -127,7 +196,7 @@ export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({ games:
                   <>
                     <span
                       className={`w-2 h-2 rounded-full ${
-                        isFinal ? 'bg-slate-500' : isScheduled ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'
+                        isFinal ? 'bg-zinc-500' : isScheduled ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'
                       }`}
                     />
                     <span className="font-bold text-slate-300">{timeHeader}</span>
@@ -177,3 +246,4 @@ export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({ games:
     </div>
   );
 };
+export default LiveGametrackStream;
