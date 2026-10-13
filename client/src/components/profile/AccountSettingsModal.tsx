@@ -57,6 +57,14 @@ export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => vo
   if (!isOpen) return null;
 
   const handleAdjudicate = async (targetUserId: string, newStatus: 'ACTIVE' | 'REJECTED') => {
+    const previousMembers = [...pendingMembers];
+    const previousCount = pendingCount;
+
+    // Optimistically update list and counter immediately
+    setPendingMembers(prev => prev.filter(m => m.userId !== targetUserId));
+    setPendingCount(prev => Math.max(0, prev - 1));
+    window.dispatchEvent(new CustomEvent('pending-memberships-changed'));
+
     setLoading(true);
     setAdjudicatingId(targetUserId);
     try {
@@ -67,12 +75,13 @@ export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => vo
       });
 
       if (error) throw error;
-      setPendingMembers(prev => prev.filter(m => m.userId !== targetUserId));
-      setPendingCount(prev => Math.max(0, prev - 1));
-      window.dispatchEvent(new CustomEvent('pending-memberships-changed'));
       setStatusMsg(`Applicant ${newStatus === 'ACTIVE' ? 'approved' : 'rejected'} successfully`);
     } catch (err: any) {
       console.error('Adjudication failed:', err);
+      // Revert optimistic state on failure
+      setPendingMembers(previousMembers);
+      setPendingCount(previousCount);
+      window.dispatchEvent(new CustomEvent('pending-memberships-changed'));
       setStatusMsg(err.message || 'Adjudication failed');
     } finally {
       setLoading(false);

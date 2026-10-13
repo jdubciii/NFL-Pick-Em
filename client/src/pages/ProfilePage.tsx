@@ -82,6 +82,12 @@ export const ProfilePage: React.FC = () => {
   }, [loadPendingApplicants]);
 
   const handleAdjudicate = async (targetUserId: string, action: 'ACTIVE' | 'REJECTED') => {
+    const previousApplicants = [...pendingApplicants];
+
+    // Optimistically update list and counter immediately
+    setPendingApplicants((prev) => prev.filter((a) => a.userId !== targetUserId));
+    window.dispatchEvent(new CustomEvent('pending-memberships-changed'));
+
     setAdjudicatingId(targetUserId);
     setStatusFeedback(null);
 
@@ -111,15 +117,12 @@ export const ProfilePage: React.FC = () => {
       });
       if (rpcErr) throw rpcErr;
 
-      // 3. Immediately remove from local state
-      setPendingApplicants((prev) => prev.filter((a) => a.userId !== targetUserId));
-
-      // 4. Clear/decrement bottom nav badge reactively
-      window.dispatchEvent(new CustomEvent('pending-memberships-changed'));
-
       setStatusFeedback(`Applicant ${action === 'ACTIVE' ? 'admitted' : 'rejected'} successfully.`);
     } catch (err: any) {
       console.error('Failed to adjudicate applicant:', err);
+      // Revert optimistic state on failure
+      setPendingApplicants(previousApplicants);
+      window.dispatchEvent(new CustomEvent('pending-memberships-changed'));
       setStatusFeedback(`Error: ${err.message || 'Adjudication failed'}`);
     } finally {
       setAdjudicatingId(null);
