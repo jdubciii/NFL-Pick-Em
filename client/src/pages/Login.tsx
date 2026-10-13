@@ -9,7 +9,7 @@ export const Login: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [inviteCode, setInviteCode] = useState('');
+  const [inviteCode, setInviteCode] = useState('MAIN26');
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -34,50 +34,56 @@ export const Login: React.FC = () => {
         });
         if (signUpError) throw signUpError;
 
+        const user = signUpData.user;
+        if (!user || !user.email) {
+          throw new Error('User creation returned empty profile.');
+        }
+
+        // 1) Direct cloud database upsert for public.users:
+        const { error: userUpsertError } = await supabase.from('users').upsert({
+          id: user.id,
+          email: user.email,
+          display_name: user.email.split('@')[0],
+          role: 'MEMBER'
+        });
+        if (userUpsertError) {
+          throw userUpsertError;
+        }
+
+        // 2) Direct cloud database upsert for public.pool_memberships:
+        const { error: memberUpsertError } = await supabase.from('pool_memberships').upsert({
+          pool_id: activePoolId,
+          user_id: user.id,
+          status: 'PENDING',
+          role: 'MEMBER'
+        });
+        if (memberUpsertError) {
+          throw memberUpsertError;
+        }
+
+        // Also proxy through join route if session token exists
         let token = signUpData.session?.access_token;
-        let userId = signUpData.user?.id;
         if (!token) {
           const { data: sessData } = await supabase.auth.getSession();
           token = sessData.session?.access_token;
-          if (!userId) userId = sessData.session?.user?.id;
         }
-
-        // If session is immediately active (auto-confirm enabled)
         if (token) {
-          // Dispatch POST /api/pools/:pool_id/join with { inviteCode: 'MAIN26' }
-          const joinRes = await fetch(`/api/pools/${activePoolId}/join`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`,
-              'x-user-email': email,
-            },
-            body: JSON.stringify({ inviteCode: cleanInvite }),
-          });
-
-          if (!joinRes.ok) {
-            const errData = await joinRes.json().catch(() => ({}));
-            if (joinRes.status === 403) {
-              throw new Error(errData.error || 'Registration rejected: Invalid invite code or access denied.');
-            }
-            throw new Error(errData.error || `Server registration failed with HTTP ${joinRes.status}.`);
-          }
-
-          // Guarantee database membership record via Supabase client as well
-          if (userId) {
-            const { error: memberError } = await supabase.from('pool_memberships').upsert({
-              pool_id: activePoolId,
-              user_id: userId,
-              status: 'PENDING',
+          try {
+            await fetch(`/api/pools/${activePoolId}/join`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+                'x-user-email': email,
+              },
+              body: JSON.stringify({ inviteCode: cleanInvite }),
             });
-            if (memberError && !memberError.message.includes('duplicate')) {
-              console.warn('[SignUp] Supabase membership registration note:', memberError.message);
-            }
+          } catch (netErr) {
+            console.warn('[SignUp] Join API proxy notice:', netErr);
           }
-        } else {
-          // If Supabase requires email confirmation first
-          setInfoMessage('Application registered. Please confirm your email before the commissioner can admit you.');
         }
+
+        setInfoMessage('Application registered in PENDING status. The commissioner (Jack) must approve your admission before access is granted.');
       } else {
         const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
           email,
@@ -168,7 +174,7 @@ export const Login: React.FC = () => {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-sm focus:outline-none focus:border-amber-500"
-              placeholder="member@example.com"
+              placeholder="name@email.com"
             />
           </div>
 
@@ -219,9 +225,18 @@ export const Login: React.FC = () => {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs uppercase tracking-wider shadow-lg transition-all disabled:opacity-50"
+            className="w-full py-3.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs uppercase tracking-wider shadow-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            {loading ? 'Processing...' : isSignUp ? 'Submit Application' : 'Sign In'}
+            {loading ? (
+              <>
+                <span className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                <span>SUBMITTING...</span>
+              </>
+            ) : isSignUp ? (
+              'Submit Application'
+            ) : (
+              'Sign In'
+            )}
           </button>
         </form>
       </div>

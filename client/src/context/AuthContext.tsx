@@ -64,7 +64,30 @@ export async function autoRepairPoolMembership(
       .maybeSingle();
 
     if (error || !data) {
-      // Missing membership row detected! Dispatch join route
+      // Missing membership row detected! Execute direct cloud database upserts
+      try {
+        await supabase.from('users').upsert({
+          id: userId,
+          email: userEmail,
+          display_name: userEmail ? userEmail.split('@')[0] : 'Member',
+          role: 'MEMBER',
+        });
+      } catch (uErr) {
+        console.warn('[AutoRepair] users upsert note:', uErr);
+      }
+
+      try {
+        await supabase.from('pool_memberships').upsert({
+          pool_id: activePoolId,
+          user_id: userId,
+          status: 'PENDING',
+          role: 'MEMBER',
+        });
+      } catch (pmErr) {
+        console.warn('[AutoRepair] pool_memberships upsert note:', pmErr);
+      }
+
+      // Also proxy join route
       try {
         await fetch(`/api/pools/${activePoolId}/join`, {
           method: 'POST',
@@ -79,11 +102,6 @@ export async function autoRepairPoolMembership(
         console.warn('[AutoRepair] Join API dispatch notice:', netErr);
       }
 
-      await supabase.from('pool_memberships').upsert({
-        pool_id: activePoolId,
-        user_id: userId,
-        status: 'PENDING',
-      });
       return 'PENDING';
     }
     return data.status as 'ACTIVE' | 'PENDING';

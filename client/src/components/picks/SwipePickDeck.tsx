@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, useMotionValue, useTransform, AnimatePresence } from 'framer-motion';
 import { TeamLogo } from '../common/TeamLogo';
 import { NFL_TEAMS } from '../../utils/teamAssets';
+import { Lock } from 'lucide-react';
 
 export interface SwipeMatchup {
   id: string;
@@ -560,11 +561,9 @@ const SwipeCardItem: React.FC<{
         </div>
 
         {isUserLocked && (
-          <div
-            className="whitespace-nowrap text-xs px-2.5 py-1 max-w-[140px] truncate mx-auto rounded-xl bg-amber-950/80 border border-amber-500/50 text-amber-300 font-black tracking-wide uppercase shadow-inner"
-            title="🔒 Locked (Kickoff)"
-          >
-            🔒 Locked (Kickoff)
+          <div className="flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-full bg-zinc-900/90 border border-amber-500/40 text-amber-400 text-xs font-semibold tracking-wide">
+            <Lock className="w-3.5 h-3.5" />
+            <span>KICKOFF LOCKED</span>
           </div>
         )}
       </div>
