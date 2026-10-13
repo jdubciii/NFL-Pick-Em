@@ -6,6 +6,8 @@ import { TugOfWarDrawer } from '../components/matrix/TugOfWarDrawer';
 import { LockCountdownTimer } from '../components/matrix/LockCountdownTimer';
 import { LiveGametrackStream, LiveGameflowCardData } from '../components/matrix/LiveGametrackStream';
 import { EmptyStateWireframe } from '../components/common/EmptyStateWireframe';
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 import {
   computeSlateTopology,
   computeDuelComparison,
@@ -21,20 +23,17 @@ import { evaluatePickVisibility } from '../services/openSlatePolicyService';
 import { getCurrentNFLWeek } from '../services/nflCalendarService';
 import { fetchLiveNFLScores, LiveGame } from '../services/liveScoreService';
 
-const SAMPLE_GAMES: RawGameDefinition[] = [];
-
-const SAMPLE_USERS = [
-  { userId: 'u1', userName: 'Jack (You)', isAutopilot: false },
-];
-
-const SAMPLE_PICKS: UserSubmittedPick[] = [];
-
-const SAMPLE_LIVE_GAMES: LiveGameflowCardData[] = [];
-
 export const MatrixPage: React.FC = () => {
+  const { user } = useAuth();
+  const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+  const currentUserId = user?.id || 'u1';
+  const currentUserName = user?.email ? user.email.split('@')[0] : 'You';
+
   const [selectedWeek, setSelectedWeek] = useState<number>(() => getCurrentNFLWeek());
   const [liveGames, setLiveGames] = useState<LiveGame[]>([]);
   const [loadingGames, setLoadingGames] = useState<boolean>(true);
+  const [poolMembers, setPoolMembers] = useState<{ userId: string; userName: string; isAutopilot: boolean }[]>([]);
+  const [poolPicks, setPoolPicks] = useState<UserSubmittedPick[]>([]);
 
   useEffect(() => {
     let isMounted = true;
@@ -49,6 +48,72 @@ export const MatrixPage: React.FC = () => {
       isMounted = false;
     };
   }, [selectedWeek]);
+
+  // Query live pool members and their picks for selectedWeek from Supabase
+  useEffect(() => {
+    let isMounted = true;
+    const fetchPoolMatrixData = async () => {
+      try {
+        // Query active members
+        const { data: membersData } = await supabase
+          .from('pool_memberships')
+          .select('user_id, role, users(id, email, display_name)')
+          .eq('pool_id', activePoolId)
+          .eq('status', 'ACTIVE');
+
+        if (!isMounted) return;
+
+        let membersList: { userId: string; userName: string; isAutopilot: boolean }[] = [];
+        if (membersData && membersData.length > 0) {
+          membersList = membersData.map((m: any) => {
+            const u = m.users;
+            const isCurrent = m.user_id === user?.id;
+            const displayName = u?.display_name || (u?.email ? u.email.split('@')[0] : m.user_id.slice(0, 8));
+            return {
+              userId: m.user_id,
+              userName: isCurrent ? `${displayName} (You)` : displayName,
+              isAutopilot: false,
+            };
+          });
+          setPoolMembers(membersList);
+        } else {
+          setPoolMembers([{ userId: currentUserId, userName: `${currentUserName} (You)`, isAutopilot: false }]);
+        }
+
+        // Query submitted picks for selectedWeek
+        const { data: dbPicks } = await supabase
+          .from('picks')
+          .select('user_id, matchup_id, selected_team, week')
+          .eq('pool_id', activePoolId)
+          .eq('week', selectedWeek);
+
+        if (!isMounted) return;
+
+        if (dbPicks && dbPicks.length > 0) {
+          const memberNameMap = new Map<string, string>();
+          membersList.forEach((m) => memberNameMap.set(m.userId, m.userName));
+
+          const mappedPicks: UserSubmittedPick[] = dbPicks.map((p: any) => ({
+            userId: p.user_id,
+            userName: memberNameMap.get(p.user_id) || (p.user_id === user?.id ? currentUserName : p.user_id.slice(0, 8)),
+            gameId: p.matchup_id,
+            selectedTeam: p.selected_team,
+            isAutopilot: false,
+          }));
+          setPoolPicks(mappedPicks);
+        } else {
+          setPoolPicks([]);
+        }
+      } catch (err) {
+        console.error('Failed to query matrix pool picks:', err);
+      }
+    };
+
+    fetchPoolMatrixData();
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedWeek, user?.id, currentUserId, currentUserName]);
 
   const currentNFLWeek = getCurrentNFLWeek();
   const isPastWeek = selectedWeek < currentNFLWeek;
@@ -65,8 +130,6 @@ export const MatrixPage: React.FC = () => {
       : (isCurrentOrFutureWeek && !allGamesFinal);
 
   const isSlateLocked = isPastWeek || (!allGamesUpcoming && liveGames.some((g) => g.status !== 'SCHEDULED'));
-  const currentUserId = 'u1';
-  const currentUserName = 'Jack';
 
   const [activeTab, setActiveTab] = useState<'LEVERAGE' | 'GAMETRACK'>(
     allGamesUpcoming ? 'LEVERAGE' : 'GAMETRACK'
@@ -84,32 +147,51 @@ export const MatrixPage: React.FC = () => {
   const [expandedTugGameId, setExpandedTugGameId] = useState<string | null>(null);
   const [showTopologyToast, setShowTopologyToast] = useState<boolean>(true);
 
+  const rawGames: RawGameDefinition[] = useMemo(() => {
+    return liveGames.map((g) => ({
+      gameId: g.id,
+      homeTeam: g.homeTeam.code,
+      awayTeam: g.awayTeam.code,
+      spread: 0,
+    }));
+  }, [liveGames]);
+
   const topology = useMemo(() => {
-    return computeSlateTopology('pool_alpha', selectedWeek, SAMPLE_PICKS, SAMPLE_GAMES, 3);
-  }, [selectedWeek]);
+    return computeSlateTopology(
+      activePoolId,
+      selectedWeek,
+      poolPicks,
+      rawGames,
+      poolPicks.length > 0 ? 1 : 3
+    );
+  }, [activePoolId, selectedWeek, poolPicks, rawGames]);
 
   const autopilotUsers = useMemo(() => {
     const map = new Map<string, boolean>();
-    for (const u of SAMPLE_USERS) {
-      const provenance = deriveAutopilotProvenance(u.userId, SAMPLE_PICKS, SAMPLE_GAMES as RawGameLine[]);
+    for (const u of poolMembers) {
+      const provenance = deriveAutopilotProvenance(u.userId, poolPicks, rawGames as RawGameLine[]);
       map.set(u.userId, provenance.isAutopilot);
     }
     return map;
-  }, []);
+  }, [poolMembers, poolPicks, rawGames]);
 
   const duelComparison = useMemo(() => {
     if (!selectedRivalId) return null;
-    const rival = SAMPLE_USERS.find((u) => u.userId === selectedRivalId);
+    const rival = poolMembers.find((u) => u.userId === selectedRivalId);
     if (!rival) return null;
+    const me = poolMembers.find((u) => u.userId === currentUserId) || {
+      userId: currentUserId,
+      userName: currentUserName,
+    };
     return computeDuelComparison(
       currentUserId,
-      currentUserName,
+      me.userName,
       rival.userId,
       rival.userName,
-      SAMPLE_PICKS,
-      SAMPLE_GAMES
+      poolPicks,
+      rawGames
     );
-  }, [selectedRivalId]);
+  }, [selectedRivalId, poolMembers, currentUserId, currentUserName, poolPicks, rawGames]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 pb-24 max-w-md mx-auto font-sans">
@@ -200,7 +282,7 @@ export const MatrixPage: React.FC = () => {
 
       {/* TAB 2: PRE-LOCK LEVERAGE BOARD */}
       {activeTab === 'LEVERAGE' && (
-        SAMPLE_GAMES.length === 0 ? (
+        poolPicks.length === 0 ? (
           <EmptyStateWireframe
             header="[ AWAITING LEAGUE ACTION ]"
             subtitle="[ VEGAS LINES FREEZING... ]"
@@ -221,7 +303,7 @@ export const MatrixPage: React.FC = () => {
                   SELECT RIVAL TO ENGAGE 1-ON-1 DUEL MODE
                 </p>
                 <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
-                  {SAMPLE_USERS.filter((u) => u.userId !== currentUserId).map((user) => {
+                  {poolMembers.filter((u) => u.userId !== currentUserId).map((user) => {
                     const isMachine = autopilotUsers.get(user.userId);
 
                     return (
@@ -244,11 +326,11 @@ export const MatrixPage: React.FC = () => {
 
               {/* Matchup Distribution & Avatar Clusters */}
               <div className="space-y-2.5 font-mono">
-                {SAMPLE_GAMES.map((game) => {
+                {rawGames.map((game) => {
                   const gameDist = topology.games.find((g) => g.gameId === game.gameId);
                   const isConsensus = gameDist?.isConsensus;
 
-                  const awayCamp: CampParticipant[] = SAMPLE_PICKS
+                  const awayCamp: CampParticipant[] = poolPicks
                     .filter((p) => p.gameId === game.gameId && p.selectedTeam === game.awayTeam)
                     .map((p) => ({
                       userId: p.userId,
@@ -257,7 +339,7 @@ export const MatrixPage: React.FC = () => {
                       isAutopilot: autopilotUsers.get(p.userId)
                     }));
 
-                  const homeCamp: CampParticipant[] = SAMPLE_PICKS
+                  const homeCamp: CampParticipant[] = poolPicks
                     .filter((p) => p.gameId === game.gameId && p.selectedTeam === game.homeTeam)
                     .map((p) => ({
                       userId: p.userId,
@@ -286,7 +368,7 @@ export const MatrixPage: React.FC = () => {
                         </div>
                         {isConsensus && (
                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-bold">
-                            10/10 CONSENSUS [{gameDist?.consensusTeam}]
+                            {gameDist?.totalPicks}/{gameDist?.totalPicks} CONSENSUS [{gameDist?.consensusTeam}]
                           </span>
                         )}
                         {gameDist?.isLoneWolf && (

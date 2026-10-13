@@ -83,6 +83,17 @@ export const WeeklyPicks: React.FC = () => {
     message: ''
   });
 
+  const [userPicks, setUserPicks] = useState<Record<string, string>>({});
+  const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+
+  // USER STATE ISOLATION:
+  // When user changes or on initial mount, IMMEDIATELY reset in-memory pick state
+  useEffect(() => {
+    setUserPicks({});
+  }, [user?.id]);
+
+  const userPicksCacheKey = `picks_${user?.id}_${activePoolId}_w${selectedWeek}`;
+
   const [isPicksProtected, setIsPicksProtected] = useState<boolean>(() => {
     return localStorage.getItem('user_picks_protected') === 'true';
   });
@@ -111,13 +122,12 @@ export const WeeklyPicks: React.FC = () => {
 
   const fetchGames = useCallback(async () => {
     setLoading(true);
-    const cacheKey = `nfl_picks_slate_w${selectedWeek}`;
-    const userPicksCacheKey = `nfl_picks_user_picks_w${selectedWeek}`;
+    const slateCacheKey = `picks_slate_${activePoolId}_w${selectedWeek}`;
 
     // 1. Rehydrate initial cached state if available for instant render
     let cachedGames: GameItem[] = [];
     try {
-      const cachedStr = localStorage.getItem(cacheKey);
+      const cachedStr = localStorage.getItem(slateCacheKey);
       if (cachedStr) {
         const parsed = JSON.parse(cachedStr);
         cachedGames = [...parsed].sort(
@@ -230,29 +240,38 @@ export const WeeklyPicks: React.FC = () => {
         };
       });
 
-      // 3. Rehydrate user picks from localStorage and Supabase
+      // 3. Rehydrate user picks from localStorage and Supabase strictly scoped by active user
       let userPicksMap: Record<string, string> = {};
       try {
         const savedPicks = localStorage.getItem(userPicksCacheKey);
         if (savedPicks) {
           userPicksMap = JSON.parse(savedPicks);
+          setUserPicks(userPicksMap);
         }
       } catch (_) {}
 
-      // Query Supabase for cloud picks if user is logged in
+      // Query Supabase for cloud picks strictly filtered by active user
       if (user?.id) {
         try {
-          const { data: dbPicks } = await supabase
+          const { data: dbPicks, error } = await supabase
             .from('picks')
-            .select('game_id, selected_team_id')
-            .eq('user_id', user.id);
+            .select('matchup_id, selected_team')
+            .eq('pool_id', activePoolId)
+            .eq('user_id', user.id)
+            .eq('week', selectedWeek);
 
-          if (dbPicks && dbPicks.length > 0) {
+          if (dbPicks && Array.isArray(dbPicks)) {
+            const cloudMap: Record<string, string> = {};
             dbPicks.forEach((p: any) => {
-              if (p.game_id && p.selected_team_id) {
-                userPicksMap[p.game_id] = p.selected_team_id;
+              if (p.matchup_id && p.selected_team) {
+                cloudMap[p.matchup_id] = p.selected_team;
               }
             });
+            userPicksMap = { ...userPicksMap, ...cloudMap };
+            setUserPicks(userPicksMap);
+            try {
+              localStorage.setItem(userPicksCacheKey, JSON.stringify(userPicksMap));
+            } catch (_) {}
           }
         } catch (sbErr) {
           console.warn('Supabase picks rehydration warning:', sbErr);
@@ -272,7 +291,7 @@ export const WeeklyPicks: React.FC = () => {
 
       setGames(sortedGames);
       try {
-        localStorage.setItem(cacheKey, JSON.stringify(sortedGames));
+        localStorage.setItem(slateCacheKey, JSON.stringify(sortedGames));
       } catch (_) {}
 
       // 4. Load pool info & prefetch matrix if available
@@ -311,7 +330,7 @@ export const WeeklyPicks: React.FC = () => {
       // Gracefully fall back to cached games without raising raw "Failed to fetch" banner
       if (cachedGames.length === 0) {
         try {
-          const fallbackCached = localStorage.getItem(cacheKey);
+          const fallbackCached = localStorage.getItem(slateCacheKey);
           if (fallbackCached) {
             const parsed = JSON.parse(fallbackCached);
             const sortedFallback = [...parsed].sort(
@@ -362,44 +381,46 @@ export const WeeklyPicks: React.FC = () => {
     }
 
     setSavingPickForGameId(game.id);
-    const isUnselecting = game.userPick === selectedTeamId;
+    const isUnselecting = (userPicks[game.id] || game.userPick) === selectedTeamId;
     const teamToSend = isUnselecting ? null : selectedTeamId;
 
     // 1. Optimistically update local state
+    const updatedUserPicks = { ...userPicks };
+    if (teamToSend) {
+      updatedUserPicks[game.id] = teamToSend;
+    } else {
+      delete updatedUserPicks[game.id];
+    }
+    setUserPicks(updatedUserPicks);
+
     setGames((prev) =>
       prev.map((g) => (g.id === game.id ? { ...g, userPick: teamToSend } : g))
     );
 
     // 2. Persist to localStorage
     try {
-      const userPicksCacheKey = `nfl_picks_user_picks_w${selectedWeek}`;
-      const savedMap = JSON.parse(localStorage.getItem(userPicksCacheKey) || '{}');
-      if (teamToSend) {
-        savedMap[game.id] = teamToSend;
-      } else {
-        delete savedMap[game.id];
-      }
-      localStorage.setItem(userPicksCacheKey, JSON.stringify(savedMap));
+      localStorage.setItem(userPicksCacheKey, JSON.stringify(updatedUserPicks));
     } catch (e) {
       console.warn('localStorage save warning:', e);
     }
 
     // 3. Persist directly to Supabase cloud
-    if (user?.id && pool?.id) {
+    if (user?.id) {
       try {
         if (teamToSend) {
           await supabase.from('picks').upsert({
-            pool_id: pool.id,
+            pool_id: activePoolId,
             user_id: user.id,
-            game_id: game.id,
-            selected_team_id: teamToSend,
-            submitted_by: user.id,
-          }, { onConflict: 'pool_id,user_id,game_id' });
+            week: selectedWeek,
+            matchup_id: game.id,
+            selected_team: teamToSend,
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'pool_id,user_id,matchup_id' });
         } else {
           await supabase.from('picks').delete().match({
-            pool_id: pool.id,
+            pool_id: activePoolId,
             user_id: user.id,
-            game_id: game.id,
+            matchup_id: game.id,
           });
         }
       } catch (sbErr) {
@@ -437,40 +458,39 @@ export const WeeklyPicks: React.FC = () => {
    * Clears all unlocked picks across the active slate.
    */
   const handleClearAllPicks = async () => {
-    if (isPicksProtected || !pool) return;
+    if (isPicksProtected || !pool || !user?.id) return;
     const unlockedPickedGames = games.filter((g) => !isGameLocked(g) && g.userPick);
     if (unlockedPickedGames.length === 0) return;
 
     // Optimistically clear picks in local state
+    const updatedUserPicks = { ...userPicks };
+    unlockedPickedGames.forEach((g) => delete updatedUserPicks[g.id]);
+    setUserPicks(updatedUserPicks);
+
     setGames((prev) =>
       prev.map((g) => (!isGameLocked(g) ? { ...g, userPick: null } : g))
     );
 
     // Clear in localStorage
     try {
-      const userPicksCacheKey = `nfl_picks_user_picks_w${selectedWeek}`;
-      const savedMap = JSON.parse(localStorage.getItem(userPicksCacheKey) || '{}');
-      unlockedPickedGames.forEach((g) => delete savedMap[g.id]);
-      localStorage.setItem(userPicksCacheKey, JSON.stringify(savedMap));
+      localStorage.setItem(userPicksCacheKey, JSON.stringify(updatedUserPicks));
     } catch (e) {
       console.warn('localStorage clear warning:', e);
     }
 
     // Clear in Supabase
-    if (user?.id && pool?.id) {
-      try {
-        await Promise.all(
-          unlockedPickedGames.map((game) =>
-            supabase.from('picks').delete().match({
-              pool_id: pool.id,
-              user_id: user.id,
-              game_id: game.id,
-            })
-          )
-        );
-      } catch (sbErr) {
-        console.warn('Supabase clear warning:', sbErr);
-      }
+    try {
+      await Promise.all(
+        unlockedPickedGames.map((game) =>
+          supabase.from('picks').delete().match({
+            pool_id: activePoolId,
+            user_id: user.id,
+            matchup_id: game.id,
+          })
+        )
+      );
+    } catch (sbErr) {
+      console.warn('Supabase clear warning:', sbErr);
     }
 
     // Backend proxy if configured
@@ -550,25 +570,26 @@ export const WeeklyPicks: React.FC = () => {
         try {
           // Persist to localStorage
           try {
-            const userPicksCacheKey = `nfl_picks_user_picks_w${selectedWeek}`;
             const savedMap = JSON.parse(localStorage.getItem(userPicksCacheKey) || '{}');
             Object.assign(savedMap, finalPicks);
+            setUserPicks(savedMap);
             localStorage.setItem(userPicksCacheKey, JSON.stringify(savedMap));
           } catch (e) {
             console.warn('localStorage preset save warning:', e);
           }
 
           // Persist to Supabase
-          if (user?.id && pool?.id) {
+          if (user?.id) {
             try {
               const upsertRows = Object.entries(finalPicks).map(([gameId, selectedTeamId]) => ({
-                pool_id: pool.id,
+                pool_id: activePoolId,
                 user_id: user.id,
-                game_id: gameId,
-                selected_team_id: selectedTeamId,
-                submitted_by: user.id,
+                week: selectedWeek,
+                matchup_id: gameId,
+                selected_team: selectedTeamId,
+                updated_at: new Date().toISOString(),
               }));
-              await supabase.from('picks').upsert(upsertRows, { onConflict: 'pool_id,user_id,game_id' });
+              await supabase.from('picks').upsert(upsertRows, { onConflict: 'pool_id,user_id,matchup_id' });
             } catch (sbErr) {
               console.warn('Supabase preset save warning:', sbErr);
             }
@@ -632,12 +653,16 @@ export const WeeklyPicks: React.FC = () => {
 
   const handleUndoPreset = () => {
     const reverted = quickFillSafetyEngine.triggerUndo();
+    setUserPicks(reverted);
     setGames((prev) =>
       prev.map((g) => ({
         ...g,
         userPick: reverted[g.id] ?? null,
       }))
     );
+    try {
+      localStorage.setItem(userPicksCacheKey, JSON.stringify(reverted));
+    } catch (_) {}
     setSnackbarState({ isOpen: false, message: '' });
     triggerHaptic('impactMedium');
     setFeedbackMessage({ text: 'Preset selections reverted.', type: 'success' });
@@ -851,10 +876,7 @@ export const WeeklyPicks: React.FC = () => {
                 displayClock: g.displayClock,
                 periodLabel: g.periodLabel,
               }))}
-              selectedPicks={games.reduce((acc, g) => {
-                if (g.userPick) acc[g.id] = g.userPick;
-                return acc;
-              }, {} as Record<string, string>)}
+              selectedPicks={userPicks}
               onSelectTeam={(gameId, team) => {
                 const targetGame = games.find((g) => g.id === gameId);
                 if (targetGame) handlePick(targetGame, team);

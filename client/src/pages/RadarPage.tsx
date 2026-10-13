@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
+import { getCurrentNFLWeek } from '../services/nflCalendarService';
 import { fetchLiveNFLScores, LiveGame } from '../services/liveScoreService';
 import {
   calculateProvisionalStandings,
@@ -45,6 +47,16 @@ export const RadarPage: React.FC = () => {
           liveScoresRef.current = data;
           setLastUpdated(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
           setIsStale(false);
+          setGames((prev) => {
+            if (prev.length > 0) return prev;
+            return data.map((ls) => ({
+              id: ls.id,
+              homeTeam: ls.homeTeam.code,
+              awayTeam: ls.awayTeam.code,
+              spread: 0,
+              kickoffTime: new Date().toISOString(),
+            }));
+          });
         } else if (liveScoresRef.current.length > 0) {
           setIsStale(true);
         }
@@ -64,62 +76,94 @@ export const RadarPage: React.FC = () => {
     };
   }, []);
 
-  // Fetch pool data if token is active
+  // Fetch pool data: active members, games, and live picks from Supabase
   useEffect(() => {
-    if (!token) return;
-    const loadPoolMatrix = async () => {
+    let isMounted = true;
+    const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+    const activeWeek = getCurrentNFLWeek();
+
+    const loadPoolData = async () => {
       try {
-        const poolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
-        const res = await fetch(`/api/pools/${poolId}/matrix?week_no=5`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const matrix = await res.json();
-          if (matrix.columns && matrix.columns.length > 0) {
-            const mappedMembers: UserStandingRef[] = matrix.columns.map((col: any) => ({
-              id: col.user_id,
-              name: col.displayName || col.email || col.user_id,
-            }));
-            setMembers(mappedMembers);
-          }
-          if (matrix.rows && matrix.rows.length > 0) {
-            const mappedGames: SlateGame[] = matrix.rows.map((row: any) => ({
-              id: row.game_id,
-              homeTeam: row.home_team_id,
-              awayTeam: row.away_team_id,
-              spread: row.spread,
-              kickoffTime: row.kickoff_time,
-            }));
-            setGames(mappedGames);
-          }
-          if (matrix.cells && matrix.rows && matrix.columns) {
-            const mappedPicks: UserPickItem[] = [];
-            for (const row of matrix.rows) {
-              for (const col of matrix.columns) {
-                const cell = matrix.cells[row.game_id]?.[col.user_id];
-                if (cell && cell.selected_team_id) {
-                  mappedPicks.push({
-                    userId: col.user_id,
-                    gameId: row.game_id,
-                    selectedTeam: cell.selected_team_id,
-                    isSubmitted: true,
-                    isHidden: cell.is_hidden,
-                  });
-                }
-              }
-            }
-            if (mappedPicks.length > 0) {
-              setPicks(mappedPicks);
-            }
+        // 1. Query all active members in the pool except current user (Step 3.1)
+        const { data: activeMembers } = await supabase
+          .from('pool_memberships')
+          .select('user_id, role, users(id, email, display_name)')
+          .eq('pool_id', activePoolId)
+          .eq('status', 'ACTIVE')
+          .neq('user_id', user?.id || '');
+
+        if (!isMounted) return;
+
+        if (activeMembers && activeMembers.length > 0) {
+          const currentMember: UserStandingRef = {
+            id: user?.id || 'current',
+            name: user?.email ? user.email.split('@')[0] : 'You',
+          };
+          const mappedRivals: UserStandingRef[] = activeMembers.map((m: any) => {
+            const u = m.users;
+            const displayName = u?.display_name || (u?.email ? u.email.split('@')[0] : m.user_id);
+            return {
+              id: m.user_id,
+              name: displayName,
+            };
+          });
+
+          setMembers([currentMember, ...mappedRivals]);
+          if (!selectedRivalId && mappedRivals.length > 0) {
+            setSelectedRivalId(mappedRivals[0].id);
           }
         }
+
+        // 2. Fetch picks from public.picks for the active week
+        const { data: dbPicks } = await supabase
+          .from('picks')
+          .select('user_id, matchup_id, selected_team, week')
+          .eq('pool_id', activePoolId)
+          .eq('week', activeWeek);
+
+        if (!isMounted) return;
+
+        if (dbPicks && dbPicks.length > 0) {
+          const mappedPicks: UserPickItem[] = dbPicks.map((p: any) => ({
+            userId: p.user_id,
+            gameId: p.matchup_id,
+            selectedTeam: p.selected_team,
+            isSubmitted: true,
+            isHidden: false,
+          }));
+          setPicks(mappedPicks);
+        }
+
+        // Fallback to pool matrix endpoint if available
+        if (token) {
+          try {
+            const res = await fetch(`/api/pools/${activePoolId}/matrix?week_no=${activeWeek}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (res.ok) {
+              const matrix = await res.json();
+              if (matrix.rows && matrix.rows.length > 0) {
+                setGames(matrix.rows.map((row: any) => ({
+                  id: row.game_id,
+                  homeTeam: row.home_team_id,
+                  awayTeam: row.away_team_id,
+                  spread: row.spread,
+                  kickoffTime: row.kickoff_time,
+                })));
+              }
+            }
+          } catch (_) {}
+        }
       } catch (err) {
-        // Fall back gracefully
+        console.warn('Radar pool data load error:', err);
       }
     };
 
-    loadPoolMatrix();
-  }, [token]);
+    loadPoolData();
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id, token]);
 
   // Effective picks respecting what-if simulation
   const effectivePicks = useMemo(() => {

@@ -1,0 +1,110 @@
+import { supabase } from '../lib/supabase';
+
+export const ACTIVE_POOL_ID = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+
+/**
+ * Returns a strictly user- and pool-scoped cache key.
+ */
+export function getUserPickCacheKey(
+  userId: string | undefined | null,
+  poolId: string = ACTIVE_POOL_ID,
+  week: number
+): string {
+  return `picks_${userId || 'anon'}_${poolId}_w${week}`;
+}
+
+/**
+ * Loads user picks strictly from Supabase cloud for the active user, pool, and week.
+ */
+export async function fetchUserPicks(
+  poolId: string = ACTIVE_POOL_ID,
+  userId: string,
+  week: number
+): Promise<Record<string, string>> {
+  if (!userId) return {};
+  try {
+    const { data: dbPicks, error } = await supabase
+      .from('picks')
+      .select('matchup_id, selected_team')
+      .eq('pool_id', poolId)
+      .eq('user_id', userId)
+      .eq('week', week);
+
+    if (error) {
+      console.warn('Error fetching cloud picks:', error);
+      return {};
+    }
+
+    const picksMap: Record<string, string> = {};
+    if (dbPicks && Array.isArray(dbPicks)) {
+      dbPicks.forEach((p: any) => {
+        if (p.matchup_id && p.selected_team) {
+          picksMap[p.matchup_id] = p.selected_team;
+        }
+      });
+    }
+    return picksMap;
+  } catch (err) {
+    console.warn('Failed to load user picks from Supabase:', err);
+    return {};
+  }
+}
+
+/**
+ * Persists an individual pick directly to Supabase cloud using composite unique constraint.
+ */
+export async function persistUserPick(
+  poolId: string = ACTIVE_POOL_ID,
+  userId: string,
+  week: number,
+  gameId: string,
+  teamName: string | null
+): Promise<void> {
+  if (!userId || !poolId) return;
+
+  if (teamName) {
+    const { error } = await supabase.from('picks').upsert(
+      {
+        pool_id: poolId,
+        user_id: userId,
+        week: week,
+        matchup_id: gameId,
+        selected_team: teamName,
+        updated_at: new Date().toISOString(),
+      },
+      {
+        onConflict: 'pool_id,user_id,matchup_id',
+      }
+    );
+    if (error) {
+      console.warn('Supabase pick upsert warning:', error);
+    }
+  } else {
+    const { error } = await supabase.from('picks').delete().match({
+      pool_id: poolId,
+      user_id: userId,
+      matchup_id: gameId,
+    });
+    if (error) {
+      console.warn('Supabase pick delete warning:', error);
+    }
+  }
+}
+
+/**
+ * Clears all localStorage keys matching picks_* (e.g. on logout or user switch).
+ */
+export function clearAllPicksLocalStorage(): void {
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.startsWith('picks_') || key.startsWith('nfl_picks_'))) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach((k) => localStorage.removeItem(k));
+  } catch (e) {
+    console.warn('Error clearing localStorage picks:', e);
+  }
+}

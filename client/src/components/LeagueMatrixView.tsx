@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
+import { fetchLiveNFLScores } from '../services/liveScoreService';
 import {
   Grid,
   Lock,
@@ -230,16 +232,41 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
               localStorage.setItem('active_pool_id', mainPool.id);
             }
           }
+          return;
         }
       } catch (err) {
-        console.error('Failed to load pools:', err);
+        console.warn('Failed to load pools from API, checking Supabase:', err);
+      }
+
+      // Supabase fallback
+      try {
+        const savedPoolId = localStorage.getItem('active_pool_id') || '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+        const { data: memData } = await supabase
+          .from('pool_memberships')
+          .select('pool_id, pools(id, name)')
+          .eq('user_id', currentUser?.id);
+        if (memData && memData.length > 0) {
+          const mappedPools: PoolSummary[] = memData.map((m: any) => ({
+            id: m.pool_id,
+            name: m.pools?.name || 'Main League',
+          }));
+          setPools(mappedPools);
+          setSelectedPoolId(mappedPools[0].id);
+        } else {
+          setPools([{ id: savedPoolId, name: 'Main League' }]);
+          setSelectedPoolId(savedPoolId);
+        }
+      } catch (sbErr) {
+        const defaultPoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+        setPools([{ id: defaultPoolId, name: 'Main League' }]);
+        setSelectedPoolId(defaultPoolId);
       }
     };
 
-    if (token) {
+    if (token || currentUser) {
       fetchPools();
     }
-  }, [token]);
+  }, [token, currentUser]);
 
   // Fetch Matrix data
   const fetchMatrix = useCallback(async () => {
@@ -265,8 +292,88 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
       const data: MatrixResponsePayload = await response.json();
       setMatrixData(data);
     } catch (err: any) {
-      console.error('Matrix fetch error:', err);
-      setError(err.message || 'An error occurred while fetching the league matrix.');
+      console.warn('Matrix fetch API fallback to Supabase:', err);
+      try {
+        const weekNum = typeof selectedWeek === 'number' ? selectedWeek : parseInt(selectedWeek as string) || 6;
+        const [membersRes, liveScores, picksRes] = await Promise.all([
+          supabase
+            .from('pool_memberships')
+            .select('user_id, role, users(id, email, display_name)')
+            .eq('pool_id', selectedPoolId)
+            .eq('status', 'ACTIVE'),
+          fetchLiveNFLScores(weekNum),
+          supabase
+            .from('picks')
+            .select('user_id, matchup_id, selected_team, week')
+            .eq('pool_id', selectedPoolId)
+            .eq('week', weekNum),
+        ]);
+
+        const members = membersRes.data || [];
+        const dbPicks = picksRes.data || [];
+
+        const columns: MatrixMemberColumn[] = members.map((m: any) => ({
+          user_id: m.user_id,
+          email: m.users?.email || '',
+          displayName: m.users?.display_name || m.users?.email?.split('@')[0] || m.user_id,
+        }));
+
+        const rows: MatrixGameRow[] = (liveScores || []).map((g) => ({
+          game_id: g.id,
+          external_game_id: g.id,
+          home_team_id: g.homeTeam.code,
+          away_team_id: g.awayTeam.code,
+          kickoff_time: new Date().toISOString(),
+          status: g.status,
+          home_score: parseInt(g.homeTeam.score, 10) || 0,
+          away_score: parseInt(g.awayTeam.score, 10) || 0,
+          spread: 0,
+        }));
+
+        const cells: Record<string, Record<string, MatrixPickCell>> = {};
+        for (const r of rows) {
+          cells[r.game_id] = {};
+        }
+
+        for (const p of dbPicks) {
+          if (!cells[p.matchup_id]) {
+            cells[p.matchup_id] = {};
+          }
+          cells[p.matchup_id][p.user_id] = {
+            pick_id: `${p.user_id}_${p.matchup_id}`,
+            selected_team_id: p.selected_team,
+            is_masked: false,
+          };
+        }
+
+        const summary: Record<string, MatrixMemberSummary> = {};
+        for (const col of columns) {
+          summary[col.user_id] = {
+            user_id: col.user_id,
+            weekly_wins: 0,
+            tiebreaker_guess: null,
+            cumulative_shots: 0,
+          };
+        }
+
+        const fallbackPayload: MatrixResponsePayload = {
+          metadata: {
+            pool_id: selectedPoolId,
+            week_number: selectedWeek,
+            picking_mode: 'STRAIGHT_UP',
+            hide_picks_until_kickoff: false,
+          },
+          columns,
+          rows,
+          cells,
+          summary,
+        };
+
+        setMatrixData(fallbackPayload);
+      } catch (fallbackErr: any) {
+        console.error('Supabase Matrix fallback failed:', fallbackErr);
+        setError(fallbackErr.message || 'An error occurred while fetching the league matrix.');
+      }
     } finally {
       setLoading(false);
     }
