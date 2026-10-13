@@ -41,49 +41,20 @@ export const ProfilePage: React.FC = () => {
       return;
     }
     try {
-      let memberships: any[] | null = null;
-      const res = await supabase
-        .from('pool_memberships')
-        .select('user_id, status, role, users(email, display_name)')
-        .eq('pool_id', activePoolId)
-        .eq('status', 'PENDING');
+      const { data, error } = await supabase.rpc('get_pending_applicants', {
+        p_pool_id: activePoolId
+      });
 
-      if (!res.error && res.data) {
-        memberships = res.data;
-      } else {
-        // Schema fallback if role / display_name columns are not defined in PostgreSQL
-        const fallbackRes = await supabase
-          .from('pool_memberships')
-          .select('user_id, status, users(email)')
-          .eq('pool_id', activePoolId)
-          .eq('status', 'PENDING');
-        if (!fallbackRes.error && fallbackRes.data) {
-          memberships = fallbackRes.data;
-        } else {
-          // Additional fallback if relation nesting is not supported
-          const simpleRes = await supabase
-            .from('pool_memberships')
-            .select('user_id, status')
-            .eq('pool_id', activePoolId)
-            .eq('status', 'PENDING');
-          memberships = simpleRes.data || [];
-        }
-      }
-
-      if (!memberships || memberships.length === 0) {
-        setPendingApplicants([]);
+      if (error) {
+        console.warn('Failed to load pending applicants via RPC:', error);
         return;
       }
 
-      const applicants: PendingApplicant[] = memberships.map((m: any) => {
-        const email = m.users?.email || m.email || m.user_id;
-        const displayName = m.users?.display_name || (typeof email === 'string' && email.includes('@') ? email.split('@')[0] : email);
-        return {
-          userId: m.user_id,
-          email,
-          displayName,
-        };
-      });
+      const applicants: PendingApplicant[] = (data || []).map((m: any) => ({
+        userId: m.user_id,
+        email: m.email,
+        displayName: m.display_name,
+      }));
 
       setPendingApplicants(applicants);
     } catch (err) {
@@ -115,30 +86,30 @@ export const ProfilePage: React.FC = () => {
     setStatusFeedback(null);
 
     try {
-      // 1. Dispatch POST /api/pools/:pool_id/adjudicate
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      if (user?.email) headers['x-user-email'] = user.email;
+      // 1. Dispatch POST /api/pools/:pool_id/adjudicate if API available
+      try {
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        if (user?.email) headers['x-user-email'] = user.email;
 
-      const res = await fetch(`/api/pools/${activePoolId}/adjudicate`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ targetUserId, action }),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        console.warn(`[Adjudicate API] HTTP ${res.status}:`, errData);
+        await fetch(`/api/pools/${activePoolId}/adjudicate`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ targetUserId, action }),
+        });
+      } catch (apiErr) {
+        // Safe failover to RPC
       }
 
-      // 2. Direct Supabase update for immediate consistency
-      await supabase
-        .from('pool_memberships')
-        .update({ status: action })
-        .eq('pool_id', activePoolId)
-        .eq('user_id', targetUserId);
+      // 2. Direct Supabase RPC for authoritative adjudication
+      const { error: rpcErr } = await supabase.rpc('adjudicate_applicant', {
+        p_pool_id: activePoolId,
+        p_user_id: targetUserId,
+        p_status: action
+      });
+      if (rpcErr) throw rpcErr;
 
       // 3. Immediately remove from local state
       setPendingApplicants((prev) => prev.filter((a) => a.userId !== targetUserId));

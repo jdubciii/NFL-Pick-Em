@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Lock, CheckCircle2, AlertCircle, RefreshCw, Shield } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { Lock, CheckCircle2, AlertCircle, RefreshCw, Shield, ChevronDown, WifiOff, X, Calendar } from 'lucide-react';
 import { PickPresetControls } from './PickPresetControls';
 import { CompactPicksList } from './picks/CompactPicksList';
 import { SwipePickDeck } from './picks/SwipePickDeck';
@@ -23,6 +24,10 @@ export interface GameItem {
   spread?: number | null;
   userPick: string | null;
   pickId: string | null;
+  isLive?: boolean;
+  gameStatus?: string;
+  possession?: string;
+  inRedZone?: boolean;
 }
 
 export interface PoolInfo {
@@ -32,10 +37,39 @@ export interface PoolInfo {
   hide_picks_until_kickoff?: boolean;
 }
 
+const DEFAULT_POOL: PoolInfo = {
+  id: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+  name: 'Main League',
+  lock_offset: 0,
+  hide_picks_until_kickoff: true,
+};
+
+const getApiUrl = (endpoint: string): string | null => {
+  const base = import.meta.env.VITE_API_URL;
+  if (base) {
+    return `${base.replace(/\/+$/, '')}${endpoint}`;
+  }
+  if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
+    return endpoint;
+  }
+  return null;
+};
+
 export const WeeklyPicks: React.FC = () => {
   const { token, user } = useAuth();
+  const [selectedWeek, setSelectedWeek] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('nfl_picks_active_week');
+      return saved ? parseInt(saved, 10) : 5;
+    } catch {
+      return 5;
+    }
+  });
+  const [isWeekModalOpen, setIsWeekModalOpen] = useState(false);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+
   const [games, setGames] = useState<GameItem[]>([]);
-  const [pool, setPool] = useState<PoolInfo | null>(null);
+  const [pool, setPool] = useState<PoolInfo | null>(DEFAULT_POOL);
   const [matrixData, setMatrixData] = useState<MatrixResponsePayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingPickForGameId, setSavingPickForGameId] = useState<string | null>(null);
@@ -54,17 +88,39 @@ export const WeeklyPicks: React.FC = () => {
 
   const [isUserLocked, setIsUserLocked] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('nfl_picks_user_locked_w5') === 'true';
+      return localStorage.getItem(`nfl_picks_user_locked_w${selectedWeek}`) === 'true';
     } catch {
       return false;
     }
   });
 
+  // Sync user lock when switching weeks
+  useEffect(() => {
+    try {
+      const locked = localStorage.getItem(`nfl_picks_user_locked_w${selectedWeek}`) === 'true';
+      setIsUserLocked(locked);
+    } catch {
+      setIsUserLocked(false);
+    }
+  }, [selectedWeek]);
+
+  // Network online/offline detection
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   const toggleUserLock = () => {
     setIsUserLocked((prev) => {
       const next = !prev;
       try {
-        localStorage.setItem('nfl_picks_user_locked_w5', String(next));
+        localStorage.setItem(`nfl_picks_user_locked_w${selectedWeek}`, String(next));
       } catch (e) {
         console.error(e);
       }
@@ -88,44 +144,160 @@ export const WeeklyPicks: React.FC = () => {
 
   const fetchGames = useCallback(async () => {
     setLoading(true);
-    try {
-      const response = await fetch('/api/games', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      if (!response.ok) {
-        throw new Error('Failed to load NFL matchups.');
-      }
-      const data = await response.json();
-      const allGames: GameItem[] = data.games || [];
-      const upcomingOnly = allGames.filter((g) => g.status === 'SCHEDULED' || new Date(g.kickoffTime) > new Date());
-      setGames(upcomingOnly.length > 0 ? upcomingOnly : allGames);
-      setPool(data.pool || null);
+    const cacheKey = `nfl_picks_slate_w${selectedWeek}`;
+    const userPicksCacheKey = `nfl_picks_user_picks_w${selectedWeek}`;
 
-      if (data.pool?.id) {
+    // 1. Rehydrate initial cached state if available for instant render
+    let cachedGames: GameItem[] = [];
+    try {
+      const cachedStr = localStorage.getItem(cacheKey);
+      if (cachedStr) {
+        cachedGames = JSON.parse(cachedStr);
+        setGames(cachedGames);
+      }
+    } catch (_) {}
+
+    try {
+      // 2. Fetch directly from ESPN scoreboard API for selectedWeek
+      const espnUrl = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${selectedWeek}`;
+      const response = await fetch(espnUrl);
+
+      if (!response.ok) {
+        throw new Error(`ESPN responded with status ${response.status}`);
+      }
+
+      const data = await response.json();
+      setIsOffline(false);
+
+      // Map ESPN events to GameItem
+      const espnGames: GameItem[] = (data.events || []).map((event: any) => {
+        const competition = event.competitions?.[0];
+        const competitors = competition?.competitors || [];
+        const home = competitors.find((c: any) => c.homeAway === 'home') || {};
+        const away = competitors.find((c: any) => c.homeAway === 'away') || {};
+        const statusName = event.status?.type?.name || '';
+        const statusDetail = event.status?.type?.detail || event.status?.type?.description || event.status?.type?.shortDetail || '';
+        const isHalftime = statusName === 'STATUS_HALFTIME' || statusDetail.toLowerCase().includes('halftime');
+
+        let mappedStatus: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL' = 'SCHEDULED';
+        if (statusName === 'STATUS_FINAL') {
+          mappedStatus = 'FINAL';
+        } else if (isHalftime || statusName === 'STATUS_IN_PROGRESS') {
+          mappedStatus = 'IN_PROGRESS';
+        }
+
+        let spread: number | null = null;
+        const oddsDetail = competition?.odds?.[0]?.details;
+        if (oddsDetail) {
+          const match = oddsDetail.match(/-?[\d.]+/);
+          if (match) spread = parseFloat(match[0]);
+        }
+
+        return {
+          id: event.id,
+          externalGameId: event.id,
+          homeTeamId: home.team?.abbreviation || 'HOM',
+          awayTeamId: away.team?.abbreviation || 'AWY',
+          kickoffTime: event.date,
+          status: mappedStatus,
+          homeScore: home.score ? parseInt(home.score, 10) : null,
+          awayScore: away.score ? parseInt(away.score, 10) : null,
+          spread,
+          userPick: null,
+          pickId: null,
+          isLive: mappedStatus === 'IN_PROGRESS',
+          gameStatus: isHalftime ? 'HALFTIME' : (mappedStatus === 'IN_PROGRESS' ? 'LIVE' : mappedStatus),
+          possession: competition?.situation?.possession,
+          inRedZone: Boolean(competition?.situation?.isRedZone),
+        };
+      });
+
+      // 3. Rehydrate user picks from localStorage and Supabase
+      let userPicksMap: Record<string, string> = {};
+      try {
+        const savedPicks = localStorage.getItem(userPicksCacheKey);
+        if (savedPicks) {
+          userPicksMap = JSON.parse(savedPicks);
+        }
+      } catch (_) {}
+
+      // Query Supabase for cloud picks if user is logged in
+      if (user?.id) {
         try {
-          const matrixRes = await fetch(`/api/pools/${data.pool.id}/matrix`, {
+          const { data: dbPicks } = await supabase
+            .from('picks')
+            .select('game_id, selected_team_id')
+            .eq('user_id', user.id);
+
+          if (dbPicks && dbPicks.length > 0) {
+            dbPicks.forEach((p: any) => {
+              if (p.game_id && p.selected_team_id) {
+                userPicksMap[p.game_id] = p.selected_team_id;
+              }
+            });
+          }
+        } catch (sbErr) {
+          console.warn('Supabase picks rehydration warning:', sbErr);
+        }
+      }
+
+      // Merge picks onto games
+      const mergedGames = espnGames.map((g) => ({
+        ...g,
+        userPick: userPicksMap[g.id] || null,
+      }));
+
+      setGames(mergedGames);
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(mergedGames));
+      } catch (_) {}
+
+      // 4. Load pool info & prefetch matrix if available
+      try {
+        const { data: poolData } = await supabase
+          .from('pools')
+          .select('*')
+          .eq('id', DEFAULT_POOL.id)
+          .maybeSingle();
+
+        if (poolData) {
+          setPool({
+            id: poolData.id,
+            name: poolData.name,
+            lock_offset: poolData.settings?.lock_offset || 0,
+            hide_picks_until_kickoff: poolData.settings?.hide_picks_until_kickoff ?? true,
+          });
+        }
+      } catch (_) {}
+
+      const matrixUrl = getApiUrl(`/api/pools/${DEFAULT_POOL.id}/matrix`);
+      if (matrixUrl && token) {
+        try {
+          const matrixRes = await fetch(matrixUrl, {
             headers: { Authorization: `Bearer ${token}` },
           });
           if (matrixRes.ok) {
             const mData = await matrixRes.json();
             setMatrixData(mData);
           }
-        } catch (mErr) {
-          console.warn('Matrix prefetch warning:', mErr);
-        }
+        } catch (_) {}
       }
     } catch (err: any) {
-      console.error(err);
-      setFeedbackMessage({
-        text: err.message || 'Error loading slate',
-        type: 'error',
-      });
+      console.warn('Network error fetching games slate:', err);
+      setIsOffline(true);
+      // Gracefully fall back to cached games without raising raw "Failed to fetch" banner
+      if (cachedGames.length === 0) {
+        try {
+          const fallbackCached = localStorage.getItem(cacheKey);
+          if (fallbackCached) {
+            setGames(JSON.parse(fallbackCached));
+          }
+        } catch (_) {}
+      }
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [selectedWeek, token, user?.id]);
 
   useEffect(() => {
     fetchGames();
@@ -135,14 +307,14 @@ export const WeeklyPicks: React.FC = () => {
   React.useEffect(() => {
     const liveInterval = setInterval(() => {
       const hasLiveGame = games.some((g: any) => g.isLive || g.status === 'IN_PROGRESS');
-      if (hasLiveGame) {
+      if (hasLiveGame && !isOffline) {
         if (typeof fetchGames === 'function') {
           fetchGames();
         }
       }
     }, 10000);
     return () => clearInterval(liveInterval);
-  }, [games, fetchGames]);
+  }, [games, fetchGames, isOffline]);
 
   const handlePick = async (game: GameItem, selectedTeamId: string) => {
     if (isUserLocked) {
@@ -161,8 +333,52 @@ export const WeeklyPicks: React.FC = () => {
     const isUnselecting = game.userPick === selectedTeamId;
     const teamToSend = isUnselecting ? null : selectedTeamId;
 
+    // 1. Optimistically update local state
+    setGames((prev) =>
+      prev.map((g) => (g.id === game.id ? { ...g, userPick: teamToSend } : g))
+    );
+
+    // 2. Persist to localStorage
     try {
-      const response = await fetch('/api/picks', {
+      const userPicksCacheKey = `nfl_picks_user_picks_w${selectedWeek}`;
+      const savedMap = JSON.parse(localStorage.getItem(userPicksCacheKey) || '{}');
+      if (teamToSend) {
+        savedMap[game.id] = teamToSend;
+      } else {
+        delete savedMap[game.id];
+      }
+      localStorage.setItem(userPicksCacheKey, JSON.stringify(savedMap));
+    } catch (e) {
+      console.warn('localStorage save warning:', e);
+    }
+
+    // 3. Persist directly to Supabase cloud
+    if (user?.id && pool?.id) {
+      try {
+        if (teamToSend) {
+          await supabase.from('picks').upsert({
+            pool_id: pool.id,
+            user_id: user.id,
+            game_id: game.id,
+            selected_team_id: teamToSend,
+            submitted_by: user.id,
+          }, { onConflict: 'pool_id,user_id,game_id' });
+        } else {
+          await supabase.from('picks').delete().match({
+            pool_id: pool.id,
+            user_id: user.id,
+            game_id: game.id,
+          });
+        }
+      } catch (sbErr) {
+        console.warn('Supabase pick persist warning:', sbErr);
+      }
+    }
+
+    // 4. Background notification to backend API if configured
+    const apiUrl = getApiUrl('/api/picks');
+    if (apiUrl && token) {
+      fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -173,31 +389,16 @@ export const WeeklyPicks: React.FC = () => {
           game_id: game.id,
           selected_team_id: teamToSend,
         }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.message || data.error || 'Failed to submit pick');
-      }
-
-      // Optimistically update local state
-      setGames((prev) =>
-        prev.map((g) => (g.id === game.id ? { ...g, userPick: teamToSend } : g))
-      );
-
-      triggerHaptic('impactLight');
-
-      setFeedbackMessage({
-        text: teamToSend ? `Selected ${teamToSend} to win!` : 'Pick cleared.',
-        type: 'success',
-      });
-
-      setTimeout(() => setFeedbackMessage(null), 3000);
-    } catch (err: any) {
-      setFeedbackMessage({ text: err.message, type: 'error' });
-    } finally {
-      setSavingPickForGameId(null);
+      }).catch((err) => console.warn('Backend proxy save warning:', err));
     }
+
+    triggerHaptic('impactLight');
+    setFeedbackMessage({
+      text: teamToSend ? `Selected ${teamToSend} to win!` : 'Pick cleared.',
+      type: 'success',
+    });
+    setTimeout(() => setFeedbackMessage(null), 3000);
+    setSavingPickForGameId(null);
   };
 
   /**
@@ -213,10 +414,39 @@ export const WeeklyPicks: React.FC = () => {
       prev.map((g) => (!isGameLocked(g) ? { ...g, userPick: null } : g))
     );
 
+    // Clear in localStorage
     try {
-      await Promise.all(
+      const userPicksCacheKey = `nfl_picks_user_picks_w${selectedWeek}`;
+      const savedMap = JSON.parse(localStorage.getItem(userPicksCacheKey) || '{}');
+      unlockedPickedGames.forEach((g) => delete savedMap[g.id]);
+      localStorage.setItem(userPicksCacheKey, JSON.stringify(savedMap));
+    } catch (e) {
+      console.warn('localStorage clear warning:', e);
+    }
+
+    // Clear in Supabase
+    if (user?.id && pool?.id) {
+      try {
+        await Promise.all(
+          unlockedPickedGames.map((game) =>
+            supabase.from('picks').delete().match({
+              pool_id: pool.id,
+              user_id: user.id,
+              game_id: game.id,
+            })
+          )
+        );
+      } catch (sbErr) {
+        console.warn('Supabase clear warning:', sbErr);
+      }
+    }
+
+    // Backend proxy if configured
+    const apiUrl = getApiUrl('/api/picks');
+    if (apiUrl && token) {
+      Promise.all(
         unlockedPickedGames.map((game) =>
-          fetch('/api/picks', {
+          fetch(apiUrl, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -229,11 +459,10 @@ export const WeeklyPicks: React.FC = () => {
             }),
           })
         )
-      );
-      triggerHaptic('impactMedium');
-    } catch (err) {
-      console.error('Failed to clear all picks:', err);
+      ).catch((err) => console.warn('Backend clear warning:', err));
     }
+
+    triggerHaptic('impactMedium');
   };
 
   /**
@@ -282,57 +511,81 @@ export const WeeklyPicks: React.FC = () => {
       'FAVORITES',
       async (finalPicks) => {
         try {
-          const entries = Object.entries(finalPicks);
-          const batchPayload = entries.map(([gameId, selectedTeamId]) => ({
-            game_id: gameId,
-            selected_team_id: selectedTeamId,
-          }));
+          // Persist to localStorage
+          try {
+            const userPicksCacheKey = `nfl_picks_user_picks_w${selectedWeek}`;
+            const savedMap = JSON.parse(localStorage.getItem(userPicksCacheKey) || '{}');
+            Object.assign(savedMap, finalPicks);
+            localStorage.setItem(userPicksCacheKey, JSON.stringify(savedMap));
+          } catch (e) {
+            console.warn('localStorage preset save warning:', e);
+          }
 
-          const batchRes = await fetch('/api/picks/batch', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              pool_id: pool.id,
-              picks: batchPayload,
-            }),
-          });
+          // Persist to Supabase
+          if (user?.id && pool?.id) {
+            try {
+              const upsertRows = Object.entries(finalPicks).map(([gameId, selectedTeamId]) => ({
+                pool_id: pool.id,
+                user_id: user.id,
+                game_id: gameId,
+                selected_team_id: selectedTeamId,
+                submitted_by: user.id,
+              }));
+              await supabase.from('picks').upsert(upsertRows, { onConflict: 'pool_id,user_id,game_id' });
+            } catch (sbErr) {
+              console.warn('Supabase preset save warning:', sbErr);
+            }
+          }
 
-          if (!batchRes.ok) {
-            await Promise.all(
-              entries.map(([gameId, selectedTeamId]) =>
-                fetch('/api/picks', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`,
-                  },
-                  body: JSON.stringify({
-                    pool_id: pool.id,
-                    game_id: gameId,
-                    selected_team_id: selectedTeamId,
-                  }),
-                })
-              )
-            );
+          // Backend proxy if configured
+          const batchUrl = getApiUrl('/api/picks/batch');
+          if (batchUrl && token) {
+            const entries = Object.entries(finalPicks);
+            const batchPayload = entries.map(([gameId, selectedTeamId]) => ({
+              game_id: gameId,
+              selected_team_id: selectedTeamId,
+            }));
+
+            try {
+              const batchRes = await fetch(batchUrl, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                  pool_id: pool.id,
+                  picks: batchPayload,
+                }),
+              });
+
+              if (!batchRes.ok) {
+                const singleUrl = getApiUrl('/api/picks');
+                if (singleUrl) {
+                  await Promise.all(
+                    entries.map(([gameId, selectedTeamId]) =>
+                      fetch(singleUrl, {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          Authorization: `Bearer ${token}`,
+                        },
+                        body: JSON.stringify({
+                          pool_id: pool.id,
+                          game_id: gameId,
+                          selected_team_id: selectedTeamId,
+                        }),
+                      })
+                    )
+                  );
+                }
+              }
+            } catch (proxyErr) {
+              console.warn('Backend proxy batch warning:', proxyErr);
+            }
           }
 
           triggerHaptic('selection');
-
-          // Sync matrix
-          try {
-            const matrixRes = await fetch(`/api/pools/${pool.id}/matrix`, {
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            if (matrixRes.ok) {
-              const mData = await matrixRes.json();
-              setMatrixData(mData);
-            }
-          } catch (mErr) {
-            console.warn('Failed to sync matrix:', mErr);
-          }
         } catch (err: any) {
           console.error('Error auto-saving preset:', err);
         }
@@ -376,12 +629,27 @@ export const WeeklyPicks: React.FC = () => {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* Streamlined Mobile Top Bar: Week Tag + View Switcher + Lock Pill */}
+      {/* Streamlined Mobile Top Bar: Week Dropdown + View Switcher + Lock Pill */}
       <div className="flex items-center justify-between gap-1 w-full p-2 glass-panel rounded-2xl border border-slate-800 bg-slate-900/60 shadow-xl select-none">
         <div className="flex items-center space-x-2 shrink-0">
-          <span className="text-[11px] font-mono font-black text-cyan-400 bg-slate-950 px-2 py-0.5 rounded-lg border border-slate-800">
-            WEEK 5
-          </span>
+          {/* Interactive Week Selector Button */}
+          <button
+            type="button"
+            onClick={() => setIsWeekModalOpen(true)}
+            className="flex items-center gap-1 text-[11px] font-mono font-black text-cyan-400 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all active:scale-95"
+            title="Click to select NFL slate week"
+          >
+            <span>WEEK {selectedWeek}</span>
+            <ChevronDown className="w-3.5 h-3.5 text-cyan-400" />
+          </button>
+
+          {isOffline && (
+            <div className="flex items-center gap-1 text-[10px] font-mono font-bold text-amber-400 bg-amber-500/15 px-2 py-0.5 rounded-md border border-amber-500/30">
+              <WifiOff className="w-3 h-3 text-amber-400" />
+              <span className="hidden xs:inline">OFFLINE</span>
+            </div>
+          )}
+
           <div className="inline-flex rounded-xl bg-slate-950 p-0.5 border border-slate-800 shadow-inner">
             <button
               type="button"
@@ -457,7 +725,7 @@ export const WeeklyPicks: React.FC = () => {
         <div className="py-20 text-center font-mono text-sm text-slate-400 bg-slate-900/60 border border-slate-800 rounded-2xl p-8 shadow-xl max-w-md mx-auto">
           <span className="text-3xl mb-3 block animate-pulse">🏈</span>
           <p className="font-bold text-slate-200 uppercase tracking-wide mb-1">Slate Unavailable</p>
-          <p className="text-xs text-slate-400">No active matchup slate available for this week.</p>
+          <p className="text-xs text-slate-400">No active matchup slate available for Week {selectedWeek}.</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -546,6 +814,84 @@ export const WeeklyPicks: React.FC = () => {
         onUndo={handleUndoPreset}
         onExpire={handleSnackbarExpire}
       />
+
+      {/* Interactive Week Selection Sheet / Modal (Weeks 1 to 18) */}
+      {isWeekModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in duration-200"
+          onClick={() => setIsWeekModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg bg-zinc-950 border border-zinc-800 rounded-t-2xl sm:rounded-2xl p-5 shadow-2xl space-y-4 max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-zinc-800/80 pb-3">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-cyan-400" />
+                <h3 className="text-sm font-black font-mono tracking-wider text-zinc-100 uppercase">
+                  Select NFL Slate Week
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsWeekModalOpen(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 pr-1 space-y-2 max-h-[60vh]">
+              {Array.from({ length: 18 }, (_, i) => i + 1).map((week) => {
+                const isSelected = week === selectedWeek;
+                let statusText = 'Upcoming';
+                let statusClass = 'text-zinc-500 bg-zinc-900 border-zinc-800';
+
+                if (week < 5) {
+                  statusText = 'Completed';
+                  statusClass = 'text-zinc-400 bg-zinc-900 border-zinc-800';
+                } else if (week === 5) {
+                  statusText = 'Finalizing';
+                  statusClass = 'text-amber-400 bg-amber-500/15 border-amber-500/30';
+                } else if (week === 6) {
+                  statusText = 'Open for Picks';
+                  statusClass = 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30';
+                }
+
+                return (
+                  <button
+                    key={week}
+                    type="button"
+                    onClick={() => {
+                      setSelectedWeek(week);
+                      localStorage.setItem('nfl_picks_active_week', String(week));
+                      setIsWeekModalOpen(false);
+                      triggerHaptic('selection');
+                    }}
+                    className={`w-full flex items-center justify-between p-3 rounded-xl border text-left transition-all ${
+                      isSelected
+                        ? 'border-cyan-500 bg-cyan-950/30 ring-1 ring-cyan-500/40 text-cyan-100'
+                        : 'border-zinc-800/80 bg-zinc-900/40 hover:bg-zinc-900 hover:border-zinc-700 text-zinc-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono font-bold text-sm">Week {week}</span>
+                      {isSelected && (
+                        <span className="text-[10px] font-mono text-cyan-400 font-bold px-1.5 py-0.5 rounded bg-cyan-500/20">
+                          ACTIVE
+                        </span>
+                      )}
+                    </div>
+                    <span className={`text-[11px] font-mono font-semibold px-2.5 py-1 rounded-full border ${statusClass}`}>
+                      Week {week} ({statusText})
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

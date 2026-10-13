@@ -118,12 +118,21 @@ export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({ games:
             {/* Header: Quarter, Clock, Red Zone */}
             <div className="flex items-center justify-between text-[11px] mb-2 border-b border-slate-800 pb-1.5">
               <div className="flex items-center gap-1.5">
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    isFinal ? 'bg-slate-500' : isScheduled ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'
-                  }`}
-                />
-                <span className="font-bold text-slate-300">{timeHeader}</span>
+                {isHalftime ? (
+                  <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/50 text-amber-300 font-extrabold uppercase text-[10px] flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                    LIVE • HALFTIME
+                  </span>
+                ) : (
+                  <>
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        isFinal ? 'bg-slate-500' : isScheduled ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'
+                      }`}
+                    />
+                    <span className="font-bold text-slate-300">{timeHeader}</span>
+                  </>
+                )}
               </div>
               {isRedZone && (
                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-600 text-white font-black animate-pulse">

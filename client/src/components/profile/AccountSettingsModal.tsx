@@ -33,48 +33,22 @@ export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => vo
       setIsAdmin(adminRole);
 
       if (adminRole) {
-        let membersData: any[] | null = null;
-        const { data, error } = await supabase
-          .from('pool_memberships')
-          .select('user_id, status, role, users(email, display_name)')
-          .eq('pool_id', '9b893bef-3b5a-4ffa-951d-8ba27f9c9782')
-          .eq('status', 'PENDING');
+        const { data, error } = await supabase.rpc('get_pending_applicants', {
+          p_pool_id: activePoolId
+        });
 
         if (error) {
-          console.error('[Commissioner Queue] Query failed with error:', error);
-          const fallbackRes = await supabase
-            .from('pool_memberships')
-            .select('user_id, status, users(email)')
-            .eq('pool_id', activePoolId)
-            .eq('status', 'PENDING');
-          if (fallbackRes.error) {
-            console.error('[Commissioner Queue Fallback] Failed:', fallbackRes.error);
-          } else {
-            membersData = fallbackRes.data;
-          }
-        } else {
-          membersData = data;
+          console.error('[Commissioner Queue] RPC error:', error);
         }
 
-        const count = membersData?.length || 0;
-        setPendingCount(count);
+        const applicants: PendingApplicant[] = (data || []).map((p: any) => ({
+          userId: p.user_id,
+          email: p.email,
+          displayName: p.display_name
+        }));
 
-        if (membersData) {
-          const formatted: PendingApplicant[] = membersData.map((p: any) => {
-            const email = p.users?.email || p.email || p.user_id;
-            const displayName = p.users?.display_name || (typeof email === 'string' && email.includes('@') ? email.split('@')[0] : email);
-            return {
-              userId: p.user_id,
-              email,
-              displayName
-            };
-          });
-          setPendingMembers(formatted);
-          setPendingCount(formatted.length);
-        } else {
-          setPendingMembers([]);
-          setPendingCount(0);
-        }
+        setPendingMembers(applicants);
+        setPendingCount(applicants.length);
       }
     }
     loadCommissionerData();
@@ -86,11 +60,11 @@ export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => vo
     setLoading(true);
     setAdjudicatingId(targetUserId);
     try {
-      const { error } = await supabase
-        .from('pool_memberships')
-        .update({ status: newStatus })
-        .eq('pool_id', activePoolId)
-        .eq('user_id', targetUserId);
+      const { error } = await supabase.rpc('adjudicate_applicant', {
+        p_pool_id: activePoolId,
+        p_user_id: targetUserId,
+        p_status: newStatus
+      });
 
       if (error) throw error;
       setPendingMembers(prev => prev.filter(m => m.userId !== targetUserId));
