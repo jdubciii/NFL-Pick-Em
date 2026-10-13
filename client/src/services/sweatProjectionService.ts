@@ -50,6 +50,7 @@ export interface ProvisionalStandingEntry {
   rankDelta: number;
   isTied: boolean;
   tier: 'SAFE_HAVEN' | 'DANGER_ZONE' | 'THE_DROP' | 'PIT' | 'PODIUM';
+  projectedPenalty: number;
   statusText: string;
   podiumProbability: number;
   dangerProbability: number;
@@ -256,6 +257,17 @@ export function calculateProvisionalStandings(
       tier = 'PIT';
     }
 
+    let projectedPenalty = 1;
+    if (tier === 'SAFE_HAVEN') {
+      projectedPenalty = 0;
+    } else if (tier === 'DANGER_ZONE') {
+      projectedPenalty = 1;
+    } else if (tier === 'THE_DROP') {
+      projectedPenalty = 2;
+    } else if (tier === 'PIT') {
+      projectedPenalty = 2.5;
+    }
+
     // 2. Deterministic point gap status text (eliminating fake percentages)
     let statusText = '';
     const points = calc.totalPoints;
@@ -335,6 +347,7 @@ export function calculateProvisionalStandings(
       rankDelta,
       isTied,
       tier,
+      projectedPenalty,
       statusText,
       podiumProbability,
       dangerProbability,

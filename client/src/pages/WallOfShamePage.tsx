@@ -1,10 +1,108 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ShameSegmentedHeader } from '../components/shame/ShameSegmentedHeader';
 import { WeeklyLadderView } from '../components/shame/WeeklyLadderView';
+import { supabase } from '../lib/supabase';
 
 export function WallOfShamePage() {
   const [activeTab, setActiveTab] = useState<'reels' | 'ladder' | 'infamy'>('ladder');
   const [dockets] = useState<any[]>([]);
+  const [ladderData, setLadderData] = useState<any[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+
+    async function loadMembersAndPenalties() {
+      try {
+        // Query all ACTIVE members for activePoolId
+        const { data: members, error: membersErr } = await supabase
+          .from('pool_memberships')
+          .select('user_id, role, users(id, email, display_name)')
+          .eq('pool_id', activePoolId)
+          .eq('status', 'ACTIVE');
+
+        if (membersErr) {
+          console.error('Error fetching pool members for ladder:', membersErr);
+          return;
+        }
+
+        // Query existing rows in penalty_ledger
+        const { data: penalties } = await supabase
+          .from('penalty_ledger')
+          .select('*')
+          .eq('pool_id', activePoolId);
+
+        const penaltiesByUser = new Map<string, any[]>();
+        if (penalties && penalties.length > 0) {
+          for (const p of penalties) {
+            const list = penaltiesByUser.get(p.user_id) || [];
+            list.push(p);
+            penaltiesByUser.set(p.user_id, list);
+          }
+        }
+
+        if (members && members.length > 0 && isMounted) {
+          const mappedLadder = members.map((m: any, idx: number) => {
+            const u = m.users;
+            let displayName = u?.display_name || (u?.email ? u.email.split('@')[0] : m.user_id);
+            if (u?.email === 'jack.w.cone@gmail.com' || m.role === 'COMMISSIONER') {
+              displayName = 'Jack (Commissioner)';
+            }
+
+            const userPenalties = penaltiesByUser.get(m.user_id) || [];
+            const totalDebt = userPenalties.reduce((sum, p) => sum + Number(p.delta || 0), 0);
+
+            // For any active member who does not yet have penalty debt recorded in penalty_ledger:
+            // Default their record to 0.00s shot debt, status: 'CLEARED (SAFE)', and tier: 'SAFE HAVEN'
+            if (totalDebt <= 0) {
+              return {
+                rank: 1,
+                userId: m.user_id,
+                userName: displayName,
+                name: displayName,
+                shots: '0.00s',
+                penaltyShots: 0,
+                status: 'CLEARED (SAFE)',
+                fsmDisplayStatus: 'Safe Haven',
+                tier: 'SAFE HAVEN',
+              };
+            }
+
+            let tier = 'DANGER_LOW';
+            let status = 'Settled';
+            if (totalDebt >= 2.5) {
+              tier = 'PIT';
+              status = 'Awaiting Video';
+            } else if (totalDebt >= 2.0) {
+              tier = 'DANGER_HIGH';
+              status = 'High Risk';
+            }
+
+            return {
+              rank: idx + 1,
+              userId: m.user_id,
+              userName: displayName,
+              name: displayName,
+              shots: `${totalDebt.toFixed(2)}s`,
+              penaltyShots: totalDebt,
+              status,
+              fsmDisplayStatus: status,
+              tier,
+            };
+          });
+
+          setLadderData(mappedLadder);
+        }
+      } catch (err) {
+        console.error('Failed to load ladder data:', err);
+      }
+    }
+
+    loadMembersAndPenalties();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   return (
     <div className="flex flex-col min-h-screen bg-[#0a0f1d] text-slate-100 pb-24">
@@ -45,7 +143,7 @@ export function WallOfShamePage() {
       {/* Tab 2: Live Shot Debt Ladder (Always Accessible) */}
       {activeTab === 'ladder' && (
         <div className="flex-1 p-4">
-          <WeeklyLadderView />
+          <WeeklyLadderView ladder={ladderData.length > 0 ? ladderData : undefined} />
         </div>
       )}
 

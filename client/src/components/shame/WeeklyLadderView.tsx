@@ -3,18 +3,16 @@ import {
   SettledLadderParticipant,
   buildSettledLadderTiers
 } from '../../services/wallOfShameConsolidationService';
-
-const DEFAULT_LADDER: any[] = [
-  { rank: 1, userId: 'u1', userName: 'Jack (Commissioner)', name: 'Jack (Commissioner)', shots: '0.00s', status: 'CLEARED (SAFE)', tier: 'SAFE HAVEN' }
-];
+import { supabase } from '../../lib/supabase';
 
 interface WeeklyLadderViewProps {
   ladder?: any[];
   onTriggerFtaDemo?: () => void;
 }
 
-export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder = DEFAULT_LADDER }) => {
+export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) => {
   const [secondsRemaining, setSecondsRemaining] = useState<number>(3600 * 24 + 1800);
+  const [fetchedLadder, setFetchedLadder] = useState<any[]>([]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -22,6 +20,94 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder = DEF
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (ladder && ladder.length > 0) return;
+
+    let isMounted = true;
+    const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+
+    async function fetchActivePoolMembers() {
+      try {
+        const { data: members } = await supabase
+          .from('pool_memberships')
+          .select('user_id, role, users(id, email, display_name)')
+          .eq('pool_id', activePoolId)
+          .eq('status', 'ACTIVE');
+
+        const { data: penalties } = await supabase
+          .from('penalty_ledger')
+          .select('*')
+          .eq('pool_id', activePoolId);
+
+        const penaltiesByUser = new Map<string, any[]>();
+        if (penalties && penalties.length > 0) {
+          for (const p of penalties) {
+            const list = penaltiesByUser.get(p.user_id) || [];
+            list.push(p);
+            penaltiesByUser.set(p.user_id, list);
+          }
+        }
+
+        if (members && members.length > 0 && isMounted) {
+          const mapped = members.map((m: any, idx: number) => {
+            const u = m.users;
+            let displayName = u?.display_name || (u?.email ? u.email.split('@')[0] : m.user_id);
+            if (u?.email === 'jack.w.cone@gmail.com' || m.role === 'COMMISSIONER') {
+              displayName = 'Jack (Commissioner)';
+            }
+            const userPenalties = penaltiesByUser.get(m.user_id) || [];
+            const totalDebt = userPenalties.reduce((sum, p) => sum + Number(p.delta || 0), 0);
+
+            if (totalDebt <= 0) {
+              return {
+                rank: 1,
+                userId: m.user_id,
+                userName: displayName,
+                name: displayName,
+                shots: '0.00s',
+                penaltyShots: 0,
+                status: 'CLEARED (SAFE)',
+                fsmDisplayStatus: 'Safe Haven',
+                tier: 'SAFE HAVEN',
+              };
+            }
+
+            let tier = 'DANGER_LOW';
+            let status = 'Settled';
+            if (totalDebt >= 2.5) {
+              tier = 'PIT';
+              status = 'Awaiting Video';
+            } else if (totalDebt >= 2.0) {
+              tier = 'DANGER_HIGH';
+              status = 'High Risk';
+            }
+
+            return {
+              rank: idx + 1,
+              userId: m.user_id,
+              userName: displayName,
+              name: displayName,
+              shots: `${totalDebt.toFixed(2)}s`,
+              penaltyShots: totalDebt,
+              status,
+              fsmDisplayStatus: status,
+              tier,
+            };
+          });
+
+          setFetchedLadder(mapped);
+        }
+      } catch (err) {
+        console.error('Failed to fetch active pool members in WeeklyLadderView:', err);
+      }
+    }
+
+    fetchActivePoolMembers();
+    return () => {
+      isMounted = false;
+    };
+  }, [ladder]);
 
   const formatHoursClock = (sec: number) => {
     if (!sec || sec <= 0) return '--:--:--';
@@ -31,10 +117,10 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder = DEF
     return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const activeLadder = ladder || DEFAULT_LADDER;
+  const activeLadder = (ladder && ladder.length > 0) ? ladder : fetchedLadder;
   const safeMembers = activeLadder.filter((m) => m?.tier === 'SAFE' || m?.tier === 'SAFE HAVEN');
-  const dangerTier1 = activeLadder.filter((m) => m?.tier === 'DANGER_LOW');
-  const dangerTier2 = activeLadder.filter((m) => m?.tier === 'DANGER_HIGH');
+  const dangerTier1 = activeLadder.filter((m) => m?.tier === 'DANGER_LOW' || m?.tier === 'DANGER_ZONE');
+  const dangerTier2 = activeLadder.filter((m) => m?.tier === 'DANGER_HIGH' || m?.tier === 'THE_DROP');
   const pitMember = activeLadder.find((m) => m?.tier === 'PIT');
 
   return (

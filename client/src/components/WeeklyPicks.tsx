@@ -701,108 +701,74 @@ export const WeeklyPicks: React.FC = () => {
   const openCount = games.length - lockedCount;
   const allCompleted = games.length > 0 && games.every(g => g.status === 'FINAL' || g.gameStatus === 'FINAL');
 
+  const setShowWeekModal = setIsWeekModalOpen;
+  const viewMode = picksViewMode;
+  const setViewMode = handleTogglePicksView;
+  const slateStatus: 'OPEN' | 'LOCKED' = (allLocked || allCompleted || games.length === 0) ? 'LOCKED' : (openCount > 0 ? 'OPEN' : 'LOCKED');
+  const toastMessage = feedbackMessage?.text;
+
   return (
     <div className="space-y-4 sm:space-y-6">
-      {/* Unified Top Branding Banner */}
-      <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-zinc-800/80 -mx-4 -mt-4 bg-slate-950">
-        <div className="flex items-center gap-2">
-          <span className="text-base font-black tracking-wider text-white">NFL PICK'EM</span>
-          <span className="text-xs px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold">WEEKLY PICKS</span>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Control A: System Slate Status */}
-          {allCompleted ? (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-800/90 border border-zinc-700 text-zinc-400 text-xs font-semibold">
-              <span>WEEK {selectedWeek} FINAL</span>
+      <div className="-mx-4 -mt-4 sm:-mx-6 lg:-mx-8 sm:-mt-8 lg:-mt-8">
+        {/* ROW 1 (Branding & Controls) */}
+        <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-zinc-800/80 bg-zinc-950">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm font-black tracking-wider text-white truncate">NFL PICK'EM</span>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {/* Control A: Informational Slate Status */}
+            <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 ${
+              slateStatus === 'OPEN' 
+                ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400' 
+                : 'bg-zinc-800 border-zinc-700 text-zinc-400'
+            }`}>
+              {slateStatus === 'OPEN' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+              <span>{slateStatus === 'OPEN' ? 'OPEN' : 'LOCKED'}</span>
             </div>
-          ) : lockedCount === 0 && games.length > 0 ? (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 text-xs font-semibold">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span>SLATE OPEN</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-semibold">
-              <span>{openCount} OPEN</span>
-            </div>
-          )}
 
-          {/* Control B: User Safety Lock */}
-          <button
-            type="button"
-            onClick={togglePicksProtection}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold transition-all active:scale-95 border ${
-              isPicksProtected
-                ? 'bg-amber-500/15 border-amber-500/40 text-amber-400 hover:bg-amber-500/25'
-                : 'bg-zinc-800/90 border-zinc-700 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
-            }`}
-            title={isPicksProtected ? 'Picks are protected from accidental edits' : 'Editing allowed'}
-          >
-            {isPicksProtected ? (
-              <>
-                <Lock className="w-3.5 h-3.5 text-amber-400" />
-                <span>PICKS PROTECTED</span>
-              </>
-            ) : (
-              <>
-                <Unlock className="w-3.5 h-3.5 text-zinc-400" />
-                <span>EDITING ALLOWED</span>
-              </>
+            {/* Control B: User Safety Lock */}
+            <button
+              onClick={togglePicksProtection}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border transition-all ${
+                isPicksProtected
+                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                  : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'
+              }`}
+            >
+              {isPicksProtected ? <Lock className="w-3 h-3 text-amber-400"/> : <Unlock className="w-3 h-3 text-zinc-400"/>}
+              <span>{isPicksProtected ? 'PROTECTED' : 'EDITING'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* ROW 2 (Sub-navigation) */}
+        <div className="flex items-center justify-between px-4 py-2 bg-zinc-900/60 border-b border-zinc-800/50">
+          {/* Week Selector Dropdown */}
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowWeekModal(true)} className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-zinc-800/90 border border-zinc-700/80 text-white text-xs font-bold">
+              <span>WEEK {selectedWeek}</span>
+              <ChevronDown className="w-3.5 h-3.5 text-zinc-400"/>
+            </button>
+            {isOffline && (
+              <div className="flex items-center gap-1 text-[10px] font-mono font-bold text-amber-400 bg-amber-500/15 px-2 py-0.5 rounded-md border border-amber-500/30">
+                <WifiOff className="w-3 h-3 text-amber-400" />
+                <span className="hidden xs:inline">OFFLINE</span>
+              </div>
             )}
-          </button>
+          </div>
+
+          {/* Swipe / List Segmented Toggle */}
+          <div className="flex items-center bg-zinc-950 p-0.5 rounded-lg border border-zinc-800">
+            <button onClick={() => setViewMode('swipe')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${viewMode === 'swipe' ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : 'text-zinc-400 hover:text-white'}`}>Swipe</button>
+            <button onClick={() => setViewMode('list')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${viewMode === 'list' ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : 'text-zinc-400 hover:text-white'}`}>List</button>
+          </div>
         </div>
       </div>
 
-      {/* Sub-Navigation Row: Week Dropdown & View Toggle */}
-      <div className="flex items-center justify-between px-1 py-1">
-        <div className="flex items-center space-x-2">
-          {/* Interactive Week Selector Button */}
-          <button
-            type="button"
-            onClick={() => setIsWeekModalOpen(true)}
-            className="flex items-center gap-1 text-[11px] font-mono font-black text-cyan-400 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-900 transition-all active:scale-95"
-            title="Click to select NFL slate week"
-          >
-            <span>WEEK {selectedWeek}</span>
-            <ChevronDown className="w-3.5 h-3.5 text-cyan-400" />
-          </button>
-
-          {isOffline && (
-            <div className="flex items-center gap-1 text-[10px] font-mono font-bold text-amber-400 bg-amber-500/15 px-2 py-0.5 rounded-md border border-amber-500/30">
-              <WifiOff className="w-3 h-3 text-amber-400" />
-              <span className="hidden xs:inline">OFFLINE</span>
-            </div>
-          )}
-        </div>
-
-        <div className="inline-flex rounded-xl bg-slate-950 p-0.5 border border-slate-800 shadow-inner">
-          <button
-            type="button"
-            onClick={() => handleTogglePicksView('swipe')}
-            className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
-              picksViewMode === 'swipe' ? 'bg-cyan-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            Swipe
-          </button>
-          <button
-            type="button"
-            onClick={() => handleTogglePicksView('list')}
-            className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
-              picksViewMode === 'list' ? 'bg-cyan-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            List
-          </button>
-        </div>
-      </div>
-
-      {/* Non-reflowing floating error toast */}
-      {feedbackMessage?.type === 'error' && (
-        <div
-          role="alert"
-          className="fixed top-14 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl border text-xs font-mono font-bold text-center transition-all bg-rose-950/90 border-rose-700 text-rose-200 shadow-2xl backdrop-blur-md animate-fade-in"
-        >
-          {feedbackMessage.text}
+      {/* Floating Warning/Feedback Toast (Non-reflowing fixed overlay) */}
+      {toastMessage && (
+        <div className="fixed top-20 left-4 right-4 z-50 flex items-center justify-center p-3 rounded-xl bg-amber-950/90 border border-amber-500/50 text-amber-200 text-xs font-semibold shadow-2xl backdrop-blur-md animate-fade-in pointer-events-none">
+          <span>{toastMessage}</span>
         </div>
       )}
 
