@@ -340,22 +340,11 @@ export const RadarPage: React.FC = () => {
           </h1>
           <p className="text-xs text-slate-400">Sunday Sweat Projections &amp; Showdowns</p>
         </div>
-        <div className="text-right flex flex-col items-end gap-1">
-          {isSimulationActive ? (
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-950 border border-amber-500/80 text-amber-300 font-bold text-[10px] shadow-sm">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-              <span>SIMULATED WHAT-IF SCENARIO</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-cyan-300 font-bold text-[10px]">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-              <span>LIVE PROJECTION</span>
-            </div>
-          )}
-          {lastUpdated && !isSimulationActive && (
-            <span className="text-[9px] text-slate-500">{lastUpdated}</span>
-          )}
-        </div>
+        {lastUpdated && !isSimulationActive && (
+          <div className="text-right">
+            <span className="text-[10px] text-slate-500 font-mono">{lastUpdated}</span>
+          </div>
+        )}
       </header>
 
       {/* 3. Header Toggle: [ LEAGUE PROJECTION ] | [ RIVALRY DUEL ] */}

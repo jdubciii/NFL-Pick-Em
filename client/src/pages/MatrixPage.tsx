@@ -3,7 +3,6 @@ import { RivalCrosshairsDuel } from '../components/matrix/RivalCrosshairsDuel';
 import { LoneWolfBadge } from '../components/matrix/LoneWolfBadge';
 import { StackedAvatarCluster, CampParticipant } from '../components/matrix/StackedAvatarCluster';
 import { TugOfWarDrawer } from '../components/matrix/TugOfWarDrawer';
-import { LockCountdownTimer } from '../components/matrix/LockCountdownTimer';
 import { LiveGametrackStream, LiveGameflowCardData } from '../components/matrix/LiveGametrackStream';
 import { EmptyStateWireframe } from '../components/common/EmptyStateWireframe';
 import { AppHeader } from '../components/common/AppHeader';
@@ -196,19 +195,29 @@ export const MatrixPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 pb-24 max-w-md mx-auto font-sans">
-      {/* Unified Top Branding Banner */}
+      {/* Unified Top Branding Banner with Consolidated Status Pills */}
       <div className="-mx-4 -mt-4 mb-3">
-        <AppHeader />
+        <AppHeader
+          rightContent={
+            allGamesFinal ? (
+              <div className="flex items-center gap-1.5">
+                <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-zinc-700 bg-zinc-800 text-zinc-400">
+                  WEEK {selectedWeek} FINAL
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-amber-500/30 bg-amber-500/15 text-amber-400">
+                  • AWAITING KICKOFF
+                </div>
+                <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-cyan-500/30 bg-cyan-500/15 text-cyan-400">
+                  SLATE OPEN
+                </div>
+              </div>
+            )
+          }
+        />
       </div>
-
-      {/* Sticky Gameday Live / Lock Countdown */}
-      <LockCountdownTimer
-        isLocked={isSlateLocked}
-        allUpcoming={allGamesUpcoming}
-        allFinal={allGamesFinal}
-        weekNumber={selectedWeek}
-        onLockExpired={() => setActiveTab('GAMETRACK')}
-      />
 
       {/* Header & Persistent Tab Switcher (Leverage vs Gametrack) */}
       <header className="my-3 border-b border-slate-800 pb-2 flex items-center justify-between font-mono">
