@@ -45,8 +45,8 @@ export function WallOfShamePage() {
           const mappedLadder = members.map((m: any, idx: number) => {
             const u = m.users;
             let displayName = u?.display_name || (u?.email ? u.email.split('@')[0] : m.user_id);
-            if (u?.email === 'jack.w.cone@gmail.com' || m.role === 'COMMISSIONER') {
-              displayName = 'Jack (Commissioner)';
+            if (m.role === 'COMMISSIONER' || m.role === 'ADMIN') {
+              displayName = `${displayName} (Commissioner)`;
             }
 
             const userPenalties = penaltiesByUser.get(m.user_id) || [];

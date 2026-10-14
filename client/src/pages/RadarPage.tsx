@@ -86,23 +86,27 @@ export const RadarPage: React.FC = () => {
 
     const loadPoolData = async () => {
       try {
-        // 1. Query all active members in the pool except current user (Step 3.1)
+        // 1. Query all active members in the pool (Step 2)
         const { data: activeMembers } = await supabase
           .from('pool_memberships')
           .select('user_id, role, users(id, email, display_name)')
           .eq('pool_id', activePoolId)
-          .eq('status', 'ACTIVE')
-          .neq('user_id', user?.id || '');
+          .eq('status', 'ACTIVE');
 
         if (!isMounted) return;
 
         if (activeMembers && activeMembers.length > 0) {
+          const currentMembership: any = activeMembers.find((m: any) => m.user_id === user?.id);
+          const currentU: any = Array.isArray(currentMembership?.users) ? currentMembership.users[0] : currentMembership?.users;
+          const currentDisplayName = currentU?.display_name || (user?.email ? user.email.split('@')[0] : 'You');
           const currentMember: UserStandingRef = {
             id: user?.id || 'current',
-            name: user?.email ? user.email.split('@')[0] : 'You',
+            name: currentDisplayName,
           };
-          const mappedRivals: UserStandingRef[] = activeMembers.map((m: any) => {
-            const u = m.users;
+
+          const rivals = activeMembers.filter((m: any) => m.user_id !== user?.id);
+          const mappedRivals: UserStandingRef[] = rivals.map((m: any) => {
+            const u: any = Array.isArray(m.users) ? m.users[0] : m.users;
             const displayName = u?.display_name || (u?.email ? u.email.split('@')[0] : m.user_id);
             return {
               id: m.user_id,
@@ -111,9 +115,11 @@ export const RadarPage: React.FC = () => {
           });
 
           setMembers([currentMember, ...mappedRivals]);
-          if (!selectedRivalId && mappedRivals.length > 0) {
+          if ((!selectedRivalId || !mappedRivals.some((r) => r.id === selectedRivalId)) && mappedRivals.length > 0) {
             setSelectedRivalId(mappedRivals[0].id);
           }
+        } else {
+          setMembers([]);
         }
 
         // 2. Fetch picks from public.picks for the active week
@@ -169,15 +175,16 @@ export const RadarPage: React.FC = () => {
 
   // Effective picks respecting what-if simulation
   const effectivePicks = useMemo(() => {
-    if (!simulationFlippedPicks) return picks;
-    // Simulate DAL winning in g2
+    if (!simulationFlippedPicks || !user?.id) return picks;
+    const firstUserPick = picks.find((p) => p.userId === user.id);
+    if (!firstUserPick) return picks;
     return picks.map((p) => {
-      if (p.userId === 'u1' && p.gameId === 'g2') {
-        return { ...p, selectedTeam: 'DAL' };
+      if (p.userId === user.id && p.gameId === firstUserPick.gameId) {
+        return { ...p, selectedTeam: p.selectedTeam };
       }
       return p;
     });
-  }, [picks, simulationFlippedPicks]);
+  }, [picks, simulationFlippedPicks, user?.id]);
 
   // Compute Sunday Sweat provisional projections
   const provisionalResult: ProvisionalStandingsResult = useMemo(() => {
@@ -191,23 +198,16 @@ export const RadarPage: React.FC = () => {
   }, [members, games, liveScores, effectivePicks, tiebreakers]);
 
   // Find user's standing
-  const currentUserId = user?.id || 'u1';
+  const currentUserId = user?.id || '';
   const currentUserRef: UserStandingRef = useMemo(() => {
     const found = members.find((m) => m.id === currentUserId);
     if (found) return found;
-    return { id: currentUserId, name: user?.email ? user.email.split('@')[0] : 'Jack (Commissioner)' };
+    return { id: currentUserId, name: user?.email ? user.email.split('@')[0] : 'You' };
   }, [members, currentUserId, user?.email]);
 
   const userStanding = useMemo(() => {
-    return (
-      provisionalResult.find(
-        (s) =>
-          s.userId === currentUserId ||
-          (user?.email === 'jack.w.cone@gmail.com' && s.userName.toLowerCase().includes('jack')) ||
-          s.userName.includes('(Commissioner)')
-      ) || provisionalResult[0]
-    );
-  }, [provisionalResult, currentUserId, user?.email]);
+    return provisionalResult.find((s) => s.userId === currentUserId) || provisionalResult[0];
+  }, [provisionalResult, currentUserId]);
 
   // Active swing game for the user
   const activeSwingGame = userStanding?.swingGame || provisionalResult.swingGame || null;
@@ -527,10 +527,7 @@ export const RadarPage: React.FC = () => {
               </div>
             ) : (
               provisionalResult.map((p, idx) => {
-              const isUser =
-                (user?.email === 'jack.w.cone@gmail.com' && (p.userId === user?.id || p.userName.toLowerCase().includes('jack'))) ||
-                p.userId === currentUserId ||
-                p.userName.includes('(Commissioner)');
+              const isUser = p.userId === currentUserId || (Boolean(user?.id) && p.userId === user?.id);
               const isPulsing = pulsingUserIds.has(p.userId);
               const isThePit = p.tier === 'PIT';
 
