@@ -75,7 +75,7 @@ export const WeeklyPicks: React.FC = () => {
   const [now, setNow] = useState(new Date());
 
   const [picksViewMode, setPicksViewMode] = useState<'swipe' | 'list'>(() => {
-    const saved = localStorage.getItem('picks_view_preference');
+    const saved = localStorage.getItem('pickem_preferred_view_mode') || localStorage.getItem('picks_view_preference');
     return (saved === 'swipe' || saved === 'list') ? (saved as 'swipe' | 'list') : 'swipe';
   });
 
@@ -83,6 +83,16 @@ export const WeeklyPicks: React.FC = () => {
     isOpen: false,
     message: ''
   });
+
+  interface PendingBulkAction {
+    type: 'PRESET' | 'CLEAR';
+    description: string;
+    updatedPicks?: Record<string, string | null>;
+    editableCount: number;
+    lockedCount: number;
+  }
+  const [pendingBulkAction, setPendingBulkAction] = useState<PendingBulkAction | null>(null);
+  const [lastBulkSnapshot, setLastBulkSnapshot] = useState<Record<string, string> | null>(null);
 
   const [userPicks, setUserPicks] = useState<Record<string, string>>({});
   const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
@@ -111,9 +121,23 @@ export const WeeklyPicks: React.FC = () => {
   const handleTogglePicksView = (mode: 'swipe' | 'list') => {
     setPicksViewMode(mode);
     try {
+      localStorage.setItem('pickem_preferred_view_mode', mode);
       localStorage.setItem('picks_view_preference', mode);
     } catch {}
   };
+
+  // Smart Mode Default: when no saved preference exists, default to 'list' if all games picked, else 'swipe'
+  useEffect(() => {
+    const saved = localStorage.getItem('pickem_preferred_view_mode') || localStorage.getItem('picks_view_preference');
+    if (!saved && games.length > 0) {
+      const pickedCount = Object.keys(userPicks).filter((k) => Boolean(userPicks[k])).length;
+      if (pickedCount === games.length) {
+        setPicksViewMode('list');
+      } else {
+        setPicksViewMode('swipe');
+      }
+    }
+  }, [games.length, userPicks]);
 
   // Update clock every 10 seconds for real-time lock updates
   useEffect(() => {
@@ -468,9 +492,12 @@ export const WeeklyPicks: React.FC = () => {
   /**
    * Clears all unlocked picks across the active slate.
    */
-  const handleClearAllPicks = async () => {
+  /**
+   * Clears all unlocked picks across the active slate.
+   */
+  const performClearAllPicks = async () => {
     if (isPicksProtected || !pool || !user?.id) return;
-    const unlockedPickedGames = games.filter((g) => !isGameLocked(g) && g.userPick);
+    const unlockedPickedGames = games.filter((g) => !isGameLocked(g) && !isGameKickoffLocked(g) && g.userPick);
     if (unlockedPickedGames.length === 0) return;
 
     // Optimistically clear picks in local state
@@ -479,7 +506,7 @@ export const WeeklyPicks: React.FC = () => {
     setUserPicks(updatedUserPicks);
 
     setGames((prev) =>
-      prev.map((g) => (!isGameLocked(g) ? { ...g, userPick: null } : g))
+      prev.map((g) => (!isGameLocked(g) && !isGameKickoffLocked(g) ? { ...g, userPick: null } : g))
     );
 
     // Clear in localStorage
@@ -528,27 +555,39 @@ export const WeeklyPicks: React.FC = () => {
     triggerHaptic('impactMedium');
   };
 
-  /**
-   * Applies quick-fill presets through the QuickFillSafetyEngine with a 7-second undo grace period.
-   */
-  const handleApplyPreset = (updatedPicks: Record<string, string | null>, presetDescription: string) => {
+  const handleClearAllPicks = () => {
     if (isPicksProtected) {
       setFeedbackMessage({
         text: 'Picks are protected against accidental edits. Tap PICKS PROTECTED at the top to unlock.',
-        type: 'error'
+        type: 'error',
       });
       setTimeout(() => setFeedbackMessage(null), 3500);
       triggerHaptic('impactHeavy');
       return;
     }
-    if (!pool) return;
+    const editablePicked = games.filter((g) => !isGameLocked(g) && !isGameKickoffLocked(g) && (userPicks[g.id] || g.userPick));
+    const lockedCount = games.filter((g) => isGameLocked(g) || isGameKickoffLocked(g)).length;
+    if (editablePicked.length === 0) return;
+    setPendingBulkAction({
+      type: 'CLEAR',
+      description: 'Clear all picks',
+      editableCount: editablePicked.length,
+      lockedCount,
+    });
+  };
+
+  /**
+   * Applies quick-fill presets through the QuickFillSafetyEngine with a 7-second undo grace period.
+   */
+  const performApplyPreset = (updatedPicks: Record<string, string | null>, presetDescription: string) => {
+    if (isPicksProtected || !pool) return;
 
     const slateItems: SlateGameItem[] = games.map((g) => ({
       gameId: g.id,
       awayTeam: g.awayTeamId,
       homeTeam: g.homeTeamId,
       favorite: typeof g.spread === 'number' ? (g.spread < 0 ? g.homeTeamId : g.awayTeamId) : g.homeTeamId,
-      isLocked: isGameLocked(g),
+      isLocked: isGameLocked(g) || isGameKickoffLocked(g),
     }));
 
     const currentPicksMap: Record<string, string> = {};
@@ -559,7 +598,7 @@ export const WeeklyPicks: React.FC = () => {
     // 1. Optimistically update local state
     setGames((prev) =>
       prev.map((game) => {
-        if (Object.prototype.hasOwnProperty.call(updatedPicks, game.id)) {
+        if (!isGameLocked(game) && !isGameKickoffLocked(game) && Object.prototype.hasOwnProperty.call(updatedPicks, game.id)) {
           return { ...game, userPick: updatedPicks[game.id] };
         }
         return game;
@@ -662,6 +701,98 @@ export const WeeklyPicks: React.FC = () => {
     );
   };
 
+  const handleApplyPreset = (updatedPicks: Record<string, string | null>, presetDescription: string) => {
+    if (isPicksProtected) {
+      setFeedbackMessage({
+        text: 'Picks are protected against accidental edits. Tap PICKS PROTECTED at the top to unlock.',
+        type: 'error'
+      });
+      setTimeout(() => setFeedbackMessage(null), 3500);
+      triggerHaptic('impactHeavy');
+      return;
+    }
+    const isClear = Object.values(updatedPicks).length > 0 && Object.values(updatedPicks).every((v) => v === null);
+    const editableGames = games.filter((g) => !isGameLocked(g) && !isGameKickoffLocked(g));
+    const lockedCount = games.filter((g) => isGameLocked(g) || isGameKickoffLocked(g)).length;
+    setPendingBulkAction({
+      type: isClear ? 'CLEAR' : 'PRESET',
+      description: presetDescription,
+      updatedPicks,
+      editableCount: editableGames.length,
+      lockedCount,
+    });
+  };
+
+  const executeBulkAction = async (action: PendingBulkAction) => {
+    // Snapshot current unlocked picks before changing
+    const snapshot: Record<string, string> = {};
+    for (const g of games) {
+      if (!isGameLocked(g) && !isGameKickoffLocked(g) && (userPicks[g.id] || g.userPick)) {
+        snapshot[g.id] = userPicks[g.id] || (g.userPick as string);
+      }
+    }
+    setLastBulkSnapshot(snapshot);
+
+    if (action.type === 'CLEAR') {
+      await performClearAllPicks();
+    } else if (action.type === 'PRESET' && action.updatedPicks) {
+      performApplyPreset(action.updatedPicks, action.description);
+    }
+    setPendingBulkAction(null);
+  };
+
+  const handleUndoLastBulk = async () => {
+    if (!lastBulkSnapshot || isPicksProtected || !user?.id) return;
+    const restoredUserPicks = { ...userPicks };
+    const gamesToRestore: { gameId: string; team: string }[] = [];
+
+    for (const g of games) {
+      if (!isGameLocked(g) && !isGameKickoffLocked(g)) {
+        if (lastBulkSnapshot[g.id]) {
+          restoredUserPicks[g.id] = lastBulkSnapshot[g.id];
+          gamesToRestore.push({ gameId: g.id, team: lastBulkSnapshot[g.id] });
+        } else {
+          delete restoredUserPicks[g.id];
+        }
+      }
+    }
+
+    setUserPicks(restoredUserPicks);
+    setGames((prev) =>
+      prev.map((g) => {
+        if (!isGameLocked(g) && !isGameKickoffLocked(g)) {
+          return { ...g, userPick: restoredUserPicks[g.id] || null };
+        }
+        return g;
+      })
+    );
+
+    try {
+      localStorage.setItem(userPicksCacheKey, JSON.stringify(restoredUserPicks));
+    } catch (_) {}
+
+    try {
+      if (gamesToRestore.length > 0) {
+        const rows = gamesToRestore.map((item) => ({
+          pool_id: activePoolId,
+          user_id: user.id,
+          week: selectedWeek,
+          game_id: item.gameId,
+          selected_team: item.team,
+          updated_at: new Date().toISOString(),
+        }));
+        await supabase.from('picks').upsert(rows, { onConflict: 'pool_id,user_id,week,game_id' });
+      }
+    } catch (err) {
+      console.warn('Undo bulk restore warning:', err);
+    }
+
+    setLastBulkSnapshot(null);
+    triggerHaptic('impactMedium');
+    setFeedbackMessage({ text: 'Last bulk action undone.', type: 'success' });
+    setTimeout(() => setFeedbackMessage(null), 3000);
+  };
+
   const handleUndoPreset = () => {
     const reverted = quickFillSafetyEngine.triggerUndo();
     setUserPicks(reverted);
@@ -712,6 +843,15 @@ export const WeeklyPicks: React.FC = () => {
     <div className="w-full">
       {/* ROW 1 (Branding & Controls) */}
       <AppHeader
+        poolName="MAIN LEAGUE"
+        scope={`WEEK ${selectedWeek}`}
+        phase={
+          games.some((g) => g.isLive || g.status === 'IN_PROGRESS' || g.gameStatus === 'LIVE')
+            ? 'GAMES LIVE'
+            : allCompleted
+            ? 'SETTLED'
+            : 'PRE-KICKOFF'
+        }
         rightContent={
           <div className="flex items-center gap-2">
             <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 ${
@@ -788,6 +928,47 @@ export const WeeklyPicks: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-4">
+          {/* Bulk Action Confirmation Banner */}
+          {pendingBulkAction && (
+            <div className="p-3 rounded-xl bg-cyan-950/90 border border-cyan-500/50 text-cyan-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl backdrop-blur-md animate-fade-in">
+              <div className="text-xs">
+                <span className="font-bold text-cyan-300 uppercase tracking-wide mr-2">Confirm Bulk Action:</span>
+                <span>
+                  {pendingBulkAction.type === 'CLEAR'
+                    ? `Clear all ${pendingBulkAction.editableCount} editable picks${pendingBulkAction.lockedCount > 0 ? ` (${pendingBulkAction.lockedCount} locked games stay fixed)` : ''}?`
+                    : `Apply preset to ${pendingBulkAction.editableCount} editable games${pendingBulkAction.lockedCount > 0 ? ` (${pendingBulkAction.lockedCount} locked games stay fixed)` : ''}?`}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => executeBulkAction(pendingBulkAction)}
+                  className="px-3 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition-colors"
+                >
+                  Confirm
+                </button>
+                <button
+                  onClick={() => setPendingBulkAction(null)}
+                  className="px-3 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-xs transition-colors border border-zinc-700"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Pre-Lock Undo Last Bulk Action Pill */}
+          {lastBulkSnapshot && !pendingBulkAction && (
+            <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-200 text-xs animate-fade-in">
+              <span>Bulk action applied.</span>
+              <button
+                onClick={handleUndoLastBulk}
+                className="px-2.5 py-1 rounded-md bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-colors"
+              >
+                Undo Last Bulk Action
+              </button>
+            </div>
+          )}
+
           {/* Quick-Fill Presets Toolbar */}
           <PickPresetControls
             games={games}

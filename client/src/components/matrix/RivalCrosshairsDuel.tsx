@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { DuelComparisonResult } from '../../services/pregameTopologyService';
 
 interface RivalCrosshairsDuelProps {
@@ -7,14 +8,15 @@ interface RivalCrosshairsDuelProps {
 }
 
 export const RivalCrosshairsDuel: React.FC<RivalCrosshairsDuelProps> = ({ duel, onCloseDuel }) => {
-  const [isTargetLocked, setIsTargetLocked] = useState<boolean>(false);
+  const navigate = useNavigate();
 
-  const handleLockTarget = () => {
-    setIsTargetLocked(true);
-    // Haptic taunt pulse emulation
-    if (typeof window !== 'undefined' && window.navigator && window.navigator.vibrate) {
-      window.navigator.vibrate([100, 50, 100]);
+  const handleOpenInRadar = () => {
+    if (duel.rivalUserId) {
+      try {
+        localStorage.setItem('pickem_selected_rival_id', duel.rivalUserId);
+      } catch (_) {}
     }
+    navigate(`/radar?mode=RIVALRY${duel.rivalUserId ? `&rival=${duel.rivalUserId}` : ''}`);
   };
 
   return (
@@ -42,20 +44,20 @@ export const RivalCrosshairsDuel: React.FC<RivalCrosshairsDuelProps> = ({ duel, 
       {/* Tale of the Tape: Pre-Game Win Probability Tug-of-War Bar */}
       <div className="space-y-1.5 p-3 rounded-xl bg-slate-900 border border-slate-800">
         <div className="flex justify-between text-[11px] font-bold">
-          <span className="text-emerald-400">
+          <span className="text-cyan-400">
             {duel.targetUserName} ({duel.targetWinProbabilityPct}%)
           </span>
-          <span className="text-rose-400">
+          <span className="text-amber-400">
             {duel.rivalUserName} ({duel.rivalWinProbabilityPct}%)
           </span>
         </div>
         <div className="w-full h-3 rounded-full bg-slate-800 overflow-hidden flex border border-slate-700">
           <div
-            className="h-full bg-emerald-500 transition-all duration-500"
+            className="h-full bg-cyan-500 transition-all duration-500"
             style={{ width: `${duel.targetWinProbabilityPct}%` }}
           />
           <div
-            className="h-full bg-rose-500 transition-all duration-500"
+            className="h-full bg-amber-500 transition-all duration-500"
             style={{ width: `${duel.rivalWinProbabilityPct}%` }}
           />
         </div>
@@ -69,37 +71,30 @@ export const RivalCrosshairsDuel: React.FC<RivalCrosshairsDuelProps> = ({ duel, 
         <div className="flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-wider px-1 font-bold">
           <span>MATCHUP / SPREAD</span>
           <div className="flex gap-8">
-            <span className="text-emerald-400">{duel.targetUserName}</span>
-            <span className="text-rose-400">{duel.rivalUserName}</span>
+            <span className="text-cyan-400">{duel.targetUserName}</span>
+            <span className="text-amber-400">{duel.rivalUserName}</span>
           </div>
         </div>
 
         {duel.differingPicks.map((pick) => (
           <div
             key={pick.gameId}
-            className={`relative p-2.5 rounded-xl border flex items-center justify-between transition-all ${
-              isTargetLocked
-                ? 'bg-rose-950/20 border-rose-500/80 shadow-[inset_0_0_15px_rgba(244,63,94,0.15)]'
-                : 'bg-slate-900/90 border-slate-800'
-            }`}
+            className="relative p-2.5 rounded-xl border bg-slate-900/90 border-slate-800 flex items-center justify-between transition-all"
           >
-            {isTargetLocked && (
-              <div className="absolute inset-0 pointer-events-none border border-rose-500/40 rounded-xl flex items-center justify-center opacity-20">
-                <span className="text-2xl">🎯</span>
-              </div>
-            )}
             <div>
               <p className="text-xs font-bold text-white">{pick.gameMatchup}</p>
-              <p className="text-[10px] text-cyan-400">
-                Spread: {pick.spread > 0 ? `+${pick.spread}` : pick.spread}
-              </p>
+              {pick.spread && pick.spread !== 0 ? (
+                <p className="text-[10px] text-cyan-400">
+                  Spread: {pick.spread > 0 ? `+${pick.spread}` : pick.spread}
+                </p>
+              ) : null}
             </div>
             <div className="flex items-center gap-6 font-bold text-xs">
-              <span className="px-2 py-1 rounded bg-emerald-950/80 border border-emerald-500/60 text-emerald-300">
+              <span className="px-2 py-1 rounded bg-cyan-950/80 border border-cyan-500/60 text-cyan-300">
                 {pick.targetPick}
               </span>
               <span className="text-slate-600 font-normal">vs</span>
-              <span className="px-2 py-1 rounded bg-rose-950/80 border border-rose-500/60 text-rose-300">
+              <span className="px-2 py-1 rounded bg-amber-950/80 border border-amber-500/60 text-amber-300">
                 {pick.rivalPick}
               </span>
             </div>
@@ -120,21 +115,16 @@ export const RivalCrosshairsDuel: React.FC<RivalCrosshairsDuelProps> = ({ duel, 
         ) : null}
       </div>
 
-      {/* Haptic Target Lock Button */}
+      {/* Navigation to Radar Rivalry Duel */}
       <div>
-        {isTargetLocked ? (
-          <div className="p-2.5 rounded-xl bg-rose-950/80 border border-rose-500 text-center text-xs font-black text-rose-300 tracking-wider animate-pulse">
-            🎯 TARGET LOCKED // RIVAL CROSSHAIR ACTIVE
-          </div>
-        ) : (
-          <button
-            onClick={handleLockTarget}
-            className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-mono font-black text-xs uppercase tracking-widest transition shadow-lg shadow-rose-950"
-          >
-            [ 🎯 LOCK TARGET ON {duel.rivalUserName} ]
-          </button>
-        )}
+        <button
+          onClick={handleOpenInRadar}
+          className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-950 font-mono font-black text-xs uppercase tracking-wider transition shadow-lg shadow-amber-950/50 flex items-center justify-center gap-2"
+        >
+          <span>⚔️ Open Duel in Radar →</span>
+        </button>
       </div>
     </div>
   );
 };
+

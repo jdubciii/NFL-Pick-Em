@@ -565,10 +565,10 @@
 - [x] **Task 39.1.7**: Author tests/phase39_s1_dependable_info.test.ts and compile signed Android release binary pickem-v39-s1.apk (versionCode 63, v39.1.0).
 
 ### Phase 39 Sprint 2 (P39-S2 — Pass 2: Mobile Speed, Shared Context & Rivalry Continuity)
-- [ ] **Task 39.2.1**: Deploy shared Pool + Week + Phase context header across Picks, Matrix, Radar, Ladder, and Profile.
-- [ ] **Task 39.2.2**: Unify Viewer (Cyan) and Rival (Amber) color tokens across Matrix and Radar components.
-- [ ] **Task 39.2.3**: Implement Smart List/Swipe mode persistence and Presets / Clear All preview confirmation modal with pre-lock Undo guard.
-- [ ] **Task 39.2.4**: Add Matrix filter pills (All, Split Picks, My Pick, Live) and link Matrix Open Duel directly to Radar with auto-selected rival in 2-player pools.
+- [x] **Task 39.2.1**: Deploy shared Pool + Week + Phase context header across Picks, Matrix, Radar, Ladder, and Profile.
+- [x] **Task 39.2.2**: Unify Viewer (Cyan) and Rival (Amber) color tokens across Matrix and Radar components.
+- [x] **Task 39.2.3**: Implement Smart List/Swipe mode persistence and Presets / Clear All preview confirmation modal with pre-lock Undo guard.
+- [x] **Task 39.2.4**: Add Matrix filter pills (All, Split Picks, My Pick, Live) and link Matrix Open Duel directly to Radar with auto-selected rival in 2-player pools.
 
 ### Phase 39 Sprint 3 (P39-S3 — Pass 3: Signature Sunday Sweat Features)
 - [ ] **Task 39.3.1**: Build Personal Rooting Queue strip inside Radar ordered by duel and tier impact.

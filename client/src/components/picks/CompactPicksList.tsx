@@ -104,6 +104,7 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
               <div className="flex items-center space-x-1.5">
                 <TeamLogo abbr={g.awayTeam} size="xs" />
                 <span>{g.awayTeam}</span>
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider ml-1">AWAY</span>
               </div>
               {selected === g.awayTeam && (
                 <div>
@@ -171,8 +172,8 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
                       ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300 shadow-md shadow-emerald-500/20 ring-1 ring-emerald-500/50'
                       : homeIsLoss
                       ? 'bg-rose-950/80 border-rose-500 text-rose-300 shadow-md shadow-rose-500/20 ring-1 ring-rose-500/50'
-                      : 'bg-indigo-500 border-indigo-400 text-white shadow-md shadow-indigo-500/20 ring-1 ring-indigo-400'
-                    : 'bg-indigo-500 border-indigo-400 text-white shadow-md shadow-indigo-500/20 ring-1 ring-indigo-400'
+                      : 'bg-cyan-500 border-cyan-400 text-slate-950 shadow-md shadow-cyan-500/20 ring-1 ring-cyan-400'
+                    : 'bg-cyan-500 border-cyan-400 text-slate-950 shadow-md shadow-cyan-500/20 ring-1 ring-cyan-400'
                   : 'bg-slate-950/80 border-slate-800 text-white'
               } ${
                 g.isLocked
@@ -185,6 +186,7 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
               <div className="flex items-center space-x-1.5">
                 <TeamLogo abbr={g.homeTeam} size="xs" />
                 <span>{g.homeTeam}</span>
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider ml-1">HOME</span>
               </div>
               {selected === g.homeTeam && (
                 <div>

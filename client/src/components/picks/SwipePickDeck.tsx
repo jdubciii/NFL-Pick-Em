@@ -490,7 +490,7 @@ const SwipeCardItem: React.FC<{
 
           <motion.div
             style={{ opacity: homeOpacity }}
-            className="absolute top-6 right-5 px-3.5 py-1 rounded-2xl bg-rose-950/95 border-2 border-rose-400 text-rose-300 font-black text-xs uppercase rotate-12 z-30 shadow-[0_0_15px_rgba(244,63,94,0.5)]"
+            className="absolute top-6 right-5 px-3.5 py-1 rounded-2xl bg-cyan-950/95 border-2 border-cyan-400 text-cyan-300 font-black text-xs uppercase rotate-12 z-30 shadow-[0_0_15px_rgba(34,211,238,0.5)]"
           >
             ▶ PICK {matchup.homeTeam}
           </motion.div>
@@ -618,8 +618,8 @@ const SwipeCardItem: React.FC<{
                   ? 'border-emerald-500 ring-2 ring-emerald-500/50'
                   : homeIsLoss
                   ? 'border-rose-500 ring-2 ring-rose-500/50'
-                  : 'border-rose-400 ring-2 ring-rose-500/40'
-                : 'border-rose-400 ring-2 ring-rose-500/40' 
+                  : 'border-cyan-400 ring-2 ring-cyan-500/40'
+                : 'border-cyan-400 ring-2 ring-cyan-500/40' 
               : 'border-slate-700/80'
           }`}>
             <TeamLogo abbr={matchup.homeTeam} size="lg" />
@@ -648,11 +648,11 @@ const SwipeCardItem: React.FC<{
             <div className={`px-2 py-0.5 rounded border text-[9px] font-black transition-all ${
               matchup.selectedTeam === matchup.homeTeam
                 ? isPicksProtected
-                  ? 'bg-rose-500/80 text-slate-950 border-rose-400'
-                  : 'bg-rose-500 text-slate-950 border-rose-400 font-black'
+                  ? 'bg-cyan-500/80 text-slate-950 border-cyan-400'
+                  : 'bg-cyan-500 text-slate-950 border-cyan-400 font-black'
                 : isPicksProtected
                 ? 'bg-slate-950/80 border-slate-800 text-slate-500'
-                : 'bg-rose-950/80 border-rose-800 text-rose-400'
+                : 'bg-cyan-950/80 border-cyan-800 text-cyan-400'
             }`}>
               {matchup.selectedTeam === matchup.homeTeam ? '✔ SELECTED' : isPicksProtected ? 'PROTECTED' : '▶ SWIPE'}
             </div>

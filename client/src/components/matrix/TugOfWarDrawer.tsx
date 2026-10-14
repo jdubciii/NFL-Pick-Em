@@ -59,7 +59,7 @@ export const TugOfWarDrawer: React.FC<TugOfWarDrawerProps> = ({
 
         {/* Home Camp */}
         <div className="space-y-1.5 pl-2">
-          <div className="flex items-center justify-between text-[10px] text-emerald-300 font-bold border-b border-emerald-500/30 pb-1">
+          <div className="flex items-center justify-between text-[10px] text-amber-300 font-bold border-b border-amber-500/30 pb-1">
             <span>CAMP {homeTeam}</span>
             <span>({homeCamp.length})</span>
           </div>

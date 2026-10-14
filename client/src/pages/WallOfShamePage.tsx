@@ -109,7 +109,11 @@ export function WallOfShamePage() {
   return (
     <div className="min-h-screen bg-zinc-950 text-white pb-24">
       {/* Unified Top Branding Banner */}
-      <AppHeader />
+      <AppHeader
+        poolName="MAIN LEAGUE"
+        scope={activeTab === 'infamy' ? 'SEASON LEDGER' : 'WEEK 6'}
+        phase={activeTab === 'infamy' ? 'SETTLED' : 'PRE-KICKOFF'}
+      />
 
       {/* Persistent 3-Tab Segmented Header */}
       <ShameSegmentedHeader activeTab={activeTab} onSelectTab={setActiveTab} />
@@ -138,7 +142,11 @@ export function WallOfShamePage() {
       {/* Tab 2: Live Shot Debt Ladder (Always Accessible) */}
       {activeTab === 'ladder' && (
         <div className="flex-1 p-4">
-          <WeeklyLadderView ladder={ladderData.length > 0 ? ladderData : undefined} />
+          <WeeklyLadderView
+            ladder={ladderData.length > 0 ? ladderData : undefined}
+            weekNumber={6}
+            isSettled={false}
+          />
         </div>
       )}
 

@@ -138,6 +138,9 @@ export const ProfilePage: React.FC = () => {
     <div className="min-h-screen bg-zinc-950 text-white pb-24">
       {/* Unified Top Branding Banner */}
       <AppHeader
+        poolName="MAIN LEAGUE"
+        scope="SEASON LEDGER"
+        phase="SETTLED"
         rightContent={
           <button
             onClick={() => setSettingsOpen(true)}

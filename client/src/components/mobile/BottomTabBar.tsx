@@ -9,7 +9,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: 'picks', label: 'Picks', path: '/picks', icon: '🏈' },
+  { id: 'picks', label: 'Picks', path: '/', icon: '🏈' },
   { id: 'matrix', label: 'Matrix', path: '/matrix', icon: '📊' },
   { id: 'radar', label: 'Radar', path: '/radar', icon: '⚡' },
   { id: 'shame', label: 'Shame', path: '/shame', icon: '💀' },
@@ -35,8 +35,10 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({ currentPath, onNavig
     >
       <div className="flex items-center justify-around h-14">
         {NAV_ITEMS.map((item) => {
+          const isPicks = item.id === 'picks';
           const isActive = 
-            currentPath.startsWith(item.path) || 
+            (isPicks && (currentPath === '/' || currentPath.startsWith('/picks'))) ||
+            (!isPicks && currentPath.startsWith(item.path)) || 
             (item.id === 'shame' && currentPath.startsWith('/wall-of-shame'));
           return (
             <button

@@ -18,8 +18,30 @@ import { AppHeader } from '../components/common/AppHeader';
 export const RadarPage: React.FC = () => {
   const { user, token } = useAuth();
   const activeWeek = getCurrentNFLWeek();
-  const [activeViewMode, setActiveViewMode] = useState<'LEAGUE' | 'RIVALRY'>('LEAGUE');
-  const [selectedRivalId, setSelectedRivalId] = useState<string | null>(null);
+  const [activeViewMode, setActiveViewMode] = useState<'LEAGUE' | 'RIVALRY'>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('mode') === 'RIVALRY') return 'RIVALRY';
+    }
+    return 'LEAGUE';
+  });
+  const [selectedRivalId, setSelectedRivalId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const urlRival = params.get('rival');
+      if (urlRival) return urlRival;
+      return localStorage.getItem('pickem_selected_rival_id');
+    }
+    return null;
+  });
+
+  const handleSelectRival = (id: string | null) => {
+    setSelectedRivalId(id);
+    if (typeof window !== 'undefined') {
+      if (id) localStorage.setItem('pickem_selected_rival_id', id);
+      else localStorage.removeItem('pickem_selected_rival_id');
+    }
+  };
 
   const [liveScores, setLiveScores] = useState<LiveGame[]>([]);
   const [lastUpdated, setLastUpdated] = useState<string>('');
@@ -116,8 +138,12 @@ export const RadarPage: React.FC = () => {
           });
 
           setMembers([currentMember, ...mappedRivals]);
-          if ((!selectedRivalId || !mappedRivals.some((r) => r.id === selectedRivalId)) && mappedRivals.length > 0) {
-            setSelectedRivalId(mappedRivals[0].id);
+          if (mappedRivals.length > 0) {
+            const savedRival = typeof window !== 'undefined' ? localStorage.getItem('pickem_selected_rival_id') : null;
+            const rivalToSelect = (savedRival && mappedRivals.some((r) => r.id === savedRival))
+              ? savedRival
+              : mappedRivals[0].id;
+            handleSelectRival(rivalToSelect);
           }
         } else {
           setMembers([]);
@@ -274,21 +300,23 @@ export const RadarPage: React.FC = () => {
     setSimulationFlippedPicks(false);
   };
 
+  const formatShotUnit = (shots: number) => (shots === 1 ? '1 shot' : `${shots} shots`);
+
   // Charter Penalty Tier Alignment:
-  // Rank 1: SAFE HAVEN (0s)
-  // Ranks 2–6: DANGER ZONE (1s)
-  // Ranks 7–9: THE DROP (2s)
-  // Rank 10: THE PIT (2.5s)
+  // Rank 1: SAFE HAVEN (0 shots)
+  // Ranks 2–6: DANGER ZONE (1 shot)
+  // Ranks 7–9: THE DROP (2 shots)
+  // Rank 10: THE PIT (2.5 shots)
   const renderTierBadge = (tier: ProvisionalStanding['tier']) => {
     switch (tier) {
       case 'SAFE_HAVEN':
-        return <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-emerald-950 border border-emerald-500/60 text-emerald-300">SAFE HAVEN (0s)</span>;
+        return <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-emerald-950 border border-emerald-500/60 text-emerald-300">SAFE HAVEN (0 shots)</span>;
       case 'DANGER_ZONE':
-        return <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-amber-950 border border-amber-500/60 text-amber-300">DANGER ZONE (1s)</span>;
+        return <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-amber-950 border border-amber-500/60 text-amber-300">DANGER ZONE ({formatShotUnit(1)})</span>;
       case 'THE_DROP':
-        return <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-orange-950 border border-orange-500/60 text-orange-300">THE DROP (2s)</span>;
+        return <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-orange-950 border border-orange-500/60 text-orange-300">THE DROP ({formatShotUnit(2)})</span>;
       case 'PIT':
-        return <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-rose-950 border border-rose-500 text-rose-300">THE PIT (2.5s)</span>;
+        return <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-rose-950 border border-rose-500 text-rose-300">THE PIT ({formatShotUnit(2.5)})</span>;
       default:
         return null;
     }
@@ -298,6 +326,15 @@ export const RadarPage: React.FC = () => {
     <div className="min-h-screen bg-zinc-950 text-white pb-24">
       {/* Unified Top Branding Banner */}
       <AppHeader
+        poolName="MAIN LEAGUE"
+        scope={`WEEK ${activeWeek}`}
+        phase={
+          liveScores.length > 0 && liveScores.every((g) => (g.status || '').toUpperCase() === 'FINAL')
+            ? 'SETTLED'
+            : liveScores.some((g) => ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()))
+            ? 'GAMES LIVE'
+            : 'PRE-KICKOFF'
+        }
         rightContent={
           isSimulationActive ? (
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-950 border border-amber-500/80 text-amber-300 font-bold text-[10px] shadow-sm">
@@ -393,7 +430,7 @@ export const RadarPage: React.FC = () => {
           liveScores={liveScores}
           picks={effectivePicks}
           selectedRivalId={selectedRivalId}
-          onSelectRival={(id) => setSelectedRivalId(id)}
+          onSelectRival={(id) => handleSelectRival(id)}
           onBackToLeague={() => setActiveViewMode('LEAGUE')}
           selectedWeek={activeWeek}
         />
@@ -434,7 +471,11 @@ export const RadarPage: React.FC = () => {
               <div className="flex items-center justify-between pt-1 border-t border-slate-800 text-[11px]">
                 <span className="text-slate-400 font-bold">Status:</span>
                 <span className="text-amber-300 font-bold">
-                  {userStanding.statusText || 'Gameday Active'}
+                  {(userStanding.bankedPoints === 0 && userStanding.livePoints === 0)
+                    ? (userStanding.statusText === 'Holding Safe Haven on tiebreaker'
+                        ? 'Joint #1 on points · Tiebreak pending'
+                        : userStanding.statusText || 'Joint #1 on points · Tiebreak pending')
+                    : (userStanding.statusText || 'Gameday Active')}
                 </span>
               </div>
             </div>
@@ -459,20 +500,35 @@ export const RadarPage: React.FC = () => {
                       {activeSwingGame.matchup}
                     </span>
                     <span className="text-xs font-mono font-bold text-cyan-400">
-                      {swingLiveMatch
-                        ? `${swingLiveMatch.awayTeam.code} ${swingLiveMatch.awayTeam.score} @ ${swingLiveMatch.homeTeam.code} ${swingLiveMatch.homeTeam.score}`
-                        : 'AWAITING KICKOFF'}
+                      {(() => {
+                        const isLiveOrFinal = Boolean(
+                          swingLiveMatch && ['IN_PROGRESS', 'LIVE', 'HALFTIME', 'FINAL'].includes((swingLiveMatch.status || '').toUpperCase())
+                        );
+                        if (swingLiveMatch && isLiveOrFinal) {
+                          return `${swingLiveMatch.awayTeam.code} ${swingLiveMatch.awayTeam.score} @ ${swingLiveMatch.homeTeam.code} ${swingLiveMatch.homeTeam.score}`;
+                        }
+                        if (swingLiveMatch) {
+                          return `${swingLiveMatch.awayTeam.code} @ ${swingLiveMatch.homeTeam.code}`;
+                        }
+                        return activeSwingGame.matchup || 'AWAITING KICKOFF';
+                      })()}
                     </span>
                   </div>
                   <div className="flex items-center justify-between mt-1 text-[10px] text-slate-400">
                     <span>
                       Status:{' '}
                       <strong className="text-slate-200">
-                        {swingLiveMatch && swingLiveMatch.status !== 'SCHEDULED'
-                          ? swingLiveMatch.status === 'FINAL'
-                            ? 'FINAL'
-                            : `Q${swingLiveMatch.period} ${swingLiveMatch.clock}`
-                          : activeSwingGame.gameStatus}
+                        {(() => {
+                          const isLiveOrFinal = Boolean(
+                            swingLiveMatch && ['IN_PROGRESS', 'LIVE', 'HALFTIME', 'FINAL'].includes((swingLiveMatch.status || '').toUpperCase())
+                          );
+                          if (swingLiveMatch && isLiveOrFinal) {
+                            return swingLiveMatch.status === 'FINAL'
+                              ? 'FINAL'
+                              : `Q${swingLiveMatch.period} ${swingLiveMatch.clock}`;
+                          }
+                          return activeSwingGame.gameStatus || 'PRE-KICKOFF';
+                        })()}
                       </strong>
                     </span>
                     <span>
@@ -565,7 +621,7 @@ export const RadarPage: React.FC = () => {
                   <div
                     onClick={() => {
                       if (!isUser) {
-                        setSelectedRivalId(p.userId);
+                        handleSelectRival(p.userId);
                         setActiveViewMode('RIVALRY');
                       }
                     }}

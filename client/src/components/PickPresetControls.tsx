@@ -55,15 +55,7 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
 
   // Filter rivals (competitors other than the active user)
   const rivalOptions = matrixMembers.filter((m) => m.user_id !== currentUserId);
-  const fallbackRivals: MatrixMemberOption[] = [
-    { user_id: 'admin_rival', email: 'admin@nflpickem.com', displayName: 'Commissioner' },
-    { user_id: 'alice_rival', email: 'alice@nflpickem.com', displayName: 'Alice Cooper' },
-    { user_id: 'bob_rival', email: 'bob@nflpickem.com', displayName: 'Bob Martinez' },
-    { user_id: 'charlie_rival', email: 'charlie@nflpickem.com', displayName: 'Charlie Davis' },
-    { user_id: 'david_rival', email: 'david@nflpickem.com', displayName: 'David Wilson' },
-    { user_id: 'emma_rival', email: 'emma@nflpickem.com', displayName: 'Emma Watson' },
-  ];
-  const rivalList = rivalOptions.length > 0 ? rivalOptions : fallbackRivals;
+  const rivalList = rivalOptions;
 
   /**
    * Deterministic 'All Home' Auto-Fill:

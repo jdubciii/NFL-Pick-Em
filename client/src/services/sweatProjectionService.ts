@@ -274,7 +274,13 @@ export function calculateProvisionalStandings(
     if (rank === 1) {
       const rank2 = sorted.find((_, idx) => entriesWithRank[idx]?.rank === 2) || sorted[1];
       const gap = rank2 ? points - rank2.totalPoints : 0;
-      statusText = gap > 0 ? `Currently ${gap} pt ahead of Danger Zone` : 'Holding Safe Haven on tiebreaker';
+      if (gap > 0) {
+        statusText = `Currently ${gap} pt ahead of Danger Zone`;
+      } else if (calc.bankedPoints === 0 && calc.livePoints === 0) {
+        statusText = 'Joint #1 on points · Tiebreak pending';
+      } else {
+        statusText = 'Holding Safe Haven on tiebreaker';
+      }
     } else if (tier === 'DANGER_ZONE') {
       const dropBorder = sorted.find((_, idx) => entriesWithRank[idx]?.rank === 7) || sorted[sorted.length - 1];
       const gapToDrop = dropBorder ? points - dropBorder.totalPoints : 0;

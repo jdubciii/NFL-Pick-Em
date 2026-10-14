@@ -143,9 +143,35 @@ export const MatrixPage: React.FC = () => {
     }
   }, [allGamesUpcoming, selectedWeek]);
 
-  const [selectedRivalId, setSelectedRivalId] = useState<string | null>(null);
+  const [selectedRivalId, setSelectedRivalId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('pickem_selected_rival_id');
+    } catch (_) {
+      return null;
+    }
+  });
+
+  const handleSelectRival = (rivalId: string | null) => {
+    setSelectedRivalId(rivalId);
+    try {
+      if (rivalId) {
+        localStorage.setItem('pickem_selected_rival_id', rivalId);
+      } else {
+        localStorage.removeItem('pickem_selected_rival_id');
+      }
+    } catch (_) {}
+  };
+
+  useEffect(() => {
+    const rivals = poolMembers.filter((u) => u.userId !== currentUserId);
+    if (rivals.length === 1 && !selectedRivalId) {
+      handleSelectRival(rivals[0].userId);
+    }
+  }, [poolMembers, currentUserId, selectedRivalId]);
+
   const [expandedTugGameId, setExpandedTugGameId] = useState<string | null>(null);
   const [showTopologyToast, setShowTopologyToast] = useState<boolean>(true);
+  const [matrixFilter, setMatrixFilter] = useState<'ALL' | 'SPLIT' | 'MY_PICKS' | 'CONSENSUS'>('ALL');
 
   const rawGames: RawGameDefinition[] = useMemo(() => {
     return liveGames.map((g) => ({
@@ -165,6 +191,19 @@ export const MatrixPage: React.FC = () => {
       poolPicks.length > 0 ? 1 : 3
     );
   }, [activePoolId, selectedWeek, poolPicks, rawGames]);
+
+  const filteredGames = useMemo(() => {
+    return rawGames.filter((game) => {
+      const gameDist = topology.games.find((g) => g.gameId === game.gameId);
+      const isConsensus = Boolean(gameDist?.isConsensus);
+      if (matrixFilter === 'SPLIT') return !isConsensus;
+      if (matrixFilter === 'CONSENSUS') return isConsensus;
+      if (matrixFilter === 'MY_PICKS') {
+        return poolPicks.some((p) => p.gameId === game.gameId && p.userId === currentUserId);
+      }
+      return true;
+    });
+  }, [rawGames, topology, matrixFilter, poolPicks, currentUserId]);
 
   const autopilotUsers = useMemo(() => {
     const map = new Map<string, boolean>();
@@ -197,6 +236,15 @@ export const MatrixPage: React.FC = () => {
     <div className="min-h-screen bg-zinc-950 text-white pb-24">
       {/* Unified Top Branding Banner with Consolidated Status Pills */}
       <AppHeader
+        poolName="MAIN LEAGUE"
+        scope={`WEEK ${selectedWeek}`}
+        phase={
+          allGamesFinal
+            ? 'SETTLED'
+            : liveGames.some((g) => ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()))
+            ? 'GAMES LIVE'
+            : 'PRE-KICKOFF'
+        }
         rightContent={
           allGamesFinal ? (
             <div className="flex items-center gap-1.5">
@@ -308,7 +356,7 @@ export const MatrixPage: React.FC = () => {
           {duelComparison ? (
             <RivalCrosshairsDuel
               duel={duelComparison}
-              onCloseDuel={() => setSelectedRivalId(null)}
+              onCloseDuel={() => handleSelectRival(null)}
             />
           ) : (
             <div className="space-y-4">
@@ -324,7 +372,7 @@ export const MatrixPage: React.FC = () => {
                     return (
                       <button
                         key={user.userId}
-                        onClick={() => setSelectedRivalId(user.userId)}
+                        onClick={() => handleSelectRival(user.userId)}
                         className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 text-xs transition relative overflow-hidden ${
                           isMachine
                             ? 'border-cyan-400 text-cyan-200 bg-[linear-gradient(45deg,transparent_25%,rgba(6,182,212,0.1)_50%,transparent_75%)] shadow-[0_0_10px_rgba(6,182,212,0.3)]'
@@ -339,9 +387,53 @@ export const MatrixPage: React.FC = () => {
                 </div>
               </div>
 
+              {/* Matrix Filter Pills Bar */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                <button
+                  onClick={() => setMatrixFilter('ALL')}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all border ${
+                    matrixFilter === 'ALL'
+                      ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400'
+                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  All ({rawGames.length})
+                </button>
+                <button
+                  onClick={() => setMatrixFilter('SPLIT')}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all border ${
+                    matrixFilter === 'SPLIT'
+                      ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400'
+                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Split Picks
+                </button>
+                <button
+                  onClick={() => setMatrixFilter('MY_PICKS')}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all border ${
+                    matrixFilter === 'MY_PICKS'
+                      ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400'
+                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  My Picks
+                </button>
+                <button
+                  onClick={() => setMatrixFilter('CONSENSUS')}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all border ${
+                    matrixFilter === 'CONSENSUS'
+                      ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400'
+                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Consensus
+                </button>
+              </div>
+
               {/* Matchup Distribution & Avatar Clusters */}
               <div className="space-y-2.5 font-mono">
-                {rawGames.map((game) => {
+                {filteredGames.map((game) => {
                   const gameDist = topology.games.find((g) => g.gameId === game.gameId);
                   const isConsensus = gameDist?.isConsensus;
 
@@ -368,7 +460,7 @@ export const MatrixPage: React.FC = () => {
                       key={game.gameId}
                       className={`p-3 rounded-xl border transition-all duration-700 ${
                         isConsensus
-                          ? 'bg-slate-950/40 border-slate-900 opacity-30 grayscale'
+                          ? 'bg-slate-900/70 border-slate-800/80 opacity-80'
                           : 'bg-slate-900/90 border-slate-800'
                       }`}
                     >
@@ -377,13 +469,15 @@ export const MatrixPage: React.FC = () => {
                           <span className="text-xs font-bold text-white">
                             {game.awayTeam} @ {game.homeTeam}
                           </span>
-                          <span className="text-[10px] text-cyan-400">
-                            [{game.spread > 0 ? `+${game.spread}` : game.spread}]
-                          </span>
+                          {game.spread && game.spread !== 0 ? (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 font-mono font-bold">
+                              {game.spread > 0 ? `+${game.spread}` : game.spread}
+                            </span>
+                          ) : null}
                         </div>
                         {isConsensus && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-bold">
-                            {gameDist?.totalPicks}/{gameDist?.totalPicks} CONSENSUS [{gameDist?.consensusTeam}]
+                          <span className="text-[9px] px-2 py-0.5 rounded bg-slate-800/90 text-cyan-300 border border-slate-700 font-bold">
+                            {gameDist?.totalPicks} of {gameDist?.totalPicks} picked {gameDist?.consensusTeam}
                           </span>
                         )}
                         {gameDist?.isLoneWolf && (
