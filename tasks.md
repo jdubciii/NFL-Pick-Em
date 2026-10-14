@@ -487,4 +487,66 @@
 - [x] Milestone 24.3: Real-Time Operational Health Endpoints & Degradation Telemetry (Complete)
 - [x] Milestone 24.4: Synthetic E2E Alerting & Monitoring Verification (Complete)
 - [x] Milestone 24.5: Phase 24 Cumulative Observability Dossier & Ratification (Complete)
-
+
+
+## Phase 25: Multi-Tenant League Isolation & Ten-Person Charter Enforcement [✅ COMPLETED]
+- [✅] **Prompt 25.1:** Enforce private 10-person league cap and token rotation rules.
+- [✅] **Prompt 25.2:** Scope all projection queries strictly to active pool membership.
+
+## Phase 26: Tiebreaker Precision Engine & Split Decimal Penalties [✅ COMPLETED]
+- [✅] **Prompt 26.1:** Implement Monday Night total point distance calculation using Prisma.Decimal.
+- [✅] **Prompt 26.2:** Enforce Decision #69 Dead Place auto-loss and absolute penalty assignments.
+
+## Phase 27: Wall of Shame Shot-Cam Video Pipeline & Storage Vault [✅ COMPLETED]
+- [✅] **Prompt 27.1:** Configure `penalty-evidence` storage bucket with owner-restricted RLS.
+- [✅] **Prompt 27.2:** Wire Capacitor camera capture and upload compression pipeline.
+
+## Phase 28: Mobile Viewport Adapters & Native Capacitor Bridge [✅ COMPLETED]
+- [✅] **Prompt 28.1:** Implement native HTTP bridge and network configuration for Android container.
+- [✅] **Prompt 28.2:** Configure production release keystore signing chain.
+
+## Phase 29: Sunday Sweat Radar & Live Win Probability Projection Engine [✅ COMPLETED]
+- [✅] **Prompt 29.1:** Build Monte Carlo live game simulation service.
+- [✅] **Prompt 29.2:** Render dynamic provisional standings table with animated rank movement.
+
+## Phase 30: 1-on-1 Head-to-Head Rivalry Duel & Crosshairs Battlegrounds [✅ COMPLETED]
+- [✅] **Prompt 30.1:** Implement battleground game extractor comparing opposing picks.
+- [✅] **Prompt 30.2:** Build Duel Decider leverage card calculating net point swings.
+
+## Phase 31: Dynamic Consensus Spread & Vegas Line Freezing [✅ COMPLETED]
+- [✅] **Prompt 31.1:** Fetch and freeze opening spreads prior to weekly kickoff.
+- [✅] **Prompt 31.2:** Render tug-of-war leverage distribution percentages on matchup cards.
+
+## Phase 32: Pre-Lock Matrix Topologies & Anti-Peeking Cohort Floors [✅ COMPLETED]
+- [✅] **Prompt 32.1:** Mask unrevealed picks across Matrix until kickoff timestamp passes.
+- [✅] **Prompt 32.2:** Compute aggregate pick distribution counts with cohort floor guard.
+
+## Phase 33: Gameday Live Drive Progression & ESPN Feed Integration [✅ COMPLETED]
+- [✅] **Prompt 33.1:** Integrate ESPN live scoreboard poller for quarter, clock, and territory.
+- [✅] **Prompt 33.2:** Render live drive badges and red zone indicators on matchup cards.
+
+## Phase 34: In-App Administrative Tribunal & Penalty Ledger Compensations [✅ COMPLETED]
+- [✅] **Prompt 34.1:** Install append-only trigger on `penalty_ledger` blocking UPDATE and DELETE.
+- [✅] **Prompt 34.2:** Implement compensating ledger reversals and adjustment modal.
+
+## Phase 35: Offline State Snapshotting & Local Persistence Resilience [✅ COMPLETED]
+- [✅] **Prompt 35.1:** Scope local storage cache keys by user ID, pool ID, and week number.
+- [✅] **Prompt 35.2:** Implement cloud-first rehydration with local cache fallback on network loss.
+
+## Phase 36: Pilot Season Day 1 Cutover & Release Candidate Hardening [✅ COMPLETED]
+- [✅] **Prompt 36.1:** Execute live Supabase database cleanup for pilot league onboarding.
+- [✅] **Prompt 36.2:** Compile and verify release candidate binary `v36.0.0-pilot`.
+
+## Phase 37: Shell Auth Modernization & Dynamic NFL Week Calendar [✅ COMPLETED]
+- [✅] **Prompt 37.1:** Implement `getCurrentNFLWeek()` for automated Tuesday rollover.
+- [✅] **Prompt 37.2:** Build user safety lock toggle (`PROTECTED` / `EDITING`) on Picks tab.
+
+## Phase 38: Authoritative Onboarding Triggers & Universal AppHeader Parity [✅ COMPLETED]
+- [✅] **Prompt 38.1:** Deploy `handle_new_auth_user()` database trigger on `auth.users`.
+- [✅] **Prompt 38.2:** Standardize rigid 56px `AppHeader.tsx` across all 5 core application tabs.
+- [✅] **Prompt 38.3:** Compile, sign, and verify release APK `pickem-v38-s2.apk` (v62 / v38.4.6).
+
+## Phase 39: Live Gameday Operations, Active Week 6 Sweat & Automated Adjudication [ACTIVE]
+- [ ] **Prompt 39.1:** Verify automated individual matchup lock at Thursday Night Football kickoff.
+- [ ] **Prompt 39.2:** Execute live Sunday sweat telemetry poller and rank delta tracking.
+- [ ] **Prompt 39.3:** Execute Monday night finalization pipeline and post-audit penalty settlement.

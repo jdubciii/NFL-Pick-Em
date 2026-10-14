@@ -199,4 +199,67 @@
 - M24.4: Synthetic E2E Alerting & Monitoring Verification [RATIFIED]
 - M24.5: Phase 24 Cumulative Observability Dossier & Final Closure [COMPLETE]
 
-
+
+
+## Phase 25: Multi-Tenant League Isolation & Ten-Person Charter Enforcement [✅]
+- [✅] **25.1 Charter Invariants:** Enforced 10-person private league capacity constraints and automated invitation token rotation.
+- [✅] **25.2 Multi-Tenant Partitioning:** Database-level scoping on active pool contexts across all analytical projections.
+
+## Phase 26: Tiebreaker Precision Engine & Split Decimal Penalties [✅]
+- [✅] **26.1 Precision Distance Scoring:** Absolute Monday Night distance resolution using Prisma.Decimal(5,2).
+- [✅] **26.2 Dead Place Monarch Settlement:** Integrated Decision #69 zero-splitting auto-loss penalty rules.
+
+## Phase 27: Wall of Shame Shot-Cam Video Pipeline & Storage Vault [✅]
+- [✅] **27.1 Private Storage Bucket:** Configured Supabase Storage `penalty-evidence` with strict folder-level RLS.
+- [✅] **27.2 Hardware Camera Capture:** Integrated Capacitor Camera and Media capture with 30MB/60s hardware caps.
+
+## Phase 28: Mobile Viewport Adapters & Native Capacitor Bridge [✅]
+- [✅] **28.1 Native HTTP Interceptor:** Configured Android cleartext bridge and local network routing to `192.168.1.18:3000`.
+- [✅] **28.2 Hardware Keystore Signing:** Configured Android release compilation with `nflpickem-release.keystore`.
+
+## Phase 29: Sunday Sweat Radar & Live Win Probability Projection Engine [✅]
+- [✅] **29.1 Monte Carlo Simulation Engine:** Implemented 10,000-iteration gameday live outcome simulation.
+- [✅] **29.2 Dynamic Ladder Projection:** Real-time projected shot debt exposure and Safe Haven tier calculation.
+
+## Phase 30: 1-on-1 Head-to-Head Rivalry Duel & Crosshairs Battlegrounds [✅]
+- [✅] **30.1 Battleground Game Isolation:** Real-time delta extraction isolating opposing picks on active slates.
+- [✅] **30.2 Duel Decider Calculator:** Live branch swing arithmetic evaluating signed net point differentials.
+
+## Phase 31: Dynamic Consensus Spread & Vegas Line Freezing [✅]
+- [✅] **31.1 Line Freeze Automation:** Implemented pre-lock spread snapshotting derived from ESPN data feeds.
+- [✅] **31.2 Consensus Tug-of-War UI:** Visual distribution percentage bars on matchup cards.
+
+## Phase 32: Pre-Lock Matrix Topologies & Anti-Peeking Cohort Floors [✅]
+- [✅] **32.1 Anti-Peeking Enforcement:** Strict masking of unrevealed picks until individual matchup kickoff.
+- [✅] **32.2 Pre-Lock Matrix Rendering:** Avatar cluster distribution without leaking individual member picks.
+
+## Phase 33: Gameday Live Drive Progression & ESPN Feed Integration [✅]
+- [✅] **33.1 Live Telemetry Ingestion:** Sub-minute pollers streaming down, distance, clock, and territory progression.
+- [✅] **33.2 Red Zone Alert Overlays:** Visual red-zone flash and turnover indicator badges on live matchup cards.
+
+## Phase 34: In-App Administrative Tribunal & Penalty Ledger Compensations [✅]
+- [✅] **34.1 Append-Only Ledger Triggers:** Installed `penalty_ledger_prevent_update_delete()` database trigger.
+- [✅] **34.2 Compensating Reversal Engine:** Reversal entry tracking with balance verification.
+
+## Phase 35: Offline State Snapshotting & Local Persistence Resilience [✅]
+- [✅] **35.1 Scoped Local Caching:** Isolated pick storage keys `picks_${user.id}_${poolId}_w${week}`.
+- [✅] **35.2 Rehydration Fallbacks:** Cloud-first hydration with deterministic local storage cache recovery.
+
+## Phase 36: Pilot Season Day 1 Cutover & Release Candidate Hardening [✅]
+- [✅] **36.1 Database Sanitization:** Reset legacy mock fixtures and established `Main League` production pool.
+- [✅] **36.2 Release Candidate Verification:** Tagged `v36.0.0-pilot` release candidate binary.
+
+## Phase 37: Shell Auth Modernization & Dynamic NFL Week Calendar [✅]
+- [✅] **37.1 Authoritative Tuesday Rollover:** Implemented `getCurrentNFLWeek()` calendar resolver.
+- [✅] **37.2 User Safety Lock:** Implemented user edit-protection toggle (`PROTECTED` / `EDITING`) separated from system slate status.
+
+## Phase 38: Authoritative Onboarding Triggers & Universal AppHeader Parity [✅]
+- [✅] **38.1 Database Auth Trigger:** Installed server-side `AFTER INSERT` trigger on `auth.users` (`handle_new_auth_user()`).
+- [✅] **38.2 Universal AppHeader:** Standardized 56px branding wrapper across Picks, Matrix, Radar, Shame, and Profile.
+- [✅] **38.3 Verified Release Build:** Compiled and cryptographically signed release binary (versionCode 62 / v38.4.6).
+
+## Phase 39: Live Gameday Operations, Active Week 6 Sweat & Automated Adjudication [ACTIVE]
+*Objective: Execute live Week 6 gameday tracking, automated kickoff locking, and real-time Tribunal adjudication.*
+- [ ] **39.1 Week 6 Kickoff Lock Verification:** Automated server-side locking at Thursday Night Football kickoff (SEA @ DEN).
+- [ ] **39.2 Live Sunday Sweat Radar Telemetry:** Real-time win probability simulation and dynamic ladder rank shifts.
+- [ ] **39.3 Monday Night Tiebreaker Finalization:** Automated calculation of final shot debt allocations and Wall of Shame settlement.
