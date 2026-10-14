@@ -13,6 +13,7 @@ import {
   TiebreakerData
 } from '../services/sweatProjectionService';
 import { RivalryShowdown } from '../components/radar/RivalryShowdown';
+import { AppHeader } from '../components/common/AppHeader';
 
 export const RadarPage: React.FC = () => {
   const { user, token } = useAuth();
@@ -296,10 +297,22 @@ export const RadarPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 pb-28 max-w-md mx-auto font-sans">
       {/* Unified Top Branding Banner */}
-      <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-zinc-800/80 -mx-4 -mt-4 mb-3 bg-slate-950">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-sm font-black tracking-wider text-white truncate">NFL PICK'EM</span>
-        </div>
+      <div className="-mx-4 -mt-4 mb-3">
+        <AppHeader
+          rightContent={
+            isSimulationActive ? (
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-950 border border-amber-500/80 text-amber-300 font-bold text-[10px] shadow-sm">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                <span>SIMULATED</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-cyan-300 font-bold text-[10px]">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                <span>LIVE PROJECTION</span>
+              </div>
+            )
+          }
+        />
       </div>
       {/* 1. Sticky Simulation Warning Banner */}
       {isSimulationActive && (

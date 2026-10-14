@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { AccountSettingsModal } from '../components/profile/AccountSettingsModal';
+import { AppHeader } from '../components/common/AppHeader';
+import { Settings } from 'lucide-react';
 
 interface PendingApplicant {
   userId: string;
@@ -133,18 +135,17 @@ export const ProfilePage: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-950 pb-24 text-white">
       {/* Unified Top Branding Banner */}
-      <div className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur-md border-b border-zinc-800/80 px-4 pt-3 pb-2 flex items-center justify-between">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-sm font-black tracking-wider text-white truncate">NFL PICK'EM</span>
-        </div>
-        <button
-          onClick={() => setSettingsOpen(true)}
-          className="min-h-[36px] min-w-[36px] flex items-center justify-center text-slate-400 hover:text-white transition-colors"
-          title="Account Settings"
-        >
-          ⚙️
-        </button>
-      </div>
+      <AppHeader
+        rightContent={
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800/80 transition-colors"
+            aria-label="Settings"
+          >
+            <Settings className="w-5 h-5"/>
+          </button>
+        }
+      />
 
       <div className="p-4 space-y-4 max-w-lg mx-auto">
         {/* Quick Admission Queue Banner */}

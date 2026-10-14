@@ -6,6 +6,7 @@ import { TugOfWarDrawer } from '../components/matrix/TugOfWarDrawer';
 import { LockCountdownTimer } from '../components/matrix/LockCountdownTimer';
 import { LiveGametrackStream, LiveGameflowCardData } from '../components/matrix/LiveGametrackStream';
 import { EmptyStateWireframe } from '../components/common/EmptyStateWireframe';
+import { AppHeader } from '../components/common/AppHeader';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import {
@@ -196,10 +197,8 @@ export const MatrixPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 pb-24 max-w-md mx-auto font-sans">
       {/* Unified Top Branding Banner */}
-      <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-zinc-800/80 -mx-4 -mt-4 mb-3 bg-slate-950">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-sm font-black tracking-wider text-white truncate">NFL PICK'EM</span>
-        </div>
+      <div className="-mx-4 -mt-4 mb-3">
+        <AppHeader />
       </div>
 
       {/* Sticky Gameday Live / Lock Countdown */}
