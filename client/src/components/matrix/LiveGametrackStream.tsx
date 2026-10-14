@@ -85,15 +85,6 @@ export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({
 
     return (
       <div className="flex flex-col items-center justify-center p-8 text-center border border-dashed border-slate-800 rounded-xl bg-slate-900/40 my-4 font-mono">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-semibold">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-            <span>AWAITING KICKOFF</span>
-          </div>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 text-xs font-semibold">
-            <span>SLATE OPEN</span>
-          </div>
-        </div>
         <p className="text-slate-400 text-xs">Live drive progression and red zone telemetry activate at kickoff.</p>
       </div>
     );
@@ -103,29 +94,13 @@ export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({
     <div className="space-y-3 font-mono">
       <div className="flex items-center justify-between px-1 mb-1">
         {allFinal ? (
-          <>
-            <span className="text-[10px] font-black tracking-widest text-zinc-400 uppercase">
-              🏈 WEEK {weekNumber} FINAL SCORES
-            </span>
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400 text-xs font-semibold">
-              <span>WEEK {weekNumber} FINAL</span>
-            </div>
-          </>
+          <span className="text-[10px] font-black tracking-widest text-zinc-400 uppercase">
+            🏈 WEEK {weekNumber} FINAL SCORES
+          </span>
         ) : allUpcoming ? (
-          <>
-            <span className="text-[10px] font-black tracking-widest text-cyan-400 uppercase">
-              🏈 WEEK {weekNumber} SLATE
-            </span>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[10px] font-semibold">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                <span>AWAITING KICKOFF</span>
-              </div>
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 text-[10px] font-semibold">
-                <span>SLATE OPEN</span>
-              </div>
-            </div>
-          </>
+          <span className="text-[10px] font-black tracking-widest text-cyan-400 uppercase">
+            🏈 WEEK {weekNumber} SLATE
+          </span>
         ) : (
           <>
             <span className="text-[10px] font-black tracking-widest text-emerald-400 uppercase">

@@ -58,6 +58,8 @@ export interface DuelComparisonResult {
   rivalWinProbabilityPct: number;
   summaryMicrocopy: string;
   differingPicks: DifferingPickDetail[];
+  targetPicksCount?: number;
+  rivalPicksCount?: number;
 }
 
 /**
@@ -193,7 +195,9 @@ export function computeDuelComparison(
   const targetWinProbabilityPct = Math.round(Math.min(85, Math.max(15, baselinePct + probabilityDelta)));
   const rivalWinProbabilityPct = 100 - targetWinProbabilityPct;
 
-  const summaryMicrocopy = `⚔️ ${differingCount} Differing Picks | ${potentialSwingPoints.toFixed(1)} Potential Swing Points`;
+  const summaryMicrocopy = rivalPicks.length === 0
+    ? `${rivalUserName} has not submitted picks yet (${targetPicks.length} submitted by you)`
+    : `⚔️ ${differingCount} Differing Picks | ${potentialSwingPoints.toFixed(1)} Potential Swing Points`;
 
   return {
     targetUserId,
@@ -207,6 +211,8 @@ export function computeDuelComparison(
     targetWinProbabilityPct,
     rivalWinProbabilityPct,
     summaryMicrocopy,
-    differingPicks
+    differingPicks,
+    targetPicksCount: targetPicks.length,
+    rivalPicksCount: rivalPicks.length,
   };
 }

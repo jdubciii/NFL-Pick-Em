@@ -134,9 +134,8 @@ export const ProfilePage: React.FC = () => {
     <div className="min-h-screen bg-slate-950 pb-24 text-white">
       {/* Unified Top Branding Banner */}
       <div className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur-md border-b border-zinc-800/80 px-4 pt-3 pb-2 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-base font-black tracking-wider text-white">NFL PICK'EM</span>
-          <span className="text-xs px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 font-bold">PROFILE</span>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-black tracking-wider text-white truncate">NFL PICK'EM</span>
         </div>
         <button
           onClick={() => setSettingsOpen(true)}

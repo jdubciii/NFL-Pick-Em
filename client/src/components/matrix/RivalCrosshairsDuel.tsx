@@ -106,11 +106,18 @@ export const RivalCrosshairsDuel: React.FC<RivalCrosshairsDuelProps> = ({ duel, 
           </div>
         ))}
 
-        {duel.differingPicks.length === 0 && (
+        {duel.rivalPicksCount === 0 ? (
+          <div className="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800 text-center font-mono">
+            <span className="text-amber-400 font-bold text-xs uppercase tracking-wider block mb-1">Picks Pending</span>
+            <p className="text-zinc-400 text-xs">
+              {duel.rivalUserName} has not submitted any picks yet ({duel.targetPicksCount ?? 0} submitted by you).
+            </p>
+          </div>
+        ) : duel.differingPicks.length === 0 ? (
           <div className="p-4 rounded-xl bg-slate-900 text-center text-xs text-slate-400 italic">
             Zero differing picks. Both participants are in complete lockstep.
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Haptic Target Lock Button */}

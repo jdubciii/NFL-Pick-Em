@@ -197,9 +197,8 @@ export const MatrixPage: React.FC = () => {
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 pb-24 max-w-md mx-auto font-sans">
       {/* Unified Top Branding Banner */}
       <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-zinc-800/80 -mx-4 -mt-4 mb-3 bg-slate-950">
-        <div className="flex items-center gap-2">
-          <span className="text-base font-black tracking-wider text-white">NFL PICK'EM</span>
-          <span className="text-xs px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 font-bold">THE MATRIX</span>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-black tracking-wider text-white truncate">NFL PICK'EM</span>
         </div>
       </div>
 

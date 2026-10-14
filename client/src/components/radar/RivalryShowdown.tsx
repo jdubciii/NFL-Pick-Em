@@ -22,6 +22,7 @@ interface RivalryShowdownProps {
   selectedRivalId: string | null;
   onSelectRival: (rivalId: string) => void;
   onBackToLeague?: () => void;
+  selectedWeek?: number;
 }
 
 export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
@@ -33,6 +34,7 @@ export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
   picks,
   selectedRivalId,
   onSelectRival,
+  selectedWeek,
 }) => {
   // Available rivals (all members except current user)
   const availableRivals = useMemo(() => {
@@ -100,7 +102,18 @@ export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
     );
   }
 
-  const { pointGap, userPoints, rivalPoints, statusText, battlegrounds, sharedPicks, duelDecider } = showdown;
+  const {
+    pointGap,
+    userPoints,
+    rivalPoints,
+    statusText,
+    battlegrounds,
+    sharedPicks,
+    pendingRivalPicks,
+    duelDecider,
+    userPickCount,
+    rivalPickCount,
+  } = showdown;
 
   return (
     <div className="space-y-4 font-mono">
@@ -246,7 +259,14 @@ export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
           <span>OPPOSITE PICKS</span>
         </div>
 
-        {battlegrounds.length === 0 ? (
+        {rivalPickCount === 0 ? (
+          <div className="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800 text-center">
+            <span className="text-amber-400 font-bold text-xs uppercase tracking-wider block mb-1">Picks Pending</span>
+            <p className="text-zinc-400 text-xs">
+              {activeRival.name} has not submitted any picks for Week {selectedWeek || 6} yet ({userPickCount} submitted by you).
+            </p>
+          </div>
+        ) : battlegrounds.length === 0 ? (
           <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 text-center text-xs text-slate-400">
             No active battlegrounds remaining on the slate. All head-to-head matchups are either shared or finalized.
           </div>
@@ -285,7 +305,28 @@ export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
         )}
       </div>
 
-      {/* 6. Shared Picks (Neutralized Leverage) */}
+      {/* 6. Pending Rival Picks (When rivalPickCount > 0 and user picked but rival hasn't picked yet) */}
+      {rivalPickCount > 0 && pendingRivalPicks && pendingRivalPicks.length > 0 && (
+        <div className="space-y-1.5 pt-2">
+          <div className="flex items-center justify-between px-1 text-[10px] text-amber-400 font-bold uppercase tracking-wider">
+            <span>PENDING RIVAL PICKS ({pendingRivalPicks.length})</span>
+            <span>AWAITING SELECTION</span>
+          </div>
+
+          <div className="p-3 rounded-xl bg-slate-950/60 border border-amber-500/30 space-y-1.5 text-xs">
+            {pendingRivalPicks.map((p) => (
+              <div key={p.gameId} className="flex items-center justify-between text-slate-300 text-[11px]">
+                <span className="font-semibold">{p.matchup}</span>
+                <span className="text-cyan-300">
+                  Your pick: <strong className="font-black">{p.userPick}</strong> · {activeRival.name.split(' ')[0]}: <span className="text-amber-400 italic font-medium">Unpicked</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 7. Shared Picks (Neutralized Leverage - Only when BOTH users selected the same team) */}
       {sharedPicks.length > 0 && (
         <div className="space-y-1.5 pt-2">
           <div className="flex items-center justify-between px-1 text-[10px] text-slate-500 font-bold uppercase tracking-wider">

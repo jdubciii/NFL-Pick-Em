@@ -108,9 +108,8 @@ export function WallOfShamePage() {
     <div className="flex flex-col min-h-screen bg-[#0a0f1d] text-slate-100 pb-24">
       {/* Unified Top Branding Banner */}
       <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-zinc-800/80 bg-[#0a0f1d]/95 backdrop-blur-md">
-        <div className="flex items-center gap-2">
-          <span className="text-base font-black tracking-wider text-white">NFL PICK'EM</span>
-          <span className="text-xs px-2 py-0.5 rounded bg-rose-500/10 border border-rose-500/30 text-rose-400 font-bold">WALL OF SHAME</span>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-black tracking-wider text-white truncate">NFL PICK'EM</span>
         </div>
       </div>
 

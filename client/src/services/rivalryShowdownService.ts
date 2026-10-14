@@ -37,6 +37,13 @@ export interface SharedPickGame {
   status: string;
 }
 
+export interface PendingRivalPickGame {
+  gameId: string;
+  matchup: string;
+  userPick: string;
+  status: string;
+}
+
 export interface RivalryShowdownResult {
   userId: string;
   userName: string;
@@ -45,10 +52,13 @@ export interface RivalryShowdownResult {
   userPoints: CompetitorPoints;
   rivalPoints: CompetitorPoints;
   pointGap: number; // userTotal - rivalTotal
-  statusText: string; // "Ahead by N", "Chasing by N", "Level on points"
+  statusText: string; // "Ahead by N", "Chasing by N", "Level on points", "Rival picks pending"
   battlegrounds: BattlegroundGame[];
   sharedPicks: SharedPickGame[];
+  pendingRivalPicks: PendingRivalPickGame[];
   duelDecider: BattlegroundGame | null;
+  userPickCount: number;
+  rivalPickCount: number;
 }
 
 /**
@@ -89,6 +99,9 @@ export function calculateRivalryShowdown(
     }
   }
 
+  const userPickCount = validUserPicks.size;
+  const rivalPickCount = validRivalPicks.size;
+
   let userBanked = 0;
   let userLive = 0;
   let rivalBanked = 0;
@@ -100,6 +113,7 @@ export function calculateRivalryShowdown(
 
   const battlegrounds: BattlegroundGame[] = [];
   const sharedPicks: SharedPickGame[] = [];
+  const pendingRivalPicks: PendingRivalPickGame[] = [];
 
   for (const game of games) {
     const live = scoreMap.get(game.id);
@@ -145,11 +159,12 @@ export function calculateRivalryShowdown(
       }
     }
 
-    // Classify Battlegrounds vs Shared Picks
+    // Classify Battlegrounds vs Shared Picks vs Pending Rival Picks
+    const matchup = `${game.awayTeam} @ ${game.homeTeam}`;
+
     if (uPick && rPick) {
       const uTeam = uPick.selectedTeam.toUpperCase();
       const rTeam = rPick.selectedTeam.toUpperCase();
-      const matchup = `${game.awayTeam} @ ${game.homeTeam}`;
 
       if (uTeam === rTeam) {
         sharedPicks.push({
@@ -184,6 +199,14 @@ export function calculateRivalryShowdown(
           },
         });
       }
+    } else if (uPick && !rPick && !isFinal) {
+      // User picked Team A and rival has not picked that game yet
+      pendingRivalPicks.push({
+        gameId: game.id,
+        matchup,
+        userPick: uPick.selectedTeam,
+        status: live ? live.status : 'SCHEDULED',
+      });
     }
   }
 
@@ -232,7 +255,9 @@ export function calculateRivalryShowdown(
   }
 
   let statusText = 'Level on points';
-  if (pointGap > 0) {
+  if (rivalPickCount === 0 && pointGap === 0) {
+    statusText = 'Rival picks pending';
+  } else if (pointGap > 0) {
     statusText = `Ahead by ${pointGap}`;
   } else if (pointGap < 0) {
     statusText = `Chasing by ${Math.abs(pointGap)}`;
@@ -257,6 +282,9 @@ export function calculateRivalryShowdown(
     statusText,
     battlegrounds,
     sharedPicks,
-    duelDecider,
+    pendingRivalPicks,
+    duelDecider: rivalPickCount === 0 ? null : duelDecider,
+    userPickCount,
+    rivalPickCount,
   };
 }
