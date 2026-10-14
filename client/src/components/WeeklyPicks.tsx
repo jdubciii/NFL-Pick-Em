@@ -709,38 +709,37 @@ export const WeeklyPicks: React.FC = () => {
   const toastMessage = feedbackMessage?.text;
 
   return (
-    <div className="space-y-4 sm:space-y-6">
-      <div className="-mx-4 -mt-4 sm:-mx-6 lg:-mx-8 sm:-mt-8 lg:-mt-8">
-        {/* ROW 1 (Branding & Controls) */}
-        <AppHeader
-          rightContent={
-            <>
-              <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 ${
-                slateStatus === 'OPEN' 
-                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400' 
-                  : 'bg-zinc-800 border-zinc-700 text-zinc-400'
-              }`}>
-                {slateStatus === 'OPEN' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
-                <span>{slateStatus === 'OPEN' ? 'OPEN' : 'LOCKED'}</span>
-              </div>
+    <div className="w-full">
+      {/* ROW 1 (Branding & Controls) */}
+      <AppHeader
+        rightContent={
+          <div className="flex items-center gap-2">
+            <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 ${
+              slateStatus === 'OPEN' 
+                ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400' 
+                : 'bg-zinc-800 border-zinc-700 text-zinc-400'
+            }`}>
+              {slateStatus === 'OPEN' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+              <span>{slateStatus === 'OPEN' ? 'OPEN' : 'LOCKED'}</span>
+            </div>
 
-              <button
-                onClick={togglePicksProtection}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border transition-all ${
-                  isPicksProtected
-                    ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
-                    : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'
-                }`}
-              >
-                {isPicksProtected ? <Lock className="w-3 h-3 text-amber-400"/> : <Unlock className="w-3 h-3 text-zinc-400"/>}
-                <span>{isPicksProtected ? 'PROTECTED' : 'EDITING'}</span>
-              </button>
-            </>
-          }
-        />
+            <button
+              onClick={togglePicksProtection}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border transition-all ${
+                isPicksProtected
+                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                  : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'
+              }`}
+            >
+              {isPicksProtected ? <Lock className="w-3 h-3 text-amber-400"/> : <Unlock className="w-3 h-3 text-zinc-400"/>}
+              <span>{isPicksProtected ? 'PROTECTED' : 'EDITING'}</span>
+            </button>
+          </div>
+        }
+      />
 
-        {/* ROW 2 (Sub-navigation) */}
-        <div className="flex items-center justify-between px-4 py-2 bg-zinc-900/60 border-b border-zinc-800/50">
+      {/* ROW 2 (Sub-navigation) */}
+      <div className="flex items-center justify-between px-4 py-2 bg-zinc-900/60 border-b border-zinc-800/50">
           {/* Week Selector Dropdown */}
           <div className="flex items-center gap-2">
             <button onClick={() => setShowWeekModal(true)} className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-zinc-800/90 border border-zinc-700/80 text-white text-xs font-bold">
@@ -761,7 +760,6 @@ export const WeeklyPicks: React.FC = () => {
             <button onClick={() => setViewMode('list')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${viewMode === 'list' ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : 'text-zinc-400 hover:text-white'}`}>List</button>
           </div>
         </div>
-      </div>
 
       {/* Floating Warning/Feedback Toast (Non-reflowing fixed overlay) */}
       {toastMessage && (

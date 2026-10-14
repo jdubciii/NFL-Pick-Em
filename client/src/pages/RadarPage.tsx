@@ -295,57 +295,57 @@ export const RadarPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-4 pb-28 max-w-md mx-auto font-sans">
+    <div className="min-h-screen bg-zinc-950 text-white pb-24">
       {/* Unified Top Branding Banner */}
-      <div className="-mx-4 -mt-4 mb-3">
-        <AppHeader
-          rightContent={
-            isSimulationActive ? (
-              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-950 border border-amber-500/80 text-amber-300 font-bold text-[10px] shadow-sm">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-                <span>SIMULATED</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-cyan-300 font-bold text-[10px]">
-                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                <span>LIVE PROJECTION</span>
-              </div>
-            )
-          }
-        />
-      </div>
-      {/* 1. Sticky Simulation Warning Banner */}
-      {isSimulationActive && (
-        <div className="sticky top-0 z-40 -mx-4 px-4 py-2 bg-amber-950/95 border-b border-amber-400 font-mono text-xs flex items-center justify-between shadow-lg">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-            <span className="font-black text-amber-200 uppercase tracking-wider">
-              ⚡ WHAT-IF SIMULATION ACTIVE
-            </span>
-          </div>
-          <button
-            onClick={handleResetSimulation}
-            className="px-2 py-0.5 rounded bg-amber-500 text-slate-950 font-black text-[10px] hover:bg-amber-400"
-          >
-            RETURN TO LIVE
-          </button>
-        </div>
-      )}
+      <AppHeader
+        rightContent={
+          isSimulationActive ? (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-950 border border-amber-500/80 text-amber-300 font-bold text-[10px] shadow-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+              <span>SIMULATED</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-cyan-300 font-bold text-[10px]">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+              <span>LIVE PROJECTION</span>
+            </div>
+          )
+        }
+      />
 
-      {/* 2. Header: Sunday Radar Telemetry Header */}
-      <header className="mb-3 border-b border-slate-800 pb-2 flex items-center justify-between font-mono">
-        <div>
-          <h1 className="text-lg font-black tracking-wider text-cyan-400">
-            SUNDAY RADAR
-          </h1>
-          <p className="text-xs text-slate-400">Sunday Sweat Projections &amp; Showdowns</p>
-        </div>
-        {lastUpdated && !isSimulationActive && (
-          <div className="text-right">
-            <span className="text-[10px] text-slate-500 font-mono">{lastUpdated}</span>
+      <div className="p-4 max-w-md mx-auto font-sans">
+        {/* 1. Sticky Simulation Warning Banner */}
+        {isSimulationActive && (
+          <div className="sticky top-14 z-30 -mx-4 px-4 py-2 bg-amber-950/95 border-b border-amber-400 font-mono text-xs flex items-center justify-between shadow-lg mb-3">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+              <span className="font-black text-amber-200 uppercase tracking-wider">
+                ⚡ WHAT-IF SIMULATION ACTIVE
+              </span>
+            </div>
+            <button
+              onClick={handleResetSimulation}
+              className="px-2 py-0.5 rounded bg-amber-500 text-slate-950 font-black text-[10px] hover:bg-amber-400"
+            >
+              RETURN TO LIVE
+            </button>
           </div>
         )}
-      </header>
+
+        {/* 2. Header: Sunday Radar Telemetry Header */}
+        <header className="mb-3 border-b border-slate-800 pb-2 flex items-center justify-between font-mono">
+          <div>
+            <h1 className="text-xl font-black text-cyan-400 tracking-tight">
+              SUNDAY RADAR
+            </h1>
+            <p className="text-xs text-slate-400">Sunday Sweat Projections &amp; Showdowns</p>
+          </div>
+          {lastUpdated && !isSimulationActive && (
+            <div className="text-right">
+              <span className="text-[10px] text-slate-500 font-mono">{lastUpdated}</span>
+            </div>
+          )}
+        </header>
 
       {/* 3. Header Toggle: [ LEAGUE PROJECTION ] | [ RIVALRY DUEL ] */}
       <div className="grid grid-cols-2 p-1 bg-slate-900/90 border border-slate-800 rounded-xl mb-4 font-mono text-xs">
@@ -635,6 +635,7 @@ export const RadarPage: React.FC = () => {
           </div>
         </>
       )}
+      </div>
     </div>
   );
 };

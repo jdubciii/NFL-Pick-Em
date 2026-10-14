@@ -106,14 +106,12 @@ export function WallOfShamePage() {
   }, []);
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#0a0f1d] text-slate-100 pb-24">
+    <div className="min-h-screen bg-zinc-950 text-white pb-24">
       {/* Unified Top Branding Banner */}
       <AppHeader />
 
       {/* Persistent 3-Tab Segmented Header */}
-      <div className="sticky top-0 z-30 bg-[#0a0f1d]/95 backdrop-blur-md px-4 pt-2 pb-2 border-b border-slate-800">
-        <ShameSegmentedHeader activeTab={activeTab} onSelectTab={setActiveTab} />
-      </div>
+      <ShameSegmentedHeader activeTab={activeTab} onSelectTab={setActiveTab} />
 
       {/* Tab 1: Reels Feed (Scoped Empty State) */}
       {activeTab === 'reels' && (

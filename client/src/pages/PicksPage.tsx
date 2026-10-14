@@ -3,7 +3,7 @@ import { WeeklyPicks } from '../components/WeeklyPicks';
 
 export const PicksPage: React.FC = () => {
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="min-h-screen bg-zinc-950 text-white pb-24">
       <WeeklyPicks />
     </div>
   );

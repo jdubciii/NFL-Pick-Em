@@ -133,7 +133,7 @@ export const ProfilePage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 pb-24 text-white">
+    <div className="min-h-screen bg-zinc-950 text-white pb-24">
       {/* Unified Top Branding Banner */}
       <AppHeader
         rightContent={

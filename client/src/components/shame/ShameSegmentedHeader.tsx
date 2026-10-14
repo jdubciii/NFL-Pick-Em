@@ -24,7 +24,7 @@ export const ShameSegmentedHeader: React.FC<ShameSegmentedHeaderProps> = ({
   };
 
   return (
-    <div className="sticky top-0 z-40 w-full pt-1 pb-2 px-3 bg-slate-950/80 backdrop-blur-md border-b border-slate-800/80 font-mono">
+    <div className="sticky top-14 z-30 w-full pt-2 pb-2 px-4 bg-zinc-950/95 backdrop-blur-md border-b border-zinc-800 font-mono">
       <div className="flex rounded-xl bg-slate-900/90 p-1 border border-slate-800 text-xs font-bold">
         <button
           onClick={() => handleSelect('reels')}
