@@ -1,4 +1,4 @@
-﻿export interface HistoricalWeekRecord {
+export interface HistoricalWeekRecord {
   weekNumber: number;
   rank: number;
   totalParticipants: number;

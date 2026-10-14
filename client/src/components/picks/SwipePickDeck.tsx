@@ -4,6 +4,7 @@ import { TeamLogo } from '../common/TeamLogo';
 import { NFL_TEAMS } from '../../utils/teamAssets';
 import { Lock } from 'lucide-react';
 import { isKickoffLocked } from '../../services/lockEnforcementService';
+import { formatAttributedSpread } from '../../services/dependableInfoService';
 
 export interface SwipeMatchup {
   id: string;
@@ -367,7 +368,14 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
 
                 <div className="flex justify-between p-3 bg-slate-950/60 rounded-xl border border-slate-800">
                   <span className="text-slate-400">Consensus Spread</span>
-                  <span className="font-bold text-amber-300">{activeCard.spread || 'EVEN'}</span>
+                  <span className="font-bold text-amber-300">
+                    {formatAttributedSpread({
+                      spread: activeCard.spread,
+                      homeTeam: activeCard.homeTeam,
+                      awayTeam: activeCard.awayTeam,
+                      treatZeroAsUnavailable: true,
+                    })}
+                  </span>
                 </div>
 
                 <div className="flex justify-between p-3 bg-slate-950/60 rounded-xl border border-slate-800">
@@ -534,7 +542,12 @@ const SwipeCardItem: React.FC<{
           </div>
         )}
         <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-cyan-300 font-black text-[10px]">
-          {matchup.spread || 'EVEN'}
+          {formatAttributedSpread({
+            spread: matchup.spread,
+            homeTeam: matchup.homeTeam,
+            awayTeam: matchup.awayTeam,
+            treatZeroAsUnavailable: true,
+          })}
         </span>
       </div>
 

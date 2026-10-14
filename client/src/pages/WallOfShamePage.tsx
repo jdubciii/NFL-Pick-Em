@@ -1,8 +1,9 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ShameSegmentedHeader } from '../components/shame/ShameSegmentedHeader';
 import { WeeklyLadderView } from '../components/shame/WeeklyLadderView';
 import { AppHeader } from '../components/common/AppHeader';
 import { supabase } from '../lib/supabase';
+import { formatShotUnit } from '../services/dependableInfoService';
 
 export function WallOfShamePage() {
   const [activeTab, setActiveTab] = useState<'reels' | 'ladder' | 'infamy'>('ladder');
@@ -54,7 +55,7 @@ export function WallOfShamePage() {
             const totalDebt = userPenalties.reduce((sum, p) => sum + Number(p.delta || 0), 0);
 
             // For any active member who does not yet have penalty debt recorded in penalty_ledger:
-            // Default their record to 0 shots shot debt, status: 'CLEARED (SAFE)', and tier: 'SAFE HAVEN'
+            // Default their record to 0.00s shot debt, status: 'CLEARED (SAFE)', and tier: 'SAFE HAVEN'
             if (totalDebt <= 0) {
               return {
                 rank: 1,
@@ -84,7 +85,7 @@ export function WallOfShamePage() {
               userId: m.user_id,
               userName: displayName,
               name: displayName,
-              shots: `${totalDebt.toFixed(2)}s`,
+              shots: formatShotUnit(totalDebt),
               penaltyShots: totalDebt,
               status,
               fsmDisplayStatus: status,
@@ -117,7 +118,7 @@ export function WallOfShamePage() {
       {activeTab === 'reels' && (
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-center min-h-[60vh]">
           <div className="w-16 h-16 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center mb-4 text-3xl">
-            ðŸŽ¬
+            🎬
           </div>
           <div className="text-amber-400 font-bold text-sm tracking-wider uppercase mb-1">
             [ NO ACTIVE PENALTY REELS ]
@@ -129,7 +130,7 @@ export function WallOfShamePage() {
             onClick={() => setActiveTab('ladder')}
             className="px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold rounded-lg text-slate-200 transition"
           >
-            VIEW SHOT DEBT LADDER â†’
+            VIEW SHOT DEBT LADDER →
           </button>
         </div>
       )}
@@ -145,7 +146,7 @@ export function WallOfShamePage() {
       {activeTab === 'infamy' && (
         <div className="flex-1 p-6 text-center">
           <div className="w-14 h-14 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center mx-auto mb-3 text-2xl">
-            ðŸ›ï¸
+            🏛️
           </div>
           <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400 mb-1">
             [ HALL OF INFAMY ARCHIVE ]
@@ -157,7 +158,7 @@ export function WallOfShamePage() {
             <div className="text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-2">SEASON LEDGER SUMMARY</div>
             <div className="flex justify-between text-xs py-1 border-b border-slate-800/60">
               <span className="text-slate-400">Total League Penalties:</span>
-              <span className="text-amber-400 font-mono font-bold">0.00 Shots</span>
+              <span className="text-amber-400 font-mono font-bold">0 shots</span>
             </div>
             <div className="flex justify-between text-xs py-1">
               <span className="text-slate-400">Tribunal Disputes:</span>
@@ -171,4 +172,3 @@ export function WallOfShamePage() {
 }
 
 export default WallOfShamePage;
-

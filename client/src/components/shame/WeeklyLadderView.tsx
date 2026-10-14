@@ -1,9 +1,10 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   SettledLadderParticipant,
   buildSettledLadderTiers
 } from '../../services/wallOfShameConsolidationService';
 import { supabase } from '../../lib/supabase';
+import { formatShotUnit } from '../../services/dependableInfoService';
 
 interface WeeklyLadderViewProps {
   ladder?: any[];
@@ -88,7 +89,7 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
               userId: m.user_id,
               userName: displayName,
               name: displayName,
-              shots: `${totalDebt.toFixed(2)}s`,
+              shots: formatShotUnit(totalDebt),
               penaltyShots: totalDebt,
               status,
               fsmDisplayStatus: status,
@@ -134,7 +135,7 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
         </span>
       </div>
 
-      {/* 1. Safe Haven (0.00 Shots) */}
+      {/* 1. Safe Haven (0 shots) */}
       <div className="space-y-1.5">
         <div className="flex justify-between items-center px-1">
           <span className="text-[10px] font-bold text-emerald-400 uppercase">
@@ -156,13 +157,13 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
         ))}
       </div>
 
-      {/* 2. Danger Zone Tier 1 (2ndâ€“6th Place: 1.00 Shot) */}
+      {/* 2. Danger Zone Tier 1 (2nd–6th Place: 1 shot) */}
       <div className="space-y-1.5">
         <div className="flex justify-between items-center px-1">
           <span className="text-[10px] font-bold text-amber-400 uppercase">
-            DANGER ZONE // 2NDâ€“6TH PLACE (1.00 SHOT)
+            DANGER ZONE // 2ND–6TH PLACE (1 SHOT)
           </span>
-          <span className="text-[9px] text-amber-400 font-bold">1.00s</span>
+          <span className="text-[9px] text-amber-400 font-bold">1 shot</span>
         </div>
         {dangerTier1.map((m) => (
           <div
@@ -174,7 +175,7 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
               <span className="font-semibold text-slate-200">{m.userName}</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-amber-300 font-black">1.00s</span>
+              <span className="text-amber-300 font-black">1 shot</span>
               <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-950 text-slate-400 border border-slate-800">
                 {m.fsmDisplayStatus}
               </span>
@@ -186,17 +187,17 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
       {/* 6TH / 7TH DANGER FAULT LINE */}
       <div className="my-1 border-t-2 border-dashed border-rose-500/50 relative text-center">
         <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-slate-950 px-2 text-[9px] font-black text-rose-400 uppercase tracking-widest">
-          â–¼ THE DROP (1.00s âž” 2.00s STEP) â–¼
+          ▼ THE DROP (1 SHOT → 2 SHOTS STEP) ▼
         </span>
       </div>
 
-      {/* 3. Danger Zone Tier 2 (7thâ€“9th Place: 2.00 Shots) */}
+      {/* 3. Danger Zone Tier 2 (7th–9th Place: 2 shots) */}
       <div className="space-y-1.5">
         <div className="flex justify-between items-center px-1">
           <span className="text-[10px] font-bold text-rose-400 uppercase">
-            HIGH DANGER // 7THâ€“9TH PLACE (2.00 SHOTS)
+            HIGH DANGER // 7TH–9TH PLACE (2 SHOTS)
           </span>
-          <span className="text-[9px] text-rose-400 font-bold">2.00s</span>
+          <span className="text-[9px] text-rose-400 font-bold">2 shots</span>
         </div>
         {dangerTier2.map((m) => (
           <div
@@ -208,7 +209,7 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
               <span className="font-semibold text-slate-100">{m.userName}</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-rose-300 font-black">2.00s</span>
+              <span className="text-rose-300 font-black">2 shots</span>
               <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-950 text-slate-400 border border-slate-800">
                 {m.fsmDisplayStatus}
               </span>
@@ -227,7 +228,7 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
           <div className="p-4 rounded-2xl bg-rose-950/40 border-2 border-rose-500/80 shadow-glow-rose space-y-3">
             <div className="flex items-center justify-between border-b border-rose-500/40 pb-2">
               <div className="flex items-center gap-2">
-                <span className="text-lg">ðŸ’€</span>
+                <span className="text-lg">💀</span>
                 <div>
                   <p className="text-sm font-black text-white">{pitMember.userName || 'No Unsettled Penalties'}</p>
                   <p className="text-[9px] text-rose-300 font-bold uppercase">
@@ -263,4 +264,3 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
     </div>
   );
 };
-

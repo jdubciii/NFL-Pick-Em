@@ -290,3 +290,4 @@ export function calculateRivalryShowdown(
 }
 
 export * from './dependableInfoService';
+

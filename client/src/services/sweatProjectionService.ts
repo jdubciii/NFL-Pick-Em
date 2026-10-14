@@ -1,4 +1,4 @@
-﻿import { LiveGame } from './liveScoreService';
+import { LiveGame } from './liveScoreService';
 
 export interface UserStandingRef {
   id: string;
@@ -239,8 +239,8 @@ export function calculateProvisionalStandings(
 
     // 1. Charter Penalty Tier Alignment:
     // Rank 1: "SAFE HAVEN" (0 shots)
-    // Ranks 2â€“6: "DANGER ZONE" (1 shot exposure)
-    // Ranks 7â€“9: "THE DROP" (2 shots exposure)
+    // Ranks 2–6: "DANGER ZONE" (1 shot exposure)
+    // Ranks 7–9: "THE DROP" (2 shots exposure)
     // Rank 10: "THE PIT" (2.5 shots / Dead Place Monarch provisional)
     let tier: ProvisionalStandingEntry['tier'] = 'DANGER_ZONE';
     if (rank === 1) {

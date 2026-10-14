@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 export const OpsDashboardPage: React.FC = () => {
   const [health, setHealth] = useState<any>(null);

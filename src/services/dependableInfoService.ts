@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Phase 39 Sprint 1 (P39-S1): Dependable Information & Mathematical Truth Service
  * Enforces Decision #61 (Modular Client Boundary Isolation), Decision #66 (Pick Lock Readiness),
  * and Decision #69 (Decimal Shot Obligation Formatting).

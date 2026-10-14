@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   calculateRivalryShowdown,
   RivalryShowdownResult,
@@ -154,7 +154,7 @@ export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
       {showLeadFlippedAlert && (
         <div className="p-3 rounded-2xl bg-amber-950 border-2 border-amber-400 text-amber-200 text-xs font-black animate-pulse flex items-center justify-between shadow-glow-amber">
           <div className="flex items-center gap-2">
-            <span className="text-base">âš¡</span>
+            <span className="text-base">⚡</span>
             <span>LEAD FLIPPED! LIVE MOMENTUM SHIFT</span>
           </div>
           <span className="text-[10px] uppercase tracking-wider">{statusText}</span>
@@ -194,7 +194,7 @@ export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
             <span className="text-[10px] text-cyan-400 font-bold block mb-1">YOU</span>
             <p className="text-2xl font-black text-white">{userPoints.total}</p>
             <span className="text-[10px] text-slate-400 block mt-1">
-              {userPoints.banked} banked Â· +{userPoints.live} live
+              {userPoints.banked} banked · +{userPoints.live} live
             </span>
           </div>
 
@@ -205,7 +205,7 @@ export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
             </span>
             <p className="text-2xl font-black text-white">{rivalPoints.total}</p>
             <span className="text-[10px] text-slate-400 block mt-1">
-              {rivalPoints.banked} banked Â· +{rivalPoints.live} live
+              {rivalPoints.banked} banked · +{rivalPoints.live} live
             </span>
           </div>
         </div>
@@ -220,10 +220,10 @@ export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
         <div className="p-4 rounded-2xl bg-slate-900/90 border border-amber-500/60 shadow-lg">
           <div className="flex items-center justify-between text-xs font-bold text-amber-400 mb-2">
             <span className="flex items-center gap-1.5">
-              <span>ðŸŽ¯ DUEL DECIDER // HIGHEST LEVERAGE</span>
+              <span>🎯 DUEL DECIDER // HIGHEST LEVERAGE</span>
             </span>
             <span className="text-[10px] px-2 py-0.5 rounded bg-amber-950 border border-amber-500/60 text-amber-300 font-black">
-              Â2 PT OUTCOME SPAN (-1 / +1)
+              2 PT OUTCOME SPAN (-1 / +1)
             </span>
           </div>
 
@@ -318,7 +318,7 @@ export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
               <div key={p.gameId} className="flex items-center justify-between text-slate-300 text-[11px]">
                 <span className="font-semibold">{p.matchup}</span>
                 <span className="text-cyan-300">
-                  Your pick: <strong className="font-black">{p.userPick}</strong> Â· {activeRival.name.split(' ')[0]}: <span className="text-amber-400 italic font-medium">Unpicked</span>
+                  Your pick: <strong className="font-black">{p.userPick}</strong> · {activeRival.name.split(' ')[0]}: <span className="text-amber-400 italic font-medium">Unpicked</span>
                 </span>
               </div>
             ))}
@@ -351,4 +351,3 @@ export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
 };
 
 export default RivalryShowdown;
-

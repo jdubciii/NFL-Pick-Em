@@ -236,14 +236,14 @@ export const ProfilePage: React.FC = () => {
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
               <div className="text-sm font-black text-white">0</div>
-              <div className="text-[10px] text-slate-500 font-bold uppercase">Wins</div>
+              <div className="text-[10px] text-slate-500 font-bold uppercase">Pick Wins</div>
             </div>
             <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
               <div className="text-sm font-black text-white">0</div>
-              <div className="text-[10px] text-slate-500 font-bold uppercase">Losses</div>
+              <div className="text-[10px] text-slate-500 font-bold uppercase">Pick Losses</div>
             </div>
             <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-              <div className="text-sm font-black text-amber-400">0.00</div>
+              <div className="text-sm font-black text-amber-400">0 shots</div>
               <div className="text-[10px] text-slate-500 font-bold uppercase">Shot Debt</div>
             </div>
           </div>

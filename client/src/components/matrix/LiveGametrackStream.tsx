@@ -188,15 +188,27 @@ export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({
             {/* Scoreboard Line */}
             <div className="flex items-center justify-between my-2 text-sm font-black">
               <div className="flex items-center gap-2">
-                <span className="text-white">
-                  {awayCode} <span className="text-amber-400">{awayScore}</span>
-                </span>
-                <span className="text-slate-500 font-normal">@</span>
-                <span className="text-white">
-                  {homeCode} <span className="text-amber-400">{homeScore}</span>
-                </span>
+                {isScheduled ? (
+                  <span className="text-white">
+                    {awayCode} <span className="text-slate-500 font-normal">@</span> {homeCode}
+                  </span>
+                ) : (
+                  <>
+                    <span className="text-white">
+                      {awayCode} <span className="text-amber-400">{awayScore}</span>
+                    </span>
+                    <span className="text-slate-500 font-normal">@</span>
+                    <span className="text-white">
+                      {homeCode} <span className="text-amber-400">{homeScore}</span>
+                    </span>
+                  </>
+                )}
               </div>
-              {isEspnGame ? (
+              {isScheduled ? (
+                <span className="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">
+                  SCHEDULED
+                </span>
+              ) : isEspnGame ? (
                 <span className="text-[10px] text-cyan-400 font-bold truncate max-w-[120px]">
                   {(item as LiveGame).shortName || (item as LiveGame).name}
                 </span>

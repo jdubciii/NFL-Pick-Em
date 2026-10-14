@@ -307,7 +307,11 @@ export const RadarPage: React.FC = () => {
           ) : (
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-cyan-300 font-bold text-[10px]">
               <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-              <span>LIVE PROJECTION</span>
+              <span>
+                {liveScores.some((g) => ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()))
+                  ? 'GAMES LIVE'
+                  : 'PRE-KICKOFF · PROJECTION'}
+              </span>
             </div>
           )
         }

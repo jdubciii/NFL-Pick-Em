@@ -732,7 +732,13 @@ export const WeeklyPicks: React.FC = () => {
               }`}
             >
               {isPicksProtected ? <Lock className="w-3 h-3 text-amber-400"/> : <Unlock className="w-3 h-3 text-zinc-400"/>}
-              <span>{isPicksProtected ? 'PROTECTED' : 'EDITING'}</span>
+              <span>
+                {isPicksProtected
+                  ? 'PROTECTED'
+                  : games.length > 0 && Object.keys(userPicks).filter((k) => Boolean(userPicks[k])).length >= games.length
+                  ? 'SUBMITTED · EDITABLE'
+                  : 'DRAFT · UNSUBMITTED'}
+              </span>
             </button>
           </div>
         }
