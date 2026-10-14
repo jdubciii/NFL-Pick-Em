@@ -68,6 +68,7 @@ export const ProfilePage: React.FC = () => {
     loadPendingApplicants();
 
     const handleUpdate = () => loadPendingApplicants();
+    window.addEventListener('focus', handleUpdate);
     window.addEventListener('pending-memberships-changed', handleUpdate);
 
     const channel = supabase
@@ -78,6 +79,7 @@ export const ProfilePage: React.FC = () => {
       .subscribe();
 
     return () => {
+      window.removeEventListener('focus', handleUpdate);
       window.removeEventListener('pending-memberships-changed', handleUpdate);
       channel.unsubscribe();
     };

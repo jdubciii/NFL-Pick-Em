@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 
@@ -19,40 +19,50 @@ export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => vo
   const [loading, setLoading] = useState(false);
   const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
 
+  const loadCommissionerData = useCallback(async () => {
+    if (!user) return;
+    const { data: userData } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', user?.id)
+      .maybeSingle();
+
+    const adminRole = userData?.role === 'ADMIN' || user?.role === 'ADMIN' || user?.email === 'jack.w.cone@gmail.com';
+    setIsAdmin(adminRole);
+
+    if (adminRole) {
+      const { data, error } = await supabase.rpc('get_pending_applicants', {
+        p_pool_id: activePoolId
+      });
+
+      if (error) {
+        console.error('[Commissioner Queue] RPC error:', error);
+      }
+
+      const applicants: PendingApplicant[] = (data || []).map((p: any) => ({
+        userId: p.user_id,
+        email: p.email,
+        displayName: p.display_name
+      }));
+
+      setPendingMembers(applicants);
+      setPendingCount(applicants.length);
+    }
+  }, [user]);
+
   useEffect(() => {
     if (!isOpen || !user) return;
-
-    async function loadCommissionerData() {
-      const { data: userData } = await supabase
-        .from('users')
-        .select('role')
-        .eq('id', user?.id)
-        .maybeSingle();
-
-      const adminRole = userData?.role === 'ADMIN' || user?.role === 'ADMIN' || user?.email === 'jack.w.cone@gmail.com';
-      setIsAdmin(adminRole);
-
-      if (adminRole) {
-        const { data, error } = await supabase.rpc('get_pending_applicants', {
-          p_pool_id: activePoolId
-        });
-
-        if (error) {
-          console.error('[Commissioner Queue] RPC error:', error);
-        }
-
-        const applicants: PendingApplicant[] = (data || []).map((p: any) => ({
-          userId: p.user_id,
-          email: p.email,
-          displayName: p.display_name
-        }));
-
-        setPendingMembers(applicants);
-        setPendingCount(applicants.length);
-      }
-    }
     loadCommissionerData();
-  }, [isOpen, user]);
+
+    const handleUpdate = () => loadCommissionerData();
+    window.addEventListener('focus', handleUpdate);
+    window.addEventListener('pending-memberships-changed', handleUpdate);
+
+    return () => {
+      window.removeEventListener('focus', handleUpdate);
+      window.removeEventListener('pending-memberships-changed', handleUpdate);
+    };
+  }, [isOpen, user, loadCommissionerData]);
 
   if (!isOpen) return null;
 
