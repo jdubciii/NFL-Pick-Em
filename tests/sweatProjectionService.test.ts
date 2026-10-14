@@ -220,7 +220,7 @@ describe('Phase 38 Sunday Sweat Projection Engine (Ruling P37-P38-2026-10-12-01)
     expect(jack.swingGame?.gameId).toBe('g2');
     expect(jack.swingGame?.userPick).toBe('PHI');
     expect(jack.swingGame?.leverageScore).toBe(8.0);
-    expect(jack.swingGame?.impactDescription).toMatch(/Podium/i);
+    expect(jack.swingGame?.impactDescription).toMatch(/Podium|Safe Haven/i);
   });
 
   // --------------------------------------------------------------------------

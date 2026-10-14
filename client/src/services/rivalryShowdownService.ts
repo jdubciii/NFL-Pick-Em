@@ -288,3 +288,5 @@ export function calculateRivalryShowdown(
     rivalPickCount,
   };
 }
+
+export * from './dependableInfoService';

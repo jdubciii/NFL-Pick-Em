@@ -1,4 +1,4 @@
-import { LiveGame } from './liveScoreService';
+﻿import { LiveGame } from './liveScoreService';
 
 export interface UserStandingRef {
   id: string;
@@ -239,8 +239,8 @@ export function calculateProvisionalStandings(
 
     // 1. Charter Penalty Tier Alignment:
     // Rank 1: "SAFE HAVEN" (0 shots)
-    // Ranks 2–6: "DANGER ZONE" (1 shot exposure)
-    // Ranks 7–9: "THE DROP" (2 shots exposure)
+    // Ranks 2â€“6: "DANGER ZONE" (1 shot exposure)
+    // Ranks 7â€“9: "THE DROP" (2 shots exposure)
     // Rank 10: "THE PIT" (2.5 shots / Dead Place Monarch provisional)
     let tier: ProvisionalStandingEntry['tier'] = 'DANGER_ZONE';
     if (rank === 1) {
@@ -324,7 +324,7 @@ export function calculateProvisionalStandings(
       if (tier === 'PIT' || tier === 'THE_DROP') {
         impactDesc = `Crucial swing pick: Winning with ${bestCandidate.pick.selectedTeam} lifts user out of The Pit`;
       } else if (tier === 'SAFE_HAVEN') {
-        impactDesc = `Defensive lock: ${bestCandidate.pick.selectedTeam} secures top podium standing`;
+        impactDesc = `Defensive lock: ${bestCandidate.pick.selectedTeam} claims sole #1 (Safe Haven) lead`;
       }
 
       swingGame = {
@@ -363,3 +363,6 @@ export function calculateProvisionalStandings(
 
   return result;
 }
+
+export * from './dependableInfoService';
+

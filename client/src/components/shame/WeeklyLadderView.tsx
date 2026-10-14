@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import {
   SettledLadderParticipant,
   buildSettledLadderTiers
@@ -65,7 +65,7 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
                 userId: m.user_id,
                 userName: displayName,
                 name: displayName,
-                shots: '0.00s',
+                shots: '0 shots',
                 penaltyShots: 0,
                 status: 'CLEARED (SAFE)',
                 fsmDisplayStatus: 'Safe Haven',
@@ -140,7 +140,7 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
           <span className="text-[10px] font-bold text-emerald-400 uppercase">
             SAFE HAVEN // 1ST PLACE (0 SHOTS)
           </span>
-          <span className="text-[9px] text-emerald-500 font-bold">0.00s</span>
+          <span className="text-[9px] text-emerald-500 font-bold">0 shots</span>
         </div>
         {safeMembers.map((m) => (
           <div
@@ -156,11 +156,11 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
         ))}
       </div>
 
-      {/* 2. Danger Zone Tier 1 (2nd–6th Place: 1.00 Shot) */}
+      {/* 2. Danger Zone Tier 1 (2ndâ€“6th Place: 1.00 Shot) */}
       <div className="space-y-1.5">
         <div className="flex justify-between items-center px-1">
           <span className="text-[10px] font-bold text-amber-400 uppercase">
-            DANGER ZONE // 2ND–6TH PLACE (1.00 SHOT)
+            DANGER ZONE // 2NDâ€“6TH PLACE (1.00 SHOT)
           </span>
           <span className="text-[9px] text-amber-400 font-bold">1.00s</span>
         </div>
@@ -186,15 +186,15 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
       {/* 6TH / 7TH DANGER FAULT LINE */}
       <div className="my-1 border-t-2 border-dashed border-rose-500/50 relative text-center">
         <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-slate-950 px-2 text-[9px] font-black text-rose-400 uppercase tracking-widest">
-          ▼ THE DROP (1.00s ➔ 2.00s STEP) ▼
+          â–¼ THE DROP (1.00s âž” 2.00s STEP) â–¼
         </span>
       </div>
 
-      {/* 3. Danger Zone Tier 2 (7th–9th Place: 2.00 Shots) */}
+      {/* 3. Danger Zone Tier 2 (7thâ€“9th Place: 2.00 Shots) */}
       <div className="space-y-1.5">
         <div className="flex justify-between items-center px-1">
           <span className="text-[10px] font-bold text-rose-400 uppercase">
-            HIGH DANGER // 7TH–9TH PLACE (2.00 SHOTS)
+            HIGH DANGER // 7THâ€“9TH PLACE (2.00 SHOTS)
           </span>
           <span className="text-[9px] text-rose-400 font-bold">2.00s</span>
         </div>
@@ -227,7 +227,7 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
           <div className="p-4 rounded-2xl bg-rose-950/40 border-2 border-rose-500/80 shadow-glow-rose space-y-3">
             <div className="flex items-center justify-between border-b border-rose-500/40 pb-2">
               <div className="flex items-center gap-2">
-                <span className="text-lg">💀</span>
+                <span className="text-lg">ðŸ’€</span>
                 <div>
                   <p className="text-sm font-black text-white">{pitMember.userName || 'No Unsettled Penalties'}</p>
                   <p className="text-[9px] text-rose-300 font-bold uppercase">
@@ -263,3 +263,4 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({ ladder }) =>
     </div>
   );
 };
+
