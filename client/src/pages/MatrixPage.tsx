@@ -23,6 +23,14 @@ import { evaluatePickVisibility } from '../services/openSlatePolicyService';
 import { getCurrentNFLWeek } from '../services/nflCalendarService';
 import { fetchLiveNFLScores, LiveGame } from '../services/liveScoreService';
 import { classifyPickDistributionBadge } from '../services/dependableInfoService';
+import {
+  applyIdempotentReactionMutation,
+  summarizeReactionsForTarget,
+  validateCanonicalReactionTarget,
+  ReactionEntry,
+  ReactionCode,
+  CanonicalReactionTarget,
+} from '../services/poolSocialService';
 
 export const MatrixPage: React.FC = () => {
   const { user } = useAuth();
@@ -35,6 +43,28 @@ export const MatrixPage: React.FC = () => {
   const [loadingGames, setLoadingGames] = useState<boolean>(true);
   const [poolMembers, setPoolMembers] = useState<{ userId: string; userName: string; isAutopilot: boolean }[]>([]);
   const [poolPicks, setPoolPicks] = useState<UserSubmittedPick[]>([]);
+  const [gameReactions, setGameReactions] = useState<ReactionEntry[]>([]);
+
+  const handleToggleGameReaction = (gameId: string, code: ReactionCode) => {
+    const target: CanonicalReactionTarget = {
+      poolId: activePoolId,
+      season: 2026,
+      week: selectedWeek,
+      targetKind: 'CANONICAL_GAME',
+      entityId: gameId,
+    };
+    const result = applyIdempotentReactionMutation({
+      existingEntries: gameReactions,
+      target,
+      authenticatedActorId: user?.id || 'u1',
+      authenticatedActorName: user?.email ? user.email.split('@')[0] : 'jack.w.cone',
+      authorizedPoolId: activePoolId,
+      reactionCode: code,
+    });
+    if (result.ok) {
+      setGameReactions(result.entries);
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -569,6 +599,58 @@ export const MatrixPage: React.FC = () => {
                           onClose={() => setExpandedTugGameId(null)}
                         />
                       )}
+
+                      {/* Canonical Reaction Strip */}
+                      {(() => {
+                        const target: CanonicalReactionTarget = {
+                          poolId: activePoolId,
+                          season: 2026,
+                          week: selectedWeek,
+                          targetKind: 'CANONICAL_GAME',
+                          entityId: game.gameId,
+                        };
+                        const val = validateCanonicalReactionTarget(target);
+                        const chips = val.canonicalKey
+                          ? summarizeReactionsForTarget(gameReactions, val.canonicalKey, user?.id || 'u1')
+                          : [];
+                        return (
+                          <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex flex-col gap-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                                REACTIONS
+                              </span>
+                              <span className="text-[8px] px-1.5 py-0.5 rounded bg-slate-950 text-cyan-400 border border-slate-800 font-mono">
+                                SESSION PREVIEW · SHARED POOL CHAT &amp; REACTIONS SCHEMA QUEUED FOR P41-S2
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1">
+                              {chips.map((chip) => (
+                                <button
+                                  key={chip.code}
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleToggleGameReaction(game.gameId, chip.code);
+                                  }}
+                                  className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold transition border flex items-center gap-1 ${
+                                    chip.viewerSelected
+                                      ? 'bg-cyan-950 border-cyan-400 text-cyan-300 shadow-sm'
+                                      : 'bg-slate-950/80 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
+                                  }`}
+                                >
+                                  <span>{chip.emoji}</span>
+                                  <span>{chip.label}</span>
+                                  {chip.count > 0 && (
+                                    <span className="ml-0.5 px-1 py-0.1 rounded-full bg-slate-800 text-[9px] text-white">
+                                      {chip.count}
+                                    </span>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}

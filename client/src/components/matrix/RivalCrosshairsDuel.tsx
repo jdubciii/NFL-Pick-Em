@@ -51,7 +51,10 @@ export const RivalCrosshairsDuel: React.FC<RivalCrosshairsDuelProps> = ({ duel, 
 
         return (
           <div className="space-y-1.5 p-3 rounded-xl bg-slate-900 border border-slate-800">
-            <div className="flex justify-between text-[11px] font-bold">
+            <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+              POINT CONSEQUENCE BREAKDOWN
+            </div>
+            <div className="flex flex-wrap gap-y-1 gap-x-3 justify-between items-center text-[11px] font-bold">
               <span className="text-amber-400">
                 Split Picks: {differingCount} game{differingCount === 1 ? '' : 's'} ({differingCount} pt max swing)
               </span>

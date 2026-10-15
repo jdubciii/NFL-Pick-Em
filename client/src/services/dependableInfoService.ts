@@ -585,6 +585,24 @@ export interface RootingQueueItem {
   consequenceNote?: string;
 }
 
+export type LateGameScenarioMode =
+  | 'SIMULATION_EXCLUDED'
+  | 'MID_SLATE_GUIDANCE'
+  | 'EXACT_CLINCH'
+  | 'HOLDING_SAFE_GROUND'
+  | 'CLINCH_AGAINST'
+  | 'IMPOSSIBLE_ESCAPE'
+  | 'TIE_ONLY_NO_TIEBREAKER';
+
+export interface DisagreementGameInput {
+  gameId: string;
+  awayTeam: string;
+  homeTeam: string;
+  viewerPick: string;
+  currentlyCreditedToViewer?: boolean;
+  currentlyCreditedToRival?: boolean;
+}
+
 export interface LateGameEscapeScenario {
   remainingDisagreements: number;
   viewerPointDeficit: number;
@@ -592,7 +610,7 @@ export interface LateGameEscapeScenario {
   requiresTiebreaker: boolean;
   headline: string;
   requirementSummary: string;
-  scenarioMode?: 'SIMULATION_EXCLUDED' | 'MID_SLATE_GUIDANCE' | 'EXACT_CLINCH' | 'HOLDING_SAFE_GROUND' | 'CLINCH_AGAINST';
+  scenarioMode?: LateGameScenarioMode;
   canClaimExactClinch?: boolean;
 }
 
@@ -684,18 +702,29 @@ export function buildPersonalRootingQueue(
 export function evaluateLateGameEscape(params: {
   viewerPoints: number;
   targetSafePoints: number;
-  remainingDisagreementGames: Array<{ gameId: string; awayTeam: string; homeTeam: string; viewerPick: string }>;
+  remainingDisagreementGames: DisagreementGameInput[];
   holdsTiebreakerEdge?: boolean | null;
   activeMemberCount?: number;
   isSimulation?: boolean;
+  currentCreditedDiffFromRemaining?: number;
 }): LateGameEscapeScenario {
-  const deficit = Math.max(0, params.targetSafePoints - params.viewerPoints);
   const remCount = params.remainingDisagreementGames.length;
+
+  // Live contribution replacement arithmetic:
+  const creditedViewer = params.remainingDisagreementGames.filter((g) => g.currentlyCreditedToViewer).length;
+  const creditedRival = params.remainingDisagreementGames.filter((g) => g.currentlyCreditedToRival).length;
+  const netCredited =
+    typeof params.currentCreditedDiffFromRemaining === 'number'
+      ? params.currentCreditedDiffFromRemaining
+      : creditedViewer - creditedRival;
+
+  const rawDeficit = params.targetSafePoints - params.viewerPoints;
+  const baseDeficit = Math.max(0, rawDeficit + netCredited);
 
   if (params.isSimulation) {
     return {
       remainingDisagreements: remCount,
-      viewerPointDeficit: deficit,
+      viewerPointDeficit: baseDeficit,
       canMathematicallyEscape: false,
       requiresTiebreaker: false,
       scenarioMode: 'SIMULATION_EXCLUDED',
@@ -708,8 +737,8 @@ export function evaluateLateGameEscape(params: {
   if (remCount > 2) {
     return {
       remainingDisagreements: remCount,
-      viewerPointDeficit: deficit,
-      canMathematicallyEscape: deficit <= remCount,
+      viewerPointDeficit: baseDeficit,
+      canMathematicallyEscape: baseDeficit <= remCount,
       requiresTiebreaker: false,
       scenarioMode: 'MID_SLATE_GUIDANCE',
       canClaimExactClinch: false,
@@ -718,7 +747,35 @@ export function evaluateLateGameEscape(params: {
     };
   }
 
-  if (deficit === 0) {
+  // 1. Impossible Escape (baseDeficit > remCount)
+  if (baseDeficit > remCount) {
+    return {
+      remainingDisagreements: remCount,
+      viewerPointDeficit: baseDeficit,
+      canMathematicallyEscape: false,
+      canClaimExactClinch: false,
+      requiresTiebreaker: false,
+      scenarioMode: 'IMPOSSIBLE_ESCAPE',
+      headline: 'Mathematical Clinch Against',
+      requirementSummary: `Trailing by ${baseDeficit} pts with only ${remCount} split game${remCount === 1 ? '' : 's'} left — catching rival is mathematically impossible.`,
+    };
+  }
+
+  // 2. Tie-Only Ceiling (baseDeficit === remCount and holdsTiebreakerEdge === false)
+  if (baseDeficit === remCount && remCount > 0 && params.holdsTiebreakerEdge === false) {
+    return {
+      remainingDisagreements: remCount,
+      viewerPointDeficit: baseDeficit,
+      canMathematicallyEscape: false,
+      canClaimExactClinch: false,
+      requiresTiebreaker: true,
+      scenarioMode: 'TIE_ONLY_NO_TIEBREAKER',
+      headline: 'Point Tie Ceiling Only (Tiebreaker Lost)',
+      requirementSummary: `Winning remaining split pick${remCount === 1 ? '' : 's'} forces a point tie, but rival holds the tiebreaker edge.`,
+    };
+  }
+
+  if (baseDeficit === 0) {
     return {
       remainingDisagreements: remCount,
       viewerPointDeficit: 0,
@@ -734,40 +791,38 @@ export function evaluateLateGameEscape(params: {
     };
   }
 
-  if (deficit > remCount) {
-    return {
-      remainingDisagreements: remCount,
-      viewerPointDeficit: deficit,
-      canMathematicallyEscape: false,
-      requiresTiebreaker: false,
-      scenarioMode: 'CLINCH_AGAINST',
-      canClaimExactClinch: true,
-      headline: 'Mathematical Clinch Against',
-      requirementSummary: `Trailing by ${deficit} pt${deficit === 1 ? '' : 's'} with only ${remCount} split game${remCount === 1 ? '' : 's'} remaining.`,
-    };
-  }
-
-  const neededTeams = params.remainingDisagreementGames.slice(0, deficit).map((g) => g.viewerPick.toUpperCase());
-  const requiresTiebreak = deficit === remCount && params.holdsTiebreakerEdge !== true;
+  // 3. Verified Escape / Clinch Path (baseDeficit < remCount or (baseDeficit === remCount and holdsTiebreakerEdge !== false))
+  const neededTeams = params.remainingDisagreementGames.slice(0, baseDeficit).map((g) => g.viewerPick.toUpperCase());
+  const requiresTiebreak = baseDeficit === remCount && params.holdsTiebreakerEdge !== true;
+  const canClaimExactClinch = params.holdsTiebreakerEdge === true || baseDeficit < remCount;
 
   const isDuelScoped = Boolean(params.activeMemberCount && params.activeMemberCount > 2);
   const headline = isDuelScoped
     ? 'Duel Escape Path Active'
     : remCount <= 2
     ? 'Late-Slate Escape Path Active'
-    : `${deficit}-Game Comeback Path Open`;
+    : `${baseDeficit}-Game Comeback Path Open`;
+
+  let requirementSummary: string;
+  if (baseDeficit === remCount) {
+    if (params.holdsTiebreakerEdge === true) {
+      requirementSummary = `Need ${neededTeams.join(' + ')} win${neededTeams.length > 1 ? 's' : ''} to force a tie (Tiebreaker Edge Secured).`;
+    } else {
+      requirementSummary = `Need ${neededTeams.join(' + ')} win${neededTeams.length > 1 ? 's' : ''} to force a tie, plus Monday Night tiebreaker differential.`;
+    }
+  } else {
+    requirementSummary = `Need ${neededTeams.join(' + ')} win${neededTeams.length > 1 ? 's' : ''} to erase the ${baseDeficit}-pt gap.`;
+  }
 
   return {
     remainingDisagreements: remCount,
-    viewerPointDeficit: deficit,
+    viewerPointDeficit: baseDeficit,
     canMathematicallyEscape: true,
     requiresTiebreaker: requiresTiebreak,
     scenarioMode: 'EXACT_CLINCH',
-    canClaimExactClinch: true,
+    canClaimExactClinch,
     headline,
-    requirementSummary: requiresTiebreak
-      ? `Need ${neededTeams.join(' + ')} win${neededTeams.length > 1 ? 's' : ''} to force a tie, plus Monday Night tiebreaker differential.`
-      : `Need ${neededTeams.join(' + ')} win${neededTeams.length > 1 ? 's' : ''} to erase the ${deficit}-pt gap.`,
+    requirementSummary,
   };
 }
 
@@ -865,4 +920,6 @@ export function classifyPickDistributionBadge(
 export * from './sweatReceiptService';
 export * from './seasonStoryService';
 export * from './weeklyRecapService';
+export * from './deadlineAlertPlanner';
+export * from './poolSocialService';
 

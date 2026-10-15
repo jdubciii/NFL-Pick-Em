@@ -583,3 +583,11 @@
 - [x] **Task 40.1.5**: Create `WeeklyRecapCardView.tsx` with high-DPI HTML5 canvas PNG exporter and Android Web Share / download fallback.
 - [x] **Task 40.1.6**: Wire Sweat Receipts into Radar & RivalryShowdown, Season Story into WallOfShame & Profile, and sync client services under Decision #61.
 - [x] **Task 40.1.7**: Author comprehensive unit test suite `tests/phase40_s1_league_memory.test.ts`, bump gradle to versionCode 67 (40.1.0), compile signed APK `pickem-v40-s1.apk`.
+
+### Phase 41 Sprint 1 (P41-S1 — Pass 5: Watch Party Big Board, Opt-In Deadline Alerts, Unified Pool Chat/Reaction Foundation) [✅ COMPLETED]
+- [x] **Task 41.1.1**: Implement five mandatory Phase 40 follow-up fixes (mobile text collisions in `RivalCrosshairsDuel` & `WeeklyRecapCardView`, handle sanitization in `weeklyRecapService`, burned-in demo watermark PNG & in-app PNG inspector in `WeeklyRecapCardView`, and live-contribution replacement escape arithmetic in `dependableInfoService`).
+- [x] **Task 41.1.2**: Create `src/services/deadlineAlertPlanner.ts` implementing deterministic opt-in kickoff window reminders (~60m lead time, window grouping, deduplication, simulation exclusion, and neutral copy).
+- [x] **Task 41.1.3**: Create `src/services/poolSocialService.ts` defining canonical reaction targets (`CANONICAL_GAME`, `SETTLED_RECAP`), rejecting device-local session receipts, and providing idempotent toggle/replacement.
+- [x] **Task 41.1.4**: Create `WatchPartyBigBoardModal.tsx` and wire into `RadarPage.tsx` with Live vs. 10-Member Demo fixture toggle, 3 high-contrast arena panels, and 10s auto-rotate.
+- [x] **Task 41.1.5**: Wire Opt-In Deadline Alerts UI into `ProfilePage.tsx`, attach 4-reaction bars onto `MatrixPage.tsx` & `WeeklyRecapCardView.tsx`, and author additive schema proposal in `docs/proposals/P41_S2_UNIFIED_POOL_CHAT_AND_REACTIONS_PROPOSAL.md`.
+- [x] **Task 41.1.6**: Author comprehensive unit test suite `tests/phase41_s1_bigboard_alerts_social.test.ts`, bump gradle to versionCode 68 (41.1.0), compile signed APK `pickem-v41-s1.apk`.

@@ -13,6 +13,7 @@ import {
   TiebreakerData
 } from '../services/sweatProjectionService';
 import { RivalryShowdown } from '../components/radar/RivalryShowdown';
+import { WatchPartyBigBoardModal } from '../components/radar/WatchPartyBigBoardModal';
 import { AppHeader } from '../components/common/AppHeader';
 import {
   buildPersonalRootingQueue,
@@ -66,6 +67,7 @@ export const RadarPage: React.FC = () => {
 
   // Session-bounded sweat receipts (live memory)
   const [receiptSession, setReceiptSession] = useState<SweatReceiptSessionState>(() => createEmptyReceiptSession());
+  const [isBigBoardOpen, setIsBigBoardOpen] = useState<boolean>(false);
 
   // Pool & slate data (bound strictly to live database pool state)
   const [members, setMembers] = useState<UserStandingRef[]>([]);
@@ -520,6 +522,23 @@ export const RadarPage: React.FC = () => {
           )}
         </header>
 
+        {/* Watch Party Big Board Action Button */}
+        <div className="mb-4">
+          <button
+            type="button"
+            onClick={() => setIsBigBoardOpen(true)}
+            className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-slate-900 via-slate-900 to-cyan-950/70 border border-cyan-500/50 hover:border-cyan-400 active:scale-95 text-cyan-300 font-mono font-black text-xs uppercase tracking-wider flex items-center justify-between transition shadow-lg shadow-cyan-950/40"
+          >
+            <span className="flex items-center gap-2">
+              <span className="text-base">📺</span>
+              <span>OPEN WATCH PARTY BIG BOARD</span>
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-950 text-cyan-200 border border-cyan-500/40">
+              ARENA VIEW →
+            </span>
+          </button>
+        </div>
+
       {/* 3. Header Toggle: [ LEAGUE PROJECTION ] | [ RIVALRY DUEL ] */}
       <div className="grid grid-cols-2 p-1 bg-slate-900/90 border border-slate-800 rounded-xl mb-4 font-mono text-xs">
         <button
@@ -887,6 +906,30 @@ export const RadarPage: React.FC = () => {
         </>
       )}
       </div>
+
+      {/* Watch Party Big Board Modal */}
+      <WatchPartyBigBoardModal
+        isOpen={isBigBoardOpen}
+        onClose={() => setIsBigBoardOpen(false)}
+        activeWeek={activeWeek}
+        poolTitle="MAIN LEAGUE"
+        phaseLabel={
+          liveScores.some((g) => ['FINAL', 'F', 'COMPLETED'].includes((g.status || '').toUpperCase()))
+            ? 'SETTLED · PROVISIONAL'
+            : liveScores.some((g) => ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()))
+            ? 'GAMES LIVE · PROVISIONAL'
+            : 'PRE-KICKOFF · PROVISIONAL'
+        }
+        isSimulation={isSimulationActive}
+        members={members}
+        standings={provisionalResult}
+        games={games}
+        liveScores={liveScores}
+        picks={effectivePicks}
+        personalRootingQueue={personalRootingQueue}
+        currentUser={currentUserRef}
+        rivalUser={activeRival}
+      />
     </div>
   );
 };

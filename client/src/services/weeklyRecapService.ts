@@ -21,7 +21,7 @@ export interface SettledParticipantSummary {
 
 export interface DeterministicRecapCardModel {
   canExportOfficialVerdict: boolean;
-  headerStamp: 'THE WEEKLY VERDICT' | 'RIVALRY RESULT' | 'AWAITING OFFICIAL SETTLEMENT';
+  headerStamp: 'THE WEEKLY VERDICT' | 'RIVALRY RESULT' | 'AWAITING OFFICIAL SETTLEMENT' | string;
   poolTitle: string;
   weekLabel: string;
   participantCountLabel: string;
@@ -31,10 +31,16 @@ export interface DeterministicRecapCardModel {
   statRows: Array<{ label: string; value: string }>;
   punishmentCallout: string;
   footerWatermark: string;
+  isDemoFixture?: boolean;
+  demoWatermarkBanner?: string;
 }
 
-function sanitizeDisplayHandle(raw: string): string {
-  const clean = (raw || 'Member').trim();
+export function sanitizeDisplayHandle(raw: string, fallbackHandle?: string): string {
+  let clean = (raw || '').trim();
+  if (!clean || clean.toLowerCase() === 'you') {
+    clean = (fallbackHandle || 'Member').trim();
+    if (clean.toLowerCase() === 'you') clean = 'Member';
+  }
   // Strip @domain if an email address was passed as display name
   const noEmail = clean.includes('@') ? clean.split('@')[0] : clean;
   // Never allow invite code MAIN26 to appear in exported share cards
@@ -51,8 +57,11 @@ export function buildDeterministicWeeklyRecap(params: {
   settledAtLabel?: string | null;
   participants: SettledParticipantSummary[];
   viewerUserId?: string;
+  viewerDisplayNameFallback?: string;
   rivalUserId?: string;
+  rivalDisplayNameFallback?: string;
   decisiveDisagreementLabel?: string | null;
+  isDemoFixture?: boolean;
 }): DeterministicRecapCardModel {
   const poolTitle = sanitizeDisplayHandle(params.poolName || 'MAIN LEAGUE').toUpperCase();
   const weekLabel = `SEASON ${params.season ?? 2026} · WEEK ${params.week}`;
@@ -60,6 +69,8 @@ export function buildDeterministicWeeklyRecap(params: {
   const participantCountLabel = `${count} Active Member${count === 1 ? '' : 's'}`;
   const revLabel = params.settlementRevision ? `Revision ${params.settlementRevision}` : 'Revision 1';
   const settledTime = params.settledAtLabel ? ` · ${params.settledAtLabel}` : '';
+  const isDemo = Boolean(params.isDemoFixture);
+  const demoBanner = isDemo ? 'DEMO FIXTURE — NOT A LEAGUE RECORD' : undefined;
 
   if (!params.isOfficiallySettled || count === 0) {
     return {
@@ -77,7 +88,11 @@ export function buildDeterministicWeeklyRecap(params: {
         { label: 'Active Field', value: participantCountLabel },
       ],
       punishmentCallout: 'Official charter obligations lock upon weekly settlement.',
-      footerWatermark: `${poolTitle} · ${weekLabel} · UNSETTLED PREVIEW`,
+      footerWatermark: isDemo
+        ? `${poolTitle} · ${weekLabel} · DEMO FIXTURE — NOT A LEAGUE RECORD`
+        : `${poolTitle} · ${weekLabel} · UNSETTLED PREVIEW`,
+      isDemoFixture: isDemo,
+      demoWatermarkBanner: demoBanner,
     };
   }
 
@@ -93,8 +108,10 @@ export function buildDeterministicWeeklyRecap(params: {
       sorted.find((p) => p.userId !== viewer.userId) ||
       viewer;
 
-    const vName = sanitizeDisplayHandle(viewer.displayName);
-    const rName = sanitizeDisplayHandle(rival.displayName);
+    const vFallback = params.viewerDisplayNameFallback || (viewer.userId === params.viewerUserId ? 'jack.w.cone' : 'Member #1');
+    const rFallback = params.rivalDisplayNameFallback || 'Member #2';
+    const vName = sanitizeDisplayHandle(viewer.displayName, vFallback);
+    const rName = sanitizeDisplayHandle(rival.displayName, rFallback);
     const diff = viewer.points - rival.points;
 
     let primaryHeadline = `${vName} vs. ${rName} — Deadlocked (${viewer.points}–${rival.points})`;
@@ -113,7 +130,7 @@ export function buildDeterministicWeeklyRecap(params: {
 
     return {
       canExportOfficialVerdict: true,
-      headerStamp: 'RIVALRY RESULT',
+      headerStamp: isDemo ? 'DEMO FIXTURE // RIVALRY RESULT' : 'RIVALRY RESULT',
       poolTitle,
       weekLabel,
       participantCountLabel,
@@ -126,12 +143,16 @@ export function buildDeterministicWeeklyRecap(params: {
         { label: 'Net Duel Margin', value: diff === 0 ? 'Tied on points' : `${diff > 0 ? '+' : ''}${diff} pt${Math.abs(diff) === 1 ? '' : 's'}` },
       ],
       punishmentCallout: `${vName}: ${viewer.tierName} (${formatShotUnit(viewer.shotsIncurred)}) | ${rName}: ${rival.tierName} (${formatShotUnit(rival.shotsIncurred)})`,
-      footerWatermark: `${poolTitle} · ${weekLabel} · ${settlementBasisLabel.toUpperCase()}`,
+      footerWatermark: isDemo
+        ? `${poolTitle} · ${weekLabel} · DEMO FIXTURE — NOT A LEAGUE RECORD`
+        : `${poolTitle} · ${weekLabel} · ${settlementBasisLabel.toUpperCase()}`,
+      isDemoFixture: isDemo,
+      demoWatermarkBanner: demoBanner,
     };
   }
 
   // LEAGUE_VERDICT format
-  const winnerNames = topRankers.map((p) => sanitizeDisplayHandle(p.displayName));
+  const winnerNames = topRankers.map((p, idx) => sanitizeDisplayHandle(p.displayName, `Member #${idx + 1}`));
   const isCoWinners = topRankers.length > 1;
   const tiebreakPending = isCoWinners && topRankers.some((p) => p.tiebreakResolved === false);
 
@@ -143,8 +164,8 @@ export function buildDeterministicWeeklyRecap(params: {
 
   const secondaryHeadline = `Official Week ${params.week} Charter Verdict · ${participantCountLabel}`;
 
-  const statRows = sorted.slice(0, 4).map((p) => ({
-    label: `#${p.rank} ${sanitizeDisplayHandle(p.displayName)}`,
+  const statRows = sorted.slice(0, 4).map((p, idx) => ({
+    label: `#${p.rank} ${sanitizeDisplayHandle(p.displayName, `Member #${idx + 1}`)}`,
     value: `${p.points}/${p.totalGames} pts · ${p.tierName} (${formatShotUnit(p.shotsIncurred)})`,
   }));
 
@@ -152,7 +173,7 @@ export function buildDeterministicWeeklyRecap(params: {
 
   return {
     canExportOfficialVerdict: true,
-    headerStamp: 'THE WEEKLY VERDICT',
+    headerStamp: isDemo ? 'DEMO FIXTURE // THE WEEKLY VERDICT' : 'THE WEEKLY VERDICT',
     poolTitle,
     weekLabel,
     participantCountLabel,
@@ -161,6 +182,10 @@ export function buildDeterministicWeeklyRecap(params: {
     secondaryHeadline,
     statRows,
     punishmentCallout: `Total Week ${params.week} Pool Penalties Assigned: ${formatShotUnit(totalShots)}`,
-    footerWatermark: `${poolTitle} · ${weekLabel} · ${settlementBasisLabel.toUpperCase()}`,
+    footerWatermark: isDemo
+      ? `${poolTitle} · ${weekLabel} · DEMO FIXTURE — NOT A LEAGUE RECORD`
+      : `${poolTitle} · ${weekLabel} · ${settlementBasisLabel.toUpperCase()}`,
+    isDemoFixture: isDemo,
+    demoWatermarkBanner: demoBanner,
   };
 }

@@ -5,6 +5,11 @@ import { AccountSettingsModal } from '../components/profile/AccountSettingsModal
 import { AppHeader } from '../components/common/AppHeader';
 import { Settings } from 'lucide-react';
 import { deriveSeasonStoryViewModel } from '../services/seasonStoryService';
+import {
+  planDeadlineReminders,
+  DeadlineGameWindowInput,
+  DeadlinePlannerResult,
+} from '../services/deadlineAlertPlanner';
 
 interface PendingApplicant {
   userId: string;
@@ -20,7 +25,124 @@ export const ProfilePage: React.FC = () => {
   const [adjudicatingId, setAdjudicatingId] = useState<string | null>(null);
   const [statusFeedback, setStatusFeedback] = useState<string | null>(null);
 
+  // Opt-in Deadline Reminder State
+  const [alertsOptedIn, setAlertsOptedIn] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('pickem_deadline_alerts_opted_in');
+      return stored !== null ? stored === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+  const [permissionState, setPermissionState] = useState<'GRANTED' | 'DENIED' | 'PROMPT_REQUIRED'>('PROMPT_REQUIRED');
+  const [testNotificationBanner, setTestNotificationBanner] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'granted') {
+        setPermissionState('GRANTED');
+      } else if (Notification.permission === 'denied') {
+        setPermissionState('DENIED');
+      } else {
+        setPermissionState('PROMPT_REQUIRED');
+      }
+    }
+  }, []);
+
+  const handleToggleOptIn = (val: boolean) => {
+    setAlertsOptedIn(val);
+    try {
+      localStorage.setItem('pickem_deadline_alerts_opted_in', String(val));
+    } catch {}
+  };
+
+  const handleRequestPermission = async () => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      try {
+        const res = await Notification.requestPermission();
+        if (res === 'granted') {
+          setPermissionState('GRANTED');
+          handleToggleOptIn(true);
+        } else if (res === 'denied') {
+          setPermissionState('DENIED');
+        } else {
+          setPermissionState('PROMPT_REQUIRED');
+        }
+      } catch {
+        // Fallback
+      }
+    } else {
+      setPermissionState('GRANTED');
+      handleToggleOptIn(true);
+    }
+  };
+
+  const handleSendTestReminder = () => {
+    const title = '[TEST NOTIFICATION — CONTROLLED TIMING CHECK]';
+    const body = 'Week 6 Kickoff Window Approaching — Tap to open Week 6 Picks (Read-Only Route Check)';
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(title, { body, icon: '/favicon.ico' });
+      } catch {}
+    }
+    setTestNotificationBanner(`${title}: ${body}`);
+  };
+
+  const handleCancelAllAlerts = () => {
+    handleToggleOptIn(false);
+    setTestNotificationBanner(null);
+  };
+
+  const week6WindowGames: DeadlineGameWindowInput[] = useMemo(() => [
+    {
+      gameId: 'w6-thu',
+      awayTeam: 'DEN',
+      homeTeam: 'NO',
+      kickoffIso: '2026-10-16T00:15:00.000Z', // Thu 5:15 PM MST
+      status: 'SCHEDULED',
+      isPicked: false,
+    },
+    {
+      gameId: 'w6-sun-lon',
+      awayTeam: 'NE',
+      homeTeam: 'JAX',
+      kickoffIso: '2026-10-18T13:30:00.000Z', // Sun 6:30 AM MST
+      status: 'SCHEDULED',
+      isPicked: false,
+    },
+    {
+      gameId: 'w6-sun-early-1',
+      awayTeam: 'SEA',
+      homeTeam: 'ATL',
+      kickoffIso: '2026-10-18T17:00:00.000Z', // Sun 10:00 AM MST
+      status: 'SCHEDULED',
+      isPicked: false,
+    },
+    {
+      gameId: 'w6-sun-early-2',
+      awayTeam: 'MIA',
+      homeTeam: 'IND',
+      kickoffIso: '2026-10-18T17:00:00.000Z', // Sun 10:00 AM MST
+      status: 'SCHEDULED',
+      isPicked: false,
+    },
+  ], []);
+
   const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+
+  const deadlinePlan: DeadlinePlannerResult = useMemo(() => {
+    return planDeadlineReminders({
+      userId: user?.id || 'viewer',
+      poolId: activePoolId,
+      season: 2026,
+      week: 6,
+      optInEnabled: alertsOptedIn,
+      permissionState,
+      isSlateSubmitted: false,
+      games: week6WindowGames,
+      nowMs: Date.now(),
+    });
+  }, [user?.id, activePoolId, alertsOptedIn, permissionState, week6WindowGames]);
 
   const isCommissioner = Boolean(
     role === 'ADMIN' || 
@@ -363,6 +485,117 @@ export const ProfilePage: React.FC = () => {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Opt-In Kickoff Deadline Alerts Card */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 font-mono shadow-md space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+            <span className="text-xs font-black text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+              <span>🔔 OPT-IN KICKOFF DEADLINE ALERTS</span>
+            </span>
+            <span
+              className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border ${
+                permissionState === 'GRANTED'
+                  ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300'
+                  : permissionState === 'DENIED'
+                  ? 'bg-rose-950/80 border-rose-500/60 text-rose-300'
+                  : 'bg-amber-950/80 border-amber-500/60 text-amber-300'
+              }`}
+            >
+              {permissionState}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between py-1">
+            <div className="space-y-0.5">
+              <div className="text-xs font-bold text-white">Enable ~60m Pre-Kickoff Reminders</div>
+              <div className="text-[10px] text-slate-400">
+                Local alert before official kickoff locks
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleToggleOptIn(!alertsOptedIn)}
+              className={`w-12 h-6 rounded-full transition-colors relative flex items-center px-0.5 ${
+                alertsOptedIn && permissionState === 'GRANTED' ? 'bg-cyan-500' : 'bg-slate-800 border border-slate-700'
+              }`}
+            >
+              <span
+                className={`w-5 h-5 rounded-full bg-white transition-transform ${
+                  alertsOptedIn && permissionState === 'GRANTED' ? 'translate-x-6' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-xs">
+            <span className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
+              Planned Window Schedule
+            </span>
+            <div className="text-white font-bold">
+              {deadlinePlan.toSchedule.length > 0
+                ? `3 Kickoff Windows Planned: Thu 5:15 PM, Sun 6:30 AM, Sun 10:00 AM`
+                : deadlinePlan.statusSummary}
+            </div>
+            <div className="text-[10px] text-slate-500 mt-1">
+              {deadlinePlan.statusSummary}
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2 pt-1">
+            {permissionState !== 'GRANTED' && (
+              <button
+                type="button"
+                onClick={handleRequestPermission}
+                className="flex-1 py-2 px-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider transition shadow-md"
+              >
+                Request Notification Permission &amp; Enable
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={handleSendTestReminder}
+              className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 border border-slate-700 text-white font-bold text-xs uppercase tracking-wider transition"
+            >
+              Send Labelled Test Reminder Now
+            </button>
+
+            {alertsOptedIn && (
+              <button
+                type="button"
+                onClick={handleCancelAllAlerts}
+                className="py-2 px-3 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/80 text-rose-300 font-bold text-xs uppercase tracking-wider transition"
+              >
+                Cancel All Scheduled Alerts
+              </button>
+            )}
+          </div>
+
+          {/* In-App Notification Delivery Banner */}
+          {testNotificationBanner && (
+            <div className="p-3 rounded-xl bg-amber-950/60 border border-amber-500/60 text-amber-200 text-xs space-y-2 animate-fadeIn">
+              <div className="font-bold flex items-center gap-1.5 text-amber-300">
+                <span>🔔</span>
+                <span>{testNotificationBanner}</span>
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                <a
+                  href="/picks"
+                  className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[11px] uppercase tracking-wider transition inline-block"
+                >
+                  Tap to Verify Deep-Link to Picks
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setTestNotificationBanner(null)}
+                  className="px-2.5 py-1 rounded bg-slate-900 text-slate-400 hover:text-white text-[11px]"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

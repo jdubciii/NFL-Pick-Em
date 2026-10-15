@@ -297,7 +297,6 @@
 - **Season Story Timelines**: Settled historical progression engine distinguishing LOADING, UNAVAILABLE_ERROR, EMPTY_SETTLED_HISTORY, and SETTLED_HISTORY.
 - **Deterministic Weekly Recap Cards & Canvas PNG Exporter**: Shareable post-settlement summary cards (THE WEEKLY VERDICT / RIVALRY RESULT) with 1080x640 high-DPI HTML5 canvas PNG exporter and Android Web Share / download fallback.
 
-### Pass 5 — Phase 41 (P41): Social Expression, Native Alerts & Watch Party Big Board [BACKLOG]
-- **Contextual Moment Reactions**: Quick game/receipt reactions (Called it, Pain, Pit bound) governed by pick visibility locks.
-- **Opt-In Native Notifications**: Authoritative deadline reminders for unsubmitted slates, weekly settlement, and pending shot-reel obligations.
-- **Watch Party Big Board**: Landscape browser layout for Sunday living-room displays showing live standings, featured duel, and swing games.
+### Pass 5 — Phase 41 (P41): Social Expression, Native Alerts & Watch Party Big Board [ACTIVE]
+- [✅] **Phase 41 Sprint 1 (P41-S1)**: Delivered Watch Party Big Board modal, pure opt-in deadline reminder planner with ~60m lead time, canonical reaction targets (`CANONICAL_GAME`, `SETTLED_RECAP`), P40 follow-up fixes (mobile text collisions, handle sanitization, burned-in demo watermark PNG, and live-contribution replacement escape arithmetic), and authored additive P41-S2 schema proposal for Unified Pool Chat and Reactions (`pickem-v41-s1.apk`, versionCode 68 / 41.1.0).
+- [ ] **Phase 41 Sprint 2 (P41-S2)**: Execute additive Supabase DDL for `public.pool_messages` and `public.pool_reactions`, implement SMS-style full pool group chat & threaded conversations, and subscribe to real-time chat & reaction stream.
