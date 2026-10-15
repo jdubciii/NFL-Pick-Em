@@ -591,3 +591,11 @@
 - [x] **Task 41.1.4**: Create `WatchPartyBigBoardModal.tsx` and wire into `RadarPage.tsx` with Live vs. 10-Member Demo fixture toggle, 3 high-contrast arena panels, and 10s auto-rotate.
 - [x] **Task 41.1.5**: Wire Opt-In Deadline Alerts UI into `ProfilePage.tsx`, attach 4-reaction bars onto `MatrixPage.tsx` & `WeeklyRecapCardView.tsx`, and author additive schema proposal in `docs/proposals/P41_S2_UNIFIED_POOL_CHAT_AND_REACTIONS_PROPOSAL.md`.
 - [x] **Task 41.1.6**: Author comprehensive unit test suite `tests/phase41_s1_bigboard_alerts_social.test.ts`, bump gradle to versionCode 68 (41.1.0), compile signed APK `pickem-v41-s1.apk`.
+
+### Phase 41 Sprint 2 (P41-S2 — Pool Lounge, Contextual Threads, Explicit Reaction & Retry API, Hardened Schema Proposal & APK v69) [✅ COMPLETED]
+- [x] **Task 41.2.1**: Resolve 4 Arbiter screenshot-backed carry-forward findings (canonical kickoff unification for `SEA @ DEN` Thu 5:15 PM, solid 100% opaque Big Board with coherent 11-9 / +2 gap demo math and auto-rotate paused by default, and clarified accidental-edit guard banner replacing ambiguous `PROTECTED`).
+- [x] **Task 41.2.2**: Upgrade `src/services/poolSocialService.ts` to implement full pure domain & validation engine (contextual attachments, explicit `SET` / `REMOVE` operations, clientRequestId retry idempotency with 409 conflict on payload mutation, and deterministic cursor pagination).
+- [x] **Task 41.2.3**: Deliver full-height `PoolLoungeDrawer.tsx` with chronological stream, parent reply quotes, context card deep-links, persistent draft in localStorage, unread guard pill, network failure simulation toggle, and recoverable retry states.
+- [x] **Task 41.2.4**: Wire shell `[💬 Lounge]` button into `AppHeader.tsx` and context-card entry points (`[💬 Talk about this game]` in `MatrixPage.tsx` and `[💬 Discuss Recap in Lounge]` in `WeeklyRecapCardView.tsx`).
+- [x] **Task 41.2.5**: Complete hardened `docs/proposals/P41_S2_UNIFIED_POOL_CHAT_AND_REACTIONS_PROPOSAL.md` addressing composite same-pool foreign keys, NULL-safe uniqueness, stable lounge identity, and Express vs. RLS boundaries.
+- [x] **Task 41.2.6**: Author comprehensive unit test suite `tests/phase41_s2_lounge_reactions_consistency.test.ts`, bump gradle to versionCode 69 (41.2.0), and prepare signed APK `pickem-v41-s2.apk`.

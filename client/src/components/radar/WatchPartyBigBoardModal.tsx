@@ -6,7 +6,7 @@ import {
   UserPickItem,
 } from '../../services/sweatProjectionService';
 import { LiveGame } from '../../services/liveScoreService';
-import { RootingQueueItem } from '../../services/dependableInfoService';
+import { RootingQueueItem, resolveCanonicalGameKickoff } from '../../services/dependableInfoService';
 
 interface WatchPartyBigBoardModalProps {
   isOpen: boolean;
@@ -27,8 +27,18 @@ interface WatchPartyBigBoardModalProps {
 
 type PanelViewMode = 'ALL' | 'STANDINGS' | 'RIVALRY' | 'GAMES';
 
-const DEMO_10_STANDINGS: Array<{
+export function formatCharterTierLabel(rawTier: string): string {
+  const clean = (rawTier || '').toUpperCase().trim();
+  if (clean.includes('SAFE')) return 'Safe Haven';
+  if (clean.includes('HIGH')) return 'High Danger';
+  if (clean.includes('DANGER')) return 'Danger Zone';
+  if (clean.includes('PIT')) return 'The Pit';
+  return clean.replace(/_/g, ' ');
+}
+
+export const DEMO_10_STANDINGS: Array<{
   rank: number;
+  isTied: boolean;
   name: string;
   banked: number;
   live: number;
@@ -36,16 +46,16 @@ const DEMO_10_STANDINGS: Array<{
   tier: string;
   shots: string;
 }> = [
-  { rank: 1, name: 'jack.w.cone', banked: 8, live: 3, total: 11, tier: 'SAFE HAVEN', shots: '0 shots' },
-  { rank: 2, name: 'jcone2', banked: 7, live: 2, total: 9, tier: 'DANGER ZONE', shots: '1 shot' },
-  { rank: 3, name: 'Sarah_Blitz', banked: 6, live: 3, total: 9, tier: 'DANGER ZONE', shots: '1 shot' },
-  { rank: 4, name: 'Coach_Dave', banked: 6, live: 2, total: 8, tier: 'DANGER ZONE', shots: '1 shot' },
-  { rank: 5, name: 'GridironGuru', banked: 5, live: 3, total: 8, tier: 'DANGER ZONE', shots: '1 shot' },
-  { rank: 6, name: 'RedZoneRay', banked: 5, live: 2, total: 7, tier: 'DANGER ZONE', shots: '1 shot' },
-  { rank: 7, name: 'TouchdownTim', banked: 4, live: 3, total: 7, tier: 'DANGER ZONE', shots: '1 shot' },
-  { rank: 8, name: 'BlitzKrieg', banked: 4, live: 2, total: 6, tier: 'DANGER ZONE', shots: '1 shot' },
-  { rank: 9, name: 'SundaySweater', banked: 3, live: 2, total: 5, tier: 'THE PIT', shots: '2.5 shots' },
-  { rank: 10, name: 'PenaltyKing', banked: 3, live: 1, total: 4, tier: 'THE PIT', shots: '2.5 shots' },
+  { rank: 1, isTied: false, name: 'jack.w.cone', banked: 9, live: 2, total: 11, tier: 'Safe Haven', shots: '0 shots' },
+  { rank: 2, isTied: true, name: 'jcone2', banked: 8, live: 1, total: 9, tier: 'Danger Zone', shots: '1 shot' },
+  { rank: 2, isTied: true, name: 'Sarah_Blitz', banked: 6, live: 3, total: 9, tier: 'Danger Zone', shots: '1 shot' },
+  { rank: 4, isTied: true, name: 'Coach_Dave', banked: 6, live: 2, total: 8, tier: 'Danger Zone', shots: '1 shot' },
+  { rank: 4, isTied: true, name: 'GridironGuru', banked: 5, live: 3, total: 8, tier: 'Danger Zone', shots: '1 shot' },
+  { rank: 6, isTied: true, name: 'RedZoneRay', banked: 5, live: 2, total: 7, tier: 'Danger Zone', shots: '1 shot' },
+  { rank: 7, isTied: true, name: 'TouchdownTim', banked: 4, live: 3, total: 7, tier: 'Danger Zone', shots: '1 shot' },
+  { rank: 8, isTied: false, name: 'BlitzKrieg', banked: 4, live: 2, total: 6, tier: 'Danger Zone', shots: '1 shot' },
+  { rank: 9, isTied: false, name: 'SundaySweater', banked: 3, live: 2, total: 5, tier: 'The Pit', shots: '2.5 shots' },
+  { rank: 10, isTied: false, name: 'PenaltyKing', banked: 3, live: 1, total: 4, tier: 'The Pit', shots: '2.5 shots' },
 ];
 
 export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = ({
@@ -68,7 +78,7 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
   const [panelMode, setPanelMode] = useState<PanelViewMode>('ALL');
   const [autoRotate, setAutoRotate] = useState<boolean>(false);
 
-  // Auto-rotate effect (10s interval)
+  // Auto-rotate effect (10s interval, OFF by default)
   useEffect(() => {
     if (!autoRotate || !isOpen) return;
     const interval = setInterval(() => {
@@ -96,17 +106,24 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
         const shots = s.tier === 'SAFE_HAVEN' ? '0 shots' : s.tier === 'DANGER_ZONE' ? '1 shot' : '2.5 shots';
         return {
           rank: s.provisionalRank,
+          isTied: s.isTied,
           name,
           banked: s.bankedPoints,
           live: s.livePoints,
           total: s.totalProvisionalPoints,
-          tier: s.tier.replace('_', ' '),
+          tier: formatCharterTierLabel(s.tier),
           shots,
         };
       });
 
+  // Canonical Decider kickoff
+  const deciderKickoff = resolveCanonicalGameKickoff({
+    awayTeam: 'SEA',
+    homeTeam: 'DEN',
+  });
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/95 text-white font-mono flex flex-col p-3 sm:p-6 overflow-y-auto">
+    <div className="fixed inset-0 z-50 bg-slate-950 text-slate-100 font-mono flex flex-col p-3 sm:p-6 overflow-y-auto">
       {/* Top Bar: Pool Title, Week, Phase, Mode Selectors, and Exit */}
       <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800 pb-3 mb-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -131,7 +148,7 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
             <button
               onClick={() => setFieldMode('LIVE')}
               className={`px-2.5 py-1 rounded transition ${
-                fieldMode === 'LIVE' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                fieldMode === 'LIVE' ? 'bg-cyan-500 text-slate-950 font-black' : 'text-slate-400 hover:text-white'
               }`}
             >
               Live ({members.length}) Field
@@ -139,7 +156,7 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
             <button
               onClick={() => setFieldMode('DEMO_10')}
               className={`px-2.5 py-1 rounded transition ${
-                fieldMode === 'DEMO_10' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                fieldMode === 'DEMO_10' ? 'bg-amber-500 text-slate-950 font-black' : 'text-slate-400 hover:text-white'
               }`}
             >
               10-Member Demo
@@ -174,14 +191,16 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
             </button>
           </div>
 
-          {/* Auto-Rotate Toggle */}
+          {/* Auto-Rotate Toggle (Default OFF / PAUSED) */}
           <button
             onClick={() => setAutoRotate(!autoRotate)}
-            className={`px-2.5 py-1 rounded-lg border text-xs font-bold transition ${
-              autoRotate ? 'bg-emerald-950 border-emerald-500 text-emerald-300' : 'bg-slate-900 border-slate-700 text-slate-400'
+            className={`px-2.5 py-1 rounded-lg border text-xs font-bold transition flex items-center gap-1.5 ${
+              autoRotate
+                ? 'bg-emerald-950 border-emerald-500 text-emerald-300'
+                : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-white'
             }`}
           >
-            {autoRotate ? '↻ Auto-Rotate: ON (10s)' : '↻ Rotate: OFF'}
+            <span>{autoRotate ? '⏸ Pause Rotation' : '▶ Auto-Rotate: OFF (Click to Start 10s Cycle)'}</span>
           </button>
 
           {/* Exit */}
@@ -205,7 +224,7 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
       <div className={`flex-1 grid gap-4 ${panelMode === 'ALL' ? 'grid-cols-1 lg:grid-cols-3' : 'grid-cols-1'}`}>
         {/* PANEL 1: Live Pool Standings Ladder */}
         {(panelMode === 'ALL' || panelMode === 'STANDINGS') && (
-          <div className="bg-slate-900/90 border-2 border-cyan-500/40 rounded-2xl p-4 flex flex-col shadow-2xl">
+          <div className="bg-slate-900 border-2 border-cyan-500/40 rounded-2xl p-4 flex flex-col shadow-2xl">
             <div className="flex items-center justify-between border-b border-cyan-500/30 pb-2 mb-3">
               <span className="text-xs font-black text-cyan-300 uppercase tracking-widest">
                 🏆 LIVE POOL STANDINGS LADDER
@@ -222,20 +241,20 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
                   className={`p-2.5 rounded-xl border flex items-center justify-between transition ${
                     row.rank === 1
                       ? 'bg-cyan-950/40 border-cyan-500/60 shadow-sm'
-                      : row.tier.includes('PIT')
+                      : row.tier.includes('Pit')
                       ? 'bg-rose-950/30 border-rose-500/40'
-                      : 'bg-slate-950/70 border-slate-800'
+                      : 'bg-slate-950 border-slate-800'
                   }`}
                 >
                   <div className="flex items-center gap-3">
                     <span
-                      className={`w-7 h-7 rounded-lg flex items-center justify-center font-black text-xs ${
+                      className={`px-2 py-1 rounded-lg flex items-center justify-center font-black text-xs ${
                         row.rank === 1
                           ? 'bg-cyan-500 text-slate-950'
                           : 'bg-slate-800 text-slate-300'
                       }`}
                     >
-                      #{row.rank}
+                      {row.isTied ? `T-#${row.rank}` : `#${row.rank}`}
                     </span>
                     <div>
                       <div className="text-sm font-black text-white truncate max-w-[140px] sm:max-w-[200px]">
@@ -253,9 +272,9 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
                     </div>
                     <span
                       className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase ${
-                        row.tier.includes('SAFE')
+                        row.tier.includes('Safe')
                           ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300'
-                          : row.tier.includes('PIT')
+                          : row.tier.includes('Pit')
                           ? 'bg-rose-950/80 border-rose-500 text-rose-300'
                           : 'bg-amber-950/80 border-amber-500 text-amber-300'
                       }`}
@@ -271,7 +290,7 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
 
         {/* PANEL 2: Featured Rivalry Showdown */}
         {(panelMode === 'ALL' || panelMode === 'RIVALRY') && (
-          <div className="bg-slate-900/90 border-2 border-amber-500/40 rounded-2xl p-4 flex flex-col shadow-2xl">
+          <div className="bg-slate-900 border-2 border-amber-500/40 rounded-2xl p-4 flex flex-col shadow-2xl">
             <div className="flex items-center justify-between border-b border-amber-500/30 pb-2 mb-3">
               <span className="text-xs font-black text-amber-300 uppercase tracking-widest">
                 ⚔️ FEATURED RIVALRY DUEL
@@ -282,46 +301,56 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
             </div>
 
             {/* Duel Scoreboard */}
-            <div className="p-4 rounded-xl bg-slate-950 border border-amber-500/30 mb-4 text-center">
-              <div className="grid grid-cols-2 gap-4 items-center">
-                <div className="p-2 rounded-lg bg-cyan-950/50 border border-cyan-500/40">
-                  <div className="text-xs font-bold text-cyan-400 uppercase truncate">
-                    {currentUser.name}
+            {(() => {
+              const vPts = fieldMode === 'DEMO_10' ? 11 : (viewerStanding?.totalProvisionalPoints ?? 0);
+              const rPts = fieldMode === 'DEMO_10' ? 9 : (rivalStanding?.totalProvisionalPoints ?? 0);
+              const diff = vPts - rPts;
+              const vTier = fieldMode === 'DEMO_10' ? 'Safe Haven (0 shots)' : formatCharterTierLabel(viewerStanding?.tier || 'SAFE_HAVEN');
+              const rTier = fieldMode === 'DEMO_10' ? 'Danger Zone (1 shot)' : formatCharterTierLabel(rivalStanding?.tier || 'DANGER_ZONE');
+              const vName = fieldMode === 'DEMO_10' ? 'jack.w.cone' : currentUser.name;
+              const rName = fieldMode === 'DEMO_10' ? 'jcone2' : activeRival.name;
+
+              return (
+                <div className="p-4 rounded-xl bg-slate-950 border border-amber-500/30 mb-4 text-center">
+                  <div className="grid grid-cols-2 gap-4 items-center">
+                    <div className="p-2 rounded-lg bg-cyan-950/50 border border-cyan-500/40">
+                      <div className="text-xs font-bold text-cyan-400 uppercase truncate">
+                        {vName}
+                      </div>
+                      <div className="text-2xl sm:text-3xl font-black text-white mt-1">
+                        {vPts}
+                      </div>
+                      <div className="text-[10px] text-slate-400 uppercase">
+                        {vTier}
+                      </div>
+                    </div>
+
+                    <div className="p-2 rounded-lg bg-amber-950/50 border border-amber-500/40">
+                      <div className="text-xs font-bold text-amber-400 uppercase truncate">
+                        {rName}
+                      </div>
+                      <div className="text-2xl sm:text-3xl font-black text-white mt-1">
+                        {rPts}
+                      </div>
+                      <div className="text-[10px] text-slate-400 uppercase">
+                        {rTier}
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-2xl sm:text-3xl font-black text-white mt-1">
-                    {viewerStanding?.totalProvisionalPoints ?? 0}
-                  </div>
-                  <div className="text-[10px] text-slate-400 uppercase">
-                    {viewerStanding?.tier ?? 'SAFE HAVEN'}
+
+                  <div className="mt-3 pt-2 border-t border-slate-800 text-xs font-bold text-slate-300">
+                    Net Margin:{' '}
+                    {diff === 0 ? (
+                      <span className="text-slate-400">Deadlocked (0 pt gap)</span>
+                    ) : (
+                      <span className={diff > 0 ? 'text-cyan-400' : 'text-amber-400'}>
+                        {diff > 0 ? `LEADING BY +${diff} PTS` : `TRAILING BY ${Math.abs(diff)} PTS`} vs {rName}
+                      </span>
+                    )}
                   </div>
                 </div>
-
-                <div className="p-2 rounded-lg bg-amber-950/50 border border-amber-500/40">
-                  <div className="text-xs font-bold text-amber-400 uppercase truncate">
-                    {activeRival.name}
-                  </div>
-                  <div className="text-2xl sm:text-3xl font-black text-white mt-1">
-                    {rivalStanding?.totalProvisionalPoints ?? 0}
-                  </div>
-                  <div className="text-[10px] text-slate-400 uppercase">
-                    {rivalStanding?.tier ?? 'DANGER ZONE'}
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-3 pt-2 border-t border-slate-800 text-xs font-bold text-slate-300">
-                Net Margin:{' '}
-                {(() => {
-                  const diff = (viewerStanding?.totalProvisionalPoints ?? 0) - (rivalStanding?.totalProvisionalPoints ?? 0);
-                  if (diff === 0) return <span className="text-slate-400">Deadlocked (0 pt gap)</span>;
-                  return (
-                    <span className={diff > 0 ? 'text-cyan-400' : 'text-amber-400'}>
-                      {diff > 0 ? `+${diff}` : diff} pt{Math.abs(diff) === 1 ? '' : 's'} vs {activeRival.name}
-                    </span>
-                  );
-                })()}
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Duel Decider Matchup Preview */}
             <div className="space-y-2 flex-1">
@@ -331,20 +360,22 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
               <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
                 <div className="flex justify-between items-center text-xs">
                   <span className="font-bold text-white">SEA @ DEN</span>
-                  <span className="text-[10px] text-cyan-400 font-mono">Sun 4:05 PM</span>
+                  <span className="text-[10px] text-cyan-400 font-mono font-bold">{deciderKickoff.kickoffLabel}</span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-center text-xs">
                   <div className="p-2 rounded bg-cyan-950/60 border border-cyan-500/40">
                     <div className="font-bold text-cyan-300">SEA wins</div>
-                    <div className="text-xs font-mono font-bold text-white">+1 pt to {currentUser.name}</div>
+                    <div className="text-xs font-mono font-bold text-white">+1 pt to jack.w.cone</div>
                   </div>
                   <div className="p-2 rounded bg-amber-950/60 border border-amber-500/40">
                     <div className="font-bold text-amber-300">DEN wins</div>
-                    <div className="text-xs font-mono font-bold text-white">+1 pt to {activeRival.name}</div>
+                    <div className="text-xs font-mono font-bold text-white">+1 pt to jcone2</div>
                   </div>
                 </div>
                 <div className="text-[10px] text-center text-slate-400">
-                  2 PT OUTCOME SPAN (-1 / +1)
+                  {fieldMode === 'DEMO_10'
+                    ? '2 PT OUTCOME SPAN (+1 / +3 margin)'
+                    : '2 PT OUTCOME SPAN (-1 / +1 margin)'}
                 </div>
               </div>
 
@@ -366,7 +397,7 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
 
         {/* PANEL 3: Priority Rooting Queue & Swing Slate */}
         {(panelMode === 'ALL' || panelMode === 'GAMES') && (
-          <div className="bg-slate-900/90 border-2 border-emerald-500/40 rounded-2xl p-4 flex flex-col shadow-2xl">
+          <div className="bg-slate-900 border-2 border-emerald-500/40 rounded-2xl p-4 flex flex-col shadow-2xl">
             <div className="flex items-center justify-between border-b border-emerald-500/30 pb-2 mb-3">
               <span className="text-xs font-black text-emerald-300 uppercase tracking-widest">
                 🎯 PRIORITY ROOTING QUEUE
@@ -377,7 +408,57 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
             </div>
 
             <div className="space-y-2 flex-1 overflow-y-auto">
-              {personalRootingQueue.length > 0 ? (
+              {fieldMode === 'DEMO_10' ? (
+                <>
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-white">SEA @ DEN</span>
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase bg-slate-800 border-slate-700 text-slate-300">
+                        {deciderKickoff.kickoffLabel}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs font-bold">
+                      <span className="text-emerald-400">Root for: SEA</span>
+                      <span className="text-rose-400 text-[11px]">vs DEN</span>
+                    </div>
+                    <div className="text-[11px] text-slate-300">
+                      A SEA win moves your duel margin vs. jcone2 from +2 to +3 pts
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-white">HOU @ JAX</span>
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase bg-slate-800 border-slate-700 text-slate-300">
+                        Sun 6:30 AM
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs font-bold">
+                      <span className="text-emerald-400">Root for: HOU</span>
+                      <span className="text-rose-400 text-[11px]">vs JAX</span>
+                    </div>
+                    <div className="text-[11px] text-slate-300">
+                      An HOU win defends your #1 Safe Haven standing
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-white">DAL @ GB</span>
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase bg-slate-800 border-slate-700 text-slate-300">
+                        Sun 1:25 PM
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs font-bold">
+                      <span className="text-emerald-400">Root for: DAL</span>
+                      <span className="text-rose-400 text-[11px]">vs GB</span>
+                    </div>
+                    <div className="text-[11px] text-slate-300">
+                      A DAL win solidifies your +2 pt duel lead
+                    </div>
+                  </div>
+                </>
+              ) : personalRootingQueue.length > 0 ? (
                 personalRootingQueue.slice(0, 4).map((item, idx) => (
                   <div
                     key={idx}
@@ -423,3 +504,4 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
     </div>
   );
 };
+export default WatchPartyBigBoardModal;

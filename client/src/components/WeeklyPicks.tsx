@@ -12,6 +12,7 @@ import { triggerHaptic } from '../utils/haptics';
 import { isKickoffLocked } from '../services/lockEnforcementService';
 import { fetchLiveNFLScores } from '../services/liveScoreService';
 import { getCurrentNFLWeek } from '../services/nflCalendarService';
+import { resolveCanonicalGameKickoff } from '../services/dependableInfoService';
 import type { MatrixResponsePayload } from './LeagueMatrixView';
 import { AppHeader } from './common/AppHeader';
 
@@ -244,12 +245,19 @@ export const WeeklyPicks: React.FC = () => {
           if (match) spread = parseFloat(match[0]);
         }
 
-        return {
+        const canonicalKo = resolveCanonicalGameKickoff({
           id: event.id,
+          awayTeam: awayAbbr,
+          homeTeam: homeAbbr,
+          kickoffIso: event.date,
+        });
+
+        return {
+          id: canonicalKo.gameId,
           externalGameId: event.id,
           homeTeamId: homeAbbr,
           awayTeamId: awayAbbr,
-          kickoffTime: event.date,
+          kickoffTime: canonicalKo.kickoffIso,
           status: mappedStatus,
           homeScore: homeScoreVal,
           awayScore: awayScoreVal,
@@ -874,7 +882,7 @@ export const WeeklyPicks: React.FC = () => {
               {isPicksProtected ? <Lock className="w-3 h-3 text-amber-400"/> : <Unlock className="w-3 h-3 text-zinc-400"/>}
               <span>
                 {isPicksProtected
-                  ? 'PROTECTED'
+                  ? 'SUBMITTED · EDIT LOCKED (TAP TO EDIT)'
                   : games.length > 0 && Object.keys(userPicks).filter((k) => Boolean(userPicks[k])).length >= games.length
                   ? 'SUBMITTED · EDITABLE'
                   : 'DRAFT · UNSUBMITTED'}
@@ -906,6 +914,21 @@ export const WeeklyPicks: React.FC = () => {
             <button onClick={() => setViewMode('list')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${viewMode === 'list' ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : 'text-zinc-400 hover:text-white'}`}>List</button>
           </div>
         </div>
+
+      {/* Accidental-Edit Guard Explanatory Sub-Banner */}
+      {isPicksProtected && (
+        <div className="mx-4 mt-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-200 text-xs font-mono flex items-center justify-between gap-3 shadow-md">
+          <div className="flex items-center gap-2">
+            <span>🛡️ Accidental-Edit Guard Active: Your {Object.keys(userPicks).filter((k) => Boolean(userPicks[k])).length || games.length} submitted picks are counted in the pool. Tap 'Unlock to Edit' to change any game whose official kickoff has not passed ({games.filter((g) => isKickoffLocked(g.kickoffTime)).length} of {games.length} kickoff-locked).</span>
+          </div>
+          <button
+            onClick={togglePicksProtection}
+            className="shrink-0 px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-300 font-bold text-[11px] uppercase tracking-wider transition"
+          >
+            Unlock to Edit
+          </button>
+        </div>
+      )}
 
       {/* Floating Warning/Feedback Toast (Non-reflowing fixed overlay) */}
       {toastMessage && (

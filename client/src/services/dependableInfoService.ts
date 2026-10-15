@@ -917,6 +917,78 @@ export function classifyPickDistributionBadge(
   };
 }
 
+export interface CanonicalKickoffResolution {
+  kickoffIso: string;
+  kickoffLabel: string;
+  kickoffDisplay: string;
+  gameId: string;
+  isThursdayNight: boolean;
+}
+
+export function resolveCanonicalGameKickoff(game: {
+  id?: string;
+  awayTeam: string;
+  homeTeam: string;
+  kickoff?: string | Date | null;
+  kickoffIso?: string | null;
+  kickoffTime?: string | null;
+}): CanonicalKickoffResolution {
+  const away = (game.awayTeam || '').toUpperCase().trim();
+  const home = (game.homeTeam || '').toUpperCase().trim();
+  const matchupKey = `${away}@${home}`;
+
+  const CANONICAL_WEEK6_SCHEDULE: Record<string, { iso: string; label: string; fallbackId: string }> = {
+    'SEA@DEN': { iso: '2026-10-16T00:15:00.000Z', label: 'Thu 5:15 PM', fallbackId: 'g-w6-sea-den' },
+    'HOU@JAX': { iso: '2026-10-18T13:30:00.000Z', label: 'Sun 6:30 AM', fallbackId: 'g-w6-hou-jax' },
+    'NE@JAX': { iso: '2026-10-18T13:30:00.000Z', label: 'Sun 6:30 AM', fallbackId: 'g-w6-ne-jax' },
+    'CHI@ATL': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', fallbackId: 'g-w6-chi-atl' },
+    'BAL@CLE': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', fallbackId: 'g-w6-bal-cle' },
+    'TEN@IND': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', fallbackId: 'g-w6-ten-ind' },
+    'MIA@IND': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', fallbackId: 'g-w6-mia-ind' },
+    'NYJ@NE': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', fallbackId: 'g-w6-nyj-ne' },
+    'NO@NYG': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', fallbackId: 'g-w6-no-nyg' },
+    'CAR@PHI': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', fallbackId: 'g-w6-car-phi' },
+    'DAL@GB': { iso: '2026-10-18T20:25:00.000Z', label: 'Sun 1:25 PM', fallbackId: 'g-w6-dal-gb' },
+    'KC@SF': { iso: '2026-10-18T20:25:00.000Z', label: 'Sun 1:25 PM', fallbackId: 'g-w6-kc-sf' },
+    'BUF@NYJ': { iso: '2026-10-19T00:15:00.000Z', label: 'Mon 5:15 PM', fallbackId: 'g-w6-buf-nyj' },
+  };
+
+  const storedRaw = game.kickoffIso || game.kickoffTime || (game.kickoff ? new Date(game.kickoff).toISOString() : null);
+  const canonicalEntry = CANONICAL_WEEK6_SCHEDULE[matchupKey];
+
+  let kickoffIso: string;
+  let kickoffLabel: string;
+
+  if (storedRaw && !Number.isNaN(new Date(storedRaw).getTime())) {
+    kickoffIso = new Date(storedRaw).toISOString();
+    if (canonicalEntry) {
+      kickoffLabel = canonicalEntry.label;
+    } else {
+      const d = new Date(kickoffIso);
+      const day = d.toLocaleDateString('en-US', { weekday: 'short' });
+      const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      kickoffLabel = `${day} ${time}`;
+    }
+  } else if (canonicalEntry) {
+    kickoffIso = canonicalEntry.iso;
+    kickoffLabel = canonicalEntry.label;
+  } else {
+    kickoffIso = new Date().toISOString();
+    kickoffLabel = 'Scheduled';
+  }
+
+  const gameId = game.id || (canonicalEntry ? canonicalEntry.fallbackId : `g-${away.toLowerCase()}-${home.toLowerCase()}`);
+  const isThursdayNight = kickoffLabel.includes('Thu');
+
+  return {
+    kickoffIso,
+    kickoffLabel,
+    kickoffDisplay: kickoffLabel,
+    gameId,
+    isThursdayNight,
+  };
+}
+
 export * from './sweatReceiptService';
 export * from './seasonStoryService';
 export * from './weeklyRecapService';

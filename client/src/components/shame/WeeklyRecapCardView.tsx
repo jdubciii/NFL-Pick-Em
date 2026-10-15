@@ -6,6 +6,7 @@ import {
   DeterministicRecapCardModel,
 } from '../../services/weeklyRecapService';
 import {
+  executeExplicitReactionOperation,
   applyIdempotentReactionMutation,
   ReactionEntry,
   ReactionCode,
@@ -122,16 +123,33 @@ export const WeeklyRecapCardView: React.FC<WeeklyRecapCardViewProps> = ({
   const reactionChips = summarizeReactionsForTarget(reactions, canonicalKey, viewerUserId);
 
   const handleToggleReaction = (code: ReactionCode) => {
-    const result = applyIdempotentReactionMutation({
+    if (useDemoFixture) {
+      showToast('Reactions disabled: Demo fixture recaps cannot receive persistent reactions.');
+      return;
+    }
+    if (!isOfficiallySettled) {
+      showToast('Reactions locked: Recap must be officially settled with a valid revision.');
+      return;
+    }
+    const currentChip = reactionChips.find((c) => c.code === code);
+    const operation = currentChip?.viewerSelected ? 'REMOVE' : 'SET';
+    const result = executeExplicitReactionOperation({
       existingEntries: reactions,
-      target: recapTarget,
+      target: {
+        ...recapTarget,
+        isOfficiallySettled,
+        isDemoFixture: useDemoFixture,
+      },
+      operation,
+      reactionCode: code,
       authenticatedActorId: viewerUserId,
       authenticatedActorName: 'jack.w.cone',
       authorizedPoolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
-      reactionCode: code,
     });
     if (result.ok) {
       setReactions(result.entries);
+    } else {
+      showToast(result.errorCode || 'Reaction failed');
     }
   };
 
@@ -440,11 +458,39 @@ export const WeeklyRecapCardView: React.FC<WeeklyRecapCardViewProps> = ({
       {/* Canonical Reaction Strip */}
       <div className="p-2.5 bg-slate-900/80 border border-slate-800 rounded-xl space-y-2">
         <div className="flex items-center justify-between">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-            REACTIONS ON THIS VERDICT
-          </span>
-          <span className="text-[9px] px-2 py-0.5 rounded bg-slate-950 text-cyan-400 border border-slate-800">
-            SESSION PREVIEW · SHARED POOL CHAT &amp; REACTIONS SCHEMA QUEUED FOR P41-S2
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+              REACTIONS ON THIS VERDICT
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                window.dispatchEvent(
+                  new CustomEvent('open-pool-lounge', {
+                    detail: {
+                      contextCard: {
+                        targetKind: 'SETTLED_RECAP',
+                        season: 2026,
+                        week: targetWeek,
+                        entityId: `w${targetWeek}-verdict`,
+                        settlementRevision: 1,
+                        title: `Week ${targetWeek} Settled Recap`,
+                        subtitle: `Official League Verdict Discussion`,
+                        deepLinkTab: 'shame',
+                      },
+                    },
+                  })
+                );
+              }}
+              className="px-2 py-0.5 rounded bg-cyan-950/70 hover:bg-cyan-900/80 border border-cyan-700/60 text-cyan-300 text-[9px] font-mono font-bold flex items-center gap-1 transition active:scale-95"
+              title="Discuss this recap in Pool Lounge"
+            >
+              <span>💬</span>
+              <span>Discuss Recap in Lounge</span>
+            </button>
+          </div>
+          <span className="text-[8px] px-1.5 py-0.5 rounded bg-slate-950 text-cyan-400 border border-slate-800 font-mono">
+            SESSION PREVIEW · P41-S2
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">

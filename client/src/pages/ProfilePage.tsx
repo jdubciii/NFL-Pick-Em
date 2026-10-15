@@ -95,31 +95,31 @@ export const ProfilePage: React.FC = () => {
 
   const week6WindowGames: DeadlineGameWindowInput[] = useMemo(() => [
     {
-      gameId: 'w6-thu',
-      awayTeam: 'DEN',
-      homeTeam: 'NO',
+      gameId: 'g-w6-sea-den',
+      awayTeam: 'SEA',
+      homeTeam: 'DEN',
       kickoffIso: '2026-10-16T00:15:00.000Z', // Thu 5:15 PM MST
       status: 'SCHEDULED',
       isPicked: false,
     },
     {
-      gameId: 'w6-sun-lon',
-      awayTeam: 'NE',
+      gameId: 'g-w6-hou-jax',
+      awayTeam: 'HOU',
       homeTeam: 'JAX',
       kickoffIso: '2026-10-18T13:30:00.000Z', // Sun 6:30 AM MST
       status: 'SCHEDULED',
       isPicked: false,
     },
     {
-      gameId: 'w6-sun-early-1',
-      awayTeam: 'SEA',
+      gameId: 'g-w6-chi-atl',
+      awayTeam: 'CHI',
       homeTeam: 'ATL',
       kickoffIso: '2026-10-18T17:00:00.000Z', // Sun 10:00 AM MST
       status: 'SCHEDULED',
       isPicked: false,
     },
     {
-      gameId: 'w6-sun-early-2',
+      gameId: 'g-w6-mia-ind',
       awayTeam: 'MIA',
       homeTeam: 'IND',
       kickoffIso: '2026-10-18T17:00:00.000Z', // Sun 10:00 AM MST

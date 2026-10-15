@@ -24,6 +24,7 @@ import { getCurrentNFLWeek } from '../services/nflCalendarService';
 import { fetchLiveNFLScores, LiveGame } from '../services/liveScoreService';
 import { classifyPickDistributionBadge } from '../services/dependableInfoService';
 import {
+  executeExplicitReactionOperation,
   applyIdempotentReactionMutation,
   summarizeReactionsForTarget,
   validateCanonicalReactionTarget,
@@ -53,13 +54,21 @@ export const MatrixPage: React.FC = () => {
       targetKind: 'CANONICAL_GAME',
       entityId: gameId,
     };
-    const result = applyIdempotentReactionMutation({
+    const val = validateCanonicalReactionTarget(target);
+    const chips = val.canonicalKey
+      ? summarizeReactionsForTarget(gameReactions, val.canonicalKey, user?.id || 'u1')
+      : [];
+    const currentChip = chips.find((c) => c.code === code);
+    const operation = currentChip?.viewerSelected ? 'REMOVE' : 'SET';
+
+    const result = executeExplicitReactionOperation({
       existingEntries: gameReactions,
       target,
+      operation,
+      reactionCode: code,
       authenticatedActorId: user?.id || 'u1',
       authenticatedActorName: user?.email ? user.email.split('@')[0] : 'jack.w.cone',
       authorizedPoolId: activePoolId,
-      reactionCode: code,
     });
     if (result.ok) {
       setGameReactions(result.entries);
@@ -616,11 +625,40 @@ export const MatrixPage: React.FC = () => {
                         return (
                           <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex flex-col gap-1.5">
                             <div className="flex items-center justify-between">
-                              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
-                                REACTIONS
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                                  REACTIONS
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    window.dispatchEvent(
+                                      new CustomEvent('open-pool-lounge', {
+                                        detail: {
+                                          contextCard: {
+                                            targetKind: 'CANONICAL_GAME',
+                                            season: 2026,
+                                            week: selectedWeek,
+                                            entityId: game.gameId,
+                                            settlementRevision: 0,
+                                            title: `${game.awayTeam} @ ${game.homeTeam}`,
+                                            subtitle: `Week ${selectedWeek} Matchup Discussion`,
+                                            deepLinkTab: 'matrix',
+                                          },
+                                        },
+                                      })
+                                    );
+                                  }}
+                                  className="px-2 py-0.5 rounded bg-cyan-950/70 hover:bg-cyan-900/80 border border-cyan-700/60 text-cyan-300 text-[9px] font-mono font-bold flex items-center gap-1 transition active:scale-95"
+                                  title="Discuss this game in Pool Lounge"
+                                >
+                                  <span>💬</span>
+                                  <span>Talk about this game</span>
+                                </button>
+                              </div>
                               <span className="text-[8px] px-1.5 py-0.5 rounded bg-slate-950 text-cyan-400 border border-slate-800 font-mono">
-                                SESSION PREVIEW · SHARED POOL CHAT &amp; REACTIONS SCHEMA QUEUED FOR P41-S2
+                                SESSION PREVIEW · P41-S2
                               </span>
                             </div>
                             <div className="flex flex-wrap items-center gap-1">

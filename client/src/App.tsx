@@ -16,12 +16,28 @@ export function resolveNavigationVisibility(session: any, membershipStatus: stri
 }
 
 import { PendingApprovalScreen } from './components/PendingApprovalScreen';
+import { PoolLoungeDrawer } from './components/social/PoolLoungeDrawer';
+import { CanonicalContextCardAttachment } from './services/poolSocialService';
 export { PendingApprovalScreen };
 
 export const App: React.FC = () => {
   const { user, session, loading } = useAuth();
   const [membershipStatus, setMembershipStatus] = useState<'ACTIVE' | 'PENDING' | 'NONE' | 'LOADING'>('LOADING');
+  const [isLoungeOpen, setIsLoungeOpen] = useState(false);
+  const [loungeContextCard, setLoungeContextCard] = useState<CanonicalContextCardAttachment | null>(null);
   const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+
+  useEffect(() => {
+    const handleOpenLounge = (e: Event) => {
+      const custom = e as CustomEvent<{ contextCard?: CanonicalContextCardAttachment }>;
+      if (custom.detail?.contextCard) {
+        setLoungeContextCard(custom.detail.contextCard);
+      }
+      setIsLoungeOpen(true);
+    };
+    window.addEventListener('open-pool-lounge', handleOpenLounge);
+    return () => window.removeEventListener('open-pool-lounge', handleOpenLounge);
+  }, []);
 
   useEffect(() => {
     async function checkMembership() {
@@ -86,6 +102,19 @@ export const App: React.FC = () => {
         </Routes>
       </main>
       {isAdmitted && <BottomNavigation />}
+      {session && (
+        <PoolLoungeDrawer
+          isOpen={isLoungeOpen}
+          onClose={() => setIsLoungeOpen(false)}
+          poolId={activePoolId}
+          season={2026}
+          week={6}
+          currentUserId={user?.id || 'u1'}
+          currentUserName={user?.email ? user.email.split('@')[0] : 'jack.w.cone'}
+          membershipStatus={membershipStatus === 'ACTIVE' ? 'ACTIVE' : 'PENDING'}
+          initialContextCard={loungeContextCard}
+        />
+      )}
     </div>
   );
 };

@@ -47,6 +47,15 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
           </span>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0 min-h-[32px]">
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('open-pool-lounge'))}
+            className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 text-xs font-semibold text-cyan-300 transition-colors shadow-sm active:scale-95"
+            title="Open Pool Lounge"
+          >
+            <span className="text-sm">💬</span>
+            <span className="text-[11px] font-bold">Lounge</span>
+          </button>
           {rightContent ? rightContent : <div className="w-1" />}
         </div>
       </header>
