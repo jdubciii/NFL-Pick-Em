@@ -1,8 +1,8 @@
-# Phase 41 Sprint 2 Remediation (P41-S2-R1) Architectural Proposal: Express-Only Pool Chat & Canonical Reactions
+# Phase 41 Sprint 2 Live Promotion (P41-S2-PROMO) Architectural Proposal: Express-Only Pool Chat & Canonical Reactions
 
 ## 1. Executive Summary & Authorizing Context
-- **Target Milestone**: Phase 41 Sprint 2 Remediation (`P41-S2-R1`)
-- **Authorizing Ruling**: `P41-S1-REVIEW-2026-10-15-01`
+- **Target Milestone**: Phase 41 Sprint 2 Live Promotion (`P41-S2-PROMO`)
+- **Authorizing Ruling**: `P41-S2-R1-REVIEW-2026-10-15-01`
 - **Scope & Purpose**: Provide the authoritative, production-hardened PostgreSQL DDL, Prisma schema extensions, and security privilege configuration for:
   1. **Canonical Shared Reactions** across canonical games, settled weekly recaps, penalty reels, and chat messages.
   2. **SMS-Style Unified Pool Group Chat & Threaded Conversations (Pool Lounge)**, enabling persistent banter across seasons/weeks, game-specific discussion cards, and settled verdict threads within authenticated pool boundaries.
@@ -18,16 +18,10 @@
 ## 2. Hardened Table Specifications & PostgreSQL DDL (`migration.sql`)
 
 ```sql
--- Phase 41 Sprint 2 (P41-S2-R1): Express-Only Social Persistence (Pool Lounge & Canonical Reactions)
--- Enforces:
--- 1. Express-only persistence: REVOKE ALL from PUBLIC, anon, and authenticated; omit public.is_active_pool_member helper.
--- 2. Strict revision & target combinations via database CHECK constraints.
--- 3. Same-pool AND same-discussion composite foreign key for thread replies.
--- 4. Exact type, constraint, default, and index alignment with prisma/schema.prisma.
+BEGIN;
 
-DROP FUNCTION IF EXISTS public.is_active_pool_member(UUID, UUID);
-
-CREATE TABLE IF NOT EXISTS public.pool_messages (
+-- Table 1: pool_messages
+CREATE TABLE public.pool_messages (
     id UUID NOT NULL DEFAULT gen_random_uuid(),
     pool_id UUID NOT NULL,
     author_user_id UUID NOT NULL,
@@ -46,19 +40,17 @@ CREATE TABLE IF NOT EXISTS public.pool_messages (
     CONSTRAINT pk_pool_messages PRIMARY KEY (id),
 
     CONSTRAINT fk_pool_messages_pool
-        FOREIGN KEY (pool_id) REFERENCES public.pools(id) ON DELETE CASCADE,
+        FOREIGN KEY (pool_id) REFERENCES public.pools(id) ON DELETE CASCADE ON UPDATE NO ACTION,
 
     CONSTRAINT fk_pool_messages_author
-        FOREIGN KEY (author_user_id) REFERENCES public.users(id) ON DELETE CASCADE,
+        FOREIGN KEY (author_user_id) REFERENCES public.users(id) ON DELETE CASCADE ON UPDATE NO ACTION,
 
-    -- Stored message length & non-blank check
     CONSTRAINT chk_pool_messages_body_len
         CHECK (char_length(btrim(body)) BETWEEN 1 AND 500),
 
     CONSTRAINT chk_pool_messages_request_id_len
         CHECK (char_length(btrim(client_request_id)) BETWEEN 6 AND 64),
 
-    -- Valid target_kind and strict Lounge / Revision combination invariant
     CONSTRAINT chk_pool_messages_target_kind
         CHECK (target_kind IN ('POOL_LOUNGE', 'CANONICAL_GAME', 'SETTLED_RECAP', 'PENALTY_REEL')),
 
@@ -71,35 +63,32 @@ CREATE TABLE IF NOT EXISTS public.pool_messages (
             (target_kind = 'SETTLED_RECAP' AND week >= 1 AND target_entity_id <> 'LOUNGE_ROOT' AND settlement_revision >= 1)
         ),
 
-    -- Client retry idempotency per author within pool
     CONSTRAINT uq_pool_messages_actor_request
         UNIQUE (pool_id, author_user_id, client_request_id),
 
-    -- Composite discussion identity key required for same-pool & same-discussion reply integrity
     CONSTRAINT uq_pool_messages_discussion_scope
         UNIQUE (id, pool_id, target_kind, target_entity_id, season, week, settlement_revision),
 
-    -- Composite self-referencing FK: a reply MUST belong to the exact same pool AND exact same discussion target
     CONSTRAINT fk_pool_messages_parent_same_discussion
         FOREIGN KEY (parent_message_id, pool_id, target_kind, target_entity_id, season, week, settlement_revision)
         REFERENCES public.pool_messages (id, pool_id, target_kind, target_entity_id, season, week, settlement_revision)
-        ON DELETE RESTRICT
+        ON DELETE RESTRICT ON UPDATE NO ACTION
 );
 
-CREATE INDEX IF NOT EXISTS idx_pool_messages_feed
+CREATE INDEX idx_pool_messages_feed
     ON public.pool_messages (pool_id, created_at ASC, id ASC);
 
-CREATE INDEX IF NOT EXISTS idx_pool_messages_context
+CREATE INDEX idx_pool_messages_context
     ON public.pool_messages (pool_id, target_kind, target_entity_id, season, week, settlement_revision, created_at ASC);
 
-CREATE INDEX IF NOT EXISTS idx_pool_messages_author
+CREATE INDEX idx_pool_messages_author
     ON public.pool_messages (author_user_id, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_pool_messages_parent
+CREATE INDEX idx_pool_messages_parent
     ON public.pool_messages (parent_message_id);
 
-
-CREATE TABLE IF NOT EXISTS public.pool_reactions (
+-- Table 2: pool_reactions
+CREATE TABLE public.pool_reactions (
     id UUID NOT NULL DEFAULT gen_random_uuid(),
     pool_id UUID NOT NULL,
     actor_user_id UUID NOT NULL,
@@ -115,10 +104,10 @@ CREATE TABLE IF NOT EXISTS public.pool_reactions (
     CONSTRAINT pk_pool_reactions PRIMARY KEY (id),
 
     CONSTRAINT fk_pool_reactions_pool
-        FOREIGN KEY (pool_id) REFERENCES public.pools(id) ON DELETE CASCADE,
+        FOREIGN KEY (pool_id) REFERENCES public.pools(id) ON DELETE CASCADE ON UPDATE NO ACTION,
 
     CONSTRAINT fk_pool_reactions_actor
-        FOREIGN KEY (actor_user_id) REFERENCES public.users(id) ON DELETE CASCADE,
+        FOREIGN KEY (actor_user_id) REFERENCES public.users(id) ON DELETE CASCADE ON UPDATE NO ACTION,
 
     CONSTRAINT chk_pool_reactions_target_kind
         CHECK (target_kind IN ('CANONICAL_GAME', 'SETTLED_RECAP', 'POOL_CHAT_MESSAGE', 'PENALTY_REEL')),
@@ -126,7 +115,6 @@ CREATE TABLE IF NOT EXISTS public.pool_reactions (
     CONSTRAINT chk_pool_reactions_code
         CHECK (reaction_code IN ('CALLED_IT', 'COLD', 'PAIN', 'PIT_BOUND')),
 
-    -- Reject device-local Sweat Receipt / deadline IDs at database boundary
     CONSTRAINT chk_pool_reactions_canonical_entity
         CHECK (
             char_length(btrim(target_entity_id)) BETWEEN 1 AND 128
@@ -136,7 +124,6 @@ CREATE TABLE IF NOT EXISTS public.pool_reactions (
             AND target_entity_id NOT LIKE 'dl::%'
         ),
 
-    -- Enforce exact revision combination: SETTLED_RECAP requires revision >= 1; all other targets require revision = 0
     CONSTRAINT chk_pool_reactions_revision_gate
         CHECK (
             (target_kind = 'SETTLED_RECAP' AND week >= 1 AND settlement_revision >= 1)
@@ -146,34 +133,21 @@ CREATE TABLE IF NOT EXISTS public.pool_reactions (
             (target_kind IN ('CANONICAL_GAME', 'PENALTY_REEL') AND week >= 1 AND settlement_revision = 0)
         ),
 
-    -- NULL-safe uniqueness: all 7 columns are NOT NULL, guaranteeing 1 active reaction per actor per target revision
     CONSTRAINT uq_pool_reaction_one_per_actor
         UNIQUE (pool_id, season, week, target_kind, target_entity_id, settlement_revision, actor_user_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_pool_reactions_aggregation
+CREATE INDEX idx_pool_reactions_aggregation
     ON public.pool_reactions (pool_id, season, week, target_kind, target_entity_id, settlement_revision, reaction_code);
 
-CREATE INDEX IF NOT EXISTS idx_pool_reactions_actor
+CREATE INDEX idx_pool_reactions_actor
     ON public.pool_reactions (actor_user_id, created_at DESC);
 
--- Express-Only Persistence Security Boundary:
--- Revoke all direct table privileges from PUBLIC, anon, and authenticated roles.
+-- Express-Only Persistence Security Boundary
 REVOKE ALL ON TABLE public.pool_messages FROM PUBLIC;
 REVOKE ALL ON TABLE public.pool_reactions FROM PUBLIC;
 
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
-        EXECUTE 'REVOKE ALL ON TABLE public.pool_messages FROM anon';
-        EXECUTE 'REVOKE ALL ON TABLE public.pool_reactions FROM anon';
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
-        EXECUTE 'REVOKE ALL ON TABLE public.pool_messages FROM authenticated';
-        EXECUTE 'REVOKE ALL ON TABLE public.pool_reactions FROM authenticated';
-    END IF;
-END
-$$;
+DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN EXECUTE 'REVOKE ALL ON TABLE public.pool_messages FROM anon'; EXECUTE 'REVOKE ALL ON TABLE public.pool_reactions FROM anon'; END IF; IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN EXECUTE 'REVOKE ALL ON TABLE public.pool_messages FROM authenticated'; EXECUTE 'REVOKE ALL ON TABLE public.pool_reactions FROM authenticated'; END IF; END $$;
 
 ALTER TABLE public.pool_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pool_messages FORCE ROW LEVEL SECURITY;
@@ -181,12 +155,7 @@ ALTER TABLE public.pool_messages FORCE ROW LEVEL SECURITY;
 ALTER TABLE public.pool_reactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pool_reactions FORCE ROW LEVEL SECURITY;
 
--- Fail-closed RLS: zero policies granted to anon or authenticated; all reads/writes must traverse Express service boundary.
-DROP POLICY IF EXISTS "Active pool members can read pool messages" ON public.pool_messages;
-DROP POLICY IF EXISTS "Active pool members can insert pool messages" ON public.pool_messages;
-DROP POLICY IF EXISTS "Authors or admins can delete their pool messages" ON public.pool_messages;
-DROP POLICY IF EXISTS "Active pool members can read pool reactions" ON public.pool_reactions;
-DROP POLICY IF EXISTS "Active pool members can insert/update pool reactions" ON public.pool_reactions;
+COMMIT;
 ```
 
 ---
@@ -210,9 +179,9 @@ model PoolMessage {
   createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
 
-  pool               Pool          @relation(fields: [poolId], references: [id], onDelete: Cascade, map: "fk_pool_messages_pool")
-  author             User          @relation(fields: [authorUserId], references: [id], onDelete: Cascade, map: "fk_pool_messages_author")
-  parentMessage      PoolMessage?  @relation("ThreadReplies", fields: [parentMessageId, poolId, targetKind, targetEntityId, season, week, settlementRevision], references: [id, poolId, targetKind, targetEntityId, season, week, settlementRevision], onDelete: Restrict, map: "fk_pool_messages_parent_same_discussion")
+  pool               Pool          @relation(fields: [poolId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_pool_messages_pool")
+  author             User          @relation(fields: [authorUserId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_pool_messages_author")
+  parentMessage      PoolMessage?  @relation("ThreadReplies", fields: [parentMessageId, poolId, targetKind, targetEntityId, season, week, settlementRevision], references: [id, poolId, targetKind, targetEntityId, season, week, settlementRevision], onDelete: Restrict, onUpdate: NoAction, map: "fk_pool_messages_parent_same_discussion")
   replies            PoolMessage[] @relation("ThreadReplies")
 
   @@unique([poolId, authorUserId, clientRequestId], map: "uq_pool_messages_actor_request")
@@ -237,8 +206,8 @@ model PoolReaction {
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
 
-  pool               Pool      @relation(fields: [poolId], references: [id], onDelete: Cascade, map: "fk_pool_reactions_pool")
-  actor              User      @relation(fields: [actorUserId], references: [id], onDelete: Cascade, map: "fk_pool_reactions_actor")
+  pool               Pool      @relation(fields: [poolId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_pool_reactions_pool")
+  actor              User      @relation(fields: [actorUserId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_pool_reactions_actor")
 
   @@unique([poolId, season, week, targetKind, targetEntityId, settlementRevision, actorUserId], map: "uq_pool_reaction_one_per_actor")
   @@index([poolId, season, week, targetKind, targetEntityId, settlementRevision, reactionCode], map: "idx_pool_reactions_aggregation")

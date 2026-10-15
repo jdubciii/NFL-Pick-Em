@@ -607,3 +607,10 @@
 - [x] **Task 41.2.10**: Wire authenticated polling and message dispatch in client `PoolLoungeDrawer.tsx`.
 - [x] **Task 41.2.11**: Author comprehensive rehearsal suite `tests/phase41_s2_persistence_rehearsal.test.ts` (10 suites, 52/52 tests passing).
 - [x] **Task 41.2.12**: Bump Android Gradle to `versionCode 70` (`v41.2.1`), compile signed APK `pickem-v41-s2.apk`, and prepare evidence bundle.
+
+### Phase 41 Sprint 2 Live Promotion (P41-S2-PROMO — Native PostgreSQL Rehearsal, Live Migration & APK v71) [✅ COMPLETED]
+- [x] **Task 41.2.13**: Finalize atomic additive SQL migration (`BEGIN; ... COMMIT;` with `ON UPDATE NO ACTION`) and align `prisma/schema.prisma` with 5 relations using `onUpdate: NoAction`.
+- [x] **Task 41.2.14**: Execute native PostgreSQL isolated schema rehearsal (`rehearsal_p41_s2_promo`) verifying revision gates, entity checks, and concurrent multi-connection retries.
+- [x] **Task 41.2.15**: Apply migration atomically to `public` schema in hosted league database and audit RLS and client privileges.
+- [x] **Task 41.2.16**: Execute authoritative 10-suite Vitest regression suite (52 tests).
+- [x] **Task 41.2.17**: Bump Android Gradle to `versionCode 71` (`v41.2.2`), compile signed APK `pickem-v41-s2.apk`, and seal evidence bundle.
