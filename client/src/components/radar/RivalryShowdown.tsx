@@ -11,6 +11,7 @@ import {
   UserPickItem,
   ProvisionalStanding,
 } from '../../services/sweatProjectionService';
+import { summarizeNemesisRecord } from '../../services/dependableInfoService';
 
 interface RivalryShowdownProps {
   currentUser: UserStandingRef;
@@ -75,6 +76,11 @@ export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
       picks
     );
   }, [currentUser, activeRival, games, liveScores, picks]);
+
+  // Pass 3: Summarize Nemesis Record
+  const nemesisRecord = useMemo(() => {
+    return summarizeNemesisRecord([], 'You', activeRival ? activeRival.name : 'Rival');
+  }, [activeRival]);
 
   // Lead Flipped Alert Tracking
   const prevLeadSignRef = useRef<number | null>(null);
@@ -171,6 +177,11 @@ export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
             <h2 className="text-sm font-black text-white">
               You vs. {activeRival.name}
             </h2>
+            <div className="mt-1">
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black bg-amber-950/80 border border-amber-500/40 text-amber-300 tracking-wider">
+                {nemesisRecord.badgeText}
+              </span>
+            </div>
           </div>
 
           {/* Signed Point Gap Delta */}

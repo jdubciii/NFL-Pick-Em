@@ -22,6 +22,7 @@ import { isKickoffLocked } from '../services/lockEnforcementService';
 import { evaluatePickVisibility } from '../services/openSlatePolicyService';
 import { getCurrentNFLWeek } from '../services/nflCalendarService';
 import { fetchLiveNFLScores, LiveGame } from '../services/liveScoreService';
+import { classifyPickDistributionBadge } from '../services/dependableInfoService';
 
 export const MatrixPage: React.FC = () => {
   const { user } = useAuth();
@@ -254,9 +255,6 @@ export const MatrixPage: React.FC = () => {
             </div>
           ) : (
             <div className="flex items-center gap-1.5">
-              <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-amber-500/30 bg-amber-500/15 text-amber-400">
-                • AWAITING KICKOFF
-              </div>
               <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-cyan-500/30 bg-cyan-500/15 text-cyan-400">
                 SLATE OPEN
               </div>
@@ -328,7 +326,7 @@ export const MatrixPage: React.FC = () => {
       {/* Floating Topology Update Toast */}
       {showTopologyToast && activeTab === 'LEVERAGE' && (
         <div className="mb-3 px-3 py-1.5 rounded-full bg-cyan-950/80 border border-cyan-400 shadow-md text-center font-mono text-[10px] text-cyan-300 font-bold flex items-center justify-between animate-fade-in">
-          <span>📡 Live updates connected</span>
+          <span>{allGamesUpcoming ? '📡 Real-time sync ready · Awaiting kickoff' : '📡 Live score updates connected'}</span>
           <button
             onClick={() => setShowTopologyToast(false)}
             className="text-slate-400 hover:text-white"
@@ -455,6 +453,35 @@ export const MatrixPage: React.FC = () => {
                       isAutopilot: autopilotUsers.get(p.userId)
                     }));
 
+                  const totalPickers = awayCamp.length + homeCamp.length;
+                  let distBadge: { text: string; className: string } | null = null;
+                  if (totalPickers > 0) {
+                    if (awayCamp.length === totalPickers || homeCamp.length === totalPickers) {
+                      distBadge = {
+                        text: `🤝 ${totalPickers} OF ${totalPickers} CONSENSUS`,
+                        className: 'bg-emerald-950/80 text-emerald-300 border-emerald-700/60',
+                      };
+                    } else if (totalPickers === 2 && awayCamp.length === 1 && homeCamp.length === 1) {
+                      classifyPickDistributionBadge(1, 2, game.awayTeam);
+                      distBadge = {
+                        text: `⚡ SPLIT DECISION (1 OF 2)`,
+                        className: 'bg-amber-950/80 text-amber-300 border-amber-700/60',
+                      };
+                    } else if (totalPickers >= 3 && awayCamp.length === 1) {
+                      classifyPickDistributionBadge(1, totalPickers, game.awayTeam);
+                      distBadge = {
+                        text: `🐺 LONE WOLF (1 OF ${totalPickers}) [${game.awayTeam}]`,
+                        className: 'bg-purple-950/80 text-purple-300 border-purple-700/60',
+                      };
+                    } else if (totalPickers >= 3 && homeCamp.length === 1) {
+                      classifyPickDistributionBadge(1, totalPickers, game.homeTeam);
+                      distBadge = {
+                        text: `🐺 LONE WOLF (1 OF ${totalPickers}) [${game.homeTeam}]`,
+                        className: 'bg-purple-950/80 text-purple-700 border-purple-700/60',
+                      };
+                    }
+                  }
+
                   return (
                     <div
                       key={game.gameId}
@@ -475,14 +502,15 @@ export const MatrixPage: React.FC = () => {
                             </span>
                           ) : null}
                         </div>
-                        {isConsensus && (
+                        {distBadge ? (
+                          <span className={`text-[9px] px-2 py-0.5 rounded border font-bold uppercase tracking-wider inline-flex items-center gap-1 ${distBadge.className}`}>
+                            {distBadge.text}
+                          </span>
+                        ) : isConsensus ? (
                           <span className="text-[9px] px-2 py-0.5 rounded bg-slate-800/90 text-cyan-300 border border-slate-700 font-bold">
                             {gameDist?.totalPicks} of {gameDist?.totalPicks} picked {gameDist?.consensusTeam}
                           </span>
-                        )}
-                        {gameDist?.isLoneWolf && (
-                          <LoneWolfBadge team={gameDist.loneWolfTeam || ''} />
-                        )}
+                        ) : null}
                       </div>
 
                       {/* Pick Distribution Percentages Bar */}

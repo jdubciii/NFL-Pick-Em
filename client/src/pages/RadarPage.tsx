@@ -14,6 +14,12 @@ import {
 } from '../services/sweatProjectionService';
 import { RivalryShowdown } from '../components/radar/RivalryShowdown';
 import { AppHeader } from '../components/common/AppHeader';
+import {
+  buildPersonalRootingQueue,
+  evaluateLateGameEscape,
+  RootingQueueItem,
+  LateGameEscapeScenario
+} from '../services/dependableInfoService';
 
 export const RadarPage: React.FC = () => {
   const { user, token } = useAuth();
@@ -245,6 +251,84 @@ export const RadarPage: React.FC = () => {
     return liveScores.find((l) => l.id === activeSwingGame.gameId);
   }, [activeSwingGame, liveScores]);
 
+  // Determine active rival for head-to-head calculations
+  const activeRival = useMemo(() => {
+    const available = members.filter((m) => m.id !== currentUserId);
+    if (selectedRivalId) {
+      const found = available.find((r) => r.id === selectedRivalId);
+      if (found) return found;
+    }
+    if (userStanding && available.length > 0) {
+      const uRank = userStanding.provisionalRank;
+      const closest = provisionalResult.find(
+        (s) => s.userId !== currentUserId && Math.abs(s.provisionalRank - uRank) === 1
+      );
+      if (closest) {
+        const match = available.find((r) => r.id === closest.userId);
+        if (match) return match;
+      }
+    }
+    return available[0] || null;
+  }, [members, currentUserId, selectedRivalId, userStanding, provisionalResult]);
+
+  // Pass 3: Personal Rooting Queue
+  const personalRootingQueue: RootingQueueItem[] = useMemo(() => {
+    const queueGames = games.map((g) => {
+      const vPick = effectivePicks.find((p) => p.gameId === g.id && p.userId === currentUserId)?.selectedTeam || '';
+      const rPick = activeRival
+        ? effectivePicks.find((p) => p.gameId === g.id && p.userId === activeRival.id)?.selectedTeam
+        : null;
+      const liveG = liveScores.find((ls) => ls.id === g.id);
+      const status = liveG?.status || (g as any).status || 'SCHEDULED';
+      return {
+        gameId: g.id,
+        awayTeam: g.awayTeam,
+        homeTeam: g.homeTeam,
+        viewerPick: vPick,
+        rivalPick: rPick,
+        status,
+        changesTier: Boolean(userStanding && userStanding.tier !== 'SAFE_HAVEN'),
+      };
+    });
+    return buildPersonalRootingQueue(queueGames, 3);
+  }, [games, effectivePicks, currentUserId, activeRival, liveScores, userStanding]);
+
+  // Pass 3: Bounded Late-Game Escape Scenario
+  const escapeScenario: LateGameEscapeScenario | null = useMemo(() => {
+    if (!userStanding) return null;
+    const leader = provisionalResult[0];
+    const targetSafePoints = leader ? leader.totalProvisionalPoints : userStanding.totalProvisionalPoints;
+
+    const disagreementGames = games
+      .filter((g) => {
+        const vPick = effectivePicks.find((p) => p.gameId === g.id && p.userId === currentUserId)?.selectedTeam;
+        const rPick = activeRival
+          ? effectivePicks.find((p) => p.gameId === g.id && p.userId === activeRival.id)?.selectedTeam
+          : null;
+        const liveG = liveScores.find((ls) => ls.id === g.id);
+        const st = (liveG?.status || (g as any).status || 'SCHEDULED').toUpperCase();
+        const isSettled = st === 'FINAL' || st === 'F' || st === 'COMPLETED' || st === 'SETTLED';
+        if (isSettled || !vPick) return false;
+        return Boolean(rPick && rPick !== vPick);
+      })
+      .map((g) => {
+        const vPick = effectivePicks.find((p) => p.gameId === g.id && p.userId === currentUserId)?.selectedTeam || '';
+        return {
+          gameId: g.id,
+          awayTeam: g.awayTeam,
+          homeTeam: g.homeTeam,
+          viewerPick: vPick,
+        };
+      });
+
+    return evaluateLateGameEscape({
+      viewerPoints: userStanding.totalProvisionalPoints,
+      targetSafePoints,
+      remainingDisagreementGames: disagreementGames,
+      holdsTiebreakerEdge: null,
+    });
+  }, [userStanding, provisionalResult, games, effectivePicks, currentUserId, activeRival, liveScores]);
+
   // Rank-Change feedback & pulse animation (isolated from What-If simulation)
   const prevRanksRef = useRef<Map<string, number>>(new Map());
   const isInitialMountRef = useRef<boolean>(true);
@@ -310,13 +394,13 @@ export const RadarPage: React.FC = () => {
   const renderTierBadge = (tier: ProvisionalStanding['tier']) => {
     switch (tier) {
       case 'SAFE_HAVEN':
-        return <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-emerald-950 border border-emerald-500/60 text-emerald-300">SAFE HAVEN (0 shots)</span>;
+        return <span className="inline-flex items-center whitespace-nowrap px-1.5 py-0.5 rounded text-[9px] font-black bg-emerald-950 border border-emerald-500/60 text-emerald-300">SAFE HAVEN (0 shots)</span>;
       case 'DANGER_ZONE':
-        return <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-amber-950 border border-amber-500/60 text-amber-300">DANGER ZONE ({formatShotUnit(1)})</span>;
+        return <span className="inline-flex items-center whitespace-nowrap px-1.5 py-0.5 rounded text-[9px] font-black bg-amber-950 border border-amber-500/60 text-amber-300">DANGER ZONE ({formatShotUnit(1)})</span>;
       case 'THE_DROP':
-        return <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-orange-950 border border-orange-500/60 text-orange-300">THE DROP ({formatShotUnit(2)})</span>;
+        return <span className="inline-flex items-center whitespace-nowrap px-1.5 py-0.5 rounded text-[9px] font-black bg-orange-950 border border-orange-500/60 text-orange-300">THE DROP ({formatShotUnit(2)})</span>;
       case 'PIT':
-        return <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-rose-950 border border-rose-500 text-rose-300">THE PIT ({formatShotUnit(2.5)})</span>;
+        return <span className="inline-flex items-center whitespace-nowrap px-1.5 py-0.5 rounded text-[9px] font-black bg-rose-950 border border-rose-500 text-rose-300">THE PIT ({formatShotUnit(2.5)})</span>;
       default:
         return null;
     }
@@ -342,13 +426,8 @@ export const RadarPage: React.FC = () => {
               <span>SIMULATED</span>
             </div>
           ) : (
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-cyan-300 font-bold text-[10px]">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-              <span>
-                {liveScores.some((g) => ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()))
-                  ? 'GAMES LIVE'
-                  : 'PRE-KICKOFF · PROJECTION'}
-              </span>
+            <div className="px-2 py-0.5 rounded-full border border-cyan-500/30 bg-cyan-500/15 text-cyan-400 font-bold text-[10px]">
+              <span>PROJECTION</span>
             </div>
           )
         }
@@ -478,6 +557,64 @@ export const RadarPage: React.FC = () => {
                     : (userStanding.statusText || 'Gameday Active')}
                 </span>
               </div>
+            </div>
+          )}
+
+          {/* Pass 3: PERSONAL ROOTING QUEUE CARD */}
+          {personalRootingQueue.length > 0 && (
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-950 to-emerald-950/30 border border-emerald-500/40 shadow-lg mb-4 font-mono">
+              <div className="flex items-center justify-between text-xs font-bold text-emerald-400 mb-2">
+                <span className="flex items-center gap-1.5">
+                  <span>🎯 PERSONAL ROOTING QUEUE // WHO YOU NEED NOW</span>
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 border border-emerald-500/60 text-emerald-300 font-black">
+                  TOP {personalRootingQueue.length}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {personalRootingQueue.map((item, qIdx) => (
+                  <div key={item.gameId} className="p-2.5 bg-slate-950/80 rounded-xl border border-slate-800">
+                    <div className="flex items-center justify-between text-xs mb-1">
+                      <span className="font-black text-white">
+                        {qIdx + 1}. Root for <span className="text-emerald-400">{item.rootForTeam}</span> ({item.matchupLabel})
+                      </span>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-black border uppercase ${
+                        item.reasonBadge === 'TIER ESCAPE'
+                          ? 'bg-purple-950 border-purple-500 text-purple-300'
+                          : item.reasonBadge === 'DUEL SWING'
+                          ? 'bg-amber-950 border-amber-500 text-amber-300'
+                          : 'bg-cyan-950 border-cyan-500 text-cyan-300'
+                      }`}>
+                        {item.reasonBadge}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400">
+                      {item.consequenceText}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Pass 3: BOUNDED LATE-GAME ESCAPE / CLINCH BANNER */}
+          {escapeScenario && (
+            <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-cyan-500/40 shadow-md mb-4 font-mono">
+              <div className="flex items-center justify-between text-xs font-bold text-cyan-400 mb-1">
+                <span className="flex items-center gap-1.5">
+                  <span>🛟 ESCAPE / CLINCH SCENARIO</span>
+                </span>
+                <span className={`text-[9px] px-1.5 py-0.5 rounded font-black border uppercase ${
+                  escapeScenario.canMathematicallyEscape
+                    ? 'bg-emerald-950 border-emerald-500 text-emerald-300'
+                    : 'bg-rose-950 border-rose-500 text-rose-300'
+                }`}>
+                  {escapeScenario.headline}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-300 leading-relaxed">
+                {escapeScenario.requirementSummary}
+              </p>
             </div>
           )}
 

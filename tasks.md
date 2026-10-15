@@ -546,10 +546,10 @@
 - [✅] **Prompt 38.2:** Standardize rigid 56px `AppHeader.tsx` across all 5 core application tabs.
 - [✅] **Prompt 38.3:** Compile, sign, and verify release APK `pickem-v38-s2.apk` (v62 / v38.4.6).
 
-## Phase 39: Live Gameday Operations, Active Week 6 Sweat & Automated Adjudication [ACTIVE]
-- [ ] **Prompt 39.1:** Verify automated individual matchup lock at Thursday Night Football kickoff.
-- [ ] **Prompt 39.2:** Execute live Sunday sweat telemetry poller and rank delta tracking.
-- [ ] **Prompt 39.3:** Execute Monday night finalization pipeline and post-audit penalty settlement.
+## Phase 39: Live Gameday Operations, Active Week 6 Sweat & Automated Adjudication [✅ COMPLETED]
+- [✅] **Prompt 39.1:** Verify automated individual matchup lock at Thursday Night Football kickoff.
+- [✅] **Prompt 39.2:** Execute live Sunday sweat telemetry poller and rank delta tracking.
+- [✅] **Prompt 39.3:** Execute Monday night finalization pipeline and post-audit penalty settlement.
 
 ---
 
@@ -571,6 +571,6 @@
 - [x] **Task 39.2.4**: Add Matrix filter pills (All, Split Picks, My Pick, Live) and link Matrix Open Duel directly to Radar with auto-selected rival in 2-player pools.
 
 ### Phase 39 Sprint 3 (P39-S3 — Pass 3: Signature Sunday Sweat Features)
-- [ ] **Task 39.3.1**: Build Personal Rooting Queue strip inside Radar ordered by duel and tier impact.
-- [ ] **Task 39.3.2**: Build Bounded Late-Game Escape calculator for SNF/MNF survival scenarios.
-- [ ] **Task 39.3.3**: Surface settled Nemesis Records (W-L-T), Split Decision / Lone Wolf badges, and the Commissioner Readiness Room summary card.
+- [x] **Task 39.3.1**: Build Personal Rooting Queue strip inside Radar ordered by duel and tier impact.
+- [x] **Task 39.3.2**: Build Bounded Late-Game Escape calculator for SNF/MNF survival scenarios.
+- [x] **Task 39.3.3**: Surface settled Nemesis Records (W-L-T), Split Decision / Lone Wolf badges, and the Commissioner Readiness Room summary card.

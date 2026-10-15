@@ -560,3 +560,237 @@ export function formatAttributedSpread(params: {
     '';
   return team ? `${team} -${absVal}` : `-${absVal}`;
 }
+
+export interface RootingQueueItem {
+  gameId: string;
+  matchupLabel: string;
+  rootForTeam: string;
+  againstTeam: string;
+  gameStatus: 'SCHEDULED' | 'LIVE' | 'FINAL';
+  priorityScore: number;
+  reasonBadge: 'DUEL SWING' | 'TIER ESCAPE' | 'SHARED ROOT';
+  consequenceText: string;
+}
+
+export interface LateGameEscapeScenario {
+  remainingDisagreements: number;
+  viewerPointDeficit: number;
+  canMathematicallyEscape: boolean;
+  requiresTiebreaker: boolean;
+  headline: string;
+  requirementSummary: string;
+}
+
+export interface NemesisRecordSummary {
+  viewerWins: number;
+  rivalWins: number;
+  ties: number;
+  settledWeeksCount: number;
+  badgeText: string;
+  subText: string;
+}
+
+export interface PickDistributionBadge {
+  type: 'LONE_WOLF' | 'SPLIT_DECISION' | 'CONSENSUS' | 'MAJORITY';
+  label: string;
+  pickedCount: number;
+  totalPickers: number;
+}
+
+export function buildPersonalRootingQueue(
+  games: Array<{
+    gameId: string;
+    awayTeam: string;
+    homeTeam: string;
+    viewerPick: string;
+    rivalPick?: string | null;
+    status?: string | null;
+    changesTier?: boolean;
+  }>,
+  maxItems: number = 3
+): RootingQueueItem[] {
+  const activeOrUpcoming = games.filter((g) => {
+    const st = (g.status || 'SCHEDULED').toUpperCase();
+    return st !== 'FINAL' && st !== 'F' && st !== 'COMPLETED' && st !== 'SETTLED';
+  });
+
+  const mapped: RootingQueueItem[] = activeOrUpcoming
+    .filter((g) => Boolean(g.viewerPick))
+    .map((g) => {
+      const vPick = g.viewerPick.toUpperCase();
+      const rPick = (g.rivalPick || '').toUpperCase();
+      const against = vPick === g.awayTeam.toUpperCase() ? g.homeTeam.toUpperCase() : g.awayTeam.toUpperCase();
+      const rawStatus = (g.status || 'SCHEDULED').toUpperCase();
+      const isLive = rawStatus === 'LIVE' || rawStatus === 'IN_PROGRESS' || rawStatus.startsWith('Q') || rawStatus === 'OT';
+      const gameStatus: 'SCHEDULED' | 'LIVE' | 'FINAL' = isLive ? 'LIVE' : 'SCHEDULED';
+      const isSplit = Boolean(rPick && rPick !== vPick);
+
+      let priorityScore = isLive ? 50 : 10;
+      let reasonBadge: 'DUEL SWING' | 'TIER ESCAPE' | 'SHARED ROOT' = 'SHARED ROOT';
+      let consequenceText = `Shared pick with rival (${vPick}) — holds current margin`;
+
+      if (isSplit && g.changesTier) {
+        priorityScore += 100;
+        reasonBadge = 'TIER ESCAPE';
+        consequenceText = `A ${vPick} win swings your duel (+1 pt) and shifts projected charter tier`;
+      } else if (isSplit) {
+        priorityScore += 75;
+        reasonBadge = 'DUEL SWING';
+        consequenceText = `A ${vPick} win puts you +1 pt ahead of ${rPick} in your active duel`;
+      }
+
+      return {
+        gameId: g.gameId,
+        matchupLabel: `${g.awayTeam.toUpperCase()} @ ${g.homeTeam.toUpperCase()}`,
+        rootForTeam: vPick,
+        againstTeam: against,
+        gameStatus,
+        priorityScore,
+        reasonBadge,
+        consequenceText,
+      };
+    });
+
+  return mapped.sort((a, b) => b.priorityScore - a.priorityScore).slice(0, maxItems);
+}
+
+export function evaluateLateGameEscape(params: {
+  viewerPoints: number;
+  targetSafePoints: number;
+  remainingDisagreementGames: Array<{ gameId: string; awayTeam: string; homeTeam: string; viewerPick: string }>;
+  holdsTiebreakerEdge?: boolean | null;
+}): LateGameEscapeScenario {
+  const deficit = Math.max(0, params.targetSafePoints - params.viewerPoints);
+  const remCount = params.remainingDisagreementGames.length;
+
+  if (deficit === 0) {
+    return {
+      remainingDisagreements: remCount,
+      viewerPointDeficit: 0,
+      canMathematicallyEscape: true,
+      requiresTiebreaker: false,
+      headline: 'Holding Safe Ground',
+      requirementSummary:
+        remCount > 0
+          ? `Currently level or ahead — win ${remCount === 1 ? params.remainingDisagreementGames[0].viewerPick : 'remaining split picks'} to lock Safe Haven.`
+          : 'All split matchups complete — current standing holds.',
+    };
+  }
+
+  if (deficit > remCount) {
+    return {
+      remainingDisagreements: remCount,
+      viewerPointDeficit: deficit,
+      canMathematicallyEscape: false,
+      requiresTiebreaker: false,
+      headline: 'Mathematical Clinch Against',
+      requirementSummary: `Trailing by ${deficit} pt${deficit === 1 ? '' : 's'} with only ${remCount} split game${remCount === 1 ? '' : 's'} remaining.`,
+    };
+  }
+
+  const neededTeams = params.remainingDisagreementGames.slice(0, deficit).map((g) => g.viewerPick.toUpperCase());
+  const requiresTiebreak = deficit === remCount && params.holdsTiebreakerEdge !== true;
+
+  return {
+    remainingDisagreements: remCount,
+    viewerPointDeficit: deficit,
+    canMathematicallyEscape: true,
+    requiresTiebreaker: requiresTiebreak,
+    headline: remCount <= 2 ? 'Late-Slate Escape Path Active' : `${deficit}-Game Comeback Path Open`,
+    requirementSummary: requiresTiebreak
+      ? `Need ${neededTeams.join(' + ')} win${neededTeams.length > 1 ? 's' : ''} to force a tie, plus Monday Night tiebreaker differential.`
+      : `Need ${neededTeams.join(' + ')} win${neededTeams.length > 1 ? 's' : ''} to erase the ${deficit}-pt gap.`,
+  };
+}
+
+export function summarizeNemesisRecord(
+  settledWeeks: Array<{ week: number; viewerScore: number; rivalScore: number }>,
+  viewerName: string = 'You',
+  rivalName: string = 'Rival'
+): NemesisRecordSummary {
+  let viewerWins = 0;
+  let rivalWins = 0;
+  let ties = 0;
+
+  for (const w of settledWeeks) {
+    if (w.viewerScore > w.rivalScore) viewerWins += 1;
+    else if (w.rivalScore > w.viewerScore) rivalWins += 1;
+    else ties += 1;
+  }
+
+  const total = settledWeeks.length;
+  if (total === 0) {
+    return {
+      viewerWins: 0,
+      rivalWins: 0,
+      ties: 0,
+      settledWeeksCount: 0,
+      badgeText: 'FIRST SEASON DUEL (0-0)',
+      subText: 'Official head-to-head Nemesis record begins once your first shared week settles.',
+    };
+  }
+
+  const recordStr = ties > 0 ? `${viewerWins}-${rivalWins}-${ties}` : `${viewerWins}-${rivalWins}`;
+  const leaderText =
+    viewerWins > rivalWins
+      ? `${viewerName} lead rivalry ${recordStr}`
+      : rivalWins > viewerWins
+      ? `${rivalName} leads rivalry ${recordStr}`
+      : `Rivalry deadlocked ${recordStr}`;
+
+  return {
+    viewerWins,
+    rivalWins,
+    ties,
+    settledWeeksCount: total,
+    badgeText: leaderText.toUpperCase(),
+    subText: `Across ${total} settled week${total === 1 ? '' : 's'}`,
+  };
+}
+
+export function classifyPickDistributionBadge(
+  pickedCount: number,
+  totalPickers: number,
+  teamCode: string
+): PickDistributionBadge {
+  const cleanTeam = teamCode.toUpperCase().trim();
+  if (totalPickers <= 0 || pickedCount <= 0) {
+    return {
+      type: 'MAJORITY',
+      label: `0 of ${Math.max(0, totalPickers)} backed ${cleanTeam}`,
+      pickedCount: 0,
+      totalPickers: Math.max(0, totalPickers),
+    };
+  }
+  if (pickedCount === totalPickers) {
+    return {
+      type: 'CONSENSUS',
+      label: `Unanimous (${pickedCount} of ${totalPickers} backed ${cleanTeam})`,
+      pickedCount,
+      totalPickers,
+    };
+  }
+  if (totalPickers === 2 && pickedCount === 1) {
+    return {
+      type: 'SPLIT_DECISION',
+      label: `Split Decision (1 of 2 backed ${cleanTeam})`,
+      pickedCount,
+      totalPickers,
+    };
+  }
+  if (pickedCount === 1 && totalPickers >= 3) {
+    return {
+      type: 'LONE_WOLF',
+      label: `Lone Wolf (Only 1 of ${totalPickers} backed ${cleanTeam})`,
+      pickedCount,
+      totalPickers,
+    };
+  }
+  return {
+    type: 'MAJORITY',
+    label: `${pickedCount} of ${totalPickers} backed ${cleanTeam}`,
+    pickedCount,
+    totalPickers,
+  };
+}
+

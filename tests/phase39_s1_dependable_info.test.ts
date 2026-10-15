@@ -1,4 +1,4 @@
-﻿import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   resolveSlatePhaseState,
   formatGameScoreOrKickoff,
@@ -8,6 +8,10 @@ import {
   formatStandingTieAndTierState,
   formatShotUnit,
   formatAttributedSpread,
+  buildPersonalRootingQueue,
+  evaluateLateGameEscape,
+  summarizeNemesisRecord,
+  classifyPickDistributionBadge,
 } from '../src/services/dependableInfoService';
 
 describe('Phase 39 Sprint 1 (P39-S1): Dependable Information & Mathematical Truth', () => {
@@ -157,5 +161,110 @@ describe('Phase 39 Sprint 1 (P39-S1): Dependable Information & Mathematical Trut
     expect(formatAttributedSpread({ spread: -2.5, favoredTeam: 'DEN' })).toBe('DEN -2.5');
     expect(formatAttributedSpread({ spread: 0, treatZeroAsUnavailable: true })).toBe('Spread Unavailable');
     expect(formatAttributedSpread({ spread: null })).toBe('Spread Unavailable');
+  });
+
+  it('6. verifies Pass-3 signature algorithms: buildPersonalRootingQueue, evaluateLateGameEscape, summarizeNemesisRecord, and classifyPickDistributionBadge', () => {
+    // 1. buildPersonalRootingQueue
+    const sampleGames = [
+      {
+        gameId: 'g1',
+        awayTeam: 'SEA',
+        homeTeam: 'DEN',
+        viewerPick: 'SEA',
+        rivalPick: 'DEN',
+        status: 'IN_PROGRESS',
+        changesTier: true,
+      },
+      {
+        gameId: 'g2',
+        awayTeam: 'CHI',
+        homeTeam: 'ATL',
+        viewerPick: 'CHI',
+        rivalPick: 'CHI',
+        status: 'SCHEDULED',
+      },
+      {
+        gameId: 'g3',
+        awayTeam: 'DAL',
+        homeTeam: 'GB',
+        viewerPick: 'GB',
+        rivalPick: 'DAL',
+        status: 'SCHEDULED',
+        changesTier: false,
+      },
+    ];
+    const rootingQueue = buildPersonalRootingQueue(sampleGames, 3);
+    expect(rootingQueue).toHaveLength(3);
+    expect(rootingQueue[0].rootForTeam).toBe('SEA');
+    expect(rootingQueue[0].reasonBadge).toBe('TIER ESCAPE');
+    expect(rootingQueue[0].gameStatus).toBe('LIVE');
+    expect(rootingQueue[1].rootForTeam).toBe('GB');
+    expect(rootingQueue[1].reasonBadge).toBe('DUEL SWING');
+    expect(rootingQueue[2].rootForTeam).toBe('CHI');
+    expect(rootingQueue[2].reasonBadge).toBe('SHARED ROOT');
+
+    // 2. evaluateLateGameEscape
+    const safeScenario = evaluateLateGameEscape({
+      viewerPoints: 10,
+      targetSafePoints: 10,
+      remainingDisagreementGames: [
+        { gameId: 'g1', awayTeam: 'SEA', homeTeam: 'DEN', viewerPick: 'SEA' },
+      ],
+    });
+    expect(safeScenario.canMathematicallyEscape).toBe(true);
+    expect(safeScenario.headline).toBe('Holding Safe Ground');
+
+    const escapeScenario = evaluateLateGameEscape({
+      viewerPoints: 8,
+      targetSafePoints: 10,
+      remainingDisagreementGames: [
+        { gameId: 'g1', awayTeam: 'SEA', homeTeam: 'DEN', viewerPick: 'SEA' },
+        { gameId: 'g2', awayTeam: 'DAL', homeTeam: 'GB', viewerPick: 'GB' },
+      ],
+      holdsTiebreakerEdge: true,
+    });
+    expect(escapeScenario.canMathematicallyEscape).toBe(true);
+    expect(escapeScenario.requiresTiebreaker).toBe(false);
+    expect(escapeScenario.viewerPointDeficit).toBe(2);
+
+    const impossibleScenario = evaluateLateGameEscape({
+      viewerPoints: 5,
+      targetSafePoints: 8,
+      remainingDisagreementGames: [
+        { gameId: 'g1', awayTeam: 'SEA', homeTeam: 'DEN', viewerPick: 'SEA' },
+      ],
+    });
+    expect(impossibleScenario.canMathematicallyEscape).toBe(false);
+    expect(impossibleScenario.headline).toBe('Mathematical Clinch Against');
+
+    // 3. summarizeNemesisRecord
+    const initialNemesis = summarizeNemesisRecord([], 'You', 'jcone2');
+    expect(initialNemesis.settledWeeksCount).toBe(0);
+    expect(initialNemesis.badgeText).toBe('FIRST SEASON DUEL (0-0)');
+
+    const activeNemesis = summarizeNemesisRecord(
+      [
+        { week: 5, viewerScore: 10, rivalScore: 9 },
+        { week: 6, viewerScore: 8, rivalScore: 8 },
+      ],
+      'You',
+      'jcone2'
+    );
+    expect(activeNemesis.viewerWins).toBe(1);
+    expect(activeNemesis.ties).toBe(1);
+    expect(activeNemesis.badgeText).toBe('YOU LEAD RIVALRY 1-0-1');
+
+    // 4. classifyPickDistributionBadge: Split Decision (1 of 2) vs Lone Wolf (Only 1 of 10)
+    const splitBadge = classifyPickDistributionBadge(1, 2, 'DEN');
+    expect(splitBadge.type).toBe('SPLIT_DECISION');
+    expect(splitBadge.label).toBe('Split Decision (1 of 2 backed DEN)');
+
+    const loneWolfBadge = classifyPickDistributionBadge(1, 10, 'DEN');
+    expect(loneWolfBadge.type).toBe('LONE_WOLF');
+    expect(loneWolfBadge.label).toBe('Lone Wolf (Only 1 of 10 backed DEN)');
+
+    const consensusBadge = classifyPickDistributionBadge(2, 2, 'JAX');
+    expect(consensusBadge.type).toBe('CONSENSUS');
+    expect(consensusBadge.label).toBe('Unanimous (2 of 2 backed JAX)');
   });
 });

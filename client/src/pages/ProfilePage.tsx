@@ -28,6 +28,24 @@ export const ProfilePage: React.FC = () => {
     user?.email === 'jack@nflpickem.com'
   );
 
+  const [activeMembersCount, setActiveMembersCount] = useState<number>(2);
+
+  useEffect(() => {
+    async function loadActiveMembers() {
+      try {
+        const { count, error } = await supabase
+          .from('pool_memberships')
+          .select('*', { count: 'exact', head: true })
+          .eq('pool_id', activePoolId)
+          .eq('status', 'ACTIVE');
+        if (!error && typeof count === 'number') {
+          setActiveMembersCount(count);
+        }
+      } catch (_) {}
+    }
+    loadActiveMembers();
+  }, [activePoolId]);
+
   useEffect(() => {
     if (!user) return;
     async function loadRole() {
@@ -233,6 +251,44 @@ export const ProfilePage: React.FC = () => {
             {role === 'ADMIN' ? 'League Commissioner' : 'Active Competitor'}
           </div>
         </div>
+
+        {/* Pass 3: Commissioner Readiness Room Card */}
+        {isCommissioner && (
+          <div className="bg-slate-900 border border-amber-500/40 rounded-2xl p-4 font-mono shadow-lg">
+            <div className="flex items-center justify-between mb-3 border-b border-amber-500/20 pb-2">
+              <span className="text-xs font-black text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                <span>🛡️ COMMISSIONER READINESS ROOM</span>
+              </span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 font-bold uppercase">
+                MAIN LEAGUE
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+              <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                <span className="text-[10px] text-slate-400 block mb-0.5 font-bold uppercase">Active Pool Members</span>
+                <span className="text-sm font-black text-white">{activeMembersCount} Active <span className="text-slate-500 text-xs font-normal">/ 10 Target</span></span>
+              </div>
+              <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                <span className="text-[10px] text-slate-400 block mb-0.5 font-bold uppercase">Pending Applicants</span>
+                <span className={`text-sm font-black ${pendingApplicants.length > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                  {pendingApplicants.length} Pending
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                <span className="text-[10px] text-slate-400 block mb-0.5 font-bold uppercase">Invite Code</span>
+                <span className="text-sm font-black text-cyan-400 tracking-wider">MAIN26</span>
+              </div>
+              <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                <span className="text-[10px] text-slate-400 block mb-0.5 font-bold uppercase">Next Kickoff Lock</span>
+                <span className="text-xs font-black text-amber-300">Thu 5:15 PM (Week 6)</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
           <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Season Ledger</div>
