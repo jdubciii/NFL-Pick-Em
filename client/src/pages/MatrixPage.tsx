@@ -73,6 +73,26 @@ export const MatrixPage: React.FC = () => {
     if (result.ok) {
       setGameReactions(result.entries);
     }
+
+    try {
+      const token = localStorage.getItem('supabase.auth.token') || '';
+      fetch(`/api/pools/${activePoolId}/reactions`, {
+        method: operation === 'REMOVE' ? 'DELETE' : 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          targetKind: 'CANONICAL_GAME',
+          targetEntityId: gameId,
+          season: 2026,
+          week: selectedWeek,
+          settlementRevision: 0,
+          reactionCode: code,
+          operation,
+        }),
+      }).catch(() => {});
+    } catch {}
   };
 
   useEffect(() => {

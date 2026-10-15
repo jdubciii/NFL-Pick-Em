@@ -1,4 +1,4 @@
-﻿import { CapacitorConfig } from '@capacitor/cli';
+import { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.nflpickem.app',
@@ -17,5 +17,3 @@ const config: CapacitorConfig = {
 };
 
 export default config;
-
-

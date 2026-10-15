@@ -148,6 +148,25 @@ export const WeeklyRecapCardView: React.FC<WeeklyRecapCardViewProps> = ({
     });
     if (result.ok) {
       setReactions(result.entries);
+      try {
+        const token = localStorage.getItem('supabase.auth.token') || '';
+        fetch('/api/pools/9b893bef-3b5a-4ffa-951d-8ba27f9c9782/reactions', {
+          method: operation === 'REMOVE' ? 'DELETE' : 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            targetKind: recapTarget.targetKind,
+            targetEntityId: recapTarget.entityId,
+            season: recapTarget.season,
+            week: recapTarget.week,
+            settlementRevision: recapTarget.settlementRevision,
+            reactionCode: code,
+            operation,
+          }),
+        }).catch(() => {});
+      } catch {}
     } else {
       showToast(result.errorCode || 'Reaction failed');
     }

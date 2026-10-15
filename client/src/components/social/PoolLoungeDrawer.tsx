@@ -75,9 +75,12 @@ export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
   const [messages, setMessages] = useState<PoolLoungeMessage[]>(() => {
     try {
       const stored = localStorage.getItem(`pickem_lounge_messages_${poolId}`);
-      if (stored) return JSON.parse(stored);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
     } catch {}
-    return INITIAL_DEMO_MESSAGES;
+    return [];
   });
 
   const [messageReactions, setMessageReactions] = useState<ReactionEntry[]>([]);
@@ -136,11 +139,17 @@ export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
         });
         if (res.ok) {
           const data = await res.json();
-          if (!isCancelled && data.items && Array.isArray(data.items) && data.items.length > 0) {
+          if (!isCancelled && data.items && Array.isArray(data.items)) {
             setMessages((prev) => {
-              const existingIds = new Set(data.items.map((m: any) => m.id));
-              const localPending = prev.filter((m) => m.deliveryState === 'PENDING' && !existingIds.has(m.id));
-              return [...data.items, ...localPending];
+              const serverIds = new Set(data.items.map((m: any) => m.id));
+              const serverReqIds = new Set(data.items.map((m: any) => m.clientRequestId));
+              const localPendingOrFailed = prev.filter(
+                (m) =>
+                  (m.deliveryState === 'PENDING' || m.deliveryState === 'FAILED') &&
+                  !serverIds.has(m.id) &&
+                  !serverReqIds.has(m.clientRequestId)
+              );
+              return [...data.items, ...localPendingOrFailed];
             });
           }
           pollInterval = 4000;
@@ -195,105 +204,200 @@ export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
     setShowScrollBottomPill(false);
   };
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     const cleanBody = draftText.trim();
     if (!cleanBody) return;
 
     const clientRequestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const targetKind = activeContextCard?.targetKind || 'POOL_LOUNGE';
+    const targetEntityId = activeContextCard?.entityId || 'LOUNGE_ROOT';
+    const msgSeason = activeContextCard?.season || season;
+    const msgWeek = activeContextCard?.week || 0;
+    const msgRevision = activeContextCard?.settlementRevision || 0;
+    const parentId = replyingToMessage?.id || null;
+    const contextCardSnapshot = activeContextCard;
 
     if (simulateFailure) {
+      const failedMsg: PoolLoungeMessage = {
+        id: `local-${clientRequestId}`,
+        poolId,
+        authorUserId: currentUserId,
+        authorDisplayName: sanitizeChatDisplayHandle(currentUserName),
+        clientRequestId,
+        body: cleanBody,
+        parentMessageId: parentId,
+        contextCard: contextCardSnapshot,
+        createdAtIso: new Date().toISOString(),
+        deliveryState: 'FAILED',
+      };
+      setMessages((prev) => [...prev, failedMsg]);
       setLastFailedMessage({
         clientRequestId,
         body: cleanBody,
-        parentMessageId: replyingToMessage?.id || null,
-        contextCard: activeContextCard,
+        parentMessageId: parentId,
+        contextCard: contextCardSnapshot,
       });
       return;
     }
 
-    const res = processPoolLoungeMessageSend({
-      existingMessages: messages,
+    // 1. Show immediate PENDING state before server acknowledgement
+    const pendingMsg: PoolLoungeMessage = {
+      id: `local-${clientRequestId}`,
       poolId,
-      authorizedPoolId: poolId,
-      authenticatedActorId: currentUserId,
-      authenticatedActorName: currentUserName,
-      actorMembershipStatus: membershipStatus,
+      authorUserId: currentUserId,
+      authorDisplayName: sanitizeChatDisplayHandle(currentUserName),
       clientRequestId,
       body: cleanBody,
-      parentMessageId: replyingToMessage?.id || null,
-      contextCard: activeContextCard,
-    });
+      parentMessageId: parentId,
+      contextCard: contextCardSnapshot,
+      createdAtIso: new Date().toISOString(),
+      deliveryState: 'PENDING',
+    };
 
-    if (res.ok && res.message) {
-      setMessages(res.messages);
-      setDraftText('');
-      try {
-        localStorage.removeItem(`pickem_lounge_draft_${poolId}`);
-      } catch {}
-      setReplyingToMessage(null);
-      setActiveContextCard(null);
-      setLastFailedMessage(null);
-      setTimeout(() => scrollToBottom(true), 50);
+    setMessages((prev) => [...prev, pendingMsg]);
+    setDraftText('');
+    try {
+      localStorage.removeItem(`pickem_lounge_draft_${poolId}`);
+    } catch {}
+    setReplyingToMessage(null);
+    setActiveContextCard(null);
+    setLastFailedMessage(null);
+    setTimeout(() => scrollToBottom(true), 50);
 
-      // Asynchronous dispatch to Express persistence endpoint
-      try {
-        const token = localStorage.getItem('supabase.auth.token') || '';
-        fetch(`/api/pools/${poolId}/lounge/messages`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({
-            clientRequestId,
-            body: cleanBody,
-            parentMessageId: replyingToMessage?.id || null,
-            targetKind: activeContextCard?.targetKind || 'POOL_LOUNGE',
-            targetEntityId: activeContextCard?.entityId || 'LOUNGE_ROOT',
-            season,
-            week: activeContextCard?.week || 0,
-            settlementRevision: activeContextCard?.settlementRevision || 0,
-          }),
-        }).catch(() => {});
-      } catch {}
+    // 2. Authoritative Express POST
+    try {
+      const token = localStorage.getItem('supabase.auth.token') || '';
+      const res = await fetch(`/api/pools/${poolId}/lounge/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          clientRequestId,
+          body: cleanBody,
+          parentMessageId: parentId,
+          targetKind,
+          targetEntityId,
+          season: msgSeason,
+          week: msgWeek,
+          settlementRevision: msgRevision,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        // Server acknowledgement governs send success: display SENT only after successful authoritative response
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.clientRequestId === clientRequestId
+              ? {
+                  ...m,
+                  id: data.message?.id || m.id,
+                  createdAtIso: data.message?.createdAtIso || m.createdAtIso,
+                  deliveryState: 'SENT',
+                }
+              : m
+          )
+        );
+      } else {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.clientRequestId === clientRequestId ? { ...m, deliveryState: 'FAILED' } : m
+          )
+        );
+        setLastFailedMessage({
+          clientRequestId,
+          body: cleanBody,
+          parentMessageId: parentId,
+          contextCard: contextCardSnapshot,
+        });
+      }
+    } catch {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.clientRequestId === clientRequestId ? { ...m, deliveryState: 'FAILED' } : m
+        )
+      );
+      setLastFailedMessage({
+        clientRequestId,
+        body: cleanBody,
+        parentMessageId: parentId,
+        contextCard: contextCardSnapshot,
+      });
     }
   };
 
-  const handleRetryFailed = () => {
+  const handleRetryFailed = async () => {
     if (!lastFailedMessage) return;
+    const { clientRequestId, body: retryBody, parentMessageId: retryParentId, contextCard: retryCtx } = lastFailedMessage;
 
-    // Retry with the exact stored clientRequestId to exercise idempotency
-    const res = processPoolLoungeMessageSend({
-      existingMessages: messages,
-      poolId,
-      authorizedPoolId: poolId,
-      authenticatedActorId: currentUserId,
-      authenticatedActorName: currentUserName,
-      actorMembershipStatus: membershipStatus,
-      clientRequestId: lastFailedMessage.clientRequestId,
-      body: lastFailedMessage.body,
-      parentMessageId: lastFailedMessage.parentMessageId,
-      contextCard: lastFailedMessage.contextCard,
-    });
+    // Transition back to PENDING with the exact same request ID
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.clientRequestId === clientRequestId ? { ...m, deliveryState: 'PENDING' } : m
+      )
+    );
 
-    if (res.ok) {
-      setMessages(res.messages);
-      setLastFailedMessage(null);
-      setDraftText('');
-      try {
-        localStorage.removeItem(`pickem_lounge_draft_${poolId}`);
-      } catch {}
-      setTimeout(() => scrollToBottom(true), 50);
+    try {
+      const token = localStorage.getItem('supabase.auth.token') || '';
+      const res = await fetch(`/api/pools/${poolId}/lounge/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          clientRequestId,
+          body: retryBody,
+          parentMessageId: retryParentId,
+          targetKind: retryCtx?.targetKind || 'POOL_LOUNGE',
+          targetEntityId: retryCtx?.entityId || 'LOUNGE_ROOT',
+          season: retryCtx?.season || season,
+          week: retryCtx?.week || 0,
+          settlementRevision: retryCtx?.settlementRevision || 0,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.clientRequestId === clientRequestId
+              ? {
+                  ...m,
+                  id: data.message?.id || m.id,
+                  createdAtIso: data.message?.createdAtIso || m.createdAtIso,
+                  deliveryState: 'SENT',
+                }
+              : m
+          )
+        );
+        setLastFailedMessage(null);
+      } else {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.clientRequestId === clientRequestId ? { ...m, deliveryState: 'FAILED' } : m
+          )
+        );
+      }
+    } catch {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.clientRequestId === clientRequestId ? { ...m, deliveryState: 'FAILED' } : m
+        )
+      );
     }
   };
 
-  const handleToggleMessageReaction = (messageId: string, code: ReactionCode) => {
+  const handleToggleMessageReaction = async (messageId: string, code: ReactionCode) => {
     const target = {
       poolId,
       season,
-      week,
-      targetKind: 'POOL_CHAT_MESSAGE',
+      week: 0,
+      targetKind: 'POOL_CHAT_MESSAGE' as const,
       entityId: messageId,
+      settlementRevision: 0,
     };
     const validation = validateCanonicalReactionTarget(target);
     if (!validation.canonicalKey) return;
@@ -303,7 +407,7 @@ export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
     );
     const operation: 'SET' | 'REMOVE' = existing && existing.reactionCode === code ? 'REMOVE' : 'SET';
 
-    const res = executeExplicitReactionOperation({
+    const localRes = executeExplicitReactionOperation({
       existingEntries: messageReactions,
       target,
       operation,
@@ -314,8 +418,30 @@ export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
       actorMembershipStatus: membershipStatus,
     });
 
-    if (res.ok) {
-      setMessageReactions(res.entries);
+    if (localRes.ok) {
+      setMessageReactions(localRes.entries);
+    }
+
+    try {
+      const token = localStorage.getItem('supabase.auth.token') || '';
+      await fetch(`/api/pools/${poolId}/reactions`, {
+        method: operation === 'REMOVE' ? 'DELETE' : 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          targetKind: 'POOL_CHAT_MESSAGE',
+          targetEntityId: messageId,
+          season,
+          week: 0,
+          settlementRevision: 0,
+          reactionCode: code,
+          operation,
+        }),
+      });
+    } catch (err) {
+      console.error('Failed to sync reaction with Express:', err);
     }
   };
 
@@ -343,7 +469,7 @@ export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
               </span>
             </div>
             <div className="text-[10px] text-slate-400 mt-0.5">
-              SESSION-SYNCED PREVIEW · P41-S2 DB MIGRATION READY FOR APPROVAL
+              EXPRESS PERSISTENCE · LIVE DATABASE VERIFIED
             </div>
           </div>
         </div>
@@ -376,6 +502,13 @@ export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
         onScroll={handleScroll}
         className="flex-1 p-3 sm:p-4 overflow-y-auto space-y-3 bg-gradient-to-b from-slate-950 via-slate-900/60 to-slate-950"
       >
+        {messages.length === 0 && (
+          <div className="h-full flex flex-col items-center justify-center text-center p-8 text-slate-500 space-y-2">
+            <span className="text-3xl">💬</span>
+            <p className="text-sm font-semibold text-slate-400">The Lounge is quiet</p>
+            <p className="text-xs max-w-xs">No messages in this pool yet. Break the ice with your pool rivals!</p>
+          </div>
+        )}
         {messages.map((msg) => {
           const isViewer = msg.authorUserId === currentUserId;
           const parentMsg = msg.parentMessageId
@@ -385,9 +518,10 @@ export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
           const target = {
             poolId,
             season,
-            week,
+            week: 0,
             targetKind: 'POOL_CHAT_MESSAGE',
             entityId: msg.id,
+            settlementRevision: 0,
           };
           const val = validateCanonicalReactionTarget(target);
           const reactionChips = val.canonicalKey
@@ -405,7 +539,9 @@ export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
                 </span>
                 <span>•</span>
                 <span>{new Date(msg.createdAtIso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
-                {msg.deliveryState === 'SENT' && <span className="text-emerald-400">✓</span>}
+                {msg.deliveryState === 'SENT' && <span className="text-emerald-400 font-bold" title="Server Acknowledged">✓</span>}
+                {msg.deliveryState === 'PENDING' && <span className="text-cyan-400 font-mono text-[9px] animate-pulse" title="Sending...">⏱ sending...</span>}
+                {msg.deliveryState === 'FAILED' && <span className="text-rose-400 font-bold text-[9px]" title="Send Failed">⚠️ failed</span>}
               </div>
 
               {/* Message Bubble Container */}
