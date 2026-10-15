@@ -102,7 +102,14 @@ export function sanitizeChatDisplayHandle(raw: string | null | undefined): strin
 export function validateCanonicalReactionTarget(
   target: CanonicalReactionTarget
 ): CanonicalTargetValidation {
-  if (!target.poolId || !target.entityId || !target.season || !target.week) {
+  if (
+    !target.poolId ||
+    !target.entityId ||
+    target.season === undefined ||
+    target.season === null ||
+    target.week === undefined ||
+    target.week === null
+  ) {
     return {
       isValid: false,
       canonicalKey: null,
@@ -121,6 +128,7 @@ export function validateCanonicalReactionTarget(
   }
 
   if (
+    target.targetKind !== 'POOL_LOUNGE' &&
     target.targetKind !== 'CANONICAL_GAME' &&
     target.targetKind !== 'SETTLED_RECAP' &&
     target.targetKind !== 'POOL_CHAT_MESSAGE' &&

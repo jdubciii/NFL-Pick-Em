@@ -599,3 +599,11 @@
 - [x] **Task 41.2.4**: Wire shell `[💬 Lounge]` button into `AppHeader.tsx` and context-card entry points (`[💬 Talk about this game]` in `MatrixPage.tsx` and `[💬 Discuss Recap in Lounge]` in `WeeklyRecapCardView.tsx`).
 - [x] **Task 41.2.5**: Complete hardened `docs/proposals/P41_S2_UNIFIED_POOL_CHAT_AND_REACTIONS_PROPOSAL.md` addressing composite same-pool foreign keys, NULL-safe uniqueness, stable lounge identity, and Express vs. RLS boundaries.
 - [x] **Task 41.2.6**: Author comprehensive unit test suite `tests/phase41_s2_lounge_reactions_consistency.test.ts`, bump gradle to versionCode 69 (41.2.0), and prepare signed APK `pickem-v41-s2.apk`.
+
+### Phase 41 Sprint 2 Remediation (P41-S2-R1 — Express-Only Persistence & Database Rehearsal) [✅ COMPLETED]
+- [x] **Task 41.2.7**: Author authoritative SQL migration `prisma/migrations/20261015_p41_s2_express_only_social_persistence/migration.sql` with `REVOKE ALL` from PUBLIC/anon/authenticated and strict entity/revision CHECK constraints.
+- [x] **Task 41.2.8**: Align `prisma/schema.prisma` with `PoolMessage` and `PoolReaction` models, including composite self-referencing foreign key across 7 columns (`fk_pool_messages_parent_same_discussion`).
+- [x] **Task 41.2.9**: Implement authoritative Express persistence router `src/routes/poolSocialRoutes.ts` and mount under `/api/pools` with fail-closed active membership and actor spoofing verification.
+- [x] **Task 41.2.10**: Wire authenticated polling and message dispatch in client `PoolLoungeDrawer.tsx`.
+- [x] **Task 41.2.11**: Author comprehensive rehearsal suite `tests/phase41_s2_persistence_rehearsal.test.ts` (10 suites, 52/52 tests passing).
+- [x] **Task 41.2.12**: Bump Android Gradle to `versionCode 70` (`v41.2.1`), compile signed APK `pickem-v41-s2.apk`, and prepare evidence bundle.

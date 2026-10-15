@@ -48,6 +48,8 @@ model User {
   outboxEventsReceived   OutboxEvent[]           @relation("OutboxEventRecipient")
   outboxEventsRetried    OutboxEvent[]           @relation("OutboxEventRetrier")
   notificationPreference NotificationPreference?
+  poolMessages           PoolMessage[]
+  poolReactions          PoolReaction[]
 
   @@map("users")
 }
@@ -67,6 +69,8 @@ model Pool {
   penaltyMedia      PenaltyMedia[]
   inboxMessages     InboxMessage[]
   outboxEvents      OutboxEvent[]
+  poolMessages      PoolMessage[]
+  poolReactions     PoolReaction[]
 
   @@map("pools")
 }
@@ -303,5 +307,58 @@ model JobRun {
   @@index([jobName, startedAt])
   @@map("job_runs")
 }
+
+model PoolMessage {
+  id                 String        @id(map: "pk_pool_messages") @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  poolId             String        @map("pool_id") @db.Uuid
+  authorUserId       String        @map("author_user_id") @db.Uuid
+  clientRequestId    String        @map("client_request_id") @db.VarChar(64)
+  parentMessageId    String?       @map("parent_message_id") @db.Uuid
+  targetKind         String        @default("POOL_LOUNGE") @map("target_kind") @db.VarChar(32)
+  targetEntityId     String        @default("LOUNGE_ROOT") @map("target_entity_id") @db.VarChar(128)
+  season             Int           @default(2026)
+  week               Int           @default(0)
+  settlementRevision Int           @default(0) @map("settlement_revision")
+  body               String        @db.VarChar(500)
+  isPinned           Boolean       @default(false) @map("is_pinned")
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  pool               Pool          @relation(fields: [poolId], references: [id], onDelete: Cascade, map: "fk_pool_messages_pool")
+  author             User          @relation(fields: [authorUserId], references: [id], onDelete: Cascade, map: "fk_pool_messages_author")
+  parentMessage      PoolMessage?  @relation("ThreadReplies", fields: [parentMessageId, poolId, targetKind, targetEntityId, season, week, settlementRevision], references: [id, poolId, targetKind, targetEntityId, season, week, settlementRevision], onDelete: Restrict, map: "fk_pool_messages_parent_same_discussion")
+  replies            PoolMessage[] @relation("ThreadReplies")
+
+  @@unique([poolId, authorUserId, clientRequestId], map: "uq_pool_messages_actor_request")
+  @@unique([id, poolId, targetKind, targetEntityId, season, week, settlementRevision], map: "uq_pool_messages_discussion_scope")
+  @@index([poolId, createdAt, id], map: "idx_pool_messages_feed")
+  @@index([poolId, targetKind, targetEntityId, season, week, settlementRevision, createdAt], map: "idx_pool_messages_context")
+  @@index([authorUserId, createdAt(sort: Desc)], map: "idx_pool_messages_author")
+  @@index([parentMessageId], map: "idx_pool_messages_parent")
+  @@map("pool_messages")
+}
+
+model PoolReaction {
+  id                 String    @id(map: "pk_pool_reactions") @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  poolId             String    @map("pool_id") @db.Uuid
+  actorUserId        String    @map("actor_user_id") @db.Uuid
+  season             Int       @default(2026)
+  week               Int       @default(0)
+  targetKind         String    @map("target_kind") @db.VarChar(32)
+  targetEntityId     String    @map("target_entity_id") @db.VarChar(128)
+  settlementRevision Int       @default(0) @map("settlement_revision")
+  reactionCode       String    @map("reaction_code") @db.VarChar(32)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  pool               Pool      @relation(fields: [poolId], references: [id], onDelete: Cascade, map: "fk_pool_reactions_pool")
+  actor              User      @relation(fields: [actorUserId], references: [id], onDelete: Cascade, map: "fk_pool_reactions_actor")
+
+  @@unique([poolId, season, week, targetKind, targetEntityId, settlementRevision, actorUserId], map: "uq_pool_reaction_one_per_actor")
+  @@index([poolId, season, week, targetKind, targetEntityId, settlementRevision, reactionCode], map: "idx_pool_reactions_aggregation")
+  @@index([actorUserId, createdAt(sort: Desc)], map: "idx_pool_reactions_actor")
+  @@map("pool_reactions")
+}
+
 
 

@@ -121,6 +121,49 @@ export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
     } catch {}
   }, [messages, poolId]);
 
+  // Authenticated polling from Express endpoint while drawer is open
+  useEffect(() => {
+    if (!isOpen) return;
+    let isCancelled = false;
+    let pollInterval = 4000;
+    let timerId: any = null;
+
+    const fetchLatestMessages = async () => {
+      try {
+        const token = localStorage.getItem('supabase.auth.token') || '';
+        const res = await fetch(`/api/pools/${poolId}/lounge/messages?limit=50`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (!isCancelled && data.items && Array.isArray(data.items) && data.items.length > 0) {
+            setMessages((prev) => {
+              const existingIds = new Set(data.items.map((m: any) => m.id));
+              const localPending = prev.filter((m) => m.deliveryState === 'PENDING' && !existingIds.has(m.id));
+              return [...data.items, ...localPending];
+            });
+          }
+          pollInterval = 4000;
+        } else {
+          pollInterval = Math.min(30000, pollInterval * 1.5);
+        }
+      } catch {
+        pollInterval = Math.min(30000, pollInterval * 1.5);
+      } finally {
+        if (!isCancelled) {
+          timerId = setTimeout(fetchLatestMessages, pollInterval);
+        }
+      }
+    };
+
+    fetchLatestMessages();
+
+    return () => {
+      isCancelled = true;
+      if (timerId) clearTimeout(timerId);
+    };
+  }, [isOpen, poolId]);
+
   // Persist draft
   const handleDraftChange = (text: string) => {
     setDraftText(text);
@@ -191,6 +234,28 @@ export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
       setActiveContextCard(null);
       setLastFailedMessage(null);
       setTimeout(() => scrollToBottom(true), 50);
+
+      // Asynchronous dispatch to Express persistence endpoint
+      try {
+        const token = localStorage.getItem('supabase.auth.token') || '';
+        fetch(`/api/pools/${poolId}/lounge/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            clientRequestId,
+            body: cleanBody,
+            parentMessageId: replyingToMessage?.id || null,
+            targetKind: activeContextCard?.targetKind || 'POOL_LOUNGE',
+            targetEntityId: activeContextCard?.entityId || 'LOUNGE_ROOT',
+            season,
+            week: activeContextCard?.week || 0,
+            settlementRevision: activeContextCard?.settlementRevision || 0,
+          }),
+        }).catch(() => {});
+      } catch {}
     }
   };
 
