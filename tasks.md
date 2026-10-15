@@ -574,3 +574,12 @@
 - [x] **Task 39.3.1**: Build Personal Rooting Queue strip inside Radar ordered by duel and tier impact.
 - [x] **Task 39.3.2**: Build Bounded Late-Game Escape calculator for SNF/MNF survival scenarios.
 - [x] **Task 39.3.3**: Surface settled Nemesis Records (W-L-T), Split Decision / Lone Wolf badges, and the Commissioner Readiness Room summary card.
+
+### Phase 40 Sprint 1 (P40-S1 — Pass 4: Opening Corrections, Sweat Receipts, Season Story & Weekly Recap PNG Export) [✅ COMPLETED]
+- [x] **Task 40.1.1**: Implement five Arbiter Opening Corrections (indefinite articles, rival display name in Rooting Queue, deterministic duel margin movement, bounded escape gating, REELS week context, deterministic duel leverage bar, and sandbox simulator warning banner).
+- [x] **Task 40.1.2**: Create `src/services/sweatReceiptService.ts` for session-bounded projection transition receipts with suppression of duplicates, initial load, and simulation.
+- [x] **Task 40.1.3**: Create `src/services/seasonStoryService.ts` for authoritative settled history engine distinguishing LOADING, UNAVAILABLE_ERROR, EMPTY_SETTLED_HISTORY, and SETTLED_HISTORY.
+- [x] **Task 40.1.4**: Create `src/services/weeklyRecapService.ts` for deterministic weekly recap cards (THE WEEKLY VERDICT / RIVALRY RESULT) with co-winner handling and PII sanitization.
+- [x] **Task 40.1.5**: Create `WeeklyRecapCardView.tsx` with high-DPI HTML5 canvas PNG exporter and Android Web Share / download fallback.
+- [x] **Task 40.1.6**: Wire Sweat Receipts into Radar & RivalryShowdown, Season Story into WallOfShame & Profile, and sync client services under Decision #61.
+- [x] **Task 40.1.7**: Author comprehensive unit test suite `tests/phase40_s1_league_memory.test.ts`, bump gradle to versionCode 67 (40.1.0), compile signed APK `pickem-v40-s1.apk`.

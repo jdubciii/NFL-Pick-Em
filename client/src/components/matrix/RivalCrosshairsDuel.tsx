@@ -41,30 +41,40 @@ export const RivalCrosshairsDuel: React.FC<RivalCrosshairsDuelProps> = ({ duel, 
         {duel.summaryMicrocopy}
       </div>
 
-      {/* Tale of the Tape: Pre-Game Win Probability Tug-of-War Bar */}
-      <div className="space-y-1.5 p-3 rounded-xl bg-slate-900 border border-slate-800">
-        <div className="flex justify-between text-[11px] font-bold">
-          <span className="text-cyan-400">
-            {duel.targetUserName} ({duel.targetWinProbabilityPct}%)
-          </span>
-          <span className="text-amber-400">
-            {duel.rivalUserName} ({duel.rivalWinProbabilityPct}%)
-          </span>
-        </div>
-        <div className="w-full h-3 rounded-full bg-slate-800 overflow-hidden flex border border-slate-700">
-          <div
-            className="h-full bg-cyan-500 transition-all duration-500"
-            style={{ width: `${duel.targetWinProbabilityPct}%` }}
-          />
-          <div
-            className="h-full bg-amber-500 transition-all duration-500"
-            style={{ width: `${duel.rivalWinProbabilityPct}%` }}
-          />
-        </div>
-        <p className="text-[9px] text-slate-400 text-center uppercase tracking-wider pt-0.5">
-          VEGAS CONSENSUS TUG-OF-WAR
-        </p>
-      </div>
+      {/* Deterministic Point Consequence Breakdown Bar */}
+      {(() => {
+        const differingCount = duel.differingPicksCount ?? duel.differingPicks.length;
+        const sharedCount = duel.matchingPicksCount ?? Math.max(0, duel.totalGames - differingCount);
+        const total = differingCount + sharedCount;
+        const splitPct = total > 0 ? Math.round((differingCount / total) * 100) : 0;
+        const sharedPct = 100 - splitPct;
+
+        return (
+          <div className="space-y-1.5 p-3 rounded-xl bg-slate-900 border border-slate-800">
+            <div className="flex justify-between text-[11px] font-bold">
+              <span className="text-amber-400">
+                Split Picks: {differingCount} game{differingCount === 1 ? '' : 's'} ({differingCount} pt max swing)
+              </span>
+              <span className="text-cyan-400">
+                Shared Picks: {sharedCount} game{sharedCount === 1 ? '' : 's'} (0 pt gap leverage)
+              </span>
+            </div>
+            <div className="w-full h-3 rounded-full bg-slate-800 overflow-hidden flex border border-slate-700">
+              <div
+                className="h-full bg-amber-500 transition-all duration-500"
+                style={{ width: `${splitPct}%` }}
+              />
+              <div
+                className="h-full bg-cyan-600 transition-all duration-500"
+                style={{ width: `${sharedPct}%` }}
+              />
+            </div>
+            <p className="text-[9px] text-slate-400 text-center uppercase tracking-wider pt-0.5">
+              DETERMINISTIC DUEL LEVERAGE // SPLIT VS. SHARED SLATE
+            </p>
+          </div>
+        );
+      })()}
 
       {/* Side-by-Side Comparison Columns */}
       <div className="space-y-2">

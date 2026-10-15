@@ -561,6 +561,18 @@ export function formatAttributedSpread(params: {
   return team ? `${team} -${absVal}` : `-${absVal}`;
 }
 
+export function getTeamIndefiniteArticle(teamCode: string): 'An' | 'A' {
+  const clean = (teamCode || '').toUpperCase().trim();
+  const vowelStarts = ['A', 'E', 'I', 'O', 'U'];
+  return vowelStarts.includes(clean.charAt(0)) ? 'An' : 'A';
+}
+
+export interface PersonalRootingQueueOptions {
+  maxItems?: number;
+  rivalDisplayName?: string;
+  currentViewerGap?: number;
+}
+
 export interface RootingQueueItem {
   gameId: string;
   matchupLabel: string;
@@ -570,6 +582,7 @@ export interface RootingQueueItem {
   priorityScore: number;
   reasonBadge: 'DUEL SWING' | 'TIER ESCAPE' | 'SHARED ROOT';
   consequenceText: string;
+  consequenceNote?: string;
 }
 
 export interface LateGameEscapeScenario {
@@ -579,6 +592,8 @@ export interface LateGameEscapeScenario {
   requiresTiebreaker: boolean;
   headline: string;
   requirementSummary: string;
+  scenarioMode?: 'SIMULATION_EXCLUDED' | 'MID_SLATE_GUIDANCE' | 'EXACT_CLINCH' | 'HOLDING_SAFE_GROUND' | 'CLINCH_AGAINST';
+  canClaimExactClinch?: boolean;
 }
 
 export interface NemesisRecordSummary {
@@ -607,12 +622,18 @@ export function buildPersonalRootingQueue(
     status?: string | null;
     changesTier?: boolean;
   }>,
-  maxItems: number = 3
+  options?: number | PersonalRootingQueueOptions
 ): RootingQueueItem[] {
+  const maxItems = typeof options === 'number' ? options : options?.maxItems ?? 3;
+  const rivalDisplayName = (typeof options === 'object' && options?.rivalDisplayName ? options.rivalDisplayName : 'your rival').trim();
+  const currentViewerGap = typeof options === 'object' && typeof options?.currentViewerGap === 'number' ? options.currentViewerGap : 0;
+
   const activeOrUpcoming = games.filter((g) => {
     const st = (g.status || 'SCHEDULED').toUpperCase();
     return st !== 'FINAL' && st !== 'F' && st !== 'COMPLETED' && st !== 'SETTLED';
   });
+
+  const formatMargin = (val: number) => (val > 0 ? `+${val}` : `${val}`);
 
   const mapped: RootingQueueItem[] = activeOrUpcoming
     .filter((g) => Boolean(g.viewerPick))
@@ -627,16 +648,21 @@ export function buildPersonalRootingQueue(
 
       let priorityScore = isLive ? 50 : 10;
       let reasonBadge: 'DUEL SWING' | 'TIER ESCAPE' | 'SHARED ROOT' = 'SHARED ROOT';
-      let consequenceText = `Shared pick with rival (${vPick}) — holds current margin`;
+      let consequenceText = `Shared pick with ${rivalDisplayName} (${vPick}) — holds current margin`;
+
+      const article = getTeamIndefiniteArticle(vPick);
+      const postGap = currentViewerGap + 1;
+      const unit = Math.abs(postGap) === 1 ? 'pt' : 'pts';
+      const marginChangeStr = `moves your duel margin vs. ${rivalDisplayName} from ${formatMargin(currentViewerGap)} to ${formatMargin(postGap)} ${unit}`;
 
       if (isSplit && g.changesTier) {
         priorityScore += 100;
         reasonBadge = 'TIER ESCAPE';
-        consequenceText = `A ${vPick} win swings your duel (+1 pt) and shifts projected charter tier`;
+        consequenceText = `${article} ${vPick} win ${marginChangeStr}`;
       } else if (isSplit) {
         priorityScore += 75;
         reasonBadge = 'DUEL SWING';
-        consequenceText = `A ${vPick} win puts you +1 pt ahead of ${rPick} in your active duel`;
+        consequenceText = `${article} ${vPick} win ${marginChangeStr}`;
       }
 
       return {
@@ -648,6 +674,7 @@ export function buildPersonalRootingQueue(
         priorityScore,
         reasonBadge,
         consequenceText,
+        consequenceNote: consequenceText,
       };
     });
 
@@ -659,9 +686,37 @@ export function evaluateLateGameEscape(params: {
   targetSafePoints: number;
   remainingDisagreementGames: Array<{ gameId: string; awayTeam: string; homeTeam: string; viewerPick: string }>;
   holdsTiebreakerEdge?: boolean | null;
+  activeMemberCount?: number;
+  isSimulation?: boolean;
 }): LateGameEscapeScenario {
   const deficit = Math.max(0, params.targetSafePoints - params.viewerPoints);
   const remCount = params.remainingDisagreementGames.length;
+
+  if (params.isSimulation) {
+    return {
+      remainingDisagreements: remCount,
+      viewerPointDeficit: deficit,
+      canMathematicallyEscape: false,
+      requiresTiebreaker: false,
+      scenarioMode: 'SIMULATION_EXCLUDED',
+      canClaimExactClinch: false,
+      headline: 'Sandbox Simulation Active',
+      requirementSummary: 'Simulated outcomes are excluded from official escape/clinch guarantees and league receipts.',
+    };
+  }
+
+  if (remCount > 2) {
+    return {
+      remainingDisagreements: remCount,
+      viewerPointDeficit: deficit,
+      canMathematicallyEscape: deficit <= remCount,
+      requiresTiebreaker: false,
+      scenarioMode: 'MID_SLATE_GUIDANCE',
+      canClaimExactClinch: false,
+      headline: `Mid-Slate Rooting Guidance (${remCount} Split Games Open)`,
+      requirementSummary: 'Exact escape/clinch guarantees unlock when 1–2 decisive split games remain. Focus on your top Rooting Queue matchups.',
+    };
+  }
 
   if (deficit === 0) {
     return {
@@ -669,6 +724,8 @@ export function evaluateLateGameEscape(params: {
       viewerPointDeficit: 0,
       canMathematicallyEscape: true,
       requiresTiebreaker: false,
+      scenarioMode: 'HOLDING_SAFE_GROUND',
+      canClaimExactClinch: true,
       headline: 'Holding Safe Ground',
       requirementSummary:
         remCount > 0
@@ -683,6 +740,8 @@ export function evaluateLateGameEscape(params: {
       viewerPointDeficit: deficit,
       canMathematicallyEscape: false,
       requiresTiebreaker: false,
+      scenarioMode: 'CLINCH_AGAINST',
+      canClaimExactClinch: true,
       headline: 'Mathematical Clinch Against',
       requirementSummary: `Trailing by ${deficit} pt${deficit === 1 ? '' : 's'} with only ${remCount} split game${remCount === 1 ? '' : 's'} remaining.`,
     };
@@ -691,12 +750,21 @@ export function evaluateLateGameEscape(params: {
   const neededTeams = params.remainingDisagreementGames.slice(0, deficit).map((g) => g.viewerPick.toUpperCase());
   const requiresTiebreak = deficit === remCount && params.holdsTiebreakerEdge !== true;
 
+  const isDuelScoped = Boolean(params.activeMemberCount && params.activeMemberCount > 2);
+  const headline = isDuelScoped
+    ? 'Duel Escape Path Active'
+    : remCount <= 2
+    ? 'Late-Slate Escape Path Active'
+    : `${deficit}-Game Comeback Path Open`;
+
   return {
     remainingDisagreements: remCount,
     viewerPointDeficit: deficit,
     canMathematicallyEscape: true,
     requiresTiebreaker: requiresTiebreak,
-    headline: remCount <= 2 ? 'Late-Slate Escape Path Active' : `${deficit}-Game Comeback Path Open`,
+    scenarioMode: 'EXACT_CLINCH',
+    canClaimExactClinch: true,
+    headline,
     requirementSummary: requiresTiebreak
       ? `Need ${neededTeams.join(' + ')} win${neededTeams.length > 1 ? 's' : ''} to force a tie, plus Monday Night tiebreaker differential.`
       : `Need ${neededTeams.join(' + ')} win${neededTeams.length > 1 ? 's' : ''} to erase the ${deficit}-pt gap.`,
@@ -793,4 +861,8 @@ export function classifyPickDistributionBadge(
     totalPickers,
   };
 }
+
+export * from './sweatReceiptService';
+export * from './seasonStoryService';
+export * from './weeklyRecapService';
 

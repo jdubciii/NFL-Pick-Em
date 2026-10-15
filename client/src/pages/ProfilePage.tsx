@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { AccountSettingsModal } from '../components/profile/AccountSettingsModal';
 import { AppHeader } from '../components/common/AppHeader';
 import { Settings } from 'lucide-react';
+import { deriveSeasonStoryViewModel } from '../services/seasonStoryService';
 
 interface PendingApplicant {
   userId: string;
@@ -151,6 +152,17 @@ export const ProfilePage: React.FC = () => {
       setAdjudicatingId(null);
     }
   };
+
+  const personalStory = useMemo(() => {
+    return deriveSeasonStoryViewModel({
+      isLoading: false,
+      season: 2026,
+      poolId: activePoolId,
+      viewerUserId: user?.id || 'viewer',
+      rawRecords: [], // Live database has 0 settled weeks currently
+      currentOutstandingShotDebt: 0,
+    });
+  }, [activePoolId, user?.id]);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white pb-24">
@@ -304,6 +316,51 @@ export const ProfilePage: React.FC = () => {
             <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
               <div className="text-sm font-black text-amber-400">0 shots</div>
               <div className="text-[10px] text-slate-500 font-bold uppercase">Shot Debt</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Pass 4: Personal Season Story Summary Card */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 font-mono shadow-md">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-3">
+            <span className="text-xs font-black text-amber-400 uppercase tracking-wider">
+              📜 SEASON STORY SUMMARY
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400">
+              OFFICIAL AUDIT
+            </span>
+          </div>
+
+          <div className="text-xs font-bold text-slate-200 mb-1">
+            {personalStory.headline}
+          </div>
+          <div className="text-[11px] text-slate-400 leading-relaxed mb-3">
+            {personalStory.statusMessage}
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+              <div className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">
+                Weekly Charges Incurred
+              </div>
+              <div className="text-sm font-black text-white">
+                {personalStory.totalWeeklyChargesLabel}
+              </div>
+              <div className="text-[9px] text-slate-500 mt-0.5">
+                Cumulative historical charges
+              </div>
+            </div>
+
+            <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+              <div className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">
+                Outstanding Season Shot Debt
+              </div>
+              <div className="text-sm font-black text-amber-400">
+                {personalStory.outstandingShotDebtLabel}
+              </div>
+              <div className="text-[9px] text-slate-500 mt-0.5">
+                Current unpaid charter balance
+              </div>
             </div>
           </div>
         </div>

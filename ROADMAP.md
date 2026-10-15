@@ -268,7 +268,7 @@
 
 ## Phase 39–41: 5-Pass Product Review Architecture & Execution Plan (Synced October 13, 2026)
 
-### Pass 1 — Phase 39 Sprint 1 (P39-S1): Dependable Information & Mathematical Truth [ACTIVE]
+### Pass 1 — Phase 39 Sprint 1 (P39-S1): Dependable Information & Mathematical Truth [✅ COMPLETED]
 - **Submission & Lock State Separation (Decision #66)**: Explicitly distinguish local draft picks, server-confirmed submissions, and per-game kickoff locks (1 Locked / 13 Editable).
 - **Explicit Slate Phase Telemetry**: Replace ambiguous pre-game LIVE PROJECTION / 0-0 displays with deterministic phase states (PRE_KICKOFF, LIVE_IN_PROGRESS, AWAITING_SETTLEMENT, SETTLED, SIMULATION) and scheduled kickoff times.
 - **Tied Ranks & Tiebreaker Honesty**: Unify Radar and Ladder standing descriptors (Joint #1 on points - Tiebreak pending vs. Projected Safe Haven if standing holds vs. settled tiebreakers).
@@ -277,24 +277,25 @@
 - **Radar Duel Swing Arithmetic**: Replace +-2 PTS NET SWING on 1-point games with explicit conditional outcome tiles (SEA wins: +1 / DEN wins: -1) and 2 PT OUTCOME SPAN (-1 / +1).
 - **Charter Shot Unit Precision (Decision #69)**: Replace ambiguous 0.00s formatting with human units (0 shots, 1 shot, 2.5 shots).
 
-### Pass 2 — Phase 39 Sprint 2 (P39-S2): Mobile Speed, Shared Context & Rivalry Continuity [QUEUED]
+### Pass 2 — Phase 39 Sprint 2 (P39-S2): Mobile Speed, Shared Context & Rivalry Continuity [✅ COMPLETED]
 - **Shared Pool + Week + Phase Context Header**: Persistent top context bar across all 5 destinations (Main League - Week 6 - Pre-Kickoff).
 - **Semantic Visual Token Unification**: Lock Viewer = Cyan and Rival = Amber across both Matrix and Radar; enforce 48x48dp touch targets and WCAG contrast minimums.
 - **Smart List / Swipe Workhorse & Bulk Preview**: Honor saved view mode or auto-select Swipe for unpicked slates and List for completed slates; add Presets and Clear All preview confirmation with pre-lock Undo guard.
 - **Readable Matrix Filters & Denominators**: Add All, Split Picks, My Pick, and Live filter pills with prominent participation denominators (2 of 2, 8 of 10).
 - **Unified Matrix + Radar Rivalry Workflow**: Share selectedRivalId across Matrix and Radar, auto-select the sole rival in a 2-player pool, and rename Lock Target to Open Duel.
 
-### Pass 3 — Phase 39 Sprint 3 (P39-S3): Signature Sunday Sweat Features [QUEUED]
+### Pass 3 — Phase 39 Sprint 3 (P39-S3): Signature Sunday Sweat Features [✅ COMPLETED]
 - **Personal Rooting Queue**: Prioritized Radar watch strip ordering live/upcoming games by rivalry and tier leverage.
 - **Bounded Late-Game Escape (SNF/MNF)**: Exact mathematical survival and tiebreak scenarios when 1-2 games remain to escape The Pit or clinch #1.
 - **Nemesis Records**: Settled head-to-head weekly duel ledger (Jack leads rivalry 3-2).
 - **Lone Wolf & Split Decision Recognition**: Read-only badges derived from authorized pick distributions (Split Decision 1 of 2 / Lone Wolf 1 of 10).
 - **Commissioner Readiness Room**: Operational summary card displaying Active Members, Pending Applicants, Slate Submission Readiness, and Next Kickoff Lock.
 
-### Pass 4 — Phase 40 (P40): League Memory & Shareable Artifacts [BACKLOG]
-- **Provisional Sweat Receipts**: Shareable session cards capturing live lead-change moments with provisional badges.
-- **Season Story Timelines**: Settled historical progression for weekly rank, pick accuracy, and shot-debt balance.
-- **Deterministic Weekly Recap Cards**: Shareable post-settlement summary cards (Champion, Rivalry Result, Weekly League Recap).
+### Pass 4 — Phase 40 Sprint 1 (P40-S1): Opening Corrections, Sweat Receipts, Season Story & Weekly Recap PNG Export [✅ COMPLETED]
+- **Arbiter Opening Corrections**: Vowel indefinite articles (`An ATL win`), rival display name in Rooting Queue, deterministic duel margin movement, bounded escape gating, REELS week context, deterministic duel leverage bar, and sandbox simulator warning banner.
+- **Provisional Sweat Receipts**: Shareable session cards capturing live lead-change moments with provisional badges and initial/duplicate/simulation suppression.
+- **Season Story Timelines**: Settled historical progression engine distinguishing LOADING, UNAVAILABLE_ERROR, EMPTY_SETTLED_HISTORY, and SETTLED_HISTORY.
+- **Deterministic Weekly Recap Cards & Canvas PNG Exporter**: Shareable post-settlement summary cards (THE WEEKLY VERDICT / RIVALRY RESULT) with 1080x640 high-DPI HTML5 canvas PNG exporter and Android Web Share / download fallback.
 
 ### Pass 5 — Phase 41 (P41): Social Expression, Native Alerts & Watch Party Big Board [BACKLOG]
 - **Contextual Moment Reactions**: Quick game/receipt reactions (Called it, Pain, Pit bound) governed by pick visibility locks.

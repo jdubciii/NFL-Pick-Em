@@ -12,6 +12,7 @@ import {
   ProvisionalStanding,
 } from '../../services/sweatProjectionService';
 import { summarizeNemesisRecord } from '../../services/dependableInfoService';
+import type { SessionSweatReceipt } from '../../services/sweatReceiptService';
 
 interface RivalryShowdownProps {
   currentUser: UserStandingRef;
@@ -24,6 +25,7 @@ interface RivalryShowdownProps {
   onSelectRival: (rivalId: string) => void;
   onBackToLeague?: () => void;
   selectedWeek?: number;
+  receipts?: SessionSweatReceipt[];
 }
 
 export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
@@ -36,6 +38,7 @@ export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
   selectedRivalId,
   onSelectRival,
   selectedWeek,
+  receipts = [],
 }) => {
   // Available rivals (all members except current user)
   const availableRivals = useMemo(() => {
@@ -224,6 +227,44 @@ export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
         <div className="text-center pt-2 border-t border-slate-800/80 text-[11px] text-slate-300 font-bold">
           Status: <span className="text-amber-300">{statusText}</span>
         </div>
+      </div>
+
+      {/* 3b. Session Sweat Receipts (Live Memory) */}
+      <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-2">
+        <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+          <span className="flex items-center gap-1.5">
+            <span>🧾 SESSION SWEAT RECEIPTS (LIVE MEMORY)</span>
+          </span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
+            {receipts.length} Captured
+          </span>
+        </div>
+
+        {receipts.length === 0 ? (
+          <p className="text-[11px] text-slate-400 italic py-1 leading-relaxed">
+            Monitoring active session — receipts capture live lead changes, level-ups, and tier crossings observed while Radar is open (Sandbox simulations excluded).
+          </p>
+        ) : (
+          <div className="space-y-2 pt-1">
+            {receipts.map((r) => (
+              <div key={r.id} className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-black text-amber-300">{r.headline}</span>
+                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-950 border border-amber-500/50 text-amber-300 font-bold">
+                    {r.transitionType}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-slate-400">
+                  <span>{r.attributionLabel}</span>
+                  <span className="font-mono">Gap: {r.beforeGap > 0 ? `+${r.beforeGap}` : r.beforeGap} → {r.afterGap > 0 ? `+${r.afterGap}` : r.afterGap}</span>
+                </div>
+                <div className="text-[9px] text-slate-500 font-mono">
+                  {r.scopeDisclosure}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 4. Duel Decider Banner */}

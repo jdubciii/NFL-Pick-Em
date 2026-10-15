@@ -1,14 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ShameSegmentedHeader } from '../components/shame/ShameSegmentedHeader';
 import { WeeklyLadderView } from '../components/shame/WeeklyLadderView';
 import { AppHeader } from '../components/common/AppHeader';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../context/AuthContext';
 import { formatShotUnit } from '../services/dependableInfoService';
+import {
+  deriveSeasonStoryViewModel,
+  AuthoritativeWeeklyStandingRow,
+} from '../services/seasonStoryService';
+import { WeeklyRecapCardView } from '../components/shame/WeeklyRecapCardView';
 
 export function WallOfShamePage() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'reels' | 'ladder' | 'infamy'>('ladder');
   const [dockets] = useState<any[]>([]);
   const [ladderData, setLadderData] = useState<any[]>([]);
+  const [inspectSettledFixture, setInspectSettledFixture] = useState<boolean>(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -106,6 +114,39 @@ export function WallOfShamePage() {
     };
   }, []);
 
+  const currentUserId = user?.id || 'viewer';
+  const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+
+  const demoRecords: AuthoritativeWeeklyStandingRow[] = useMemo(() => [
+    {
+      season: 2026,
+      week: 5,
+      poolId: activePoolId,
+      userId: currentUserId,
+      displayName: user?.email ? user.email.split('@')[0] : 'You',
+      rank: 1,
+      isTiedRank: false,
+      participantCount: 2,
+      correctPicks: 10,
+      totalGames: 14,
+      weeklyShotsIncurred: 0,
+      tierName: 'SAFE HAVEN',
+      isOfficiallySettled: true,
+      settlementRevision: '1 (Official)',
+    },
+  ], [activePoolId, currentUserId, user?.email]);
+
+  const seasonStory = useMemo(() => {
+    return deriveSeasonStoryViewModel({
+      isLoading: false,
+      season: 2026,
+      poolId: activePoolId,
+      viewerUserId: currentUserId,
+      rawRecords: inspectSettledFixture ? demoRecords : [],
+      currentOutstandingShotDebt: 0,
+    });
+  }, [activePoolId, currentUserId, inspectSettledFixture, demoRecords]);
+
   return (
     <div className="min-h-screen bg-zinc-950 text-white pb-24">
       {/* Unified Top Branding Banner */}
@@ -127,8 +168,11 @@ export function WallOfShamePage() {
           <div className="text-amber-400 font-bold text-sm tracking-wider uppercase mb-1">
             [ NO ACTIVE PENALTY REELS ]
           </div>
-          <p className="text-slate-400 text-xs max-w-xs leading-relaxed mb-6">
-            Zero penalty shot videos have been uploaded for Week 5. The tribunal queue unlocks once evidence is submitted.
+          <p className="text-slate-300 text-xs max-w-xs leading-relaxed mb-1">
+            Zero penalty shot videos have been uploaded for Week 6 (Pre-Kickoff).
+          </p>
+          <p className="text-slate-500 text-[11px] max-w-xs leading-relaxed mb-6 font-mono">
+            Prior settled obligations (Week 5): 0 outstanding penalty reels.
           </p>
           <button 
             onClick={() => setActiveTab('ladder')}
@@ -150,29 +194,104 @@ export function WallOfShamePage() {
         </div>
       )}
 
-      {/* Tab 3: Hall of Infamy (Always Accessible) */}
+      {/* Tab 3: Hall of Infamy, Season Story & Weekly Recap Cards */}
       {activeTab === 'infamy' && (
-        <div className="flex-1 p-6 text-center">
-          <div className="w-14 h-14 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center mx-auto mb-3 text-2xl">
-            🏛️
-          </div>
-          <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400 mb-1">
-            [ HALL OF INFAMY ARCHIVE ]
-          </h3>
-          <p className="text-slate-400 text-xs max-w-xs mx-auto mb-6">
-            Historical dead-place punishments and penalty records.
-          </p>
-          <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-4 text-left max-w-sm mx-auto">
-            <div className="text-[11px] font-bold text-slate-300 uppercase tracking-wider mb-2">SEASON LEDGER SUMMARY</div>
-            <div className="flex justify-between text-xs py-1 border-b border-slate-800/60">
-              <span className="text-slate-400">Total League Penalties:</span>
-              <span className="text-amber-400 font-mono font-bold">0 shots</span>
+        <div className="flex-1 p-4 space-y-4">
+          {/* Season Story Section */}
+          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 font-mono">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-3">
+              <div>
+                <div className="text-[10px] font-black text-amber-400 uppercase tracking-widest">
+                  AUTHORITATIVE SEASON STORY
+                </div>
+                <div className="text-xs text-slate-300 font-bold">
+                  {seasonStory.headline}
+                </div>
+              </div>
+              <button
+                onClick={() => setInspectSettledFixture((prev) => !prev)}
+                className={`px-2 py-1 rounded text-[10px] font-mono font-bold transition border ${
+                  inspectSettledFixture
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
+                }`}
+              >
+                {inspectSettledFixture ? 'RESET TO LIVE LEAGUE' : 'INSPECT SETTLED FIXTURE'}
+              </button>
             </div>
-            <div className="flex justify-between text-xs py-1">
-              <span className="text-slate-400">Tribunal Disputes:</span>
-              <span className="text-emerald-400 font-mono font-bold">0 Active</span>
+
+            {inspectSettledFixture && (
+              <div className="mb-3 p-2 rounded-lg bg-amber-950/40 border border-amber-500/40 text-amber-300 text-[10px]">
+                <span className="font-bold">DEMO FIXTURE:</span> Simulating 1 settled week to verify personal/league story progression on hardware while live Week 6 is unsettled.
+              </div>
+            )}
+
+            <div className="text-xs text-slate-400 leading-relaxed mb-3">
+              {seasonStory.statusMessage}
             </div>
+
+            <div className="grid grid-cols-3 gap-2 bg-slate-950/70 p-2.5 rounded-xl border border-slate-800/80 text-center mb-3">
+              <div>
+                <div className="text-[9px] text-slate-500 uppercase">Settled Slates</div>
+                <div className="text-xs font-bold text-slate-200">{seasonStory.settledWeeksCount}</div>
+              </div>
+              <div>
+                <div className="text-[9px] text-slate-500 uppercase">Pick Accuracy</div>
+                <div className="text-xs font-bold text-cyan-400">{seasonStory.accuracyPercentLabel}</div>
+              </div>
+              <div>
+                <div className="text-[9px] text-slate-500 uppercase">Safe Havens</div>
+                <div className="text-xs font-bold text-emerald-400">{seasonStory.safeHavenFinishes ?? 0}</div>
+              </div>
+            </div>
+
+            {seasonStory.weeklyNodes.length > 0 && (
+              <div className="space-y-2 mt-2">
+                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  Settled Weekly Audit Trail
+                </div>
+                {seasonStory.weeklyNodes.map((node) => (
+                  <div
+                    key={node.week}
+                    className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 text-xs"
+                  >
+                    <div>
+                      <div className="font-bold text-slate-200">
+                        Week {node.week} · <span className="text-cyan-400">{node.rankLabel}</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        {node.participationBadge} · {node.settlementRevisionLabel}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-mono font-bold text-amber-400">
+                        {node.weeklyChargeLabel}
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        {node.pickRecordLabel}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
+
+          {/* Weekly Recap Card Exporter Component */}
+          <WeeklyRecapCardView
+            currentWeek={6}
+            liveParticipants={ladderData.map((l, idx) => ({
+              userId: l.userId || `u-${idx}`,
+              displayName: l.displayName || `Player ${idx + 1}`,
+              rank: l.rank || idx + 1,
+              points: 0,
+              totalGames: 14,
+              shotsIncurred: l.shotsOwed || 0,
+              tierName: l.tier || 'SAFE HAVEN',
+              tiebreakResolved: true,
+            }))}
+            viewerUserId={user?.id || 'viewer'}
+          />
         </div>
       )}
     </div>

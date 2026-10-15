@@ -20,6 +20,12 @@ import {
   RootingQueueItem,
   LateGameEscapeScenario
 } from '../services/dependableInfoService';
+import {
+  createEmptyReceiptSession,
+  observeProjectionSnapshot,
+  SweatReceiptSessionState,
+  ProjectionSnapshot,
+} from '../services/sweatReceiptService';
 
 export const RadarPage: React.FC = () => {
   const { user, token } = useAuth();
@@ -57,6 +63,9 @@ export const RadarPage: React.FC = () => {
   // Simulation what-if state
   const [isSimulationActive, setIsSimulationActive] = useState<boolean>(false);
   const [simulationFlippedPicks, setSimulationFlippedPicks] = useState<boolean>(false);
+
+  // Session-bounded sweat receipts (live memory)
+  const [receiptSession, setReceiptSession] = useState<SweatReceiptSessionState>(() => createEmptyReceiptSession());
 
   // Pool & slate data (bound strictly to live database pool state)
   const [members, setMembers] = useState<UserStandingRef[]>([]);
@@ -271,8 +280,13 @@ export const RadarPage: React.FC = () => {
     return available[0] || null;
   }, [members, currentUserId, selectedRivalId, userStanding, provisionalResult]);
 
-  // Pass 3: Personal Rooting Queue
+  // Pass 3 & 4: Personal Rooting Queue with deterministic duel margin tracking
   const personalRootingQueue: RootingQueueItem[] = useMemo(() => {
+    const activeRivalStanding = activeRival ? provisionalResult.find((s) => s.userId === activeRival.id) : null;
+    const currentViewerGap = (userStanding && activeRivalStanding)
+      ? userStanding.totalProvisionalPoints - activeRivalStanding.totalProvisionalPoints
+      : 0;
+
     const queueGames = games.map((g) => {
       const vPick = effectivePicks.find((p) => p.gameId === g.id && p.userId === currentUserId)?.selectedTeam || '';
       const rPick = activeRival
@@ -290,10 +304,14 @@ export const RadarPage: React.FC = () => {
         changesTier: Boolean(userStanding && userStanding.tier !== 'SAFE_HAVEN'),
       };
     });
-    return buildPersonalRootingQueue(queueGames, 3);
-  }, [games, effectivePicks, currentUserId, activeRival, liveScores, userStanding]);
+    return buildPersonalRootingQueue(queueGames, {
+      maxItems: 3,
+      rivalDisplayName: activeRival?.name || 'your rival',
+      currentViewerGap,
+    });
+  }, [games, effectivePicks, currentUserId, activeRival, liveScores, userStanding, provisionalResult]);
 
-  // Pass 3: Bounded Late-Game Escape Scenario
+  // Pass 3 & 4: Bounded Late-Game Escape Scenario with simulation exclusion & member count gating
   const escapeScenario: LateGameEscapeScenario | null = useMemo(() => {
     if (!userStanding) return null;
     const leader = provisionalResult[0];
@@ -326,8 +344,43 @@ export const RadarPage: React.FC = () => {
       targetSafePoints,
       remainingDisagreementGames: disagreementGames,
       holdsTiebreakerEdge: null,
+      activeMemberCount: members.length,
+      isSimulation: isSimulationActive,
     });
-  }, [userStanding, provisionalResult, games, effectivePicks, currentUserId, activeRival, liveScores]);
+  }, [userStanding, provisionalResult, games, effectivePicks, currentUserId, activeRival, liveScores, members.length, isSimulationActive]);
+
+  // Session Sweat Receipts: observe projection transitions
+  useEffect(() => {
+    if (!userStanding || !activeRival || isSimulationActive) return;
+    const activeRivalStanding = provisionalResult.find((s) => s.userId === activeRival.id);
+    if (!activeRivalStanding) return;
+
+    const snapshot: ProjectionSnapshot = {
+      poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+      week: activeWeek,
+      viewerId: userStanding.userId,
+      viewerName: currentUserRef.name || 'You',
+      rivalId: activeRival.id,
+      rivalName: activeRival.name,
+      viewerPoints: userStanding.totalProvisionalPoints,
+      rivalPoints: activeRivalStanding.totalProvisionalPoints,
+      viewerProjectedTier: userStanding.tier,
+      isSimulation: isSimulationActive,
+      isStale,
+      observedAtIso: new Date().toISOString(),
+    };
+
+    setReceiptSession((prev) => observeProjectionSnapshot(prev, snapshot));
+  }, [
+    userStanding?.totalProvisionalPoints,
+    userStanding?.tier,
+    activeRival?.id,
+    provisionalResult,
+    isSimulationActive,
+    isStale,
+    activeWeek,
+    currentUserRef.name,
+  ]);
 
   // Rank-Change feedback & pulse animation (isolated from What-If simulation)
   const prevRanksRef = useRef<Map<string, number>>(new Map());
@@ -439,15 +492,15 @@ export const RadarPage: React.FC = () => {
           <div className="sticky top-14 z-30 -mx-4 px-4 py-2 bg-amber-950/95 border-b border-amber-400 font-mono text-xs flex items-center justify-between shadow-lg mb-3">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-              <span className="font-black text-amber-200 uppercase tracking-wider">
-                ⚡ WHAT-IF SIMULATION ACTIVE
+              <span className="font-black text-amber-200 uppercase tracking-wider text-[11px] leading-tight">
+                🧪 SANDBOX SIMULATION MODE — Hypothetical projections only. Excluded from Sweat Receipts and official League History.
               </span>
             </div>
             <button
               onClick={handleResetSimulation}
-              className="px-2 py-0.5 rounded bg-amber-500 text-slate-950 font-black text-[10px] hover:bg-amber-400"
+              className="px-2 py-1 rounded bg-amber-500 text-slate-950 font-black text-[10px] hover:bg-amber-400 shrink-0 ml-2"
             >
-              RETURN TO LIVE
+              EXIT SANDBOX
             </button>
           </div>
         )}
@@ -512,6 +565,7 @@ export const RadarPage: React.FC = () => {
           onSelectRival={(id) => handleSelectRival(id)}
           onBackToLeague={() => setActiveViewMode('LEAGUE')}
           selectedWeek={activeWeek}
+          receipts={receiptSession.receipts}
         />
       ) : (
         /* VIEW MODE 2: LEAGUE PROJECTION */
@@ -703,7 +757,7 @@ export const RadarPage: React.FC = () => {
                 onClick={handleToggleSimulation}
                 className="text-[10px] px-2 py-0.5 rounded bg-slate-900 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-950 font-bold transition"
               >
-                {isSimulationActive ? 'RESET WHAT-IF' : 'TEST WHAT-IF'}
+                {isSimulationActive ? 'EXIT SANDBOX' : 'SANDBOX SIMULATOR'}
               </button>
             </div>
 
