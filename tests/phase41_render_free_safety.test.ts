@@ -89,6 +89,26 @@ describe('Phase 41 Free Safety: Render Free Hosting, TLS & Background Switch', (
       });
     });
 
+    it('rejects sslmode=allow in production', () => {
+      process.env.NODE_ENV = 'production';
+      expect(
+        validateDatabaseConnectionUrl('postgresql://user:pass@db.example.com:5432/postgres?sslmode=allow')
+      ).toEqual({
+        valid: false,
+        reason: 'SSL_DISABLED_IN_PRODUCTION',
+      });
+    });
+
+    it('rejects sslaccept=accept_invalid_certs in production', () => {
+      process.env.NODE_ENV = 'production';
+      expect(
+        validateDatabaseConnectionUrl('postgresql://user:pass@db.example.com:5432/postgres?sslaccept=accept_invalid_certs')
+      ).toEqual({
+        valid: false,
+        reason: 'CERTIFICATE_VALIDATION_BYPASS_PROHIBITED',
+      });
+    });
+
     it('accepts compliant postgres URL with secure connection options', () => {
       process.env.NODE_ENV = 'production';
       expect(

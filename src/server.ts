@@ -30,14 +30,12 @@ import type {
 import { startLiveScheduleDaemon } from './services/liveScheduleDaemon';
 import { LiveScoreboardService, LiveGameStatus } from './services/LiveScoreboardService';
 
+import { createCorsOptions } from './config/corsConfig';
+
 export const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors({
-  origin: (_origin, callback) => callback(null, true),
-  credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-user-email', 'x-user-role'],
-}));
+app.use(cors(createCorsOptions()));
 app.use(express.json());
 
 // Bind dev user if x-user-email header is present in non-production

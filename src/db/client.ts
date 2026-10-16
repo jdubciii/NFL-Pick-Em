@@ -22,10 +22,10 @@ export function validateDatabaseConnectionUrl(url?: string): { valid: boolean; r
     if (process.env.NODE_ENV === 'production') {
       const search = parsed.searchParams;
       const sslmode = search.get('sslmode');
-      if (sslmode === 'disable') {
+      if (sslmode === 'disable' || sslmode === 'allow') {
         return { valid: false, reason: 'SSL_DISABLED_IN_PRODUCTION' };
       }
-      if (search.get('rejectUnauthorized') === 'false') {
+      if (search.get('rejectUnauthorized') === 'false' || search.get('sslaccept') === 'accept_invalid_certs') {
         return { valid: false, reason: 'CERTIFICATE_VALIDATION_BYPASS_PROHIBITED' };
       }
     }
