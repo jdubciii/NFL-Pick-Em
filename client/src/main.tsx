@@ -4,11 +4,10 @@ import './index.css';
 import App from './App.tsx';
 import { BrowserRouter } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
-import { installFetchInterceptor, cleanLegacyBootstrapStorage } from './lib/apiClient';
+import { cleanLegacyBootstrapStorage } from './lib/apiClient';
 
 if (typeof window !== 'undefined') {
   cleanLegacyBootstrapStorage(localStorage);
-  installFetchInterceptor();
 }
 
 createRoot(document.getElementById('root')!).render(
