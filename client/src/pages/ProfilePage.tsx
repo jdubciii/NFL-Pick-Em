@@ -241,7 +241,6 @@ export const ProfilePage: React.FC = () => {
           'Content-Type': 'application/json',
         };
         if (token) headers['Authorization'] = `Bearer ${token}`;
-        if (user?.email) headers['x-user-email'] = user.email;
 
         await fetch(`/api/pools/9b893bef-3b5a-4ffa-951d-8ba27f9c9782/adjudicate`, {
           method: 'POST',

@@ -94,7 +94,6 @@ export async function autoRepairPoolMembership(
           headers: {
             'Content-Type': 'application/json',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            'x-user-email': userEmail,
           },
           body: JSON.stringify({ inviteCode: 'MAIN26' }),
         });

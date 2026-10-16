@@ -5,9 +5,8 @@ const config: CapacitorConfig = {
   appName: 'NFL Pick Em',
   webDir: 'dist',
   server: {
-    androidScheme: 'http',
-    cleartext: true,
-    allowNavigation: ['192.168.1.18:3000', '192.168.1.18', '192.168.1.18:3000', '192.168.1.18', 'localhost:3000'],
+    androidScheme: 'https',
+    allowNavigation: ['nfl-pick-em-api.onrender.com'],
   },
   plugins: {
     CapacitorHttp: {
