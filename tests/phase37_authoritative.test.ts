@@ -44,6 +44,7 @@ vi.mock('../src/db/client', () => {
 // Import app after mock is registered
 import { app } from '../src/server';
 import prisma from '../src/db/client';
+import { setSupabaseAuthClientForTesting } from '../src/middleware/auth';
 
 describe('Phase 37 Authoritative Route & Server Enforcement (Ruling C6 Compliance)', () => {
   let server: http.Server;
@@ -56,11 +57,38 @@ describe('Phase 37 Authoritative Route & Server Enforcement (Ruling C6 Complianc
   const userForeignAdmin = { id: 'user-foreign-admin-0002', email: 'foreignadmin@example.com', role: 'ADMIN' };
   const userMainCommish = { id: 'e3242a19-1131-4fc5-9886-7730f10ef69b', email: 'jack.w.cone@gmail.com', role: 'ADMIN' };
 
-  const tokenAlice = jwt.sign(userAlice, JWT_SECRET, { expiresIn: '1h' });
-  const tokenForeignAdmin = jwt.sign(userForeignAdmin, JWT_SECRET, { expiresIn: '1h' });
-  const tokenMainCommish = jwt.sign(userMainCommish, JWT_SECRET, { expiresIn: '1h' });
+  const tokenAlice = jwt.sign(
+    { sub: userAlice.id, email: userAlice.email, role: userAlice.role, iss: 'https://nsljipyoihcoqkuphhll.supabase.co/auth/v1', aud: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 },
+    'synthetic-key'
+  );
+  const tokenForeignAdmin = jwt.sign(
+    { sub: userForeignAdmin.id, email: userForeignAdmin.email, role: userForeignAdmin.role, iss: 'https://nsljipyoihcoqkuphhll.supabase.co/auth/v1', aud: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 },
+    'synthetic-key'
+  );
+  const tokenMainCommish = jwt.sign(
+    { sub: userMainCommish.id, email: userMainCommish.email, role: userMainCommish.role, iss: 'https://nsljipyoihcoqkuphhll.supabase.co/auth/v1', aud: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 },
+    'synthetic-key'
+  );
 
   beforeAll(async () => {
+    setSupabaseAuthClientForTesting({
+      auth: {
+        getUser: async (token: string) => {
+          const decoded = jwt.decode(token) as any;
+          if (!decoded || !decoded.sub) return { data: { user: null }, error: { message: 'Invalid token', status: 401 } };
+          return {
+            data: {
+              user: {
+                id: decoded.sub,
+                email: decoded.email,
+              },
+            },
+            error: null,
+          };
+        },
+      },
+    } as any);
+
     await new Promise<void>((resolve) => {
       server = app.listen(0, () => {
         const addr = server.address() as any;
@@ -78,6 +106,13 @@ describe('Phase 37 Authoritative Route & Server Enforcement (Ruling C6 Complianc
 
   beforeEach(() => {
     vi.clearAllMocks();
+    (prisma.user.findUnique as any).mockImplementation((args: any) => {
+      const id = args?.where?.id;
+      if (id === userAlice.id) return Promise.resolve(userAlice);
+      if (id === userForeignAdmin.id) return Promise.resolve(userForeignAdmin);
+      if (id === userMainCommish.id) return Promise.resolve(userMainCommish);
+      return Promise.resolve(null);
+    });
   });
 
   // --------------------------------------------------------------------------

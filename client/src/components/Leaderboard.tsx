@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Trophy, Flame, AlertTriangle, RefreshCw, Medal, Users, ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { scopedExpressFetch } from '../lib/apiClient';
 
 export interface LeaderboardEntry {
   user_id: string;
@@ -52,9 +53,7 @@ export const Leaderboard: React.FC = () => {
   useEffect(() => {
     const fetchPools = async () => {
       try {
-        const res = await fetch('/api/pools', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await scopedExpressFetch('/api/pools');
         if (res.ok) {
           const data: PoolSummary[] = await res.json();
           setPools(data);
@@ -75,9 +74,7 @@ export const Leaderboard: React.FC = () => {
       }
     };
 
-    if (token) {
-      fetchPools();
-    }
+    fetchPools();
   }, [token]);
 
   const fetchLeaderboard = useCallback(async () => {
@@ -87,11 +84,7 @@ export const Leaderboard: React.FC = () => {
     setError(null);
 
     try {
-      const response = await fetch(`/api/pools/${selectedPoolId}/leaderboard`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const response = await scopedExpressFetch(`/api/pools/${selectedPoolId}/leaderboard`);
 
       if (!response.ok) {
         throw new Error('Failed to fetch leaderboard standings.');

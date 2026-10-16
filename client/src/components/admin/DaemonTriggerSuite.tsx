@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { scopedExpressFetch } from '../../lib/apiClient';
 import { Play, BellRing, Trophy, CheckCircle2, AlertTriangle, RefreshCw, Cpu } from 'lucide-react';
 
 interface DaemonTriggerSuiteProps {
@@ -19,11 +20,10 @@ export const DaemonTriggerSuite: React.FC<DaemonTriggerSuiteProps> = ({ onTrigge
     setFeedback(null);
 
     try {
-      const res = await fetch('/api/admin/ops/scan-reminders', {
+      const res = await scopedExpressFetch('/api/admin/ops/scan-reminders', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({}),
       });
@@ -53,11 +53,10 @@ export const DaemonTriggerSuite: React.FC<DaemonTriggerSuiteProps> = ({ onTrigge
     setFeedback(null);
 
     try {
-      const res = await fetch('/api/admin/ops/wrap-up', {
+      const res = await scopedExpressFetch('/api/admin/ops/wrap-up', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ weekNumber: 1 }),
       });

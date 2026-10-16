@@ -2,6 +2,10 @@ import { app } from './server';
 import { startLiveScheduleDaemon, stopLiveScheduleDaemon } from './services/liveScheduleDaemon';
 import { startLiveScorePoller, stopLiveScorePoller } from './services/liveScorePoller';
 import { isBackgroundJobsEnabled } from './services/advisoryLockService';
+import { validateProductionAuthConfig } from './middleware/auth';
+
+// Enforce production Supabase Auth configuration before serving traffic
+validateProductionAuthConfig();
 
 const PORT = process.env.PORT || 3000;
 

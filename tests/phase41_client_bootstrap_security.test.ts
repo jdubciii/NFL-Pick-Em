@@ -431,6 +431,25 @@ describe('Phase 41 Client Bootstrap Security & Credential Trust Containment', ()
     let baseUrl: string;
 
     beforeEach(async () => {
+      const { setSupabaseAuthClientForTesting } = await import('../src/middleware/auth');
+      setSupabaseAuthClientForTesting({
+        auth: {
+          getUser: async (token: string) => {
+            const decoded = jwt.decode(token) as any;
+            if (!decoded || !decoded.sub) return { data: { user: null }, error: { message: 'Invalid token', status: 401 } };
+            return {
+              data: {
+                user: {
+                  id: decoded.sub,
+                  email: decoded.email,
+                },
+              },
+              error: null,
+            };
+          },
+        },
+      } as any);
+
       server = http.createServer(app);
       await new Promise<void>((resolve) => {
         server.listen(0, '127.0.0.1', () => {
@@ -465,11 +484,14 @@ describe('Phase 41 Client Bootstrap Security & Credential Trust Containment', ()
     });
 
     it('20. Authenticated actors are server-derived from JWT payload', async () => {
+      const testUser = { id: '11111111-1111-4111-8111-111111111111', email: 'member_a@pickem.com', role: 'USER' };
       const testToken = jwt.sign(
-        { id: '11111111-1111-4111-8111-111111111111', email: 'member_a@pickem.com', role: 'USER' },
-        JWT_SECRET,
-        { expiresIn: '1h' }
+        { sub: testUser.id, email: testUser.email, role: testUser.role, iss: 'https://nsljipyoihcoqkuphhll.supabase.co/auth/v1', aud: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 },
+        'synthetic-key'
       );
+
+      vi.spyOn(prisma.user, 'findUnique').mockResolvedValue(testUser as any);
+      vi.spyOn(prisma.pool, 'findMany').mockResolvedValue([] as any);
 
       // Supply spoofed email header while using member A token
       const res = await fetch(`${baseUrl}/api/pools`, {

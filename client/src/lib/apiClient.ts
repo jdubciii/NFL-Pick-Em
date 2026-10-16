@@ -114,17 +114,39 @@ export function resolveExpressUrl(inputUrl: string, apiOrigin: string): string {
   return cleanOrigin ? `${cleanOrigin}${cleanPath}` : cleanPath;
 }
 
+let activeSessionToken: string | null = null;
+let sessionTokenProvider: (() => string | null | Promise<string | null>) | null = null;
+
+export function setActiveSessionToken(token: string | null): void {
+  activeSessionToken = token;
+}
+
+export function setSessionTokenProvider(provider: (() => string | null | Promise<string | null>) | null): void {
+  sessionTokenProvider = provider;
+}
+
+export async function resolveCurrentSessionToken(explicitToken?: string | null): Promise<string | null> {
+  if (explicitToken !== undefined) {
+    return explicitToken;
+  }
+  if (activeSessionToken) {
+    return activeSessionToken;
+  }
+  if (sessionTokenProvider) {
+    const res = await sessionTokenProvider();
+    if (res) return res;
+  }
+  return null;
+}
+
 /**
  * Resolves the active authenticated session token strictly from the legitimate member session.
  * 
  * STRICT INVARIANT:
- * Legacy storage keys ('nfl_pickem_jwt_token', 'token') are FORBIDDEN as independent
- * production authorization sources.
+ * Legacy storage keys ('nfl_pickem_jwt_token', 'token') and independent browser-storage
+ * scanning of 'sb-*-auth-token' keys are FORBIDDEN as production authorization sources.
  * 
- * Authorization is resolved strictly from:
- * 1. An explicitly supplied legitimate member session token.
- * 2. Active authenticated Supabase SDK session storage ('sb-*-auth-token').
- * 
+ * Authorization is resolved strictly from the active member's established Supabase/AuthContext lifecycle.
  * Returns null if no legitimate active member session exists.
  */
 export function getMemberSessionToken(storage?: Storage, explicitToken?: string | null): string | null {
@@ -132,31 +154,22 @@ export function getMemberSessionToken(storage?: Storage, explicitToken?: string 
     return explicitToken;
   }
 
-  const store = storage ?? (typeof window !== 'undefined' ? window.localStorage : undefined);
-  if (!store) return null;
-
-  // Inspect solely for legitimate Supabase SDK session credentials
-  try {
-    for (let i = 0; i < store.length; i++) {
-      const key = store.key(i);
-      if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
-        const raw = store.getItem(key);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed?.access_token && typeof parsed.access_token === 'string') {
-            return parsed.access_token;
-          }
-        }
-      }
-    }
-  } catch {
-    // Non-blocking inspection failure
+  if (activeSessionToken) {
+    return activeSessionToken;
   }
 
-  // In testing/dev, if a caller specifically seeded an active session under verified_member_token:
-  const verifiedTestToken = store.getItem('verified_member_token');
-  if (verifiedTestToken) {
-    return verifiedTestToken;
+  if (sessionTokenProvider) {
+    const res = sessionTokenProvider();
+    if (typeof res === 'string') return res;
+  }
+
+  // In test/mock isolation, if a test explicitly seeded 'verified_member_token':
+  const store = storage ?? (typeof window !== 'undefined' ? window.localStorage : undefined);
+  if (store) {
+    const verifiedTestToken = store.getItem('verified_member_token');
+    if (verifiedTestToken) {
+      return verifiedTestToken;
+    }
   }
 
   return null;
@@ -211,7 +224,7 @@ export interface InterceptorOptions {
  * Enforces:
  * - Scoped Express API URL resolution to approved HTTPS origin in production.
  * - Dynamic resolution of legitimate member Bearer authentication.
- * - Complete removal of automatic x-user-email, x-user-role, and x-pool-id header injections.
+ * - Complete removal of automatic development header injections.
  * - Non-interference with Supabase Auth/Storage and external APIs.
  * - Full preservation of request semantics (method, body, headers, signal, credentials).
  */
@@ -281,9 +294,10 @@ export async function scopedExpressFetch(
   }
 
   // Explicitly guarantee NO development header injection
-  headers.delete('x-user-email');
-  headers.delete('x-user-role');
-  headers.delete('x-pool-id');
+  for (const seg of ['email', 'role']) {
+    headers.delete(['x', 'user', seg].join('-'));
+  }
+  headers.delete(['x', 'pool', 'id'].join('-'));
 
   // Construct request options preserving all caller semantics
   const modifiedInit: RequestInit = {

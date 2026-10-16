@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Send, Clock, AlertTriangle, CheckCircle2, RefreshCw, Zap } from 'lucide-react';
+import { scopedExpressFetch } from '../../lib/apiClient';
 
 interface TransportQueueWidgetProps {
   queueData: {
@@ -18,7 +19,7 @@ export const TransportQueueWidget: React.FC<TransportQueueWidgetProps> = ({
   loading,
   onDrainComplete,
 }) => {
-  const { token } = useAuth();
+  const { isAuthenticated } = useAuth();
   const [draining, setDraining] = useState(false);
   const [batchSize, setBatchSize] = useState('50');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(
@@ -26,16 +27,15 @@ export const TransportQueueWidget: React.FC<TransportQueueWidgetProps> = ({
   );
 
   const handleDrain = async () => {
-    if (!token) return;
+    if (!isAuthenticated) return;
     setDraining(true);
     setFeedback(null);
 
     try {
-      const res = await fetch('/api/admin/ops/transports/drain', {
+      const res = await scopedExpressFetch('/api/admin/ops/transports/drain', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ batchSize: Number(batchSize) || 50 }),
       });

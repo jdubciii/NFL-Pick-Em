@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { scopedExpressFetch } from '../lib/apiClient';
 import {
   Camera,
   UploadCloud,
@@ -100,9 +101,7 @@ export const PenaltyLedgerView: React.FC<PenaltyLedgerViewProps> = ({
   useEffect(() => {
     const fetchPools = async () => {
       try {
-        const res = await fetch('/api/pools', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await scopedExpressFetch('/api/pools');
         if (res.ok) {
           const data = await res.json();
           setPools(data);
@@ -129,9 +128,7 @@ export const PenaltyLedgerView: React.FC<PenaltyLedgerViewProps> = ({
         ? `/api/pools/${selectedPoolId}/penalties/member/${memberIdFilter}`
         : `/api/pools/${selectedPoolId}/penalties/member/${user?.id}`;
 
-      const res = await fetch(endpoint, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await scopedExpressFetch(endpoint);
 
       if (!res.ok) {
         throw new Error('Failed to load penalty ledger.');
@@ -305,11 +302,10 @@ export const PenaltyLedgerView: React.FC<PenaltyLedgerViewProps> = ({
       const storagePath = `pools/${selectedPoolId}/penalties/${activePenaltyForUpload.id}/proof_${Date.now()}.${extension}`;
 
       // Call API to register Supabase path in PenaltyMedia table
-      const res = await fetch(`/api/pools/${selectedPoolId}/penalties/${activePenaltyForUpload.id}/media`, {
+      const res = await scopedExpressFetch(`/api/pools/${selectedPoolId}/penalties/${activePenaltyForUpload.id}/media`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           storage_path: storagePath,
@@ -338,11 +334,10 @@ export const PenaltyLedgerView: React.FC<PenaltyLedgerViewProps> = ({
     if (!selectedPoolId) return;
     setConfirmingStatus(true);
     try {
-      const res = await fetch(`/api/pools/${selectedPoolId}/penalties/${penaltyId}/media/confirm`, {
+      const res = await scopedExpressFetch(`/api/pools/${selectedPoolId}/penalties/${penaltyId}/media/confirm`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ status }),
       });

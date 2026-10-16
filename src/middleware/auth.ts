@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { Role } from '@prisma/client';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import prisma from '../db/client';
 
 export interface AuthUserPayload {
@@ -18,47 +19,78 @@ declare global {
   }
 }
 
-export const JWT_SECRET = process.env.JWT_SECRET || 'nfl-pick-em-secret-key-change-in-prod';
+export const FIXED_SUPABASE_PROJECT_REF = 'nsljipyoihcoqkuphhll';
+export const FIXED_SUPABASE_URL = `https://${FIXED_SUPABASE_PROJECT_REF}.supabase.co`;
+export const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5zbGppcHlvaWhjb3FrdXBoaGxsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA1NTY3NDUsImV4cCI6MjEwNjEzMjc0NX0.OD0dom_H-n0cAPeQyngmUPJhrKNNr9G9m6DqpPsFGYw';
 
+export const JWT_SECRET = process.env.JWT_SECRET || 'nfl-pick-em-secret-key-change-in-prod';
 export const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/**
- * Middleware to verify JWT and attach user payload to req.user.
- */
-export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const devEmail = (req.headers['x-user-email'] || req.headers['x-dev-user-email']) as string;
-  if (devEmail && process.env.NODE_ENV !== 'production') {
-    try {
-      const user = await prisma.user.findFirst({
-        where: { email: devEmail },
-      });
-      if (user) {
-        req.user = {
-          id: user.id,
-          email: user.email,
-          role: user.role,
-        };
-        next();
-        return;
-      }
-    } catch {
-      // Ignore db error, fallback to synthetic dev user
+export function createSyntheticSupabaseToken(
+  user: { id: string; email?: string; role?: Role | string },
+  overrides?: Record<string, any>
+): string {
+  const payload = {
+    sub: user.id,
+    email: user.email || 'user@example.com',
+    role: user.role || Role.USER,
+    iss: `${FIXED_SUPABASE_URL}/auth/v1`,
+    aud: 'authenticated',
+    exp: Math.floor(Date.now() / 1000) + 3600,
+    ...overrides,
+  };
+  return jwt.sign(payload, 'synthetic-test-key');
+}
+
+let testSupabaseAuthClient: SupabaseClient | null = null;
+
+export function setSupabaseAuthClientForTesting(client: SupabaseClient | null): void {
+  testSupabaseAuthClient = client;
+}
+
+export function validateProductionAuthConfig(envOverride?: Record<string, string | undefined>): void {
+  const env = envOverride || process.env;
+  if (env.NODE_ENV === 'production') {
+    const url = env.SUPABASE_URL || env.VITE_SUPABASE_URL;
+    if (!url || !url.startsWith(FIXED_SUPABASE_URL)) {
+      throw new Error(`INVALID_SUPABASE_PROJECT: Expected ${FIXED_SUPABASE_URL}, got ${url}`);
     }
+    const anonKey = env.SUPABASE_ANON_KEY || env.VITE_SUPABASE_ANON_KEY;
+    if (!anonKey || typeof anonKey !== 'string' || !anonKey.trim()) {
+      throw new Error('INVALID_SUPABASE_ANON_KEY: Missing or empty Supabase publishable key in production');
+    }
+  }
+}
 
-    const isDevAdmin =
-      (req.headers['x-user-role'] as string) === 'ADMIN' ||
-      devEmail.toLowerCase() === 'jack@nflpickem.com' ||
-      devEmail.toLowerCase().includes('admin');
-
-    req.user = {
-      id: devEmail.toLowerCase() === 'jack@nflpickem.com' ? '4cbde3a9-6f8f-44cf-80fa-3c16c03810db' : 'dev-user-id',
-      email: devEmail,
-      role: isDevAdmin ? Role.ADMIN : Role.USER,
-    };
-    next();
-    return;
+export function getSupabaseAuthClient(): SupabaseClient {
+  if (testSupabaseAuthClient) {
+    return testSupabaseAuthClient;
   }
 
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || FIXED_SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY;
+
+  validateProductionAuthConfig();
+
+  return createClient(url, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+}
+
+/**
+ * Middleware to verify Supabase Auth access token and attach user payload to req.user.
+ * 
+ * Strict Failure Contract:
+ * - HTTP 401: Missing, malformed, expired, invalid signature, wrong project/issuer/audience.
+ * - HTTP 503: Supabase Auth service outage, timeout, or indeterminate dependency failure.
+ * - HTTP 403: Verified Supabase user lacks active application user account.
+ * - Read-only invariant: Never mutates, creates, or syncs user rows during authentication.
+ */
+export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Authentication required. Missing or malformed token.' });
@@ -66,14 +98,125 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   }
 
   const token = authHeader.split(' ')[1];
+  if (!token || !token.trim()) {
+    res.status(401).json({ error: 'Authentication required. Missing or malformed token.' });
+    return;
+  }
+
+  // 1. Claim-policy inspection (decoding only, never substitutes for server-backed getUser)
+  let decodedPayload: any = null;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as AuthUserPayload;
-    req.user = decoded;
-    next();
-  } catch (err) {
+    decodedPayload = jwt.decode(token);
+  } catch {
     res.status(401).json({ error: 'Invalid or expired token.' });
     return;
   }
+
+  if (!decodedPayload || typeof decodedPayload !== 'object') {
+    res.status(401).json({ error: 'Invalid or expired token.' });
+    return;
+  }
+
+  // Enforce expected project issuer policy
+  const expectedIssuer = `${FIXED_SUPABASE_URL}/auth/v1`;
+  if (!decodedPayload.iss || decodedPayload.iss !== expectedIssuer) {
+    res.status(401).json({ error: 'Invalid token issuer.' });
+    return;
+  }
+
+  // Enforce audience "authenticated"
+  const aud = decodedPayload.aud;
+  const isAudAuthenticated = aud === 'authenticated' || (Array.isArray(aud) && aud.includes('authenticated'));
+  if (!aud || !isAudAuthenticated) {
+    res.status(401).json({ error: 'Invalid token audience.' });
+    return;
+  }
+
+  // Enforce expiration
+  if (!decodedPayload.exp || decodedPayload.exp < Math.floor(Date.now() / 1000)) {
+    res.status(401).json({ error: 'Invalid or expired token.' });
+    return;
+  }
+
+  // Require non-empty subject
+  if (!decodedPayload.sub || typeof decodedPayload.sub !== 'string') {
+    res.status(401).json({ error: 'Invalid token subject.' });
+    return;
+  }
+
+  // 2. Server-backed verification via supabase.auth.getUser(token)
+  const authClient = getSupabaseAuthClient();
+  let verifiedAuthUser: any = null;
+
+  try {
+    const { data, error } = await authClient.auth.getUser(token);
+    if (error || !data?.user) {
+      const errMsg = (error?.message || '').toLowerCase();
+      const errStatus = (error as any)?.status;
+      const isOutage =
+        errStatus >= 500 ||
+        errMsg.includes('fetch failed') ||
+        errMsg.includes('timeout') ||
+        errMsg.includes('network') ||
+        errMsg.includes('econnrefused');
+
+      if (isOutage) {
+        res.status(503).json({ error: 'Authentication service temporarily unavailable.' });
+        return;
+      }
+
+      res.status(401).json({ error: 'Invalid or expired token.' });
+      return;
+    }
+
+    verifiedAuthUser = data.user;
+  } catch (err: any) {
+    const msg = (err?.message || '').toLowerCase();
+    const isOutage =
+      msg.includes('fetch failed') ||
+      msg.includes('timeout') ||
+      msg.includes('enotfound') ||
+      msg.includes('econnrefused');
+
+    if (isOutage) {
+      res.status(503).json({ error: 'Authentication service temporarily unavailable.' });
+      return;
+    }
+
+    res.status(401).json({ error: 'Invalid or expired token.' });
+    return;
+  }
+
+  // Enforce subject consistency with verified Auth user ID
+  if (decodedPayload.sub !== verifiedAuthUser.id) {
+    res.status(401).json({ error: 'Token subject mismatch.' });
+    return;
+  }
+
+  // 3. Trusted read-only application user lookup (strictly no writes during authentication)
+  let dbUser: any = null;
+  try {
+    dbUser = await prisma.user.findUnique({
+      where: { id: verifiedAuthUser.id },
+    });
+  } catch (dbErr) {
+    console.error('[requireAuth] Database lookup failed:', dbErr);
+    res.status(503).json({ error: 'Database service temporarily unavailable.' });
+    return;
+  }
+
+  if (!dbUser) {
+    res.status(403).json({ error: 'User account not authorized or not found.' });
+    return;
+  }
+
+  req.user = {
+    id: dbUser.id,
+    email: dbUser.email,
+    role: dbUser.role,
+  };
+
+  next();
 }
 
 /**

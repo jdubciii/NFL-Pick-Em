@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { scopedExpressFetch } from '../lib/apiClient';
 import {
   Skull,
   Flame,
@@ -198,11 +199,7 @@ export const WallOfShame: React.FC = () => {
   useEffect(() => {
     const fetchPools = async () => {
       try {
-        const res = await fetch('/api/pools', {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        const res = await scopedExpressFetch('/api/pools');
         if (!res.ok) throw new Error('Failed to fetch pools');
         const data: PoolOption[] = await res.json();
         setPools(data);
@@ -250,9 +247,7 @@ export const WallOfShame: React.FC = () => {
         ? `/api/pools/${selectedPoolId}/shame/vault${queryStr}`
         : `/api/shame/vault${queryStr}`;
 
-      const res = await fetch(endpoint, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await scopedExpressFetch(endpoint);
 
       if (!res.ok) {
         throw new Error('Failed to load punishment vault records.');
@@ -273,13 +268,8 @@ export const WallOfShame: React.FC = () => {
     if (!poolId || !token) return;
     setCumulativeLoading(true);
     try {
-      const res = await fetch(
-        `/api/pools/${poolId}/leaderboard/cumulative?sort_by=${sortBy}&order=${sortOrder}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
+      const res = await scopedExpressFetch(
+        `/api/pools/${poolId}/leaderboard/cumulative?sort_by=${sortBy}&order=${sortOrder}`
       );
 
       if (!res.ok) {
@@ -323,11 +313,10 @@ export const WallOfShame: React.FC = () => {
         ? `/api/pools/${selectedPoolId}/shame/${mediaId}/spotlight`
         : `/api/shame/${mediaId}/spotlight`;
 
-      const res = await fetch(endpoint, {
+      const res = await scopedExpressFetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
       });
 
@@ -396,11 +385,10 @@ export const WallOfShame: React.FC = () => {
         ? `/api/pools/${selectedPoolId}/shame/${mediaId}/react`
         : `/api/shame/${mediaId}/react`;
 
-      await fetch(endpoint, {
+      await scopedExpressFetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ emoji }),
       });

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { scopedExpressFetch } from '../lib/apiClient';
 import { getCurrentNFLWeek } from '../services/nflCalendarService';
 import { fetchLiveNFLScores, LiveGame } from '../services/liveScoreService';
 import {
@@ -187,25 +188,21 @@ export const RadarPage: React.FC = () => {
         }
 
         // Fallback to pool matrix endpoint if available
-        if (token) {
-          try {
-            const res = await fetch(`/api/pools/${activePoolId}/matrix?week_no=${activeWeek}`, {
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            if (res.ok) {
-              const matrix = await res.json();
-              if (matrix.rows && matrix.rows.length > 0) {
-                setGames(matrix.rows.map((row: any) => ({
-                  id: row.game_id,
-                  homeTeam: row.home_team_id,
-                  awayTeam: row.away_team_id,
-                  spread: row.spread,
-                  kickoffTime: row.kickoff_time,
-                })));
-              }
+        try {
+          const res = await scopedExpressFetch(`/api/pools/${activePoolId}/matrix?week_no=${activeWeek}`);
+          if (res.ok) {
+            const matrix = await res.json();
+            if (matrix.rows && matrix.rows.length > 0) {
+              setGames(matrix.rows.map((row: any) => ({
+                id: row.game_id,
+                homeTeam: row.home_team_id,
+                awayTeam: row.away_team_id,
+                spread: row.spread,
+                kickoffTime: row.kickoff_time,
+              })));
             }
-          } catch (_) {}
-        }
+          }
+        } catch (_) {}
       } catch (err) {
         console.warn('Radar pool data load error:', err);
       }

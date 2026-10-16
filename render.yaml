@@ -17,5 +17,9 @@ services:
         sync: false
       - key: CORS_ALLOWED_ORIGINS
         sync: false
+      - key: SUPABASE_URL
+        value: https://nsljipyoihcoqkuphhll.supabase.co
+      - key: SUPABASE_ANON_KEY
+        sync: false
     autoDeploy: false
     healthCheckPath: /api/health

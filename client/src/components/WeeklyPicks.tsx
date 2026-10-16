@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { scopedExpressFetch } from '../lib/apiClient';
 import { supabase } from '../lib/supabase';
 import { Lock, Unlock, CheckCircle2, AlertCircle, RefreshCw, Shield, ChevronDown, WifiOff, X, Calendar } from 'lucide-react';
 import { PickPresetControls } from './PickPresetControls';
@@ -48,17 +49,6 @@ const DEFAULT_POOL: PoolInfo = {
   name: 'Main League',
   lock_offset: 0,
   hide_picks_until_kickoff: true,
-};
-
-const getApiUrl = (endpoint: string): string | null => {
-  const base = import.meta.env.VITE_API_URL;
-  if (base) {
-    return `${base.replace(/\/+$/, '')}${endpoint}`;
-  }
-  if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
-    return endpoint;
-  }
-  return null;
 };
 
 export const WeeklyPicks: React.FC = () => {
@@ -355,12 +345,9 @@ export const WeeklyPicks: React.FC = () => {
         }
       } catch (_) {}
 
-      const matrixUrl = getApiUrl(`/api/pools/${DEFAULT_POOL.id}/matrix`);
-      if (matrixUrl && token) {
+      if (token) {
         try {
-          const matrixRes = await fetch(matrixUrl, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
+          const matrixRes = await scopedExpressFetch(`/api/pools/${DEFAULT_POOL.id}/matrix`);
           if (matrixRes.ok) {
             const mData = await matrixRes.json();
             setMatrixData(mData);
@@ -477,13 +464,11 @@ export const WeeklyPicks: React.FC = () => {
     }
 
     // 4. Background notification to backend API if configured
-    const apiUrl = getApiUrl('/api/picks');
-    if (apiUrl && token) {
-      fetch(apiUrl, {
+    if (token) {
+      scopedExpressFetch('/api/picks', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           pool_id: pool.id,
@@ -540,15 +525,13 @@ export const WeeklyPicks: React.FC = () => {
     }
 
     // Backend proxy if configured
-    const apiUrl = getApiUrl('/api/picks');
-    if (apiUrl && token) {
+    if (token) {
       Promise.all(
         unlockedPickedGames.map((game) =>
-          fetch(apiUrl, {
+          scopedExpressFetch('/api/picks', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify({
               pool_id: pool.id,
@@ -654,8 +637,7 @@ export const WeeklyPicks: React.FC = () => {
           }
 
           // Backend proxy if configured
-          const batchUrl = getApiUrl('/api/picks/batch');
-          if (batchUrl && token) {
+          if (token) {
             const entries = Object.entries(finalPicks);
             const batchPayload = entries.map(([gameId, selectedTeamId]) => ({
               game_id: gameId,
@@ -663,11 +645,10 @@ export const WeeklyPicks: React.FC = () => {
             }));
 
             try {
-              const batchRes = await fetch(batchUrl, {
+              const batchRes = await scopedExpressFetch('/api/picks/batch', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
-                  Authorization: `Bearer ${token}`,
                 },
                 body: JSON.stringify({
                   pool_id: pool.id,
@@ -676,25 +657,21 @@ export const WeeklyPicks: React.FC = () => {
               });
 
               if (!batchRes.ok) {
-                const singleUrl = getApiUrl('/api/picks');
-                if (singleUrl) {
-                  await Promise.all(
-                    entries.map(([gameId, selectedTeamId]) =>
-                      fetch(singleUrl, {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                          Authorization: `Bearer ${token}`,
-                        },
-                        body: JSON.stringify({
-                          pool_id: pool.id,
-                          game_id: gameId,
-                          selected_team_id: selectedTeamId,
-                        }),
-                      })
-                    )
-                  );
-                }
+                await Promise.all(
+                  entries.map(([gameId, selectedTeamId]) =>
+                    scopedExpressFetch('/api/picks', {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({
+                        pool_id: pool.id,
+                        game_id: gameId,
+                        selected_team_id: selectedTeamId,
+                      }),
+                    })
+                  )
+                );
               }
             } catch (proxyErr) {
               console.warn('Backend proxy batch warning:', proxyErr);

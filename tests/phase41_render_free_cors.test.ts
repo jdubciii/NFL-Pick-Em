@@ -250,10 +250,32 @@ describe('Phase 41 Render Free Production CORS Hardening', () => {
     let server: http.Server;
     let baseUrl: string;
 
-    const testUser = { id: 'auth-test-user-id', email: 'verified@pickem.com', role: 'USER' };
-    const validToken = jwt.sign(testUser, JWT_SECRET, { expiresIn: '1h' });
+    const testUser = { id: '11111111-2222-4333-8444-555555555555', email: 'verified@pickem.com', role: 'USER' };
+    const validToken = jwt.sign(
+      { sub: testUser.id, email: testUser.email, role: testUser.role, iss: 'https://nsljipyoihcoqkuphhll.supabase.co/auth/v1', aud: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 },
+      'synthetic-key'
+    );
 
     beforeAll(async () => {
+      const { setSupabaseAuthClientForTesting } = await import('../src/middleware/auth');
+      setSupabaseAuthClientForTesting({
+        auth: {
+          getUser: async (token: string) => {
+            const decoded = jwt.decode(token) as any;
+            if (!decoded || !decoded.sub) return { data: { user: null }, error: { message: 'Invalid token', status: 401 } };
+            return {
+              data: {
+                user: {
+                  id: decoded.sub,
+                  email: decoded.email,
+                },
+              },
+              error: null,
+            };
+          },
+        },
+      } as any);
+
       await new Promise<void>((resolve) => {
         server = app.listen(0, () => {
           const addr = server.address() as any;
@@ -300,6 +322,7 @@ describe('Phase 41 Render Free Production CORS Hardening', () => {
       process.env.NODE_ENV = 'production';
       process.env.CORS_ALLOWED_ORIGINS = 'https://portal.nflpickem.com';
 
+      vi.spyOn(prisma.user, 'findUnique').mockResolvedValue(testUser as any);
       vi.spyOn(prisma.inboxMessage, 'findMany').mockResolvedValue([] as any);
       vi.spyOn(prisma.inboxMessage, 'count').mockResolvedValue(0 as any);
 
@@ -322,6 +345,7 @@ describe('Phase 41 Render Free Production CORS Hardening', () => {
       process.env.CORS_ALLOWED_ORIGINS = 'https://portal.nflpickem.com';
 
       const poolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+      vi.spyOn(prisma.user, 'findUnique').mockResolvedValue(testUser as any);
       vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue({ id: poolId, name: 'Main Pool' } as any);
       vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue(null);
 

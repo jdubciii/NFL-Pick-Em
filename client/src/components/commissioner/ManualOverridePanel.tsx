@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { scopedExpressFetch } from '../../lib/apiClient';
 import { ShieldAlert, Send, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
 
 interface ManualOverridePanelProps {
@@ -59,11 +60,10 @@ export const ManualOverridePanel: React.FC<ManualOverridePanelProps> = ({
     }
 
     try {
-      const res = await fetch(`/api/pools/${poolId}/overrides`, {
+      const res = await scopedExpressFetch(`/api/pools/${poolId}/overrides`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           type: overrideType,

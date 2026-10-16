@@ -13,6 +13,7 @@ import {
   summarizeReactionsForTarget,
   validateCanonicalReactionTarget,
 } from '../../services/poolSocialService';
+import { scopedExpressFetch } from '../../lib/apiClient';
 
 interface WeeklyRecapCardViewProps {
   currentWeek?: number;
@@ -149,12 +150,10 @@ export const WeeklyRecapCardView: React.FC<WeeklyRecapCardViewProps> = ({
     if (result.ok) {
       setReactions(result.entries);
       try {
-        const token = localStorage.getItem('supabase.auth.token') || '';
-        fetch('/api/pools/9b893bef-3b5a-4ffa-951d-8ba27f9c9782/reactions', {
+        scopedExpressFetch('/api/pools/9b893bef-3b5a-4ffa-951d-8ba27f9c9782/reactions', {
           method: operation === 'REMOVE' ? 'DELETE' : 'PUT',
           headers: {
             'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           body: JSON.stringify({
             targetKind: recapTarget.targetKind,

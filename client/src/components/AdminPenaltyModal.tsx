@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { scopedExpressFetch } from '../lib/apiClient';
 import { 
   Wine, 
   X, 
@@ -60,11 +61,7 @@ export const AdminPenaltyModal: React.FC<AdminPenaltyModalProps> = ({
     if (!poolId || !memberId) return;
     setLoadingHistory(true);
     try {
-      const res = await fetch(`/api/pools/${poolId}/penalties/member/${memberId}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const res = await scopedExpressFetch(`/api/pools/${poolId}/penalties/member/${memberId}`);
       if (res.ok) {
         const data = await res.json();
         setHistory(data);
@@ -100,11 +97,10 @@ export const AdminPenaltyModal: React.FC<AdminPenaltyModalProps> = ({
     setSuccessMessage(null);
 
     try {
-      const res = await fetch(`/api/pools/${poolId}/penalties/adjust`, {
+      const res = await scopedExpressFetch(`/api/pools/${poolId}/penalties/adjust`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           member_id: memberId,

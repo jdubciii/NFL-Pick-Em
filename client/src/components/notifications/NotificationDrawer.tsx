@@ -13,6 +13,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { NotificationPreferencesModal } from './NotificationPreferencesModal';
+import { scopedExpressFetch } from '../../lib/apiClient';
 
 export interface InboxMessageItem {
   id: string;
@@ -48,17 +49,13 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
   const [filterUnread, setFilterUnread] = useState<boolean>(false);
 
   const fetchNotifications = useCallback(async () => {
-    if (!token || !isAuthenticated) return;
+    if (!isAuthenticated) return;
     setLoading(true);
     try {
       const url = filterUnread
         ? '/api/notifications?unreadOnly=true&limit=50'
         : '/api/notifications?limit=50';
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const res = await scopedExpressFetch(url);
       if (!res.ok) throw new Error('Failed to load notifications');
       const data = await res.json();
       setMessages(data.messages || []);
@@ -72,7 +69,7 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [token, isAuthenticated, filterUnread, onUnreadCountChange]);
+  }, [isAuthenticated, filterUnread, onUnreadCountChange]);
 
   useEffect(() => {
     if (isOpen) {
@@ -81,7 +78,6 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
   }, [isOpen, fetchNotifications]);
 
   const handleMarkAsRead = async (id: string) => {
-    if (!token) return;
     // Optimistic update
     setMessages((prev) =>
       prev.map((msg) => (msg.id === id ? { ...msg, readAt: new Date().toISOString() } : msg))
@@ -92,11 +88,10 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
     }
 
     try {
-      const res = await fetch('/api/notifications/read', {
+      const res = await scopedExpressFetch('/api/notifications/read', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ id }),
       });
@@ -120,11 +115,10 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
     }
 
     try {
-      const res = await fetch('/api/notifications/read-all', {
+      const res = await scopedExpressFetch('/api/notifications/read-all', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({}),
       });

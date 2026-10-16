@@ -12,6 +12,7 @@ import {
   validateCanonicalReactionTarget,
   sanitizeChatDisplayHandle,
 } from '../../services/poolSocialService';
+import { scopedExpressFetch } from '../../lib/apiClient';
 
 interface PoolLoungeDrawerProps {
   isOpen: boolean;
@@ -133,10 +134,7 @@ export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
 
     const fetchLatestMessages = async () => {
       try {
-        const token = localStorage.getItem('supabase.auth.token') || '';
-        const res = await fetch(`/api/pools/${poolId}/lounge/messages?limit=50`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
+        const res = await scopedExpressFetch(`/api/pools/${poolId}/lounge/messages?limit=50`);
         if (res.ok) {
           const data = await res.json();
           if (!isCancelled && data.items && Array.isArray(data.items)) {
@@ -266,12 +264,10 @@ export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
 
     // 2. Authoritative Express POST
     try {
-      const token = localStorage.getItem('supabase.auth.token') || '';
-      const res = await fetch(`/api/pools/${poolId}/lounge/messages`, {
+      const res = await scopedExpressFetch(`/api/pools/${poolId}/lounge/messages`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
           clientRequestId,
@@ -340,12 +336,10 @@ export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
     );
 
     try {
-      const token = localStorage.getItem('supabase.auth.token') || '';
-      const res = await fetch(`/api/pools/${poolId}/lounge/messages`, {
+      const res = await scopedExpressFetch(`/api/pools/${poolId}/lounge/messages`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
           clientRequestId,
@@ -423,12 +417,10 @@ export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
     }
 
     try {
-      const token = localStorage.getItem('supabase.auth.token') || '';
-      await fetch(`/api/pools/${poolId}/reactions`, {
+      await scopedExpressFetch(`/api/pools/${poolId}/reactions`, {
         method: operation === 'REMOVE' ? 'DELETE' : 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
           targetKind: 'POOL_CHAT_MESSAGE',

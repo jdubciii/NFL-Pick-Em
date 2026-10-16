@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { scopedExpressFetch } from '../../lib/apiClient';
 import { X, Bell, Mail, Clock, Save, CheckCircle2, AlertCircle } from 'lucide-react';
 
 interface NotificationPreferencesModalProps {
@@ -39,11 +40,7 @@ export const NotificationPreferencesModal: React.FC<NotificationPreferencesModal
     setLoading(true);
     setFeedback(null);
     try {
-      const res = await fetch('/api/notifications/preferences', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const res = await scopedExpressFetch('/api/notifications/preferences');
       if (!res.ok) throw new Error('Failed to load notification preferences.');
       const data: NotificationPreferences = await res.json();
       
@@ -78,11 +75,10 @@ export const NotificationPreferencesModal: React.FC<NotificationPreferencesModal
     }
 
     try {
-      const res = await fetch('/api/notifications/preferences', {
+      const res = await scopedExpressFetch('/api/notifications/preferences', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           emailEnabled,

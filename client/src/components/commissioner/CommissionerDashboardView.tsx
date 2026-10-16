@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { scopedExpressFetch } from '../../lib/apiClient';
 import {
   ShieldCheck,
   FileCheck2,
@@ -37,9 +38,7 @@ export const CommissionerDashboardView: React.FC = () => {
 
     try {
       // 1. Fetch pool health status
-      const healthRes = await fetch(`/api/pools/${poolId}/ops/status`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const healthRes = await scopedExpressFetch(`/api/pools/${poolId}/ops/status`);
 
       if (healthRes.status === 403) {
         setErrorStatus(403);
@@ -58,18 +57,14 @@ export const CommissionerDashboardView: React.FC = () => {
       }
 
       // 2. Fetch proposals
-      const proposalsRes = await fetch(`/api/pools/${poolId}/proposals`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const proposalsRes = await scopedExpressFetch(`/api/pools/${poolId}/proposals`);
       if (proposalsRes.ok) {
         const pData = await proposalsRes.json();
         setProposals(pData.proposals || []);
       }
 
       // 3. Fetch overrides
-      const overridesRes = await fetch(`/api/pools/${poolId}/overrides`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const overridesRes = await scopedExpressFetch(`/api/pools/${poolId}/overrides`);
       if (overridesRes.ok) {
         const oData = await overridesRes.json();
         setOverrides(oData.overrides || []);
@@ -87,11 +82,10 @@ export const CommissionerDashboardView: React.FC = () => {
 
   const handleVote = async (proposalId: string, decision: 'APPROVE' | 'REJECT') => {
     if (!token) return;
-    const res = await fetch(`/api/pools/${poolId}/proposals/${proposalId}/vote`, {
+    const res = await scopedExpressFetch(`/api/pools/${poolId}/proposals/${proposalId}/vote`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({ decision }),
     });
@@ -106,11 +100,8 @@ export const CommissionerDashboardView: React.FC = () => {
 
   const handleExecute = async (proposalId: string) => {
     if (!token) return;
-    const res = await fetch(`/api/pools/${poolId}/proposals/${proposalId}/execute`, {
+    const res = await scopedExpressFetch(`/api/pools/${poolId}/proposals/${proposalId}/execute`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
     });
 
     if (!res.ok) {

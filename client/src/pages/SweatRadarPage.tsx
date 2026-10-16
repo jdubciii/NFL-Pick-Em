@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { scopedExpressFetch } from '../lib/apiClient';
 import {
   Flame,
   TrendingUp,
@@ -347,9 +348,7 @@ export const SweatRadarPage: React.FC = () => {
     setLoading(true);
     try {
       // 1. Fetch pools
-      const poolRes = await fetch('/api/pools', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const poolRes = await scopedExpressFetch('/api/pools');
       let activePoolId = '';
       if (poolRes.ok) {
         const pools = await poolRes.json();
@@ -372,12 +371,8 @@ export const SweatRadarPage: React.FC = () => {
 
       // 2. Fetch Leaderboard (banked points) and Matrix (active Week 5 schedule & picks)
       const [lbRes, matRes] = await Promise.all([
-        fetch(`/api/pools/${activePoolId}/leaderboard`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-        fetch(`/api/pools/${activePoolId}/matrix?week_no=5`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
+        scopedExpressFetch(`/api/pools/${activePoolId}/leaderboard`),
+        scopedExpressFetch(`/api/pools/${activePoolId}/matrix?week_no=5`),
       ]);
 
       let leaderboardEntries: any[] = [];

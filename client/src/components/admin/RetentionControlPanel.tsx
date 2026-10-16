@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { scopedExpressFetch } from '../../lib/apiClient';
 import { Trash2, ShieldCheck, CheckCircle2, AlertTriangle, RefreshCw, Archive } from 'lucide-react';
 
 interface RetentionControlPanelProps {
@@ -32,11 +33,10 @@ export const RetentionControlPanel: React.FC<RetentionControlPanelProps> = ({
     setFeedback(null);
 
     try {
-      const res = await fetch('/api/admin/ops/retention/prune', {
+      const res = await scopedExpressFetch('/api/admin/ops/retention/prune', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           batchSize: Math.min(Number(batchSize) || 500, 500), // Bound strictly to 500 max

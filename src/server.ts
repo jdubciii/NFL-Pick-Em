@@ -38,31 +38,6 @@ const PORT = process.env.PORT || 3000;
 app.use(cors(createCorsOptions()));
 app.use(express.json());
 
-// Bind dev user if x-user-email header is present in non-production
-app.use(async (req: Request, _res: Response, next) => {
-  const devEmail = (req.headers['x-user-email'] || req.headers['x-dev-user-email']) as string;
-  if (devEmail && process.env.NODE_ENV !== 'production' && !req.user) {
-    try {
-      const user = await prisma.user.findFirst({ where: { email: devEmail } });
-      if (user) {
-        req.user = { id: user.id, email: user.email, role: user.role };
-      } else {
-        req.user = {
-          id: '4cbde3a9-6f8f-44cf-80fa-3c16c03810db',
-          email: 'jack@nflpickem.com',
-          role: Role.ADMIN,
-        };
-      }
-    } catch {
-      req.user = {
-        id: '4cbde3a9-6f8f-44cf-80fa-3c16c03810db',
-        email: 'jack@nflpickem.com',
-        role: Role.ADMIN,
-      };
-    }
-  }
-  next();
-});
 
 // Routes
 app.use('/api/picks', picksRouter);

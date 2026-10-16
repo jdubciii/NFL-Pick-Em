@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
+import { scopedExpressFetch } from '../lib/apiClient';
 
 export const OpsDashboardPage: React.FC = () => {
   const [health, setHealth] = useState<any>(null);
 
   useEffect(() => {
-    fetch('/api/health')
+    scopedExpressFetch('/api/health')
       .then(res => res.json())
       .then(data => setHealth(data))
       .catch(() => setHealth({ status: 'HEALTHY', memory: 'Optimal', activeConnections: 1 }));

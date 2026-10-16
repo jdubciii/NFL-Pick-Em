@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { scopedExpressFetch } from '../lib/apiClient';
 import { supabase } from '../lib/supabase';
 import { fetchLiveNFLScores } from '../services/liveScoreService';
 import {
@@ -215,9 +216,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
   useEffect(() => {
     const fetchPools = async () => {
       try {
-        const res = await fetch('/api/pools', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await scopedExpressFetch('/api/pools');
         if (res.ok) {
           const data: PoolSummary[] = await res.json();
           setPools(data);
@@ -276,13 +275,8 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
     setError(null);
 
     try {
-      const response = await fetch(
-        `/api/pools/${selectedPoolId}/matrix?week_no=${selectedWeek}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
+      const response = await scopedExpressFetch(
+        `/api/pools/${selectedPoolId}/matrix?week_no=${selectedWeek}`
       );
 
       if (!response.ok) {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { scopedExpressFetch } from '../lib/apiClient';
 import { AccountSettingsModal } from '../components/profile/AccountSettingsModal';
 import { AppHeader } from '../components/common/AppHeader';
 import { Settings } from 'lucide-react';
@@ -237,14 +238,11 @@ export const ProfilePage: React.FC = () => {
 
       // 1. Dispatch POST /api/pools/:pool_id/adjudicate if API available
       try {
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-        };
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-
-        await fetch(`/api/pools/9b893bef-3b5a-4ffa-951d-8ba27f9c9782/adjudicate`, {
+        await scopedExpressFetch('/api/pools/9b893bef-3b5a-4ffa-951d-8ba27f9c9782/adjudicate', {
           method: 'POST',
-          headers,
+          headers: {
+            'Content-Type': 'application/json',
+          },
           body: JSON.stringify({ targetUserId, action: p_status }),
         });
       } catch (apiErr) {

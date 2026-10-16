@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { useAuth, autoRepairPoolMembership } from './context/AuthContext';
+import { useAuth } from './context/AuthContext';
 import { supabase } from './lib/supabase';
 import { BottomNavigation } from './components/BottomNavigation';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -58,9 +58,8 @@ export const App: React.FC = () => {
           .maybeSingle();
 
         if (error || !data) {
-          // Auto-repair missing pool_memberships row on login (Step 2)
-          const repairStatus = await autoRepairPoolMembership(user.id, user.email, session?.access_token);
-          setMembershipStatus(repairStatus || 'PENDING');
+          // If membership not found, fail closed to PENDING without client-side DB writes
+          setMembershipStatus('PENDING');
         } else {
           setMembershipStatus(data.status as 'ACTIVE' | 'PENDING');
         }

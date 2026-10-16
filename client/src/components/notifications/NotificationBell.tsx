@@ -2,20 +2,17 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Bell } from 'lucide-react';
 import { NotificationDrawer } from './NotificationDrawer';
+import { scopedExpressFetch } from '../../lib/apiClient';
 
 export const NotificationBell: React.FC = () => {
-  const { token, isAuthenticated } = useAuth();
+  const { isAuthenticated } = useAuth();
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [unreadCount, setUnreadCount] = useState<number>(0);
 
   const fetchUnreadCount = useCallback(async () => {
-    if (!token || !isAuthenticated) return;
+    if (!isAuthenticated) return;
     try {
-      const res = await fetch('/api/notifications?unreadOnly=true&limit=1', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const res = await scopedExpressFetch('/api/notifications?unreadOnly=true&limit=1');
       if (res.ok) {
         const data = await res.json();
         setUnreadCount(data.unreadCount || 0);
@@ -23,7 +20,7 @@ export const NotificationBell: React.FC = () => {
     } catch {
       // Ignore polling errors
     }
-  }, [token, isAuthenticated]);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (isAuthenticated) {

@@ -8,6 +8,7 @@ import { EmptyStateWireframe } from '../components/common/EmptyStateWireframe';
 import { AppHeader } from '../components/common/AppHeader';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { scopedExpressFetch } from '../lib/apiClient';
 import {
   computeSlateTopology,
   computeDuelComparison,
@@ -75,12 +76,10 @@ export const MatrixPage: React.FC = () => {
     }
 
     try {
-      const token = localStorage.getItem('supabase.auth.token') || '';
-      fetch(`/api/pools/${activePoolId}/reactions`, {
+      scopedExpressFetch(`/api/pools/${activePoolId}/reactions`, {
         method: operation === 'REMOVE' ? 'DELETE' : 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
           targetKind: 'CANONICAL_GAME',

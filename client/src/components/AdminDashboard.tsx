@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { scopedExpressFetch } from '../lib/apiClient';
 import { Shield, User as UserIcon, RefreshCw, CheckCircle2, AlertCircle, History, Clock, FileText, Check, Wine } from 'lucide-react';
 import { AdminPenaltyModal } from './AdminPenaltyModal';
 
@@ -54,9 +55,7 @@ export const AdminDashboard: React.FC = () => {
   // 1. Fetch Pools on load
   const fetchPools = useCallback(async () => {
     try {
-      const res = await fetch('/api/pools', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await scopedExpressFetch('/api/pools');
       if (res.ok) {
         const data = await res.json();
         setPools(data);
@@ -74,9 +73,7 @@ export const AdminDashboard: React.FC = () => {
   const fetchUsers = useCallback(async () => {
     setLoadingUsers(true);
     try {
-      const res = await fetch('/api/admin/users', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await scopedExpressFetch('/api/admin/users');
       if (!res.ok) throw new Error('Failed to fetch user directory.');
       const data: UserItem[] = await res.json();
       setUsers(data);
@@ -97,9 +94,7 @@ export const AdminDashboard: React.FC = () => {
     if (!currentPoolId) return;
     setLoadingPicks(true);
     try {
-      const res = await fetch(`/api/admin/picks?user_id=${userId}&pool_id=${currentPoolId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await scopedExpressFetch(`/api/admin/picks?user_id=${userId}&pool_id=${currentPoolId}`);
       if (!res.ok) throw new Error('Failed to fetch user pick slate.');
       const data = await res.json();
       setGames(data.games || []);
@@ -114,9 +109,7 @@ export const AdminDashboard: React.FC = () => {
   // 4. Fetch Audit Logs
   const fetchAuditLogs = useCallback(async () => {
     try {
-      const res = await fetch('/api/admin/audit-logs', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await scopedExpressFetch('/api/admin/audit-logs');
       if (res.ok) {
         const data = await res.json();
         setAuditLogs(data);
@@ -148,11 +141,10 @@ export const AdminDashboard: React.FC = () => {
     setOverridingGameId(game.id);
 
     try {
-      const res = await fetch('/api/admin/picks', {
+      const res = await scopedExpressFetch('/api/admin/picks', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           user_id: selectedUserId,

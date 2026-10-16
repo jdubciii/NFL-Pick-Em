@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { scopedExpressFetch } from '../../lib/apiClient';
 import { TransportQueueWidget } from './TransportQueueWidget';
 import { DLQInspector, DLQEventItem } from './DLQInspector';
 import { RetentionControlPanel } from './RetentionControlPanel';
@@ -67,11 +68,7 @@ export const AdminOpsDashboardView: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch('/api/admin/ops/system/health', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const res = await scopedExpressFetch('/api/admin/ops/system/health');
 
       if (res.status === 403) {
         setError('403 Forbidden: Global ADMIN role required to view System Ops.');

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { scopedExpressFetch } from '../lib/apiClient';
 import { DisputeCountdownClock } from '../components/shame/DisputeCountdownClock';
 import {
   Beer,
@@ -158,9 +159,7 @@ export const ShotCamPage: React.FC = () => {
   useEffect(() => {
     const fetchPools = async () => {
       try {
-        const res = await fetch('/api/pools', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await scopedExpressFetch('/api/pools');
         if (res.ok) {
           const pools = await res.json();
           if (pools.length > 0) {
@@ -199,9 +198,7 @@ export const ShotCamPage: React.FC = () => {
         ? `/api/pools/${poolId}/shot-cam/active`
         : '/api/shot-cam/active';
 
-      const res = await fetch(endpoint, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await scopedExpressFetch(endpoint);
       if (!res.ok) {
         throw new Error(`Failed to load Shot-Cam record (status ${res.status})`);
       }
@@ -223,9 +220,7 @@ export const ShotCamPage: React.FC = () => {
         ? `/api/pools/${poolId}/shot-cam/roster`
         : '/api/shot-cam/roster';
 
-      const res = await fetch(endpoint, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await scopedExpressFetch(endpoint);
       if (res.ok) {
         const data = await res.json();
         if (data.roster && Array.isArray(data.roster) && data.roster.length > 0) {
@@ -247,9 +242,7 @@ export const ShotCamPage: React.FC = () => {
         ? `/api/pools/${poolId}/shot-cam/feed?weekNumber=4`
         : '/api/shot-cam/feed?weekNumber=4';
 
-      const res = await fetch(endpoint, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await scopedExpressFetch(endpoint);
       if (res.ok) {
         const data = await res.json();
         if (data.feed && Array.isArray(data.feed)) {
@@ -291,11 +284,10 @@ export const ShotCamPage: React.FC = () => {
         ? `/api/pools/${poolId}/shot-cam/toggle-served`
         : '/api/shot-cam/toggle-served';
 
-      const res = await fetch(endpoint, {
+      const res = await scopedExpressFetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           userId: member.userId,
@@ -342,11 +334,10 @@ export const ShotCamPage: React.FC = () => {
         ? `/api/pools/${poolId}/shot-cam/review`
         : '/api/shot-cam/review';
 
-      const res = await fetch(endpoint, {
+      const res = await scopedExpressFetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           penaltyId: activeRecord.id,
@@ -384,11 +375,10 @@ export const ShotCamPage: React.FC = () => {
         ? `/api/pools/${poolId}/shot-cam/dispute`
         : '/api/shot-cam/dispute';
 
-      const res = await fetch(endpoint, {
+      const res = await scopedExpressFetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           penaltyId: activeRecord.id,
@@ -427,11 +417,10 @@ export const ShotCamPage: React.FC = () => {
         ? `/api/pools/${poolId}/shot-cam/upload`
         : '/api/shot-cam/upload';
 
-      const res = await fetch(endpoint, {
+      const res = await scopedExpressFetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           penaltyId: activeRecord.id,
@@ -470,11 +459,10 @@ export const ShotCamPage: React.FC = () => {
         ? `/api/pools/${poolId}/shot-cam/feed/submit`
         : '/api/shot-cam/feed/submit';
 
-      const res = await fetch(endpoint, {
+      const res = await scopedExpressFetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           weekNumber: modalWeek,
@@ -550,11 +538,10 @@ export const ShotCamPage: React.FC = () => {
         ? `/api/pools/${poolId}/shame/${mediaId}/react`
         : `/api/shame/${mediaId}/react`;
 
-      await fetch(endpoint, {
+      await scopedExpressFetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ emoji }),
       });

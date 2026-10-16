@@ -329,6 +329,16 @@ vi.mock('../src/db/client', () => {
         return { count: initialLen - rehearsalEngine.reactions.length };
       }),
     },
+    user: {
+      findUnique: vi.fn(async (args: any) => {
+        const id = args?.where?.id;
+        if (id === 'user-jack-001') return { id: 'user-jack-001', email: 'jack.w.cone@gmail.com', role: 'ADMIN' };
+        if (id === 'user-pending-002') return { id: 'user-pending-002', email: 'pending@gmail.com', role: 'USER' };
+        if (id === 'user-inactive-003') return { id: 'user-inactive-003', email: 'inactive@gmail.com', role: 'USER' };
+        if (id === 'user-foreign-004') return { id: 'user-foreign-004', email: 'foreign@gmail.com', role: 'USER' };
+        return null;
+      }),
+    },
   };
   return {
     default: mockPrisma,
@@ -349,12 +359,43 @@ describe('Phase 41 Sprint 2 Remediation (P41-S2-R1): Express-Only Persistence & 
   const userInactive = { id: 'user-inactive-003', email: 'inactive@gmail.com', role: 'USER' };
   const userForeign = { id: 'user-foreign-004', email: 'foreign@gmail.com', role: 'USER' };
 
-  const tokenJack = jwt.sign(userJack, JWT_SECRET, { expiresIn: '1h' });
-  const tokenPending = jwt.sign(userPending, JWT_SECRET, { expiresIn: '1h' });
-  const tokenInactive = jwt.sign(userInactive, JWT_SECRET, { expiresIn: '1h' });
-  const tokenForeign = jwt.sign(userForeign, JWT_SECRET, { expiresIn: '1h' });
+  const tokenJack = jwt.sign(
+    { sub: userJack.id, email: userJack.email, role: userJack.role, iss: 'https://nsljipyoihcoqkuphhll.supabase.co/auth/v1', aud: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 },
+    'synthetic-key'
+  );
+  const tokenPending = jwt.sign(
+    { sub: userPending.id, email: userPending.email, role: userPending.role, iss: 'https://nsljipyoihcoqkuphhll.supabase.co/auth/v1', aud: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 },
+    'synthetic-key'
+  );
+  const tokenInactive = jwt.sign(
+    { sub: userInactive.id, email: userInactive.email, role: userInactive.role, iss: 'https://nsljipyoihcoqkuphhll.supabase.co/auth/v1', aud: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 },
+    'synthetic-key'
+  );
+  const tokenForeign = jwt.sign(
+    { sub: userForeign.id, email: userForeign.email, role: userForeign.role, iss: 'https://nsljipyoihcoqkuphhll.supabase.co/auth/v1', aud: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 },
+    'synthetic-key'
+  );
 
   beforeAll(async () => {
+    const { setSupabaseAuthClientForTesting } = await import('../src/middleware/auth');
+    setSupabaseAuthClientForTesting({
+      auth: {
+        getUser: async (token: string) => {
+          const decoded = jwt.decode(token) as any;
+          if (!decoded || !decoded.sub) return { data: { user: null }, error: { message: 'Invalid token', status: 401 } };
+          return {
+            data: {
+              user: {
+                id: decoded.sub,
+                email: decoded.email,
+              },
+            },
+            error: null,
+          };
+        },
+      },
+    } as any);
+
     app = express();
     app.use(express.json());
     app.use('/api/pools', poolSocialRouter);
