@@ -3,22 +3,20 @@ import { CorsOptions, CorsOptionsDelegate } from 'cors';
 /**
  * Confirmed native Capacitor origins:
  * - http://localhost: Android WebView scheme (from client/capacitor.config.ts androidScheme: 'http')
- * - https://localhost: Capacitor secure scheme
- * - capacitor://localhost: iOS / native Capacitor scheme
+ * iOS schemes (capacitor://localhost) are omitted as iOS is out of current deployment scope.
  */
 export const CONFIRMED_CAPACITOR_ORIGINS: ReadonlySet<string> = new Set([
   'http://localhost',
-  'https://localhost',
-  'capacitor://localhost',
 ]);
 
 /**
- * Parses and strictly normalizes comma-separated allowed browser origins from configuration.
+ * Parses and strictly validates comma-separated allowed browser origins from configuration.
  * Principles enforced:
  * - No wildcard "*"
  * - No "null"
  * - Rejects malformed URLs
- * - Normalizes via URL parser (lowercased protocol + host, stripped paths/queries/trailing slashes)
+ * - Rejects entries containing URL paths, query strings, or fragments (violating origin contract)
+ * - Normalizes valid origins (protocol + host/port)
  */
 export function parseAllowedOrigins(raw?: string): Set<string> {
   const allowed = new Set<string>();
@@ -39,7 +37,10 @@ export function parseAllowedOrigins(raw?: string): Set<string> {
       if (!['http:', 'https:'].includes(parsed.protocol)) {
         continue;
       }
-      // Use parsed.origin to strip any paths, trailing slashes, or fragments
+      // Reject entries containing paths beyond root, query parameters, or hash fragments
+      if (parsed.pathname !== '/' || parsed.search !== '' || parsed.hash !== '') {
+        continue;
+      }
       allowed.add(parsed.origin);
     } catch {
       // Malformed entry rejected; fail-closed

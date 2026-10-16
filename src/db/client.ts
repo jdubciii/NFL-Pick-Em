@@ -21,11 +21,21 @@ export function validateDatabaseConnectionUrl(url?: string): { valid: boolean; r
 
     if (process.env.NODE_ENV === 'production') {
       const search = parsed.searchParams;
-      const sslmode = search.get('sslmode');
-      if (sslmode === 'disable' || sslmode === 'allow') {
-        return { valid: false, reason: 'SSL_DISABLED_IN_PRODUCTION' };
+      const sslmodes = search.getAll('sslmode');
+
+      if (sslmodes.length === 0) {
+        return { valid: false, reason: 'SSL_VERIFY_FULL_REQUIRED' };
       }
-      if (search.get('rejectUnauthorized') === 'false' || search.get('sslaccept') === 'accept_invalid_certs') {
+      if (sslmodes.length > 1) {
+        return { valid: false, reason: 'DUPLICATE_SSL_PARAMETERS' };
+      }
+      if (sslmodes[0] !== 'verify-full') {
+        return { valid: false, reason: 'SSL_VERIFY_FULL_REQUIRED' };
+      }
+      if (
+        search.getAll('rejectUnauthorized').includes('false') ||
+        search.getAll('sslaccept').includes('accept_invalid_certs')
+      ) {
         return { valid: false, reason: 'CERTIFICATE_VALIDATION_BYPASS_PROHIBITED' };
       }
     }

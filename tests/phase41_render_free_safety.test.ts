@@ -69,23 +69,23 @@ describe('Phase 41 Free Safety: Render Free Hosting, TLS & Background Switch', (
       });
     });
 
+    it('rejects missing sslmode in production (fails closed)', () => {
+      process.env.NODE_ENV = 'production';
+      expect(
+        validateDatabaseConnectionUrl('postgresql://user:pass@db.example.com:5432/postgres')
+      ).toEqual({
+        valid: false,
+        reason: 'SSL_VERIFY_FULL_REQUIRED',
+      });
+    });
+
     it('rejects sslmode=disable in production', () => {
       process.env.NODE_ENV = 'production';
       expect(
         validateDatabaseConnectionUrl('postgresql://user:pass@db.example.com:5432/postgres?sslmode=disable')
       ).toEqual({
         valid: false,
-        reason: 'SSL_DISABLED_IN_PRODUCTION',
-      });
-    });
-
-    it('rejects rejectUnauthorized=false in production', () => {
-      process.env.NODE_ENV = 'production';
-      expect(
-        validateDatabaseConnectionUrl('postgresql://user:pass@db.example.com:5432/postgres?rejectUnauthorized=false')
-      ).toEqual({
-        valid: false,
-        reason: 'CERTIFICATE_VALIDATION_BYPASS_PROHIBITED',
+        reason: 'SSL_VERIFY_FULL_REQUIRED',
       });
     });
 
@@ -95,24 +95,84 @@ describe('Phase 41 Free Safety: Render Free Hosting, TLS & Background Switch', (
         validateDatabaseConnectionUrl('postgresql://user:pass@db.example.com:5432/postgres?sslmode=allow')
       ).toEqual({
         valid: false,
-        reason: 'SSL_DISABLED_IN_PRODUCTION',
+        reason: 'SSL_VERIFY_FULL_REQUIRED',
       });
     });
 
-    it('rejects sslaccept=accept_invalid_certs in production', () => {
+    it('rejects sslmode=prefer in production (fails closed to prevent downgrade)', () => {
       process.env.NODE_ENV = 'production';
       expect(
-        validateDatabaseConnectionUrl('postgresql://user:pass@db.example.com:5432/postgres?sslaccept=accept_invalid_certs')
+        validateDatabaseConnectionUrl('postgresql://user:pass@db.example.com:5432/postgres?sslmode=prefer')
+      ).toEqual({
+        valid: false,
+        reason: 'SSL_VERIFY_FULL_REQUIRED',
+      });
+    });
+
+    it('rejects sslmode=require in production (no cert or hostname verification)', () => {
+      process.env.NODE_ENV = 'production';
+      expect(
+        validateDatabaseConnectionUrl('postgresql://user:pass@db.example.com:5432/postgres?sslmode=require')
+      ).toEqual({
+        valid: false,
+        reason: 'SSL_VERIFY_FULL_REQUIRED',
+      });
+    });
+
+    it('rejects sslmode=verify-ca in production (lacks hostname verification)', () => {
+      process.env.NODE_ENV = 'production';
+      expect(
+        validateDatabaseConnectionUrl('postgresql://user:pass@db.example.com:5432/postgres?sslmode=verify-ca')
+      ).toEqual({
+        valid: false,
+        reason: 'SSL_VERIFY_FULL_REQUIRED',
+      });
+    });
+
+    it('rejects invalid or unsupported sslmode in production', () => {
+      process.env.NODE_ENV = 'production';
+      expect(
+        validateDatabaseConnectionUrl('postgresql://user:pass@db.example.com:5432/postgres?sslmode=bogus')
+      ).toEqual({
+        valid: false,
+        reason: 'SSL_VERIFY_FULL_REQUIRED',
+      });
+    });
+
+    it('rejects duplicate or conflicting sslmode parameters', () => {
+      process.env.NODE_ENV = 'production';
+      expect(
+        validateDatabaseConnectionUrl('postgresql://user:pass@db.example.com:5432/postgres?sslmode=verify-full&sslmode=disable')
+      ).toEqual({
+        valid: false,
+        reason: 'DUPLICATE_SSL_PARAMETERS',
+      });
+    });
+
+    it('rejects rejectUnauthorized=false in production', () => {
+      process.env.NODE_ENV = 'production';
+      expect(
+        validateDatabaseConnectionUrl('postgresql://user:pass@db.example.com:5432/postgres?sslmode=verify-full&rejectUnauthorized=false')
       ).toEqual({
         valid: false,
         reason: 'CERTIFICATE_VALIDATION_BYPASS_PROHIBITED',
       });
     });
 
-    it('accepts compliant postgres URL with secure connection options', () => {
+    it('rejects sslaccept=accept_invalid_certs in production', () => {
       process.env.NODE_ENV = 'production';
       expect(
-        validateDatabaseConnectionUrl('postgresql://user:pass@aws-0-us-east-1.pooler.supabase.com:5432/postgres?pgbouncer=true')
+        validateDatabaseConnectionUrl('postgresql://user:pass@db.example.com:5432/postgres?sslmode=verify-full&sslaccept=accept_invalid_certs')
+      ).toEqual({
+        valid: false,
+        reason: 'CERTIFICATE_VALIDATION_BYPASS_PROHIBITED',
+      });
+    });
+
+    it('accepts compliant postgres URL with sslmode=verify-full and secure connection options', () => {
+      process.env.NODE_ENV = 'production';
+      expect(
+        validateDatabaseConnectionUrl('postgresql://user:pass@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&pgbouncer=true')
       ).toEqual({
         valid: true,
       });

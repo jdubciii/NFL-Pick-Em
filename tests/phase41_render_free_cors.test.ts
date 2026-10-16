@@ -34,8 +34,12 @@ describe('Phase 41 Render Free Production CORS Hardening', () => {
       expect(parseAllowedOrigins('ftp://bad.com, not-a-url, file:///C:/path').size).toBe(0);
     });
 
-    it('normalizes origins by lowercasing and stripping paths, queries, and trailing slashes', () => {
-      const parsed = parseAllowedOrigins('https://pickem.app/some/path?query=1, https://SECOND.app/');
+    it('rejects entries with paths, query parameters, or fragments, and normalizes valid root origins', () => {
+      expect(parseAllowedOrigins('https://pickem.app/some/path').size).toBe(0);
+      expect(parseAllowedOrigins('https://pickem.app?query=1').size).toBe(0);
+      expect(parseAllowedOrigins('https://pickem.app#fragment').size).toBe(0);
+
+      const parsed = parseAllowedOrigins('https://pickem.app, https://SECOND.app/');
       expect(parsed.size).toBe(2);
       expect(parsed.has('https://pickem.app')).toBe(true);
       expect(parsed.has('https://second.app')).toBe(true);
@@ -74,10 +78,10 @@ describe('Phase 41 Render Free Production CORS Hardening', () => {
       expect(isOriginAllowed('https://review.pickem.com', true, allowedBrowser)).toBe(true);
     });
 
-    it('accepts confirmed Android and native Capacitor origins in production', () => {
+    it('accepts confirmed Android native origin in production and rejects unconfigured iOS schemes', () => {
       expect(isOriginAllowed('http://localhost', true, allowedBrowser)).toBe(true);
-      expect(isOriginAllowed('https://localhost', true, allowedBrowser)).toBe(true);
-      expect(isOriginAllowed('capacitor://localhost', true, allowedBrowser)).toBe(true);
+      expect(isOriginAllowed('https://localhost', true, allowedBrowser)).toBe(false);
+      expect(isOriginAllowed('capacitor://localhost', true, allowedBrowser)).toBe(false);
     });
 
     it('rejects unapproved HTTPS browser origins in production', () => {
