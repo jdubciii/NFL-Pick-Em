@@ -1,0 +1,95 @@
+export interface LiveGame {
+  id: string;
+  name: string;
+  shortName: string;
+  homeTeam: { code: string; name: string; score: string };
+  awayTeam: { code: string; name: string; score: string };
+  status: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL';
+  clock: string;
+  period: number;
+  downDistanceText?: string;
+  isRedZone?: boolean;
+  state?: string;
+  displayClock?: string;
+  periodLabel?: string;
+}
+
+export async function fetchLiveNFLScores(weekNumber: number = 5): Promise<LiveGame[]> {
+  try {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${weekNumber}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Failed to fetch ESPN scores');
+    const data = (await res.json()) as any;
+    
+    return (data.events || []).map((event: any) => {
+      const competition = event.competitions?.[0];
+      const competitors = competition?.competitors || [];
+      const home = competitors.find((c: any) => c.homeAway === 'home') || {};
+      const away = competitors.find((c: any) => c.homeAway === 'away') || {};
+      const statusName = event.status?.type?.name || '';
+      const statusDetail = event.status?.type?.detail || event.status?.type?.description || event.status?.type?.shortDetail || '';
+      
+      const isHalftime = statusName === 'STATUS_HALFTIME' || statusDetail.toLowerCase().includes('halftime');
+      let mappedStatus: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL' = 'SCHEDULED';
+      let state = 'PRE';
+      let displayClock = event.status?.displayClock || '0:00';
+      let periodLabel = `Q${event.status?.period || 1}`;
+
+      if (statusName === 'STATUS_FINAL') {
+        mappedStatus = 'FINAL';
+        state = 'POST';
+        periodLabel = 'FINAL';
+      } else if (isHalftime) {
+        mappedStatus = 'IN_PROGRESS';
+        state = 'LIVE';
+        displayClock = 'HALFTIME';
+        periodLabel = 'HALF';
+      } else if (statusName === 'STATUS_IN_PROGRESS') {
+        mappedStatus = 'IN_PROGRESS';
+        state = 'LIVE';
+      }
+
+      return {
+        id: event.id,
+        name: event.name,
+        shortName: event.shortName,
+        homeTeam: {
+          code: home.team?.abbreviation || 'HOM',
+          name: home.team?.displayName || 'Home',
+          score: home.score || '0'
+        },
+        awayTeam: {
+          code: away.team?.abbreviation || 'AWY',
+          name: away.team?.displayName || 'Away',
+          score: away.score || '0'
+        },
+        status: mappedStatus,
+        clock: displayClock,
+        period: event.status?.period || (isHalftime ? 2 : 1),
+        downDistanceText: competition?.situation?.downDistanceText || '',
+        isRedZone: Boolean(competition?.situation?.isRedZone),
+        state,
+        displayClock,
+        periodLabel,
+      };
+    });
+  } catch (err) {
+    console.warn('Live score fetch fallback:', err);
+    return [];
+  }
+}
+
+/**
+ * Authoritative Live Score Feed Ingestion & Telemetry Processing Function
+ * Architecturally isolated pure function that accepts only game telemetry arrays
+ * and contains zero references or imports to picks, locks, database clients, or mutation sinks.
+ * Strictly guarantees that live feed polling and network failovers cannot mutate
+ * user picks, kickoff locks, or persist side effects (Decision #54 & Decision #66).
+ */
+export function processLiveScoreUpdate(existingGames: LiveGame[], newScores: LiveGame[]): LiveGame[] {
+  if (!newScores || newScores.length === 0) {
+    // Preserve existing live telemetry state on transient network failover or error
+    return existingGames;
+  }
+  return [...newScores];
+}

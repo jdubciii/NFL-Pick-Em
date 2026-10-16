@@ -1,46 +1,35 @@
 import { app } from './server';
-import { startLiveScheduleDaemon } from './services/liveScheduleDaemon';
-import { LiveScoreboardService } from './services/LiveScoreboardService';
-import prisma from './db/client';
-import { GameStatus } from '@prisma/client';
+import { startLiveScheduleDaemon, stopLiveScheduleDaemon } from './services/liveScheduleDaemon';
+import { startLiveScorePoller, stopLiveScorePoller } from './services/liveScorePoller';
+import { isBackgroundJobsEnabled } from './services/advisoryLockService';
 
 const PORT = process.env.PORT || 3000;
 
-// --- LIVE_SCOREBOARD_POLLER (Phase 27 Live Testing) ---
-export const startLiveScorePoller = () => {
-  console.log('[LiveScoreboard] Initializing 15s ESPN polling daemon...');
-  setInterval(async () => {
-    try {
-      const liveGames = await LiveScoreboardService.fetchLiveScores();
-      for (const game of liveGames) {
-        if (game.isLive || game.isFinal) {
-          const gameStatus = game.isFinal ? GameStatus.FINAL : (game.isLive ? GameStatus.IN_PROGRESS : GameStatus.SCHEDULED);
-          await prisma.game.updateMany({
-            where: {
-              OR: [
-                { awayTeamId: game.awayTeam, homeTeamId: game.homeTeam },
-                { awayTeamId: game.homeTeam, homeTeamId: game.awayTeam },
-                { awayTeamId: game.awayTeam.toUpperCase(), homeTeamId: game.homeTeam.toUpperCase() },
-                { awayTeamId: game.homeTeam.toUpperCase(), homeTeamId: game.awayTeam.toUpperCase() }
-              ]
-            },
-            data: {
-              awayScore: game.awayScore,
-              homeScore: game.homeScore,
-              status: gameStatus,
-            }
-          });
-        }
-      }
-    } catch (err) {
-      // Non-blocking log
-    }
-  }, 15000); // 15-second interval
+export { startLiveScorePoller, stopLiveScorePoller };
+
+const server = app.listen(PORT, () => {
+  console.log(`Server listening on http://localhost:${PORT}`);
+
+  if (isBackgroundJobsEnabled()) {
+    console.log('[BackgroundJobs] 🚀 BACKGROUND_JOBS_ENABLED=true: Starting background ingest & scoring daemons.');
+    startLiveScheduleDaemon();
+    startLiveScorePoller();
+  } else {
+    console.log('[BackgroundJobs] ⏸️ BACKGROUND_JOBS_ENABLED is false or not set: Background daemons disabled (safe default).');
+  }
+});
+
+// Graceful lifecycle shutdown for Render / container restarts
+const handleShutdown = (signal: string) => {
+  console.log(`[Server] Received ${signal}. Stopping background workers and closing HTTP listener...`);
+  stopLiveScheduleDaemon();
+  stopLiveScorePoller();
+  server.close(() => {
+    console.log('[Server] HTTP listener closed cleanly.');
+    process.exit(0);
+  });
 };
 
-app.listen(PORT, () => {
-  console.log(`Server listening on http://localhost:${PORT}`);
-  startLiveScheduleDaemon();
-  startLiveScorePoller();
-});
-// --- END LIVE_SCOREBOARD_POLLER ---
+process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+process.on('SIGINT', () => handleShutdown('SIGINT'));
+

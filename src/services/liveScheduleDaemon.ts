@@ -1,6 +1,7 @@
 import { GameStatus } from '@prisma/client';
 import prisma from '../db/client';
 import espnSyncService from './espnSyncService';
+import { tryAcquireAdvisoryLock } from './advisoryLockService';
 
 let daemonTimer: NodeJS.Timeout | null = null;
 let isExecuting = false;
@@ -67,60 +68,76 @@ export async function tickLiveScheduleDaemon(): Promise<{
       console.warn(`[LiveScheduleDaemon] ESPN live sync warning for week ${currentWeek}:`, espnErr);
     }
 
-    // 3. Scan games for kickoff status transitions & pick grading
-    const now = new Date();
-    const paddedWeek = currentWeek < 10 ? `_w0${currentWeek}_` : `_w${currentWeek}_`;
-    const weekGames = await prisma.game.findMany({
-      where: {
-        externalGameId: {
-          contains: paddedWeek,
-        },
-      },
-    });
-
-    for (const game of weekGames) {
-      // Transition: SCHEDULED -> IN_PROGRESS when now >= kickoffTime
-      if (game.status === GameStatus.SCHEDULED && now >= new Date(game.kickoffTime)) {
-        await prisma.game.update({
-          where: { id: game.id },
-          data: { status: GameStatus.IN_PROGRESS },
-        });
-        transitionedInProgress++;
+    // 3. Scan games for kickoff status transitions & pick grading under advisory lock
+    const txResult = await prisma.$transaction(async (tx) => {
+      const lockAcquired = await tryAcquireAdvisoryLock(tx);
+      if (!lockAcquired) {
+        console.log('[LiveScheduleDaemon] Shared advisory lock unavailable; skipping tick mutations.');
+        return { transitioned: 0, graded: 0, skipped: true };
       }
 
-      // Auto-Grade: If game is FINAL and scores are present
-      if (game.status === GameStatus.FINAL && game.homeScore !== null && game.awayScore !== null) {
-        const winner =
-          game.homeScore > game.awayScore
-            ? game.homeTeamId
-            : game.awayScore > game.homeScore
-            ? game.awayTeamId
-            : 'TIE';
+      const now = new Date();
+      const paddedWeek = currentWeek < 10 ? `_w0${currentWeek}_` : `_w${currentWeek}_`;
+      const weekGames = await tx.game.findMany({
+        where: {
+          externalGameId: {
+            contains: paddedWeek,
+          },
+        },
+      });
 
-        const picks = await prisma.pick.findMany({
-          where: { gameId: game.id },
-        });
+      let innerTransitioned = 0;
+      let innerGraded = 0;
 
-        for (const pick of picks) {
-          const isCorrect = pick.selectedTeamId === winner;
-          await prisma.pickResult.upsert({
-            where: { pickId: pick.id },
-            update: {
-              isCorrect,
-              pointsAwarded: isCorrect ? 1.0 : 0.0,
-              finalizedAt: now,
-            },
-            create: {
-              pickId: pick.id,
-              isCorrect,
-              pointsAwarded: isCorrect ? 1.0 : 0.0,
-              finalizedAt: now,
-            },
+      for (const game of weekGames) {
+        // Transition: SCHEDULED -> IN_PROGRESS when now >= kickoffTime
+        if (game.status === GameStatus.SCHEDULED && now >= new Date(game.kickoffTime)) {
+          await tx.game.update({
+            where: { id: game.id },
+            data: { status: GameStatus.IN_PROGRESS },
           });
-          gradedPicks++;
+          innerTransitioned++;
+        }
+
+        // Auto-Grade: If game is FINAL and scores are present
+        if (game.status === GameStatus.FINAL && game.homeScore !== null && game.awayScore !== null) {
+          const winner =
+            game.homeScore > game.awayScore
+              ? game.homeTeamId
+              : game.awayScore > game.homeScore
+              ? game.awayTeamId
+              : 'TIE';
+
+          const picks = await tx.pick.findMany({
+            where: { gameId: game.id },
+          });
+
+          for (const pick of picks) {
+            const isCorrect = pick.selectedTeamId === winner;
+            await tx.pickResult.upsert({
+              where: { pickId: pick.id },
+              update: {
+                isCorrect,
+                pointsAwarded: isCorrect ? 1.0 : 0.0,
+                finalizedAt: now,
+              },
+              create: {
+                pickId: pick.id,
+                isCorrect,
+                pointsAwarded: isCorrect ? 1.0 : 0.0,
+                finalizedAt: now,
+              },
+            });
+            innerGraded++;
+          }
         }
       }
-    }
+
+      return { transitioned: innerTransitioned, graded: innerGraded, skipped: false };
+    });
+
+    transitionedInProgress = txResult.transitioned;
+    gradedPicks = txResult.graded;
   } catch (err) {
     console.error('[LiveScheduleDaemon] Error during daemon tick execution:', err);
   } finally {

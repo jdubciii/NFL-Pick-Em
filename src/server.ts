@@ -5,6 +5,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { Role, Status } from '@prisma/client';
 import prisma from './db/client';
 import { JWT_SECRET, UUID_REGEX, requireAuth, requireAdmin, requirePoolCommissioner, requirePoolMember } from './middleware/auth';
 import { picksRouter } from './routes/picks';
@@ -162,7 +163,7 @@ app.get('/api/pools', requireAuth, async (_req: Request, res: Response): Promise
  * Strictly rejects forged payloads containing { status: 'ACTIVE' } or { role: 'ADMIN' }, forcing membership to 'PENDING'.
  */
 app.post('/api/pools/:pool_id/join', requireAuth, async (req: Request, res: Response): Promise<void> => {
-  const { pool_id } = req.params;
+  const pool_id = String(req.params.pool_id);
   const { inviteCode, status, role } = req.body || {};
 
   if (!UUID_REGEX.test(pool_id)) {
@@ -217,7 +218,7 @@ app.post('/api/pools/:pool_id/join', requireAuth, async (req: Request, res: Resp
       create: {
         poolId: pool_id,
         userId: req.user!.id,
-        status: 'PENDING',
+        status: 'PENDING' as any,
       },
     });
 
@@ -238,7 +239,7 @@ app.post('/api/pools/:pool_id/join', requireAuth, async (req: Request, res: Resp
  * Foreign pool commissioners are strictly denied with HTTP 403.
  */
 app.post('/api/pools/:pool_id/adjudicate', requireAuth, requirePoolCommissioner, async (req: Request, res: Response): Promise<void> => {
-  const { pool_id } = req.params;
+  const pool_id = String(req.params.pool_id);
   const { targetUserId, action } = req.body || {};
 
   if (!targetUserId || !['ACTIVE', 'REJECTED'].includes(action)) {
@@ -251,11 +252,11 @@ app.post('/api/pools/:pool_id/adjudicate', requireAuth, requirePoolCommissioner,
       where: {
         poolId_userId: {
           poolId: pool_id,
-          userId: targetUserId,
+          userId: String(targetUserId),
         },
       },
       data: {
-        status: action,
+        status: action as any,
       },
     });
 

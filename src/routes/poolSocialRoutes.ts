@@ -27,7 +27,7 @@ export async function requireActivePoolMember(
     return;
   }
 
-  const poolId = req.params.pool_id || req.body?.poolId || req.query.poolId;
+  const poolId = String(req.params.pool_id || req.body?.poolId || req.query.poolId);
   if (!poolId || !UUID_REGEX.test(String(poolId))) {
     res.status(400).json({ error: 'Invalid pool ID format. Must be a valid UUID.' });
     return;
@@ -110,7 +110,6 @@ async function validateAuthoritativeTarget(params: {
     try {
       const game = await prisma.game.findFirst({
         where: {
-          week,
           OR: [{ id: targetEntityId }, { externalGameId: targetEntityId }],
         },
       });
@@ -175,7 +174,7 @@ poolSocialRouter.get(
   requireAuth,
   requireActivePoolMember,
   async (req: Request, res: Response): Promise<void> => {
-    const poolId = req.params.pool_id;
+    const poolId = String(req.params.pool_id);
     const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 50));
     const afterCursor = req.query.afterCursor ? String(req.query.afterCursor) : null;
     const targetKind = req.query.targetKind ? String(req.query.targetKind) : undefined;
@@ -253,7 +252,7 @@ poolSocialRouter.post(
   requireAuth,
   requireActivePoolMember,
   async (req: Request, res: Response): Promise<void> => {
-    const poolId = req.params.pool_id;
+    const poolId = String(req.params.pool_id);
     const authorUserId = req.user!.id;
     const {
       clientRequestId,
@@ -435,7 +434,7 @@ poolSocialRouter.get(
   requireAuth,
   requireActivePoolMember,
   async (req: Request, res: Response): Promise<void> => {
-    const poolId = req.params.pool_id;
+    const poolId = String(req.params.pool_id);
     const {
       targetKind = 'CANONICAL_GAME',
       targetEntityId,
@@ -497,7 +496,7 @@ poolSocialRouter.put(
   requireAuth,
   requireActivePoolMember,
   async (req: Request, res: Response): Promise<void> => {
-    const poolId = req.params.pool_id;
+    const poolId = String(req.params.pool_id);
     const actorUserId = req.user!.id;
     const {
       targetKind,
@@ -600,7 +599,7 @@ poolSocialRouter.delete(
   requireAuth,
   requireActivePoolMember,
   async (req: Request, res: Response): Promise<void> => {
-    const poolId = req.params.pool_id;
+    const poolId = String(req.params.pool_id);
     const actorUserId = req.user!.id;
     const {
       targetKind,
