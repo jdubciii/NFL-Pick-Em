@@ -20,7 +20,7 @@ export async function fetchLiveNFLScores(weekNumber: number = 5): Promise<LiveGa
     const res = await fetch(url);
     if (!res.ok) throw new Error('Failed to fetch ESPN scores');
     const data = (await res.json()) as any;
-    
+
     return (data.events || []).map((event: any) => {
       const competition = event.competitions?.[0];
       const competitors = competition?.competitors || [];
@@ -28,7 +28,7 @@ export async function fetchLiveNFLScores(weekNumber: number = 5): Promise<LiveGa
       const away = competitors.find((c: any) => c.homeAway === 'away') || {};
       const statusName = event.status?.type?.name || '';
       const statusDetail = event.status?.type?.detail || event.status?.type?.description || event.status?.type?.shortDetail || '';
-      
+
       const isHalftime = statusName === 'STATUS_HALFTIME' || statusDetail.toLowerCase().includes('halftime');
       let mappedStatus: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL' = 'SCHEDULED';
       let state = 'PRE';
