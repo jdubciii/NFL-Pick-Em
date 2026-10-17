@@ -7,6 +7,7 @@ import { PickPresetControls } from './PickPresetControls';
 import { CompactPicksList } from './picks/CompactPicksList';
 import { SwipePickDeck } from './picks/SwipePickDeck';
 import { UndoSnackbar } from './picks/UndoSnackbar';
+import { WeeklyTiebreakerCard } from './picks/WeeklyTiebreakerCard';
 import { quickFillSafetyEngine, SlateGameItem } from '../services/QuickFillSafetyEngine';
 import { formatGameKickoff } from '../utils/dateUtils';
 import { triggerHaptic } from '../utils/haptics';
@@ -968,6 +969,13 @@ export const WeeklyPicks: React.FC = () => {
               </button>
             </div>
           )}
+
+          {/* Inline Weekly Tiebreaker Card (Section 6) */}
+          <WeeklyTiebreakerCard
+            week={selectedWeek}
+            poolId={activePoolId}
+            hasPicksWithoutTiebreaker={Object.keys(userPicks).length > 0}
+          />
 
           {/* Quick-Fill Presets Toolbar */}
           <PickPresetControls
