@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import prisma from '../db/client';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { runReminderScan } from '../services/reminderScanner';
-import { runWrapUpEngine } from '../services/wrapUpEngine';
+import { runWrapUpEngine, previewWeeklyWrapUpForPool } from '../services/wrapUpEngine';
 import { sealSeason, getSeasonSealStatus } from '../services/seasonSeal';
 import { processTransportsBatch, getTransportsQueueStatus } from '../services/transports';
 import { runRetentionPruning, getRetentionStatus } from '../services/retentionService';
@@ -118,6 +118,37 @@ adminOpsRouter.get('/wrap-up/status', requireAuth, requireAdmin, async (_req: Re
     console.error('Error querying wrap-up status:', error);
     res.status(500).json({
       error: 'Failed to retrieve wrap-up status',
+      details: error.message,
+    });
+  }
+});
+
+/**
+ * GET /api/admin/ops/wrap-up/preview
+ * Read-only settlement preview for commissioners and admins.
+ * Evaluates slate completeness, designated game status, and projected rankings/penalties.
+ * Strictly adheres to Decision #54 (NO WRITES ON GET).
+ */
+adminOpsRouter.get('/wrap-up/preview', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const poolId = (req.query.poolId || req.query.pool_id) as string;
+  const weekNumber = Number(req.query.weekNumber || req.query.week || 1);
+  const season = Number(req.query.season || 2026);
+
+  if (!poolId) {
+    res.status(400).json({ error: 'poolId is required.' });
+    return;
+  }
+
+  try {
+    const preview = await previewWeeklyWrapUpForPool(poolId, weekNumber, { season });
+    res.status(200).json({
+      status: preview.readyToSettle ? 'READY' : 'NOT_READY',
+      preview,
+    });
+  } catch (error: any) {
+    console.error('Error generating wrap-up preview:', error);
+    res.status(500).json({
+      error: 'Failed to generate wrap-up preview',
       details: error.message,
     });
   }

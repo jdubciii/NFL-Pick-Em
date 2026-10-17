@@ -2,36 +2,49 @@ import { Prisma, GameStatus, OutboxStatus } from '@prisma/client';
 import prisma from '../db/client';
 import { withJobRun } from '../jobs/jobRunner';
 import { isGameInExcludedWindow } from './scoringEngine';
-import { resolveTiebreakerGame } from './weeklyWrapUp';
+import {
+  calculateRankingsAndPenalties,
+  RankedMemberResult,
+  MemberEntry,
+} from './tiebreakerRankingService';
+import {
+  getWeeklyDesignation,
+  DesignationResolution,
+} from './weeklyDesignationService';
 import type { PoolSettings } from '../types/pool';
-
-export interface WrapUpMemberScore {
-  userId: string;
-  score: number;
-  tieBreakerPrediction: number | null;
-  tiebreakerDistance: number;
-}
 
 export interface WrapUpOptions {
   weekNumber?: number;
+  season?: number;
   poolId?: string;
+  tiebreakerOffered?: boolean;
   prismaClient?: typeof prisma;
 }
 
 export interface PoolWrapUpResult {
   applied: boolean;
-  reason?: 'ALREADY_WRAPPED_UP' | 'NO_GAMES_FOR_WEEK' | 'SCORE_FEED_UNAVAILABLE' | 'WEEK_NOT_FINAL' | 'CLAIM_STORE_UNAVAILABLE' | string;
+  reason?:
+    | 'ALREADY_WRAPPED_UP'
+    | 'NO_GAMES_FOR_WEEK'
+    | 'SCORE_FEED_UNAVAILABLE'
+    | 'WEEK_NOT_FINAL'
+    | 'DESIGNATED_GAME_UNAVAILABLE'
+    | 'DESIGNATED_GAME_NOT_FINAL'
+    | 'CLAIM_STORE_UNAVAILABLE'
+    | string;
   poolId: string;
+  season: number;
   weekNumber: number;
   pendingCount?: number;
   earliestPendingKickoff?: Date | string | null;
-  topScorers?: Array<{ userId: string; score: number; tiebreakerDistance: number }>;
-  deadPlaceMembers?: Array<{ userId: string; score: number; tiebreakerDistance: number }>;
-  penaltyAssigned?: Prisma.Decimal | number;
+  standings?: RankedMemberResult[];
+  topScorers?: Array<{ userId: string; score: number; rank: number; shots: number }>;
+  deadPlaceMembers?: Array<{ userId: string; score: number; rank: number; shots: number }>;
   processedMembers?: number;
   notificationsEnqueued?: number;
   targetGameId?: string | null;
   targetGameScore?: number | null;
+  tiebreakerOffered?: boolean;
 }
 
 export interface WrapUpEngineRunResult {
@@ -42,19 +55,179 @@ export interface WrapUpEngineRunResult {
   results: PoolWrapUpResult[];
 }
 
+export interface WrapUpPreviewResult {
+  readyToSettle: boolean;
+  reasonsIfNotReady: string[];
+  poolId: string;
+  season: number;
+  weekNumber: number;
+  totalGames: number;
+  completedGames: number;
+  pendingGamesCount: number;
+  designatedGame: any | null;
+  designatedGameScore: number | null;
+  tiebreakerOffered: boolean;
+  projectedStandings: RankedMemberResult[];
+}
+
 /**
- * Executes weekly wrap-up for a single pool with strict invariants:
+ * Read-only settlement preview for commissioners and admins (Decision #54).
+ * Strictly zero mutations; checks slate completeness and evaluates projected rankings.
+ */
+export async function previewWeeklyWrapUpForPool(
+  poolId: string,
+  weekNumber: number,
+  options: WrapUpOptions = {}
+): Promise<WrapUpPreviewResult> {
+  const db = options.prismaClient || prisma;
+
+  const pool = await db.pool.findUnique({
+    where: { id: poolId },
+    include: {
+      memberships: {
+        where: { status: 'ACTIVE' },
+        include: { user: true },
+      },
+    },
+  });
+
+  if (!pool) {
+    throw new Error(`Pool with ID ${poolId} not found.`);
+  }
+
+  const settings = (pool.settings as any) || {};
+  const season = options.season || Number(settings.season) || 2026;
+  const reasonsIfNotReady: string[] = [];
+
+  // Check if already claimed
+  const existingClaim: any[] = ((await db.$queryRawUnsafe(
+    `SELECT pool_id, week_number FROM public.weekly_wrapups WHERE pool_id = $1::uuid AND week_number = $2::int;`,
+    poolId,
+    weekNumber
+  ).catch(() => [])) as any[]) || [];
+
+  if (existingClaim && existingClaim.length > 0) {
+    reasonsIfNotReady.push('ALREADY_WRAPPED_UP: Week has already been officially settled.');
+  }
+
+  // Fetch games
+  const games = await db.game.findMany();
+  const excludedWindows = settings.excludedGameWindows ?? settings.excluded_game_windows;
+  const nonExcludedGames = games.filter(
+    (g) => !isGameInExcludedWindow(g.kickoffTime, excludedWindows)
+  );
+
+  if (nonExcludedGames.length === 0) {
+    reasonsIfNotReady.push('NO_GAMES_FOR_WEEK: No active games found in weekly slate.');
+  }
+
+  const pendingGames = nonExcludedGames.filter(
+    (g) => g.status !== GameStatus.FINAL || g.homeScore === null || g.awayScore === null
+  );
+
+  if (pendingGames.length > 0) {
+    reasonsIfNotReady.push(`WEEK_NOT_FINAL: ${pendingGames.length} games in the weekly slate are not yet official FINAL.`);
+  }
+
+  // Resolve designated tiebreaker game
+  const designation = getWeeklyDesignation(pool.settings, season, weekNumber, games as any);
+  let designatedGameScore: number | null = null;
+
+  if (!designation.game) {
+    reasonsIfNotReady.push(`DESIGNATED_GAME_UNAVAILABLE: Tiebreaker game status is ${designation.status}. ${designation.reason || ''}`.trim());
+  } else {
+    const dGame = designation.game;
+    if (dGame.status !== GameStatus.FINAL || dGame.homeScore === null || dGame.awayScore === null) {
+      reasonsIfNotReady.push(`DESIGNATED_GAME_NOT_FINAL: Designated tiebreaker game (${designation.eventId}) has not reached official FINAL score.`);
+    } else {
+      designatedGameScore = Number(dGame.homeScore) + Number(dGame.awayScore);
+    }
+  }
+
+  // Current-week activation safeguard:
+  // Week 6 or if entry was not offered before kickoff -> tiebreaker unavailable
+  const tiebreakerOffered = options.tiebreakerOffered !== undefined
+    ? options.tiebreakerOffered
+    : (weekNumber !== 6);
+
+  if (!tiebreakerOffered) {
+    // Note in preview
+  }
+
+  // Fetch member scores from picks
+  const memberScoresMap = new Map<string, number>();
+  for (const m of pool.memberships) {
+    memberScoresMap.set(m.userId, 0);
+  }
+
+  // Fetch picks strictly for this pool and week
+  // Picks in DB may have week column or game relation
+  const picks: any[] = ((await db.$queryRawUnsafe(
+    `SELECT p.user_id, p.game_id, p.selected_team, g.home_team_id, g.away_team_id, g.home_score, g.away_score, g.status
+     FROM public.picks p
+     LEFT JOIN public.games g ON (g.external_game_id = p.game_id OR g.id::text = p.game_id)
+     WHERE p.pool_id = $1::uuid AND (p.week = $2::int OR p.week IS NULL);`,
+    poolId,
+    weekNumber
+  ).catch(() => [])) as any[]) || [];
+
+  for (const pick of picks) {
+    if (pick.status === GameStatus.FINAL && pick.home_score !== null && pick.away_score !== null) {
+      const winner = pick.home_score > pick.away_score ? pick.home_team_id : (pick.away_score > pick.home_score ? pick.away_team_id : null);
+      if (winner && (pick.selected_team === winner || pick.selected_team_id === winner)) {
+        const cur = memberScoresMap.get(pick.user_id) || 0;
+        memberScoresMap.set(pick.user_id, cur + 1);
+      }
+    }
+  }
+
+  // Fetch predictions
+  const submissions = await db.weeklySubmission.findMany({
+    where: { poolId, weekNumber },
+  });
+  const subMap = new Map(submissions.map((s) => [s.userId, s.tieBreakerPrediction !== null ? Number(s.tieBreakerPrediction) : null]));
+
+  const memberEntries: MemberEntry[] = pool.memberships.map((m) => ({
+    userId: m.userId,
+    score: memberScoresMap.get(m.userId) || 0,
+    tieBreakerPrediction: subMap.get(m.userId) ?? null,
+  }));
+
+  const projectedStandings = calculateRankingsAndPenalties(memberEntries, {
+    actualFinalTotal: designatedGameScore,
+    tiebreakerOffered,
+  });
+
+  return {
+    readyToSettle: reasonsIfNotReady.length === 0,
+    reasonsIfNotReady,
+    poolId,
+    season,
+    weekNumber,
+    totalGames: nonExcludedGames.length,
+    completedGames: nonExcludedGames.length - pendingGames.length,
+    pendingGamesCount: pendingGames.length,
+    designatedGame: designation.game,
+    designatedGameScore,
+    tiebreakerOffered,
+    projectedStandings,
+  };
+}
+
+/**
+ * Executes weekly settlement for a single pool with strict invariants:
  * - Decision #24: Atomic claim on weekly_wrapups table inside transaction.
- * - Decision #27: Fail closed with SCORE_FEED_UNAVAILABLE if games are unfinalized or empty.
- * - Decisions #3 & #22: Pure Prisma.Decimal precision math for penalties and scores.
- * - Decision #54: Mutation occurs only during transactional execution; read-only on GETs.
- * - Decision #55: Fails closed if claim store or score feeds are missing.
- * - Decision #57: Store-enforced deduplication key: wrapup:v1:pool:<pool_id>:week:<week_id>:user:<user_id>.
+ * - Decision #27: Complete-slate check; requires official FINAL status across all games.
+ * - Authority P41-TIEBREAKER-CONTRACT-2026-10-17-01: Canonical competition ranking and discrete penalty schedule.
+ * - Section 7 Safeguard: Current-week safeguard (fair timely entry verification).
+ * - Decision #54: Pure mutations inside POST transaction; read-only preview available separately.
+ * - Decision #55: Fails closed on missing feeds or unresolved designation.
+ * - Decision #57: Deduplicated outbox/inbox notifications.
  */
 export async function executeWeeklyWrapUpForPool(
   poolId: string,
   weekNumber: number,
-  options: { prismaClient?: typeof prisma } = {}
+  options: WrapUpOptions = {}
 ): Promise<PoolWrapUpResult> {
   const db = options.prismaClient || prisma;
 
@@ -72,25 +245,27 @@ export async function executeWeeklyWrapUpForPool(
         applied: false,
         reason: 'CLAIM_STORE_UNAVAILABLE',
         poolId,
+        season: 2026,
         weekNumber,
       };
     }
 
-    // Attempt atomic insertion into weekly_wrapups
-    const claimResult: any[] = await tx.$queryRawUnsafe(
+    // Atomic insert into weekly_wrapups (prevents concurrent duplicate settlement)
+    const claimResult: any[] = ((await tx.$queryRawUnsafe(
       `INSERT INTO public.weekly_wrapups (pool_id, week_number)
        VALUES ($1::uuid, $2::int)
        ON CONFLICT (pool_id, week_number) DO NOTHING
        RETURNING pool_id, week_number;`,
       poolId,
       weekNumber
-    );
+    )) as any[]) || [];
 
     if (!claimResult || claimResult.length === 0) {
       return {
         applied: false,
         reason: 'ALREADY_WRAPPED_UP',
         poolId,
+        season: 2026,
         weekNumber,
       };
     }
@@ -123,69 +298,95 @@ export async function executeWeeklyWrapUpForPool(
     }
 
     const settings = (pool.settings as PoolSettings) || {};
-    const penaltiesConfig = settings.penalties || {};
-    const tiebreakerConfig = settings.tiebreaker || {};
-    const gameTargetSetting = tiebreakerConfig.game_target || tiebreakerConfig.gameTarget || 'MONDAY_NIGHT';
+    const season = options.season || Number((settings as any).season) || 2026;
     const excludedWindows = settings.excludedGameWindows ?? settings.excluded_game_windows;
 
     // -------------------------------------------------------------------------
-    // Step 3: Precondition Check (Decision #27) - Game Status and Finality
+    // Step 3: Complete-Slate Check (Decision #27 & Section 8)
     // -------------------------------------------------------------------------
-    const picks = await tx.pick.findMany({
-      where: { poolId },
-      include: {
-        result: true,
-        game: true,
-      },
-    });
-
-    const gamesMap = new Map<string, any>();
-    for (const pick of picks) {
-      if (pick.game) {
-        gamesMap.set(pick.game.id, pick.game);
-      }
-    }
-    const poolGames = Array.from(gamesMap.values());
-
-    const nonExcludedGames = poolGames.filter(
-      (game) => !isGameInExcludedWindow(game.kickoffTime, excludedWindows)
+    const games = await tx.game.findMany();
+    const nonExcludedGames = games.filter(
+      (game: any) => !isGameInExcludedWindow(game.kickoffTime, excludedWindows)
     );
 
     if (nonExcludedGames.length === 0) {
-      return {
-        applied: false,
-        reason: 'SCORE_FEED_UNAVAILABLE',
-        poolId,
-        weekNumber,
-      };
+      throw new Error('NO_GAMES_FOR_WEEK: No games found in weekly slate.');
     }
 
+    // Every game must have status === 'FINAL' and non-null scores
     const pendingGames = nonExcludedGames.filter(
-      (g) => g.status !== GameStatus.FINAL || g.homeScore === null || g.awayScore === null
+      (g: any) => g.status !== GameStatus.FINAL || g.homeScore === null || g.awayScore === null
     );
 
     if (pendingGames.length > 0) {
       const sortedPending = [...pendingGames].sort(
-        (a, b) => new Date(a.kickoffTime).getTime() - new Date(b.kickoffTime).getTime()
+        (a: any, b: any) => new Date(a.kickoffTime).getTime() - new Date(b.kickoffTime).getTime()
       );
       return {
         applied: false,
-        reason: 'SCORE_FEED_UNAVAILABLE',
+        reason: 'WEEK_NOT_FINAL',
         pendingCount: pendingGames.length,
         earliestPendingKickoff: sortedPending[0]?.kickoffTime ?? null,
         poolId,
+        season,
         weekNumber,
       };
     }
 
     // -------------------------------------------------------------------------
-    // Step 4: Decimal Scoring & Tiebreaker Resolution (Decisions #3 & #22)
+    // Step 4: Designated Tiebreaker Game Resolution (Section 5 & 8)
     // -------------------------------------------------------------------------
-    const targetGame = resolveTiebreakerGame(nonExcludedGames, gameTargetSetting);
-    const targetGameHomeScore = targetGame?.homeScore ?? 0;
-    const targetGameAwayScore = targetGame?.awayScore ?? 0;
-    const actualTiebreakerTotal = targetGame ? targetGameHomeScore + targetGameAwayScore : 0;
+    const designation = getWeeklyDesignation(pool.settings, season, weekNumber, games as any);
+    if (!designation.game) {
+      throw new Error(`DESIGNATED_GAME_UNAVAILABLE: Tiebreaker game unresolved (${designation.status}). ${designation.reason || ''}`);
+    }
 
+    const designatedGame = designation.game;
+    if (designatedGame.status !== GameStatus.FINAL || designatedGame.homeScore === null || designatedGame.awayScore === null) {
+      throw new Error('DESIGNATED_GAME_NOT_FINAL: Designated tiebreaker game has not reached official FINAL score.');
+    }
+
+    // Official combined FINAL score, including overtime
+    const actualTiebreakerTotal = Number(designatedGame.homeScore) + Number(designatedGame.awayScore);
+
+    // -------------------------------------------------------------------------
+    // Step 5: Current-Week Safeguard (Section 7)
+    // -------------------------------------------------------------------------
+    // If fair timely entry was not offered to all members before deadline,
+    // designate: "Tiebreaker unavailable — entry was not offered."
+    const tiebreakerOffered = options.tiebreakerOffered !== undefined
+      ? options.tiebreakerOffered
+      : (weekNumber !== 6);
+
+    // -------------------------------------------------------------------------
+    // Step 6: Member Pick Scoring & Predictions
+    // -------------------------------------------------------------------------
+    const memberScoresMap = new Map<string, number>();
+    for (const membership of pool.memberships) {
+      memberScoresMap.set(membership.userId, 0);
+    }
+
+    // Load picks for this pool and week
+    const picks: any[] = ((await tx.$queryRawUnsafe(
+      `SELECT p.user_id, p.game_id, p.selected_team, g.home_team_id, g.away_team_id, g.home_score, g.away_score, g.status
+       FROM public.picks p
+       LEFT JOIN public.games g ON (g.external_game_id = p.game_id OR g.id::text = p.game_id)
+       WHERE p.pool_id = $1::uuid AND (p.week = $2::int OR p.week IS NULL);`,
+      poolId,
+      weekNumber
+    ).catch(() => [])) as any[]) || [];
+
+    for (const pick of picks) {
+      if (pick.status === GameStatus.FINAL && pick.home_score !== null && pick.away_score !== null) {
+        const winner = pick.home_score > pick.away_score ? pick.home_team_id : (pick.away_score > pick.home_score ? pick.away_team_id : null);
+        if (winner && (pick.selected_team === winner || pick.selected_team_id === winner)) {
+          const cur = memberScoresMap.get(pick.user_id) || 0;
+          memberScoresMap.set(pick.user_id, cur + 1);
+        }
+      }
+    }
+
+    // Load predictions from weekly_submissions
     const weeklySubmissions = await tx.weeklySubmission.findMany({
       where: {
         poolId: pool.id,
@@ -202,100 +403,50 @@ export async function executeWeeklyWrapUpForPool(
       }
     }
 
-    const memberScoresMap = new Map<string, Prisma.Decimal>();
-    for (const membership of pool.memberships) {
-      memberScoresMap.set(membership.userId, new Prisma.Decimal(0));
-    }
+    const memberEntries: MemberEntry[] = pool.memberships.map((membership: any) => ({
+      userId: membership.userId,
+      score: memberScoresMap.get(membership.userId) || 0,
+      tieBreakerPrediction: predictionsMap.get(membership.userId) ?? null,
+    }));
 
-    for (const pick of picks) {
-      if (memberScoresMap.has(pick.userId) && pick.result) {
-        const isExcluded = pick.game ? isGameInExcludedWindow(pick.game.kickoffTime, excludedWindows) : false;
-        if (!isExcluded) {
-          const currentScore = memberScoresMap.get(pick.userId) || new Prisma.Decimal(0);
-          const points = new Prisma.Decimal(pick.result.pointsAwarded.toString());
-          memberScoresMap.set(pick.userId, currentScore.plus(points));
-        }
-      }
-    }
-
-    const memberEntries: WrapUpMemberScore[] = pool.memberships.map((membership: any) => {
-      const userId = membership.userId;
-      const score = (memberScoresMap.get(userId) || new Prisma.Decimal(0)).toNumber();
-      const prediction = predictionsMap.has(userId) ? predictionsMap.get(userId)! : null;
-
-      let tiebreakerDistance = Infinity;
-      if (prediction !== null && targetGame) {
-        tiebreakerDistance = Math.abs(actualTiebreakerTotal - prediction);
-      }
-
-      return {
-        userId,
-        score,
-        tieBreakerPrediction: prediction,
-        tiebreakerDistance,
-      };
+    // -------------------------------------------------------------------------
+    // Step 7: Canonical Tiebreaker Ranking & Penalty Schedule Calculation
+    // -------------------------------------------------------------------------
+    const rankedStandings = calculateRankingsAndPenalties(memberEntries, {
+      actualFinalTotal: actualTiebreakerTotal,
+      tiebreakerOffered,
     });
 
-    // Rank members: Score DESC, Tiebreaker Distance ASC, UserId ASC
-    memberEntries.sort((a, b) => {
-      if (b.score !== a.score) {
-        return b.score - a.score;
-      }
-      if (a.tiebreakerDistance !== b.tiebreakerDistance) {
-        return a.tiebreakerDistance - b.tiebreakerDistance;
-      }
-      return a.userId.localeCompare(b.userId);
-    });
+    const topScorers = rankedStandings.filter((r) => r.isSafeHaven);
+    const deadPlaceMembers = rankedStandings.filter((r) => r.isDeadPlace);
 
-    const bestScore = memberEntries[0].score;
-    const bestDistance = memberEntries[0].tiebreakerDistance;
-    const topScorers = memberEntries.filter(
-      (m) => m.score === bestScore && m.tiebreakerDistance === bestDistance
-    );
+    // -------------------------------------------------------------------------
+    // Step 8: Commit Penalties & Member Stats Atomically
+    // -------------------------------------------------------------------------
+    for (const member of rankedStandings) {
+      // Incur weekly charge if shots > 0
+      if (member.shots > 0) {
+        const reason = member.isDeadPlace
+          ? 'DEAD_PLACE_MONARCH'
+          : `WEEKLY_SETTLEMENT_RANK_${member.rank}`;
 
-    const worstMember = memberEntries[memberEntries.length - 1];
-    const worstScore = worstMember.score;
-    const worstDistance = worstMember.tiebreakerDistance;
-    const deadPlaceMembers = memberEntries.filter(
-      (m) => m.score === worstScore && m.tiebreakerDistance === worstDistance
-    );
-
-    const topScorerUserIds = new Set(topScorers.map((m) => m.userId));
-    const deadPlaceUserIds = new Set(deadPlaceMembers.map((m) => m.userId));
-
-    // Calculate split penalty using Prisma.Decimal
-    const penaltyConfigVal = penaltiesConfig.dead_place_penalty ?? penaltiesConfig.deadPlacePenalty ?? 1;
-    const deadPlacePenalty = new Prisma.Decimal(penaltyConfigVal.toString());
-    const deadCountDecimal = new Prisma.Decimal(deadPlaceMembers.length);
-    const splitPenalty = deadPlaceMembers.length > 0
-      ? deadPlacePenalty.dividedBy(deadCountDecimal).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
-      : new Prisma.Decimal(0);
-
-    if (splitPenalty.greaterThan(0)) {
-      for (const deadMember of deadPlaceMembers) {
         await tx.penaltyLedger.create({
           data: {
             poolId: pool.id,
-            userId: deadMember.userId,
+            userId: member.userId,
             weekNumber,
-            delta: splitPenalty,
-            reason: 'WEEKLY_DEAD_PLACE',
+            delta: new Prisma.Decimal(member.shots.toString()),
+            reason,
             createdById: pool.adminId,
           },
         });
       }
-    }
 
-    // Upsert PoolMemberStats
-    for (const membership of pool.memberships) {
-      const userId = membership.userId;
-      const isTopScorer = topScorerUserIds.has(userId);
-      const isDeadPlace = deadPlaceUserIds.has(userId);
-
+      // Recompute total cumulative shots drank from ledger
       const ledgerSum = await tx.penaltyLedger.aggregate({
         where: {
           poolId: pool.id,
-          userId,
+          userId: member.userId,
         },
         _sum: {
           delta: true,
@@ -308,26 +459,26 @@ export async function executeWeeklyWrapUpForPool(
         where: {
           poolId_userId: {
             poolId: pool.id,
-            userId,
+            userId: member.userId,
           },
         },
         update: {
-          firstPlaceFinishes: isTopScorer ? { increment: 1 } : undefined,
-          deadPlaceFinishes: isDeadPlace ? { increment: 1 } : undefined,
+          firstPlaceFinishes: member.isSafeHaven ? { increment: 1 } : undefined,
+          deadPlaceFinishes: member.isDeadPlace ? { increment: 1 } : undefined,
           totalShotsDrank,
         },
         create: {
           poolId: pool.id,
-          userId,
-          firstPlaceFinishes: isTopScorer ? 1 : 0,
-          deadPlaceFinishes: isDeadPlace ? 1 : 0,
+          userId: member.userId,
+          firstPlaceFinishes: member.isSafeHaven ? 1 : 0,
+          deadPlaceFinishes: member.isDeadPlace ? 1 : 0,
           totalShotsDrank,
         },
       });
     }
 
     // -------------------------------------------------------------------------
-    // Step 5: Outbox Enqueue Fan-Out (Decision #57)
+    // Step 9: Outbox Enqueue Fan-Out (Decision #57)
     // -------------------------------------------------------------------------
     let notificationsEnqueued = 0;
     const now = new Date();
@@ -336,19 +487,17 @@ export async function executeWeeklyWrapUpForPool(
       const user = membership.user;
       const pref = user?.notificationPreference;
 
-      // Check preference opt-out
-      if (pref) {
-        if (pref.emailEnabled === false || (pref as any).weeklyWrapup === false) {
-          continue;
-        }
+      if (pref && (pref.emailEnabled === false || (pref as any).weeklyWrapup === false)) {
+        continue;
       }
 
       const dedupeKey = `wrapup:v1:pool:${pool.id}:week:${weekNumber}:user:${user.id}`;
       const payload = {
         poolName: pool.name,
+        season,
         weekNumber,
-        highScorer: topScorers.map((t) => t.userId).join(', '),
-        penaltySummary: `Dead place penalty: ${splitPenalty.toString()} shots`,
+        highScorers: topScorers.map((t) => t.userId),
+        deadPlaceMembers: deadPlaceMembers.map((d) => d.userId),
         deepLink: `/pools/${pool.id}/leaderboard`,
       };
 
@@ -389,22 +538,26 @@ export async function executeWeeklyWrapUpForPool(
     return {
       applied: true,
       poolId: pool.id,
+      season,
       weekNumber,
+      standings: rankedStandings,
       topScorers: topScorers.map((t) => ({
         userId: t.userId,
         score: t.score,
-        tiebreakerDistance: t.tiebreakerDistance,
+        rank: t.rank,
+        shots: t.shots,
       })),
       deadPlaceMembers: deadPlaceMembers.map((d) => ({
         userId: d.userId,
         score: d.score,
-        tiebreakerDistance: d.tiebreakerDistance,
+        rank: d.rank,
+        shots: d.shots,
       })),
-      penaltyAssigned: splitPenalty,
       processedMembers: pool.memberships.length,
       notificationsEnqueued,
-      targetGameId: targetGame?.id ?? null,
+      targetGameId: designatedGame.id,
       targetGameScore: actualTiebreakerTotal,
+      tiebreakerOffered,
     };
   }, { maxWait: 15000, timeout: 30000 });
 }
@@ -447,7 +600,11 @@ export async function runWrapUpEngine(options: WrapUpOptions = {}): Promise<{
 
     for (const p of pools) {
       try {
-        const wrapUpRes = await executeWeeklyWrapUpForPool(p.id, weekNumber, { prismaClient: db });
+        const wrapUpRes = await executeWeeklyWrapUpForPool(p.id, weekNumber, {
+          prismaClient: db,
+          season: options.season,
+          tiebreakerOffered: options.tiebreakerOffered,
+        });
         results.push(wrapUpRes);
         if (wrapUpRes.applied) {
           poolsApplied++;
@@ -461,6 +618,7 @@ export async function runWrapUpEngine(options: WrapUpOptions = {}): Promise<{
           applied: false,
           reason: err.message || 'EXECUTION_FAILED',
           poolId: p.id,
+          season: options.season || 2026,
           weekNumber,
         });
         poolsSkipped++;
