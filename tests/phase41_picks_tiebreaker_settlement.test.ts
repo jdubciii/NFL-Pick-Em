@@ -664,6 +664,118 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       expect(preview.readyToSettle).toBe(false);
       expect(preview.reasonsIfNotReady.some((r) => r.includes('DESIGNATED_GAME_NOT_FINAL'))).toBe(true);
     });
+
+    it('flags NOT READY — AUTHORITATIVE SLATE / EVENT MAPPING UNAVAILABLE in preview when picks exist but 0 join scheduled games', async () => {
+      const mockDb: any = {
+        pool: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: POOL_ID,
+            adminId: ADMIN_ID,
+            memberships: [{ userId: MEMBER_1_ID, status: 'ACTIVE' }],
+            settings: { season: 2026 },
+          }),
+        },
+        game: {
+          findMany: vi.fn().mockResolvedValue([
+            {
+              id: 'g-week5',
+              externalGameId: '2026_w05_TB_DAL',
+              homeTeamId: 'DAL',
+              awayTeamId: 'TB',
+              status: GameStatus.FINAL,
+              homeScore: 24,
+              awayScore: 17,
+              kickoffTime: new Date('2026-10-09T00:15:00.000Z'),
+            },
+          ]),
+        },
+        weeklySubmission: { findMany: vi.fn().mockResolvedValue([]) },
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('weekly_wrapups')) {
+            return [{ to_regclass: 'public.weekly_wrapups' }];
+          }
+          if (sql.includes('SELECT p.user_id, p.game_id')) {
+            // Returns picks with ESPN event ID that does not join scheduled games (home_team_id is null)
+            return [
+              {
+                user_id: MEMBER_1_ID,
+                game_id: '401872995',
+                selected_team: 'SEA',
+                selected_team_id: null,
+                home_team_id: null,
+                away_team_id: null,
+                home_score: null,
+                away_score: null,
+                status: null,
+              },
+            ];
+          }
+          return [];
+        }),
+      };
+
+      const preview = await previewWeeklyWrapUpForPool(POOL_ID, 6, { prismaClient: mockDb, tiebreakerOffered: false });
+      expect(preview.readyToSettle).toBe(false);
+      expect(preview.reasonsIfNotReady.some((r) => r.includes('NOT READY — AUTHORITATIVE SLATE / EVENT MAPPING UNAVAILABLE'))).toBe(true);
+    });
+
+    it('returns AUTHORITATIVE_SLATE_UNAVAILABLE in execute when picks exist but 0 join scheduled games', async () => {
+      const mockTx: any = {
+        $queryRaw: vi.fn().mockResolvedValue([{ to_regclass: 'public.weekly_wrapups' }]),
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('INSERT INTO public.weekly_wrapups')) {
+            return [{ pool_id: POOL_ID, week_number: 6 }];
+          }
+          if (sql.includes('SELECT p.user_id, p.game_id')) {
+            return [
+              {
+                user_id: MEMBER_1_ID,
+                game_id: '401872995',
+                selected_team: 'SEA',
+                selected_team_id: null,
+                home_team_id: null,
+                away_team_id: null,
+                home_score: null,
+                away_score: null,
+                status: null,
+              },
+            ];
+          }
+          return [];
+        }),
+        pool: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: POOL_ID,
+            adminId: ADMIN_ID,
+            memberships: [{ userId: MEMBER_1_ID, status: 'ACTIVE', user: {} }],
+            settings: { season: 2026 },
+          }),
+        },
+        game: {
+          findMany: vi.fn().mockResolvedValue([
+            {
+              id: 'g-week5',
+              externalGameId: '2026_w05_TB_DAL',
+              homeTeamId: 'DAL',
+              awayTeamId: 'TB',
+              status: GameStatus.FINAL,
+              homeScore: 24,
+              awayScore: 17,
+              kickoffTime: new Date('2026-10-09T00:15:00.000Z'),
+            },
+          ]),
+        },
+        weeklySubmission: { findMany: vi.fn().mockResolvedValue([]) },
+      };
+
+      const mockDb: any = {
+        $transaction: vi.fn().mockImplementation(async (cb: any) => cb(mockTx)),
+      };
+
+      const result = await executeWeeklyWrapUpForPool(POOL_ID, 6, { prismaClient: mockDb, tiebreakerOffered: false });
+      expect(result.applied).toBe(false);
+      expect(result.reason).toBe('AUTHORITATIVE_SLATE_UNAVAILABLE');
+    });
   });
 });
 

@@ -188,6 +188,11 @@ export async function previewWeeklyWrapUpForPool(
     weekNumber
   ).catch(() => [])) as any[]) || [];
 
+  const joinedPicksCount = picks.filter((p) => p.home_team_id !== null && p.home_team_id !== undefined).length;
+  if (picks.length > 0 && joinedPicksCount === 0) {
+    reasonsIfNotReady.push(`NOT READY — AUTHORITATIVE SLATE / EVENT MAPPING UNAVAILABLE: ${picks.length} picks exist for Week ${weekNumber} but 0 join scheduled games.`);
+  }
+
   for (const pick of picks) {
     if (pick.status === GameStatus.FINAL && pick.home_score !== null && pick.away_score !== null) {
       const winner = pick.home_score > pick.away_score ? pick.home_team_id : (pick.away_score > pick.home_score ? pick.away_team_id : null);
@@ -402,6 +407,17 @@ export async function executeWeeklyWrapUpForPool(
       poolId,
       weekNumber
     ).catch(() => [])) as any[]) || [];
+
+    const joinedCount = picks.filter((p: any) => p.home_team_id !== null && p.home_team_id !== undefined).length;
+    if (picks.length > 0 && joinedCount === 0) {
+      return {
+        applied: false,
+        reason: 'AUTHORITATIVE_SLATE_UNAVAILABLE',
+        poolId,
+        season,
+        weekNumber,
+      };
+    }
 
     for (const pick of picks) {
       if (pick.status === GameStatus.FINAL && pick.home_score !== null && pick.away_score !== null) {
