@@ -129,29 +129,30 @@ export async function previewWeeklyWrapUpForPool(
     reasonsIfNotReady.push(`WEEK_NOT_FINAL: ${pendingGames.length} games in the weekly slate are not yet official FINAL.`);
   }
 
-  // Resolve designated tiebreaker game
-  const designation = getWeeklyDesignation(pool.settings, season, weekNumber, games as any);
-  let designatedGameScore: number | null = null;
-
-  if (!designation.game) {
-    reasonsIfNotReady.push(`DESIGNATED_GAME_UNAVAILABLE: Tiebreaker game status is ${designation.status}. ${designation.reason || ''}`.trim());
-  } else {
-    const dGame = designation.game;
-    if (dGame.status !== GameStatus.FINAL || dGame.homeScore === null || dGame.awayScore === null) {
-      reasonsIfNotReady.push(`DESIGNATED_GAME_NOT_FINAL: Designated tiebreaker game (${designation.eventId}) has not reached official FINAL score.`);
-    } else {
-      designatedGameScore = Number(dGame.homeScore) + Number(dGame.awayScore);
-    }
-  }
-
-  // Current-week activation safeguard:
-  // Week 6 or if entry was not offered before kickoff -> tiebreaker unavailable
+  // Current-week activation safeguard (Section 6 & 7):
+  // If fair timely entry was not offered to all members before deadline (e.g. Week 6),
+  // designate: "Tiebreaker unavailable — entry was not offered."
   const tiebreakerOffered = options.tiebreakerOffered !== undefined
     ? options.tiebreakerOffered
-    : (weekNumber !== 6);
+    : (weekNumber !== 6 && settings?.tiebreaker_unavailable_weeks?.[season]?.[weekNumber] !== true);
 
-  if (!tiebreakerOffered) {
-    // Note in preview
+  let designatedGameScore: number | null = null;
+  let designatedGameItem: any | null = null;
+  let designation: ReturnType<typeof getWeeklyDesignation> | null = null;
+
+  if (tiebreakerOffered) {
+    // Only require designated game and final total when tiebreaker was offered to members
+    designation = getWeeklyDesignation(pool.settings, season, weekNumber, games as any);
+    if (!designation.game) {
+      reasonsIfNotReady.push(`DESIGNATED_GAME_UNAVAILABLE: Tiebreaker game status is ${designation.status}. ${designation.reason || ''}`.trim());
+    } else {
+      designatedGameItem = designation.game;
+      if (designatedGameItem.status !== GameStatus.FINAL || designatedGameItem.homeScore === null || designatedGameItem.awayScore === null) {
+        reasonsIfNotReady.push(`DESIGNATED_GAME_NOT_FINAL: Designated tiebreaker game (${designation.eventId}) has not reached official FINAL score.`);
+      } else {
+        designatedGameScore = Number(designatedGameItem.homeScore) + Number(designatedGameItem.awayScore);
+      }
+    }
   }
 
   // Fetch member scores from picks
@@ -207,7 +208,7 @@ export async function previewWeeklyWrapUpForPool(
     totalGames: nonExcludedGames.length,
     completedGames: nonExcludedGames.length - pendingGames.length,
     pendingGamesCount: pendingGames.length,
-    designatedGame: designation.game,
+    designatedGame: designation?.game || null,
     designatedGameScore,
     tiebreakerOffered,
     projectedStandings,
@@ -334,29 +335,39 @@ export async function executeWeeklyWrapUpForPool(
     }
 
     // -------------------------------------------------------------------------
-    // Step 4: Designated Tiebreaker Game Resolution (Section 5 & 8)
+    // Step 4: Tiebreaker Availability Check (Section 6 & 7 Safeguard)
     // -------------------------------------------------------------------------
-    const designation = getWeeklyDesignation(pool.settings, season, weekNumber, games as any);
-    if (!designation.game) {
-      throw new Error(`DESIGNATED_GAME_UNAVAILABLE: Tiebreaker game unresolved (${designation.status}). ${designation.reason || ''}`);
-    }
-
-    const designatedGame = designation.game;
-    if (designatedGame.status !== GameStatus.FINAL || designatedGame.homeScore === null || designatedGame.awayScore === null) {
-      throw new Error('DESIGNATED_GAME_NOT_FINAL: Designated tiebreaker game has not reached official FINAL score.');
-    }
-
-    // Official combined FINAL score, including overtime
-    const actualTiebreakerTotal = Number(designatedGame.homeScore) + Number(designatedGame.awayScore);
-
-    // -------------------------------------------------------------------------
-    // Step 5: Current-Week Safeguard (Section 7)
-    // -------------------------------------------------------------------------
-    // If fair timely entry was not offered to all members before deadline,
+    // If fair timely entry was not offered to all members before deadline (e.g. Week 6),
     // designate: "Tiebreaker unavailable — entry was not offered."
     const tiebreakerOffered = options.tiebreakerOffered !== undefined
       ? options.tiebreakerOffered
-      : (weekNumber !== 6);
+      : (weekNumber !== 6 && (pool.settings as any)?.tiebreaker_unavailable_weeks?.[season]?.[weekNumber] !== true);
+
+    let actualTiebreakerTotal: number | null = null;
+    let designatedGameId: string | null = null;
+
+    if (tiebreakerOffered) {
+      // For weeks with tiebreaker offered: strictly require designated game and official FINAL score
+      const designation = getWeeklyDesignation(pool.settings, season, weekNumber, games as any);
+      if (!designation.game) {
+        throw new Error(`DESIGNATED_GAME_UNAVAILABLE: Tiebreaker game unresolved (${designation.status}). ${designation.reason || ''}`);
+      }
+
+      const designatedGame = designation.game;
+      if (designatedGame.status !== GameStatus.FINAL || designatedGame.homeScore === null || designatedGame.awayScore === null) {
+        throw new Error('DESIGNATED_GAME_NOT_FINAL: Designated tiebreaker game has not reached official FINAL score.');
+      }
+
+      // Official combined FINAL score, including overtime
+      actualTiebreakerTotal = Number(designatedGame.homeScore) + Number(designatedGame.awayScore);
+      designatedGameId = designatedGame.id;
+    } else {
+      // When tiebreaker was not offered to members:
+      // Do not require a designated tiebreaker final total that the week was explicitly not eligible to use.
+      // Do not fabricate a prediction or designate a replacement game.
+      actualTiebreakerTotal = null;
+      designatedGameId = null;
+    }
 
     // -------------------------------------------------------------------------
     // Step 6: Member Pick Scoring & Predictions
@@ -485,13 +496,16 @@ export async function executeWeeklyWrapUpForPool(
 
     for (const membership of pool.memberships) {
       const user = membership.user;
+      const userId = user?.id || membership.userId;
+      if (!userId) continue;
+
       const pref = user?.notificationPreference;
 
       if (pref && (pref.emailEnabled === false || (pref as any).weeklyWrapup === false)) {
         continue;
       }
 
-      const dedupeKey = `wrapup:v1:pool:${pool.id}:week:${weekNumber}:user:${user.id}`;
+      const dedupeKey = `wrapup:v1:pool:${pool.id}:week:${weekNumber}:user:${userId}`;
       const payload = {
         poolName: pool.name,
         season,
@@ -505,7 +519,7 @@ export async function executeWeeklyWrapUpForPool(
         data: [
           {
             poolId: pool.id,
-            recipientUserId: user.id,
+            recipientUserId: userId,
             type: 'WRAPUP',
             payload,
             dedupeKey,
@@ -521,7 +535,7 @@ export async function executeWeeklyWrapUpForPool(
         data: [
           {
             poolId: pool.id,
-            userId: user.id,
+            userId,
             type: 'WRAPUP',
             payload,
             dedupeKey,
@@ -555,7 +569,7 @@ export async function executeWeeklyWrapUpForPool(
       })),
       processedMembers: pool.memberships.length,
       notificationsEnqueued,
-      targetGameId: designatedGame.id,
+      targetGameId: designatedGameId,
       targetGameScore: actualTiebreakerTotal,
       tiebreakerOffered,
     };

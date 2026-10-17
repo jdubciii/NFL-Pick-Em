@@ -414,10 +414,11 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
         game: {
           findMany: vi.fn().mockResolvedValue(byeGames),
         },
+        weeklySubmission: { findMany: vi.fn().mockResolvedValue([]) },
       };
 
       await expect(
-        executeWeeklyWrapUpForPool(POOL_ID, 6, { prismaClient: mockDb })
+        executeWeeklyWrapUpForPool(POOL_ID, 7, { prismaClient: mockDb, tiebreakerOffered: true })
       ).rejects.toThrow('DESIGNATED_GAME_UNAVAILABLE');
     });
 
@@ -494,5 +495,172 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       expect(preview.projectedStandings[1].rank).toBe(1);
       expect(preview.projectedStandings[1].shots).toBe(0);
     });
+
+    it('executes Week 6 unavailable-tiebreaker wrap-up successfully without designated tiebreaker game or score', async () => {
+      const mockCreatedPenalties: any[] = [];
+      const mockDb: any = {
+        $transaction: async (cb: any) => cb(mockDb),
+        $queryRaw: vi.fn().mockResolvedValue([{ to_regclass: 'public.weekly_wrapups' }]),
+        $queryRawUnsafe: vi.fn().mockImplementation((query: string) => {
+          if (query.includes('weekly_wrapups')) {
+            return Promise.resolve([{ pool_id: POOL_ID, week_number: 6 }]);
+          }
+          if (query.includes('FROM public.picks')) {
+            return Promise.resolve([
+              // Member 1 got 2 correct picks
+              { user_id: MEMBER_1_ID, game_id: 'g1', selected_team: 'DET', status: GameStatus.FINAL, home_score: 28, away_score: 20, home_team_id: 'DET', away_team_id: 'CHI' },
+              { user_id: MEMBER_1_ID, game_id: 'g2', selected_team: 'GB', status: GameStatus.FINAL, home_score: 24, away_score: 10, home_team_id: 'GB', away_team_id: 'MIN' },
+              // Member 2 got 2 correct picks (tied for 1st)
+              { user_id: MEMBER_2_ID, game_id: 'g1', selected_team: 'DET', status: GameStatus.FINAL, home_score: 28, away_score: 20, home_team_id: 'DET', away_team_id: 'CHI' },
+              { user_id: MEMBER_2_ID, game_id: 'g2', selected_team: 'GB', status: GameStatus.FINAL, home_score: 24, away_score: 10, home_team_id: 'GB', away_team_id: 'MIN' },
+              // Member 3 got 0 correct picks (dead place)
+              { user_id: '11111111-1111-1111-1111-111111111113', game_id: 'g1', selected_team: 'CHI', status: GameStatus.FINAL, home_score: 28, away_score: 20, home_team_id: 'DET', away_team_id: 'CHI' },
+            ]);
+          }
+          return Promise.resolve([]);
+        }),
+        pool: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: POOL_ID,
+            adminId: ADMIN_ID,
+            memberships: [
+              { userId: MEMBER_1_ID, status: 'ACTIVE' },
+              { userId: MEMBER_2_ID, status: 'ACTIVE' },
+              { userId: '11111111-1111-1111-1111-111111111113', status: 'ACTIVE' },
+            ],
+            settings: { season: 2026 },
+          }),
+          update: vi.fn().mockResolvedValue({ id: POOL_ID }),
+        },
+        game: {
+          findMany: vi.fn().mockResolvedValue([
+            {
+              id: 'g1',
+              externalGameId: '401872999',
+              homeTeamId: 'DET',
+              awayTeamId: 'CHI',
+              kickoffTime: new Date(Date.now() - 7200000),
+              status: GameStatus.FINAL,
+              homeScore: 28,
+              awayScore: 20,
+            },
+            {
+              id: 'g2',
+              externalGameId: '401873000',
+              homeTeamId: 'GB',
+              awayTeamId: 'MIN',
+              kickoffTime: new Date(Date.now() - 7200000),
+              status: GameStatus.FINAL,
+              homeScore: 24,
+              awayScore: 10,
+            },
+          ]),
+        },
+        weeklySubmission: { findMany: vi.fn().mockResolvedValue([]) },
+        penaltyLedger: {
+          create: vi.fn().mockImplementation((args: any) => {
+            mockCreatedPenalties.push(args.data);
+            return Promise.resolve({ id: 'pen-1', ...args.data });
+          }),
+          aggregate: vi.fn().mockResolvedValue({ _sum: { delta: 1 } }),
+        },
+        poolMemberStat: {
+          upsert: vi.fn().mockResolvedValue({}),
+        },
+        outboxEvent: {
+          createMany: vi.fn().mockResolvedValue({ count: 1 }),
+        },
+        inboxMessage: {
+          createMany: vi.fn().mockResolvedValue({ count: 1 }),
+        },
+      };
+
+      const result = await executeWeeklyWrapUpForPool(POOL_ID, 6, { prismaClient: mockDb });
+      expect(result.applied).toBe(true);
+      expect(result.tiebreakerOffered).toBe(false);
+      expect(result.targetGameId).toBeNull();
+      expect(result.targetGameScore).toBeNull();
+      // Member 1 & 2 share Rank 1 with 0 shots
+      expect(result.topScorers).toHaveLength(2);
+      expect(result.topScorers[0].rank).toBe(1);
+      expect(result.topScorers[0].shots).toBe(0);
+      expect(result.topScorers[1].rank).toBe(1);
+      expect(result.topScorers[1].shots).toBe(0);
+      // Member 3 is Dead Place with rank 3 and 2.5 shots (Dead Place Monarch)
+      expect(result.deadPlaceMembers).toHaveLength(1);
+      expect(result.deadPlaceMembers[0].userId).toBe('11111111-1111-1111-1111-111111111113');
+      expect(result.deadPlaceMembers[0].shots).toBe(2.5);
+
+      // Penalties: only 1 penalty posted for member 3
+      expect(mockCreatedPenalties).toHaveLength(1);
+      expect(mockCreatedPenalties[0].userId).toBe('11111111-1111-1111-1111-111111111113');
+      expect(mockCreatedPenalties[0].delta.toString()).toBe('2.5');
+      expect(mockCreatedPenalties[0].reason).toBe('DEAD_PLACE_MONARCH');
+      expect(mockCreatedPenalties[0].weekNumber).toBe(6);
+      expect(mockCreatedPenalties[0].createdById).toBe(ADMIN_ID);
+    });
+
+    it('fails closed with CLAIM_STORE_UNAVAILABLE when weekly_wrapups table does not exist', async () => {
+      const mockDb: any = {
+        $transaction: async (cb: any) => cb(mockDb),
+        $queryRaw: vi.fn().mockResolvedValue([{ to_regclass: null }]),
+        pool: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: POOL_ID,
+            adminId: ADMIN_ID,
+            memberships: [{ userId: MEMBER_1_ID, status: 'ACTIVE' }],
+            settings: { season: 2026 },
+          }),
+        },
+        game: {
+          findMany: vi.fn().mockResolvedValue([
+            {
+              id: 'g1',
+              status: GameStatus.FINAL,
+              homeScore: 24,
+              awayScore: 17,
+            },
+          ]),
+        },
+      };
+
+      const result = await executeWeeklyWrapUpForPool(POOL_ID, 6, { prismaClient: mockDb });
+      expect(result.applied).toBe(false);
+      expect(result.reason).toBe('CLAIM_STORE_UNAVAILABLE');
+    });
+
+    it('flags DESIGNATED_GAME_NOT_FINAL in preview when tiebreakerOffered is true but designated game is not FINAL', async () => {
+      const mondayGame = {
+        id: 'g-mnf',
+        externalGameId: '401873005',
+        homeTeamId: 'DET',
+        awayTeamId: 'GB',
+        kickoffTime: new Date('2026-10-19T20:15:00.000Z'),
+        status: GameStatus.IN_PROGRESS,
+        homeScore: 14,
+        awayScore: 10,
+      };
+
+      const mockDb: any = {
+        pool: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: POOL_ID,
+            adminId: ADMIN_ID,
+            memberships: [{ userId: MEMBER_1_ID, status: 'ACTIVE' }],
+            settings: { season: 2026 },
+          }),
+        },
+        game: {
+          findMany: vi.fn().mockResolvedValue([mondayGame]),
+        },
+        weeklySubmission: { findMany: vi.fn().mockResolvedValue([]) },
+        $queryRawUnsafe: vi.fn().mockResolvedValue([]),
+      };
+
+      const preview = await previewWeeklyWrapUpForPool(POOL_ID, 7, { prismaClient: mockDb, tiebreakerOffered: true });
+      expect(preview.readyToSettle).toBe(false);
+      expect(preview.reasonsIfNotReady.some((r) => r.includes('DESIGNATED_GAME_NOT_FINAL'))).toBe(true);
+    });
   });
 });
+
