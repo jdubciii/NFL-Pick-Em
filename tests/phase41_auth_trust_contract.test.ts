@@ -182,7 +182,14 @@ describe('Phase 41 Authoritative Supabase Auth Contract Tests', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
 
-    expect(findUniqueSpy).toHaveBeenCalledWith({ where: { id: verifiedId } });
+    expect(findUniqueSpy).toHaveBeenCalledWith({
+      where: { id: verifiedId },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+      },
+    });
     expect(res.status).not.toBe(401);
     expect(res.status).not.toBe(403);
   });
@@ -684,4 +691,95 @@ describe('Phase 41 Authoritative Supabase Auth Contract Tests', () => {
     });
     expect(res.status).toBe(401);
   });
+
+  // 31. Regression: Supabase-only user with NULL passwordHash succeeds without P2032
+  it('31. Regression: Supabase-only user with NULL passwordHash succeeds without P2032', async () => {
+    const userUuid = '1ebe5959-3b34-4c27-a00f-a799bab334f3';
+
+    // 1. Supply a valid synthetic Supabase-authenticated user through the controlled test verifier
+    const getUserMock = vi.fn().mockImplementation(async (_token: string) => {
+      return {
+        data: {
+          user: {
+            id: userUuid,
+            aud: 'authenticated',
+            role: 'authenticated',
+            email: 'supabase_only@nflpickem.com',
+            app_metadata: {},
+            user_metadata: {},
+            created_at: new Date().toISOString(),
+          },
+        },
+        error: null,
+      };
+    });
+    setSupabaseAuthClientForTesting({ auth: { getUser: getUserMock } } as any);
+
+    // 2. Configure Prisma mock to reproduce P2032 if full record or passwordHash is requested
+    const findUniqueSpy = vi.spyOn(prisma.user, 'findUnique').mockImplementation(async (args: any) => {
+      if (!args?.select || args?.select?.passwordHash) {
+        const error: any = new Error(
+          'Error converting field "passwordHash" of expected non-nullable type "String", found incompatible value of "null".'
+        );
+        error.code = 'P2032';
+        error.clientVersion = '5.x';
+        throw error;
+      }
+
+      if (args.select.id && args.select.email && args.select.role && !args.select.passwordHash) {
+        return {
+          id: userUuid,
+          email: 'supabase_only@nflpickem.com',
+          role: 'USER',
+        } as any;
+      }
+
+      return null;
+    });
+
+    vi.spyOn(prisma.inboxMessage, 'findMany').mockResolvedValue([]);
+
+    const token = createSyntheticSupabaseToken({ id: userUuid, email: 'supabase_only@nflpickem.com' });
+
+    // Positive control: request succeeds and reaches protected route
+    const res = await fetch(`${baseUrl}/api/me/inbox`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.messages).toEqual([]);
+
+    // Assert that prisma.user.findUnique received the expected select projection
+    expect(findUniqueSpy).toHaveBeenCalledTimes(1);
+    const callArgs = findUniqueSpy.mock.calls[0][0];
+    expect(callArgs.where).toEqual({ id: userUuid });
+    expect(callArgs.select).toEqual({
+      id: true,
+      email: true,
+      role: true,
+    });
+    expect(callArgs.select.passwordHash).toBeUndefined();
+
+    // Negative controls preserved:
+    // Missing bearer -> 401
+    const unauthRes = await fetch(`${baseUrl}/api/me/inbox`);
+    expect(unauthRes.status).toBe(401);
+
+    // Missing public account -> 403
+    findUniqueSpy.mockImplementationOnce(async () => null);
+    const missingAccountRes = await fetch(`${baseUrl}/api/me/inbox`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(missingAccountRes.status).toBe(403);
+
+    // Header impersonation attempt -> 401
+    const headerImpersonationRes = await fetch(`${baseUrl}/api/me/inbox`, {
+      headers: { 'x-user-email': 'admin@example.com' },
+    });
+    expect(headerImpersonationRes.status).toBe(401);
+  });
 });
+

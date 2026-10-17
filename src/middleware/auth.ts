@@ -194,10 +194,15 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   }
 
   // 3. Trusted read-only application user lookup (strictly no writes during authentication)
-  let dbUser: any = null;
+  let dbUser: { id: string; email: string; role: Role } | null = null;
   try {
     dbUser = await prisma.user.findUnique({
       where: { id: verifiedAuthUser.id },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+      },
     });
   } catch (dbErr) {
     console.error('[requireAuth] Database lookup failed:', dbErr);
