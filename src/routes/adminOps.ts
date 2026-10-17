@@ -169,19 +169,57 @@ adminOpsRouter.get('/wrap-up/preview', requireAuth, async (req: Request, res: Re
  * Fetches and validates ESPN observations before persisting accepted revision atomically.
  * Protected by requireAuth & requireAdmin.
  */
-adminOpsRouter.post('/slate/refresh', requireAuth, requireAdmin, async (req: Request, res: Response): Promise<void> => {
+adminOpsRouter.post('/slate/refresh', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const { poolId, season, seasonType, weekNumber, weekId } = req.body || {};
+  if (!poolId || typeof poolId !== 'string') {
+    res.status(400).json({ error: 'poolId is required.' });
+    return;
+  }
+
+  const actorId = req.user!.id;
+
+  // 1. Authenticated actor already verified by requireAuth (req.user)
+  // 2. Verify requested pool exists
+  const pool = await prisma.pool.findUnique({
+    where: { id: poolId },
+  });
+  if (!pool) {
+    res.status(404).json({ error: 'Pool not found.' });
+    return;
+  }
+
+  // 3. Verify ACTIVE pool membership
+  const membership = await prisma.poolMembership.findUnique({
+    where: {
+      poolId_userId: {
+        poolId,
+        userId: actorId,
+      },
+    },
+  });
+  if (!membership || membership.status !== 'ACTIVE') {
+    res.status(403).json({ error: 'FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED: Must be an ACTIVE member of the requested pool.' });
+    return;
+  }
+
+  // 4. Verify commissioner authority (pool.adminId === actorId).
+  // A global ADMIN role does not provide ambient authority over an unrelated pool.
+  if (pool.adminId !== actorId) {
+    res.status(403).json({ error: 'FORBIDDEN_COMMISSIONER_REQUIRED: Only the pool commissioner may refresh the authoritative slate.' });
+    return;
+  }
+
   const targetWeek = weekNumber !== undefined ? Number(weekNumber) : (weekId !== undefined ? Number(weekId) : 1);
   const targetSeason = season !== undefined ? Number(season) : 2026;
   const targetSeasonType = seasonType !== undefined ? Number(seasonType) : 2;
 
   try {
     const result = await refreshWeeklySlateInDb(prisma, {
-      poolId: typeof poolId === 'string' ? poolId : undefined,
+      poolId,
       seasonYear: targetSeason,
       seasonType: targetSeasonType,
       weekNumber: targetWeek,
-      operatorId: req.user!.id,
+      operatorId: actorId,
     });
 
     if (!result.success) {

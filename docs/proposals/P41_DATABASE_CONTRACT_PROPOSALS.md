@@ -1,19 +1,40 @@
-# P41 — CANONICAL DATABASE CONTRACT & NONEXECUTED PROPOSALS
+# P41 — CANONICAL DATABASE CONTRACT & NONEXECUTED PROPOSALS (RECONCILED)
 
 **AUTHORITIES:** `REVIEW-34BF0025-PHASING-2026-10-17-01`, `P41-TIEBREAKER-CONTRACT-2026-10-17-01`, and `P41-AUTHORITATIVE-SLATE-ARCHITECTURE-2026-10-17-01`  
-**STATUS:** Nonexecuted proposals for Architect & Independent Review Gatekeeper review  
-**EXECUTION BOUNDARY:** STRICTLY NONEXECUTED IN PRODUCTION. Local isolated testing only.
+**STATUS:** Nonexecuted proposals reconciled against live PostgreSQL catalog  
+**EXECUTION BOUNDARY:** STRICTLY NONEXECUTED IN PRODUCTION. Local isolated proposal & analysis only.
 
 ---
 
-## Proposal A — Canonical Games and Weekly Manifest DDL
+## 1. Catalog Discrepancy & Reconciliation Matrix
+
+| Object / Relation | Live Production Catalog | Legacy / Flawed Proposal | Reconciled Contract Proposal |
+| :--- | :--- | :--- | :--- |
+| `games.id` | `uuid PRIMARY KEY` | `uuid PRIMARY KEY` | Preserved unchanged (`uuid`) |
+| `games.external_game_id` | `text UNIQUE` | Proposed redundant `event_id` | **No duplicate column**. Uses canonical `external_game_id` directly for ESPN event text IDs (`401872995`..`401873008`). |
+| `games.home_score`, `away_score` | `integer NULL` | Proposed adding duplicate scores | **No duplicate score columns**. Reuses existing `home_score` and `away_score`. |
+| `games.status` | `enum GameStatus` (`SCHEDULED`, `IN_PROGRESS`, `FINAL`, `POSTPONED`, `CANCELED`) | Proposed `source_status text` | **No duplicate status column**. Reuses existing `GameStatus` enum with normalized mappings. |
+| `games` additive columns | None | Ad-hoc definitions | `season int NOT NULL DEFAULT 2026`, `season_type int NOT NULL DEFAULT 2`, `week int NULL`, `observation_time timestamptz NULL`, `manifest_revision int NOT NULL DEFAULT 1`. |
+| Existing 16 `games` rows | 16 rows (`2026_w05_*`) | Risk of ID collision / guessing | **Preserved 100%**. UUIDs intact. `week` set to `5` based on `external_game_id ILIKE '%w05%'`. |
+| `pools.id` | `uuid PRIMARY KEY` | Guessed `TEXT` in summary | Strictly typed `uuid REFERENCES public.pools(id)`. |
+| `weekly_submissions` unique key | `weekly_submissions_pool_id_user_id_week_number_key` on `(pool_id, user_id, week_number)` | Guessed `weekly_submissions_pool_id_week_number_user_id_key` | Exact verified name dropped concurrently; replaced with season-aware unique index on `(pool_id, season, season_type, week_number, user_id)`. |
+| Pool settings location | `public.pools.settings` (`jsonb`) | Guessed `public.pool_settings` table | **`public.pool_settings` does NOT exist**. Stored strictly within `pools.settings` JSONB under `season_tiebreaker_config`. |
+| `weekly_wrapups` primary key | Table does not exist in production | Assumed synthetic `id uuid` or `RETURNING id` | **Composite primary key strictly `(pool_id, season, week_number)`**. Zero synthetic `id` column. |
+| `penalty_ledger` columns | `id uuid`, `pool_id uuid`, `user_id uuid`, `week_number int`, `delta numeric(5,2)`, `reason text`, `created_by uuid`, `created_at timestamptz` | Assumed existing `season`, `week`, `type` | Additive `season int NOT NULL DEFAULT 2026`, `settlement_attribution text NULL`. Unique partial index for weekly settlement deduplication. |
+| `picks.week` | `integer NOT NULL` named `week` | Mistakenly referenced as `week_number` | Verified column is `week`. Trigger and queries reference `NEW.week`. |
+| Live `picks` RLS policies | `Allow authenticated read picks` (`FOR SELECT USING (true)`), `Allow user upsert own picks` | Guessed legacy policy names | Replaces exact live policy names with granular, kickoff-enforced `SELECT`, `INSERT`, `UPDATE`, `DELETE` policies and trigger guard. |
+
+---
+
+## Proposal A — Canonical Games & Weekly Slate Manifests DDL
 
 ### 1. Objective
-Add season, season type, week number, and observation tracking to `public.games` while establishing `public.weekly_slate_manifests` for compact durable slate versioning. Preserve internal UUIDs and all 16 existing Week 5 rows.
+Add season, season type, week number, and observation provenance to `public.games` without duplicating existing score/status columns. Establish `public.weekly_slate_manifests` for compact durable slate versioning. Preserve internal UUIDs and all 16 existing Week 5 rows.
 
-### 2. DDL Specification
+### 2. DDL Specification (Nonexecuted)
 ```sql
--- 1. Additive columns to public.games
+-- Step 1: Add additive columns to public.games
+-- Existing home_score, away_score, status, and external_game_id are preserved directly.
 ALTER TABLE public.games
   ADD COLUMN IF NOT EXISTS season integer DEFAULT 2026 NOT NULL,
   ADD COLUMN IF NOT EXISTS season_type integer DEFAULT 2 NOT NULL,
@@ -21,14 +42,19 @@ ALTER TABLE public.games
   ADD COLUMN IF NOT EXISTS observation_time timestamptz NULL,
   ADD COLUMN IF NOT EXISTS manifest_revision integer DEFAULT 1 NOT NULL;
 
--- 2. Performance & scope indexes on public.games
+-- Step 2: Performance & scope indexes on public.games
 CREATE INDEX CONCURRENTLY IF NOT EXISTS games_season_week_idx
   ON public.games (season, season_type, week);
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS games_external_id_canonical_idx
   ON public.games (external_game_id);
 
--- 3. Compact durable weekly manifest table
+-- Step 3: Classify existing 16 Week 5 games safely
+UPDATE public.games
+SET week = 5, season = 2026, season_type = 2
+WHERE external_game_id ILIKE '2026_w05_%' AND week IS NULL;
+
+-- Step 4: Compact durable weekly manifest table (League-Wide Canonical Slate)
 CREATE TABLE IF NOT EXISTS public.weekly_slate_manifests (
   season integer NOT NULL,
   season_type integer NOT NULL DEFAULT 2,
@@ -50,7 +76,6 @@ CREATE POLICY "Allow authenticated read slate manifests"
   TO authenticated
   USING (true);
 
--- Only service role / admin write
 CREATE POLICY "Allow service role manage slate manifests"
   ON public.weekly_slate_manifests FOR ALL
   TO service_role
@@ -58,62 +83,76 @@ CREATE POLICY "Allow service role manage slate manifests"
   WITH CHECK (true);
 ```
 
-### 3. Compatibility Invariants
-- Pre-existing 16 Games rows retain `season = 2026`, `season_type = 2`, and their original `external_game_id` strings (`2026_w05_*`).
-- Zero ID reassignment occurs.
-- `week` column on existing rows can be backfilled safely to `5` based on `external_game_id ILIKE '%w05%'`.
+### 3. Alternative Pool-Scoped Manifest DDL (If custom pool windows are enabled)
+```sql
+-- If manifests are pool-specific rather than universal NFL schedule:
+CREATE TABLE IF NOT EXISTS public.pool_slate_manifests (
+  pool_id uuid NOT NULL REFERENCES public.pools(id) ON DELETE CASCADE,
+  season integer NOT NULL,
+  season_type integer NOT NULL DEFAULT 2,
+  week_number integer NOT NULL,
+  revision integer NOT NULL DEFAULT 1,
+  event_ids text[] NOT NULL,
+  accepted_at timestamptz NOT NULL DEFAULT NOW(),
+  accepted_by uuid NOT NULL REFERENCES auth.users(id),
+  manifest_fingerprint text NOT NULL,
+  observation_time timestamptz NOT NULL,
+  CONSTRAINT pool_slate_manifests_pkey PRIMARY KEY (pool_id, season, season_type, week_number)
+);
+```
 
 ---
 
-## Proposal B — Canonical Games Import Script & Mapping
+## Proposal B — Canonical Games Import (Week 6 Candidate Manifest)
 
 ### 1. Objective
 Synchronize the official 2026 Week 6 NFL schedule from verified ESPN observations into `public.games` using canonical ESPN event text IDs (`401872995`..`401873008`), resolving all 80 existing picks across 9 events without modifying any pick row.
 
-### 2. Candidate Manifest Mapping (2026 Week 6 Regular Season)
-| ESPN Event ID | Away Team | Home Team | Canonical Kickoff (UTC) | Pick Count (in 80 picks) |
-| :--- | :--- | :--- | :--- | :--- |
-| `401872995` | SEA | SF | 2026-10-15T20:15:00.000Z | 1 (SEA) |
-| `401872996` | JAX | HOU | 2026-10-18T17:00:00.000Z | 9 (JAX: 8, HOU: 1) |
-| `401872997` | BAL | CLE | 2026-10-18T17:00:00.000Z | 10 (BAL: 8, CLE: 2) |
-| `401872998` | PHI | CAR | 2026-10-18T17:00:00.000Z | 10 (PHI: 7, CAR: 3) |
-| `401872999` | CHI | ATL | 2026-10-18T17:00:00.000Z | 10 (CHI: 7, ATL: 3) |
-| `401873000` | NYG | NO | 2026-10-18T17:00:00.000Z | 10 (NYG: 7, NO: 3) |
-| `401873001` | NE | NYJ | 2026-10-18T17:00:00.000Z | 10 (NE: 8, NYJ: 2) |
-| `401873002` | PIT | TB | 2026-10-18T17:00:00.000Z | 10 (PIT: 9, TB: 1) |
-| `401873003` | IND | TEN | 2026-10-18T17:00:00.000Z | 10 (IND: 9, TEN: 1) |
-| `401873004` | LAC | MIA | 2026-10-18T20:05:00.000Z | 0 (Unpicked) |
-| `401873005` | DAL | DEN | 2026-10-18T20:25:00.000Z | 0 (Unpicked) |
-| `401873006` | CIN | GB | 2026-10-18T20:25:00.000Z | 0 (Unpicked) |
-| `401873007` | LAR | ARI | 2026-10-18T20:20:00.000Z | 0 (Unpicked — SNF) |
-| `401873008` | KC | MIN | 2026-10-19T20:15:00.000Z | 0 (Unpicked — MNF) |
+### 2. Candidate Manifest Mapping & Pick Coverage Proof
+| ESPN Event ID | Away Team | Home Team | Canonical Kickoff (UTC) | Pick Count (in 80 picks) | Pick Teams Selected |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `401872995` | SEA | SF | 2026-10-15T20:15:00.000Z | 1 | SEA: 1 |
+| `401872996` | JAX | HOU | 2026-10-18T17:00:00.000Z | 9 | JAX: 8, HOU: 1 |
+| `401872997` | BAL | CLE | 2026-10-18T17:00:00.000Z | 10 | BAL: 8, CLE: 2 |
+| `401872998` | PHI | CAR | 2026-10-18T17:00:00.000Z | 10 | PHI: 7, CAR: 3 |
+| `401872999` | CHI | ATL | 2026-10-18T17:00:00.000Z | 10 | CHI: 7, ATL: 3 |
+| `401873000` | NYG | NO | 2026-10-18T17:00:00.000Z | 10 | NYG: 7, NO: 3 |
+| `401873001` | NE | NYJ | 2026-10-18T17:00:00.000Z | 10 | NE: 8, NYJ: 2 |
+| `401873002` | PIT | TB | 2026-10-18T17:00:00.000Z | 10 | PIT: 9, TB: 1 |
+| `401873003` | IND | TEN | 2026-10-18T17:00:00.000Z | 10 | IND: 9, TEN: 1 |
+| `401873004` | LAC | MIA | 2026-10-18T20:05:00.000Z | 0 | Unpicked |
+| `401873005` | DAL | DEN | 2026-10-18T20:25:00.000Z | 0 | Unpicked |
+| `401873006` | CIN | GB | 2026-10-18T20:25:00.000Z | 0 | Unpicked |
+| `401873007` | LAR | ARI | 2026-10-18T20:20:00.000Z | 0 | Unpicked (SNF) |
+| `401873008` | KC | MIN | 2026-10-19T20:15:00.000Z | 0 | Unpicked (MNF) |
+| **Total** | | | | **80 picks** | **100% Resolved** |
 
-### 3. Preflight & Execution SQL (Nonexecuted)
+### 3. Preflight, Upsert & Join Verification SQL (Nonexecuted)
 ```sql
 BEGIN;
 
--- 1. Preflight check: verify picks preservation
-SELECT count(*)::int AS initial_pick_count FROM public.picks WHERE week = 6;
--- Assert initial_pick_count = 80
+-- 1. Preflight assertion: verify 80 picks exist before import
+SELECT count(*)::int AS pre_import_pick_count FROM public.picks WHERE week = 6;
+-- Assert pre_import_pick_count = 80
 
 -- 2. Upsert canonical Week 6 events
 INSERT INTO public.games (
   external_game_id, home_team_id, away_team_id, kickoff_time, status, season, season_type, week
 ) VALUES
-  ('401872995', 'SF',  'SEA', '2026-10-15T20:15:00Z', 'SCHEDULED', 2026, 2, 6),
-  ('401872996', 'HOU', 'JAX', '2026-10-18T17:00:00Z', 'SCHEDULED', 2026, 2, 6),
-  ('401872997', 'CLE', 'BAL', '2026-10-18T17:00:00Z', 'SCHEDULED', 2026, 2, 6),
-  ('401872998', 'CAR', 'PHI', '2026-10-18T17:00:00Z', 'SCHEDULED', 2026, 2, 6),
-  ('401872999', 'ATL', 'CHI', '2026-10-18T17:00:00Z', 'SCHEDULED', 2026, 2, 6),
-  ('401873000', 'NO',  'NYG', '2026-10-18T17:00:00Z', 'SCHEDULED', 2026, 2, 6),
-  ('401873001', 'NYJ', 'NE',  '2026-10-18T17:00:00Z', 'SCHEDULED', 2026, 2, 6),
-  ('401873002', 'TB',  'PIT', '2026-10-18T17:00:00Z', 'SCHEDULED', 2026, 2, 6),
-  ('401873003', 'TEN', 'IND', '2026-10-18T17:00:00Z', 'SCHEDULED', 2026, 2, 6),
-  ('401873004', 'MIA', 'LAC', '2026-10-18T20:05:00Z', 'SCHEDULED', 2026, 2, 6),
-  ('401873005', 'DEN', 'DAL', '2026-10-18T20:25:00Z', 'SCHEDULED', 2026, 2, 6),
-  ('401873006', 'GB',  'CIN', '2026-10-18T20:25:00Z', 'SCHEDULED', 2026, 2, 6),
-  ('401873007', 'ARI', 'LAR', '2026-10-18T20:20:00Z', 'SCHEDULED', 2026, 2, 6),
-  ('401873008', 'MIN', 'KC',  '2026-10-19T20:15:00Z', 'SCHEDULED', 2026, 2, 6)
+  ('401872995', 'SF',  'SEA', '2026-10-15T20:15:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401872996', 'HOU', 'JAX', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401872997', 'CLE', 'BAL', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401872998', 'CAR', 'PHI', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401872999', 'ATL', 'CHI', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401873000', 'NO',  'NYG', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401873001', 'NYJ', 'NE',  '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401873002', 'TB',  'PIT', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401873003', 'TEN', 'IND', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401873004', 'MIA', 'LAC', '2026-10-18T20:05:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401873005', 'DEN', 'DAL', '2026-10-18T20:25:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401873006', 'GB',  'CIN', '2026-10-18T20:25:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401873007', 'ARI', 'LAR', '2026-10-18T20:20:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401873008', 'MIN', 'KC',  '2026-10-19T20:15:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6)
 ON CONFLICT (external_game_id) DO UPDATE SET
   home_team_id = EXCLUDED.home_team_id,
   away_team_id = EXCLUDED.away_team_id,
@@ -122,10 +161,10 @@ ON CONFLICT (external_game_id) DO UPDATE SET
   season_type = EXCLUDED.season_type,
   week = EXCLUDED.week;
 
--- 3. Post-import join verification
+-- 3. Post-import join verification: verify all 80 picks join canonical games
 SELECT count(*)::int AS joined_picks
 FROM public.picks p
-JOIN public.games g ON g.external_game_id = p.game_id
+JOIN public.games g ON (g.external_game_id = p.game_id OR g.id::text = p.game_id)
 WHERE p.week = 6;
 -- Assert joined_picks = 80
 
@@ -137,16 +176,35 @@ COMMIT;
 ## Proposal C — Season-Safe Submissions and Designation
 
 ### 1. Objective
-Add `season` and `season_type` to `public.weekly_submissions` to prevent cross-season collision, replacing the legacy unique index on `(pool_id, user_id, week_number)`.
+Add `season` and `season_type` to `public.weekly_submissions` to prevent cross-season collision, replacing the verified legacy unique index `weekly_submissions_pool_id_user_id_week_number_key` on `(pool_id, user_id, week_number)`.
 
-### 2. Migration Sequence (Outside Transaction for Concurrently)
+### 2. Settings & Designation Storage
+The designated tiebreaker game is stored inside `public.pools.settings` (`jsonb`) at:
+```json
+{
+  "season_tiebreaker_config": {
+    "2026": {
+      "6": {
+        "status": "DEFAULT_LIONS",
+        "game_id": "401872995",
+        "provenance": "DEFAULT_LIONS",
+        "is_frozen": true,
+        "designated_at": "2026-10-15T12:00:00Z"
+      }
+    }
+  }
+}
+```
+`public.pool_settings` does NOT exist. Storing within `pools.settings` preserves transactionality and eliminates orphan relations.
+
+### 3. Phased Index Migration Sequence (Nonexecuted)
 ```sql
 -- Step 1: Add season columns with defaults
 ALTER TABLE public.weekly_submissions
   ADD COLUMN IF NOT EXISTS season integer DEFAULT 2026 NOT NULL,
   ADD COLUMN IF NOT EXISTS season_type integer DEFAULT 2 NOT NULL;
 
--- Step 2: Create concurrent unique index
+-- Step 2: Create concurrent replacement unique index
 CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS weekly_submissions_pool_season_week_user_idx
   ON public.weekly_submissions (pool_id, season, season_type, week_number, user_id);
 
@@ -164,21 +222,23 @@ ALTER TABLE public.weekly_submissions
 
 ---
 
-## Proposal D — Settlement Records and Ledger
+## Proposal D — Settlement Records & Penalty Ledger Attribution
 
 ### 1. Objective
-Create `public.weekly_wrapups` with composite primary key `(pool_id, season, week_number)`, durable JSONB audit snapshot, and atomic penalty ledger attribution.
+Establish `public.weekly_wrapups` with composite primary key `(pool_id, season, week_number)`. Extend `public.penalty_ledger` with season attribution and a unique partial index to guarantee exactly one penalty charge per member per week.
 
-### 2. DDL Specification
+### 2. DDL Specification (Nonexecuted)
 ```sql
+-- Step 1: Composite Primary Key Settlement Store
 CREATE TABLE IF NOT EXISTS public.weekly_wrapups (
   pool_id uuid NOT NULL REFERENCES public.pools(id) ON DELETE CASCADE,
   season integer NOT NULL DEFAULT 2026,
   season_type integer NOT NULL DEFAULT 2,
   week_number integer NOT NULL,
-  applied_by uuid NOT NULL REFERENCES auth.users(id),
+  applied_by uuid NULL REFERENCES auth.users(id),
   completed_at timestamptz NOT NULL DEFAULT NOW(),
-  input_hash text NULL,
+  input_fingerprint text NULL,
+  accepted_revision integer NULL,
   summary jsonb NULL,
   CONSTRAINT weekly_wrapups_pkey PRIMARY KEY (pool_id, season, week_number)
 );
@@ -197,34 +257,45 @@ CREATE POLICY "Allow authenticated read weekly wrapups"
     )
   );
 
-CREATE POLICY "Allow admin write weekly wrapups"
+CREATE POLICY "Allow service role manage weekly wrapups"
   ON public.weekly_wrapups FOR ALL
   TO service_role
   USING (true)
   WITH CHECK (true);
+
+-- Step 2: Add season column to penalty_ledger
+ALTER TABLE public.penalty_ledger
+  ADD COLUMN IF NOT EXISTS season integer DEFAULT 2026 NOT NULL,
+  ADD COLUMN IF NOT EXISTS settlement_attribution text NULL;
+
+-- Step 3: Settlement charge uniqueness index (prevents double-billing)
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_penalty_ledger_settlement_unique
+  ON public.penalty_ledger (pool_id, user_id, season, week_number)
+  WHERE reason LIKE 'WEEKLY_SETTLEMENT%' OR reason LIKE 'DEAD_PLACE_MONARCH%';
 ```
 
-### 3. Ledger Attribution Contract
-- Penalty rows in `public.penalty_ledger` are attributed with:
-  `delta`: exact discrete shots (0, 1, 2, or 2.5).
-  `reason`: `DEAD_PLACE_MONARCH_S{season}_W{weekNumber}` or `WEEKLY_SETTLEMENT_S{season}_W{weekNumber}_RANK_{rank}`.
-- Recovery protocol: offsetting reversal entries (`delta = -original_delta`), never mutating historical rows.
+### 3. Settlement & Recovery Invariants
+- **Atomic Claim**: `INSERT INTO public.weekly_wrapups (pool_id, season, week_number, applied_by, input_fingerprint, accepted_revision) VALUES (...) ON CONFLICT (pool_id, season, week_number) DO NOTHING RETURNING pool_id, season, week_number;`
+- **Zero Retries with Additional Charges**: If a week was already settled, `ON CONFLICT` returns 0 rows and the transaction exits idempotently with `ALREADY_SETTLED`.
+- **Rollback Protocol**: Committed settlement markers are NEVER deleted. If an erroneous settlement must be corrected, an offsetting reversal entry is inserted into `penalty_ledger`:
+  `delta = -original_delta`, `reason = 'REVERSAL_WEEKLY_SETTLEMENT_S2026_W6_RANK_...'`.
 
 ---
 
-## Proposal E — Direct Picks RLS, Grants & Trigger Guards
+## Proposal E — Direct Supabase Pick Security, Grants & Trigger Guards
 
 ### 1. Objective
-Eliminate over-permissive `Allow authenticated read picks` (`FOR SELECT USING (true)`) and permissive `ALL` policies, establishing strict ownership, active pool membership, and kickoff lock guards while fully preserving the direct Supabase client pick-save flow.
+Eliminate over-permissive `Allow authenticated read picks` (`FOR SELECT USING (true)`) and `Allow user upsert own picks`, establishing strict authenticated ownership, active pool membership, and kickoff lock enforcement while preserving the direct Supabase client pick-save flow.
 
-### 2. DDL & Policy Transition (Nonexecuted)
+### 2. DDL, RLS & Trigger Guard Transition (Nonexecuted)
 ```sql
--- Step 1: Drop over-permissive policies
+-- Step 1: Drop over-permissive live policies
 DROP POLICY IF EXISTS "Allow authenticated read picks" ON public.picks;
+DROP POLICY IF EXISTS "Allow user upsert own picks" ON public.picks;
 DROP POLICY IF EXISTS "Allow authenticated all picks" ON public.picks;
 
--- Step 2: Enforce league visibility rules for SELECT
--- Users see picks in their pool ONLY after kickoff OR if it is their own pick
+-- Step 2: Privacy-preserving SELECT policy
+-- A member sees their own picks anytime; other members' picks ONLY after game kickoff
 CREATE POLICY "picks_select_pool_member_policy"
 ON public.picks FOR SELECT
 TO authenticated
@@ -245,7 +316,7 @@ USING (
   )
 );
 
--- Step 3: Owner insert scoped to active membership
+-- Step 3: Owner INSERT policy (active membership + before kickoff)
 CREATE POLICY "picks_insert_policy"
 ON public.picks FOR INSERT
 TO authenticated
@@ -264,7 +335,7 @@ WITH CHECK (
   )
 );
 
--- Step 4: Owner update scoped to pre-kickoff
+-- Step 4: Owner UPDATE policy (active membership + before kickoff)
 CREATE POLICY "picks_update_policy"
 ON public.picks FOR UPDATE
 TO authenticated
@@ -286,7 +357,7 @@ WITH CHECK (
   user_id = auth.uid()
 );
 
--- Step 5: Owner delete scoped to pre-kickoff
+-- Step 5: Owner DELETE policy (before kickoff only)
 CREATE POLICY "picks_delete_policy"
 ON public.picks FOR DELETE
 TO authenticated
@@ -299,26 +370,48 @@ USING (
   )
 );
 
--- Step 6: Trigger guard for pick identity immutability (pool_id, user_id, game_id, week)
-CREATE OR REPLACE FUNCTION public.enforce_pick_identity_immutability()
+-- Step 6: Trigger guard for pick immutability and hard kickoff boundary
+CREATE OR REPLACE FUNCTION public.check_pick_kickoff_and_immutability()
 RETURNS TRIGGER AS $$
+DECLARE
+  v_kickoff timestamptz;
 BEGIN
-  IF NEW.pool_id <> OLD.pool_id THEN
-    RAISE EXCEPTION 'CANNOT_MUTATE_PICK_POOL_ID: Pool ID is immutable.';
+  -- 1. Immutability checks on UPDATE
+  IF TG_OP = 'UPDATE' THEN
+    IF NEW.pool_id <> OLD.pool_id THEN
+      RAISE EXCEPTION 'CANNOT_MUTATE_PICK_POOL_ID: pool_id is immutable';
+    END IF;
+    IF NEW.user_id <> OLD.user_id THEN
+      RAISE EXCEPTION 'CANNOT_MUTATE_PICK_USER_ID: user_id is immutable';
+    END IF;
+    IF NEW.game_id <> OLD.game_id THEN
+      RAISE EXCEPTION 'CANNOT_MUTATE_PICK_GAME_ID: game_id is immutable';
+    END IF;
+    IF NEW.week <> OLD.week THEN
+      RAISE EXCEPTION 'CANNOT_MUTATE_PICK_WEEK: week is immutable';
+    END IF;
   END IF;
-  IF NEW.user_id <> OLD.user_id THEN
-    RAISE EXCEPTION 'CANNOT_MUTATE_PICK_USER_ID: User ID is immutable.';
+
+  -- 2. Kickoff lock check
+  SELECT kickoff_time INTO v_kickoff
+  FROM public.games
+  WHERE external_game_id = NEW.game_id OR id::text = NEW.game_id;
+
+  IF v_kickoff IS NULL THEN
+    RAISE EXCEPTION 'FAIL_CLOSED: Game % not found or kickoff undefined', NEW.game_id;
   END IF;
-  IF NEW.game_id <> OLD.game_id THEN
-    RAISE EXCEPTION 'CANNOT_MUTATE_PICK_GAME_ID: Game ID is immutable.';
+
+  IF (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') >= v_kickoff THEN
+    RAISE EXCEPTION 'KICKOFF_LOCKED: Pick submission closed at %', v_kickoff;
   END IF;
+
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-DROP TRIGGER IF EXISTS trg_enforce_pick_identity_immutability ON public.picks;
-CREATE TRIGGER trg_enforce_pick_identity_immutability
-  BEFORE UPDATE ON public.picks
+DROP TRIGGER IF EXISTS trg_check_pick_kickoff_and_immutability ON public.picks;
+CREATE TRIGGER trg_check_pick_kickoff_and_immutability
+  BEFORE INSERT OR UPDATE ON public.picks
   FOR EACH ROW
-  EXECUTE FUNCTION public.enforce_pick_identity_immutability();
+  EXECUTE FUNCTION public.check_pick_kickoff_and_immutability();
 ```
