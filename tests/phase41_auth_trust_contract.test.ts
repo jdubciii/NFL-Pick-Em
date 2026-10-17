@@ -694,7 +694,7 @@ describe('Phase 41 Authoritative Supabase Auth Contract Tests', () => {
 
   // 31. Regression: Supabase-only user with NULL passwordHash succeeds without P2032
   it('31. Regression: Supabase-only user with NULL passwordHash succeeds without P2032', async () => {
-    const userUuid = '1ebe5959-3b34-4c27-a00f-a799bab334f3';
+    const userUuid = '77777777-7777-7777-7777-777777777777';
 
     // 1. Supply a valid synthetic Supabase-authenticated user through the controlled test verifier
     const getUserMock = vi.fn().mockImplementation(async (_token: string) => {
@@ -704,7 +704,7 @@ describe('Phase 41 Authoritative Supabase Auth Contract Tests', () => {
             id: userUuid,
             aud: 'authenticated',
             role: 'authenticated',
-            email: 'supabase_only@nflpickem.com',
+            email: 'synthetic_null_pw@nflpickem.test',
             app_metadata: {},
             user_metadata: {},
             created_at: new Date().toISOString(),
@@ -729,7 +729,7 @@ describe('Phase 41 Authoritative Supabase Auth Contract Tests', () => {
       if (args.select.id && args.select.email && args.select.role && !args.select.passwordHash) {
         return {
           id: userUuid,
-          email: 'supabase_only@nflpickem.com',
+          email: 'synthetic_null_pw@nflpickem.test',
           role: 'USER',
         } as any;
       }
@@ -739,7 +739,7 @@ describe('Phase 41 Authoritative Supabase Auth Contract Tests', () => {
 
     vi.spyOn(prisma.inboxMessage, 'findMany').mockResolvedValue([]);
 
-    const token = createSyntheticSupabaseToken({ id: userUuid, email: 'supabase_only@nflpickem.com' });
+    const token = createSyntheticSupabaseToken({ id: userUuid, email: 'synthetic_null_pw@nflpickem.test' });
 
     // Positive control: request succeeds and reaches protected route
     const res = await fetch(`${baseUrl}/api/me/inbox`, {
