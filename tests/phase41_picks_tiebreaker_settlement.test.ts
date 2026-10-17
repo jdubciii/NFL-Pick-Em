@@ -54,13 +54,13 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
     });
     setSupabaseAuthClientForTesting({ auth: { getUser: getUserMock } } as any);
 
-    vi.spyOn(prisma.user, 'findUnique').mockImplementation(async ({ where }: any) => {
+    (vi.spyOn(prisma.user, 'findUnique') as any).mockImplementation(async ({ where }: any) => {
       return {
         id: where.id,
         email: `${where.id}@example.com`,
         role: where.id === ADMIN_ID ? 'ADMIN' : 'USER',
         createdAt: new Date(),
-      } as any;
+      };
     });
 
     app = express();
@@ -487,6 +487,9 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       };
 
       const preview = await previewWeeklyWrapUpForPool(POOL_ID, 6, { prismaClient: mockDb });
+      // When weekly_wrapups is absent, preview displays informational projected standings but readyToSettle is false (NOT READY)
+      expect(preview.readyToSettle).toBe(false);
+      expect(preview.reasonsIfNotReady.some((r) => r.includes('CLAIM_STORE_UNAVAILABLE'))).toBe(true);
       // Week 6 safeguard: tiebreakerOffered must be false!
       expect(preview.tiebreakerOffered).toBe(false);
       // Both tied at 0 points -> both share rank 1 with 0 shots
@@ -582,20 +585,20 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       expect(result.targetGameScore).toBeNull();
       // Member 1 & 2 share Rank 1 with 0 shots
       expect(result.topScorers).toHaveLength(2);
-      expect(result.topScorers[0].rank).toBe(1);
-      expect(result.topScorers[0].shots).toBe(0);
-      expect(result.topScorers[1].rank).toBe(1);
-      expect(result.topScorers[1].shots).toBe(0);
+      expect(result.topScorers?.[0]?.rank).toBe(1);
+      expect(result.topScorers?.[0]?.shots).toBe(0);
+      expect(result.topScorers?.[1]?.rank).toBe(1);
+      expect(result.topScorers?.[1]?.shots).toBe(0);
       // Member 3 is Dead Place with rank 3 and 2.5 shots (Dead Place Monarch)
       expect(result.deadPlaceMembers).toHaveLength(1);
-      expect(result.deadPlaceMembers[0].userId).toBe('11111111-1111-1111-1111-111111111113');
-      expect(result.deadPlaceMembers[0].shots).toBe(2.5);
+      expect(result.deadPlaceMembers?.[0]?.userId).toBe('11111111-1111-1111-1111-111111111113');
+      expect(result.deadPlaceMembers?.[0]?.shots).toBe(2.5);
 
       // Penalties: only 1 penalty posted for member 3
       expect(mockCreatedPenalties).toHaveLength(1);
       expect(mockCreatedPenalties[0].userId).toBe('11111111-1111-1111-1111-111111111113');
       expect(mockCreatedPenalties[0].delta.toString()).toBe('2.5');
-      expect(mockCreatedPenalties[0].reason).toBe('DEAD_PLACE_MONARCH');
+      expect(mockCreatedPenalties[0].reason).toBe('DEAD_PLACE_MONARCH_S2026_W6');
       expect(mockCreatedPenalties[0].weekNumber).toBe(6);
       expect(mockCreatedPenalties[0].createdById).toBe(ADMIN_ID);
     });

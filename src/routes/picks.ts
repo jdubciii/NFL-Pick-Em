@@ -455,19 +455,27 @@ picksRouter.post('/tiebreaker', requireAuth, async (req: Request, res: Response)
 
       // Apply Freeze Rule: if a valid prediction was saved and designation not frozen
       if (parsedPrediction !== null && !designation.isFrozen) {
-        const updatedSettings = freezeDesignation({
-          currentSettings: pool.settings,
-          season,
-          week: weekNumber,
-          designatedEventId: designation.eventId!,
-          firstPredictionUserId: userId,
-          games: games as any,
-        });
+        const freshPool = typeof tx.pool?.findUnique === 'function'
+          ? await tx.pool.findUnique({ where: { id: poolId } })
+          : pool;
+        const currentSettings = freshPool?.settings || pool.settings;
+        const currentDesignation = getWeeklyDesignation(currentSettings, season, weekNumber, games as any);
 
-        await tx.pool.update({
-          where: { id: poolId },
-          data: { settings: updatedSettings },
-        });
+        if (!currentDesignation.isFrozen && typeof tx.pool?.update === 'function') {
+          const updatedSettings = freezeDesignation({
+            currentSettings,
+            season,
+            week: weekNumber,
+            designatedEventId: currentDesignation.eventId || designation.eventId!,
+            firstPredictionUserId: userId,
+            games: games as any,
+          });
+
+          await tx.pool.update({
+            where: { id: poolId },
+            data: { settings: updatedSettings },
+          });
+        }
       }
 
       return submission;
@@ -521,20 +529,42 @@ picksRouter.post('/tiebreaker/override', requireAuth, async (req: Request, res: 
       return;
     }
 
-    const { updatedSettings, designation } = applyCommissionerOverride({
-      currentSettings: pool.settings,
-      season,
-      week: weekNumber,
-      targetGameId,
-      games: games as any,
-      requestingUserId: userId,
-      poolAdminId: pool.adminId,
-      isUserActiveMember: membership?.status === 'ACTIVE',
-    });
+    const designation = await prisma.$transaction(async (tx) => {
+      const freshPool = await tx.pool.findUnique({ where: { id: poolId } });
+      if (!freshPool) {
+        throw new Error('NOT_FOUND: Pool not found');
+      }
 
-    await prisma.pool.update({
-      where: { id: poolId },
-      data: { settings: updatedSettings },
+      // Concurrency check: verify no predictions have been submitted for this pool and week
+      const existingPredictions = await tx.weeklySubmission.findMany({
+        where: {
+          poolId,
+          weekNumber,
+          tieBreakerPrediction: { not: null },
+        },
+      });
+
+      if (existingPredictions.length > 0) {
+        throw new Error('DESIGNATION_FROZEN: Cannot change designated tiebreaker game after predictions have been received');
+      }
+
+      const { updatedSettings, designation: newDesignation } = applyCommissionerOverride({
+        currentSettings: freshPool.settings,
+        season,
+        week: weekNumber,
+        targetGameId,
+        games: games as any,
+        requestingUserId: userId,
+        poolAdminId: freshPool.adminId,
+        isUserActiveMember: membership?.status === 'ACTIVE',
+      });
+
+      await tx.pool.update({
+        where: { id: poolId },
+        data: { settings: updatedSettings },
+      });
+
+      return newDesignation;
     });
 
     res.status(200).json({

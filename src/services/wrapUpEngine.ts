@@ -99,15 +99,33 @@ export async function previewWeeklyWrapUpForPool(
   const season = options.season || Number(settings.season) || 2026;
   const reasonsIfNotReady: string[] = [];
 
-  // Check if already claimed
-  const existingClaim: any[] = ((await db.$queryRawUnsafe(
-    `SELECT pool_id, week_number FROM public.weekly_wrapups WHERE pool_id = $1::uuid AND week_number = $2::int;`,
-    poolId,
-    weekNumber
-  ).catch(() => [])) as any[]) || [];
+  // Check if settlement marker table exists
+  let markerTableExists = false;
+  try {
+    if (typeof (db as any).$queryRaw === 'function') {
+      const check: any[] = (await db.$queryRaw`SELECT to_regclass('public.weekly_wrapups') as to_regclass;` as any[]) || [];
+      markerTableExists = check[0]?.to_regclass !== null && check[0]?.to_regclass !== undefined;
+    } else if (typeof (db as any).$queryRawUnsafe === 'function') {
+      const check: any[] = (await db.$queryRawUnsafe(`SELECT to_regclass('public.weekly_wrapups') as to_regclass;`) as any[]) || [];
+      markerTableExists = check[0]?.to_regclass !== null && check[0]?.to_regclass !== undefined;
+    }
+  } catch {
+    markerTableExists = false;
+  }
 
-  if (existingClaim && existingClaim.length > 0) {
-    reasonsIfNotReady.push('ALREADY_WRAPPED_UP: Week has already been officially settled.');
+  if (!markerTableExists) {
+    reasonsIfNotReady.push('CLAIM_STORE_UNAVAILABLE: Settlement claim store (public.weekly_wrapups) does not exist.');
+  } else {
+    // Check if already claimed
+    const existingClaim: any[] = ((await db.$queryRawUnsafe(
+      `SELECT pool_id, week_number FROM public.weekly_wrapups WHERE pool_id = $1::uuid AND week_number = $2::int;`,
+      poolId,
+      weekNumber
+    ).catch(() => [])) as any[]) || [];
+
+    if (existingClaim && existingClaim.length > 0) {
+      reasonsIfNotReady.push('ALREADY_WRAPPED_UP: Week has already been officially settled.');
+    }
   }
 
   // Fetch games
@@ -129,12 +147,10 @@ export async function previewWeeklyWrapUpForPool(
     reasonsIfNotReady.push(`WEEK_NOT_FINAL: ${pendingGames.length} games in the weekly slate are not yet official FINAL.`);
   }
 
-  // Current-week activation safeguard (Section 6 & 7):
-  // If fair timely entry was not offered to all members before deadline (e.g. Week 6),
-  // designate: "Tiebreaker unavailable — entry was not offered."
+  const isWeek6Unavailable = (weekNumber === 6 && season === 2026);
   const tiebreakerOffered = options.tiebreakerOffered !== undefined
     ? options.tiebreakerOffered
-    : (weekNumber !== 6 && settings?.tiebreaker_unavailable_weeks?.[season]?.[weekNumber] !== true);
+    : (!isWeek6Unavailable && settings?.tiebreaker_unavailable_weeks?.[season]?.[weekNumber] !== true);
 
   let designatedGameScore: number | null = null;
   let designatedGameItem: any | null = null;
@@ -164,7 +180,7 @@ export async function previewWeeklyWrapUpForPool(
   // Fetch picks strictly for this pool and week
   // Picks in DB may have week column or game relation
   const picks: any[] = ((await db.$queryRawUnsafe(
-    `SELECT p.user_id, p.game_id, p.selected_team, g.home_team_id, g.away_team_id, g.home_score, g.away_score, g.status
+    `SELECT p.user_id, p.game_id, p.selected_team, p.selected_team_id, g.home_team_id, g.away_team_id, g.home_score, g.away_score, g.status
      FROM public.picks p
      LEFT JOIN public.games g ON (g.external_game_id = p.game_id OR g.id::text = p.game_id)
      WHERE p.pool_id = $1::uuid AND (p.week = $2::int OR p.week IS NULL);`,
@@ -338,10 +354,10 @@ export async function executeWeeklyWrapUpForPool(
     // Step 4: Tiebreaker Availability Check (Section 6 & 7 Safeguard)
     // -------------------------------------------------------------------------
     // If fair timely entry was not offered to all members before deadline (e.g. Week 6),
-    // designate: "Tiebreaker unavailable — entry was not offered."
+    const isWeek6Unavailable = (weekNumber === 6 && season === 2026);
     const tiebreakerOffered = options.tiebreakerOffered !== undefined
       ? options.tiebreakerOffered
-      : (weekNumber !== 6 && (pool.settings as any)?.tiebreaker_unavailable_weeks?.[season]?.[weekNumber] !== true);
+      : (!isWeek6Unavailable && (pool.settings as any)?.tiebreaker_unavailable_weeks?.[season]?.[weekNumber] !== true);
 
     let actualTiebreakerTotal: number | null = null;
     let designatedGameId: string | null = null;
@@ -379,7 +395,7 @@ export async function executeWeeklyWrapUpForPool(
 
     // Load picks for this pool and week
     const picks: any[] = ((await tx.$queryRawUnsafe(
-      `SELECT p.user_id, p.game_id, p.selected_team, g.home_team_id, g.away_team_id, g.home_score, g.away_score, g.status
+      `SELECT p.user_id, p.game_id, p.selected_team, p.selected_team_id, g.home_team_id, g.away_team_id, g.home_score, g.away_score, g.status
        FROM public.picks p
        LEFT JOIN public.games g ON (g.external_game_id = p.game_id OR g.id::text = p.game_id)
        WHERE p.pool_id = $1::uuid AND (p.week = $2::int OR p.week IS NULL);`,
@@ -438,8 +454,8 @@ export async function executeWeeklyWrapUpForPool(
       // Incur weekly charge if shots > 0
       if (member.shots > 0) {
         const reason = member.isDeadPlace
-          ? 'DEAD_PLACE_MONARCH'
-          : `WEEKLY_SETTLEMENT_RANK_${member.rank}`;
+          ? `DEAD_PLACE_MONARCH_S${season}_W${weekNumber}`
+          : `WEEKLY_SETTLEMENT_S${season}_W${weekNumber}_RANK_${member.rank}`;
 
         await tx.penaltyLedger.create({
           data: {
