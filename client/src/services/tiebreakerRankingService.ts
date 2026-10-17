@@ -140,6 +140,7 @@ export function calculateRankingsAndPenalties(
     const groupMembers = scoreMap.get(scoreKey)!;
 
     if (!canEvaluateTiebreaker || groupMembers.length === 1) {
+      // Either tiebreaker not offered, or single member -> all in same group are tied (or single)
       if (!canEvaluateTiebreaker) {
         orderedSubgroups.push(groupMembers);
       } else {
@@ -201,6 +202,7 @@ export function calculateRankingsAndPenalties(
       if (canEvaluateTiebreaker && member.tieBreakerPrediction !== null && member.tieBreakerPrediction !== undefined && member.tieBreakerPrediction !== '') {
         const num = Number(member.tieBreakerPrediction);
         if (!isNaN(num)) {
+          // Exact hundredths distance divided by 100
           distance = Math.round(Math.abs(num - actualTotal!) * 100) / 100;
         }
       }
@@ -230,14 +232,17 @@ export function calculateRankingsAndPenalties(
     let isDeadPlace = false;
 
     if (isEntireFieldTiedFirst || item.rank === 1) {
+      // Shared first / sole first: Safe Haven, 0 shots
       shots = 0;
       isSafeHaven = true;
       isDeadPlace = false;
     } else if (item.rank === maxRank) {
+      // Shared last below first / sole last below first: Dead Place Monarch, 2.5 shots each
       shots = 2.5;
       isSafeHaven = false;
       isDeadPlace = true;
     } else {
+      // Shared non-bottom rank: charge for that shared rank
       isSafeHaven = false;
       isDeadPlace = false;
       if (item.rank >= 2 && item.rank <= 6) {

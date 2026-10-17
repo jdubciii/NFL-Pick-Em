@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Prisma, GameStatus, OutboxStatus } from '@prisma/client';
 import prisma from '../db/client';
 import { withJobRun } from '../jobs/jobRunner';
@@ -11,13 +12,21 @@ import {
   getWeeklyDesignation,
   DesignationResolution,
 } from './weeklyDesignationService';
+import {
+  getAcceptedSlateManifest,
+  WeeklySlateManifest,
+} from './authoritativeSlateService';
 import type { PoolSettings } from '../types/pool';
 
 export interface WrapUpOptions {
   weekNumber?: number;
   season?: number;
+  seasonType?: number;
   poolId?: string;
   tiebreakerOffered?: boolean;
+  previewRevision?: number | string;
+  inputFingerprint?: string;
+  appliedBy?: string;
   prismaClient?: typeof prisma;
 }
 
@@ -31,6 +40,8 @@ export interface PoolWrapUpResult {
     | 'DESIGNATED_GAME_UNAVAILABLE'
     | 'DESIGNATED_GAME_NOT_FINAL'
     | 'CLAIM_STORE_UNAVAILABLE'
+    | 'STALE_PREVIEW_REVISION'
+    | 'AUTHORITATIVE_SLATE_UNAVAILABLE'
     | string;
   poolId: string;
   season: number;
@@ -45,6 +56,7 @@ export interface PoolWrapUpResult {
   targetGameId?: string | null;
   targetGameScore?: number | null;
   tiebreakerOffered?: boolean;
+  auditSnapshot?: any;
 }
 
 export interface WrapUpEngineRunResult {
@@ -60,14 +72,25 @@ export interface WrapUpPreviewResult {
   reasonsIfNotReady: string[];
   poolId: string;
   season: number;
+  seasonType: number;
   weekNumber: number;
+  acceptedRevision: number | null;
+  observationTime: string | null;
+  manifestFingerprint: string | null;
+  expectedGames: number;
+  presentGames: number;
   totalGames: number;
   completedGames: number;
   pendingGamesCount: number;
+  validMappedPicks: number;
+  unmappedPicks: number;
+  eligibleParticipants: number;
+  allGamesFinal: boolean;
   designatedGame: any | null;
   designatedGameScore: number | null;
   tiebreakerOffered: boolean;
   projectedStandings: RankedMemberResult[];
+  inputFingerprint: string;
 }
 
 /**
@@ -97,9 +120,10 @@ export async function previewWeeklyWrapUpForPool(
 
   const settings = (pool.settings as any) || {};
   const season = options.season || Number(settings.season) || 2026;
+  const seasonType = options.seasonType || 2;
   const reasonsIfNotReady: string[] = [];
 
-  // Check if settlement marker table exists
+  // 1. Check if settlement marker table exists
   let markerTableExists = false;
   try {
     if (typeof (db as any).$queryRaw === 'function') {
@@ -116,10 +140,11 @@ export async function previewWeeklyWrapUpForPool(
   if (!markerTableExists) {
     reasonsIfNotReady.push('CLAIM_STORE_UNAVAILABLE: Settlement claim store (public.weekly_wrapups) does not exist.');
   } else {
-    // Check if already claimed
+    // Check if already claimed under composite key (pool_id, season, week_number)
     const existingClaim: any[] = ((await db.$queryRawUnsafe(
-      `SELECT pool_id, week_number FROM public.weekly_wrapups WHERE pool_id = $1::uuid AND week_number = $2::int;`,
+      `SELECT pool_id, week_number FROM public.weekly_wrapups WHERE pool_id = $1::uuid AND (season = $2::int OR season IS NULL) AND week_number = $3::int;`,
       poolId,
+      season,
       weekNumber
     ).catch(() => [])) as any[]) || [];
 
@@ -128,11 +153,24 @@ export async function previewWeeklyWrapUpForPool(
     }
   }
 
-  // Fetch games
-  const games = await db.game.findMany();
+  // 2. Check accepted weekly slate manifest
+  const manifest = await getAcceptedSlateManifest(db, season, seasonType, weekNumber);
+  const acceptedRevision = manifest?.revision ?? null;
+  const observationTime = manifest?.observationTime ?? null;
+  const manifestFingerprint = manifest?.manifestFingerprint ?? null;
+  const expectedGames = manifest?.eventIds?.length ?? 0;
+
+  // 3. Fetch games
+  const allGames = await db.game.findMany();
+  let games = allGames;
+  if (manifest && manifest.eventIds && manifest.eventIds.length > 0) {
+    const eventSet = new Set(manifest.eventIds);
+    games = allGames.filter((g: any) => eventSet.has(g.externalGameId) || eventSet.has(g.id));
+  }
+
   const excludedWindows = settings.excludedGameWindows ?? settings.excluded_game_windows;
   const nonExcludedGames = games.filter(
-    (g) => !isGameInExcludedWindow(g.kickoffTime, excludedWindows)
+    (g: any) => !isGameInExcludedWindow(g.kickoffTime, excludedWindows)
   );
 
   if (nonExcludedGames.length === 0) {
@@ -140,7 +178,7 @@ export async function previewWeeklyWrapUpForPool(
   }
 
   const pendingGames = nonExcludedGames.filter(
-    (g) => g.status !== GameStatus.FINAL || g.homeScore === null || g.awayScore === null
+    (g: any) => g.status !== GameStatus.FINAL || g.homeScore === null || g.awayScore === null
   );
 
   if (pendingGames.length > 0) {
@@ -157,7 +195,6 @@ export async function previewWeeklyWrapUpForPool(
   let designation: ReturnType<typeof getWeeklyDesignation> | null = null;
 
   if (tiebreakerOffered) {
-    // Only require designated game and final total when tiebreaker was offered to members
     designation = getWeeklyDesignation(pool.settings, season, weekNumber, games as any);
     if (!designation.game) {
       reasonsIfNotReady.push(`DESIGNATED_GAME_UNAVAILABLE: Tiebreaker game status is ${designation.status}. ${designation.reason || ''}`.trim());
@@ -171,14 +208,12 @@ export async function previewWeeklyWrapUpForPool(
     }
   }
 
-  // Fetch member scores from picks
+  // 4. Fetch member scores and map picks
   const memberScoresMap = new Map<string, number>();
   for (const m of pool.memberships) {
     memberScoresMap.set(m.userId, 0);
   }
 
-  // Fetch picks strictly for this pool and week
-  // Picks in DB may have week column or game relation
   const picks: any[] = ((await db.$queryRawUnsafe(
     `SELECT p.user_id, p.game_id, p.selected_team, p.selected_team_id, g.home_team_id, g.away_team_id, g.home_score, g.away_score, g.status
      FROM public.picks p
@@ -188,8 +223,10 @@ export async function previewWeeklyWrapUpForPool(
     weekNumber
   ).catch(() => [])) as any[]) || [];
 
-  const joinedPicksCount = picks.filter((p) => p.home_team_id !== null && p.home_team_id !== undefined).length;
-  if (picks.length > 0 && joinedPicksCount === 0) {
+  const validMappedPicks = picks.filter((p) => p.home_team_id !== null && p.home_team_id !== undefined).length;
+  const unmappedPicks = picks.length - validMappedPicks;
+
+  if (picks.length > 0 && validMappedPicks === 0) {
     reasonsIfNotReady.push(`NOT READY — AUTHORITATIVE SLATE / EVENT MAPPING UNAVAILABLE: ${picks.length} picks exist for Week ${weekNumber} but 0 join scheduled games.`);
   }
 
@@ -203,13 +240,13 @@ export async function previewWeeklyWrapUpForPool(
     }
   }
 
-  // Fetch predictions
+  // 5. Fetch predictions
   const submissions = await db.weeklySubmission.findMany({
     where: { poolId, weekNumber },
   });
-  const subMap = new Map(submissions.map((s) => [s.userId, s.tieBreakerPrediction !== null ? Number(s.tieBreakerPrediction) : null]));
+  const subMap = new Map(submissions.map((s: any) => [s.userId, s.tieBreakerPrediction !== null ? Number(s.tieBreakerPrediction) : null]));
 
-  const memberEntries: MemberEntry[] = pool.memberships.map((m) => ({
+  const memberEntries: MemberEntry[] = pool.memberships.map((m: any) => ({
     userId: m.userId,
     score: memberScoresMap.get(m.userId) || 0,
     tieBreakerPrediction: subMap.get(m.userId) ?? null,
@@ -220,19 +257,43 @@ export async function previewWeeklyWrapUpForPool(
     tiebreakerOffered,
   });
 
+  // 6. Compute stable input fingerprint
+  const inputPayload = JSON.stringify({
+    poolId,
+    season,
+    seasonType,
+    weekNumber,
+    acceptedRevision,
+    manifestFingerprint,
+    picks: picks.map((p) => ({ u: p.user_id, g: p.game_id, t: p.selected_team || p.selected_team_id })).sort((a, b) => (a.u + a.g).localeCompare(b.u + b.g)),
+    submissions: Array.from(subMap.entries()).sort((a, b) => a[0].localeCompare(b[0])),
+  });
+  const inputFingerprint = crypto.createHash('sha256').update(inputPayload).digest('hex');
+
   return {
     readyToSettle: reasonsIfNotReady.length === 0,
     reasonsIfNotReady,
     poolId,
     season,
+    seasonType,
     weekNumber,
+    acceptedRevision,
+    observationTime,
+    manifestFingerprint,
+    expectedGames,
+    presentGames: games.length,
     totalGames: nonExcludedGames.length,
     completedGames: nonExcludedGames.length - pendingGames.length,
     pendingGamesCount: pendingGames.length,
+    validMappedPicks,
+    unmappedPicks,
+    eligibleParticipants: pool.memberships.length,
+    allGamesFinal: pendingGames.length === 0 && nonExcludedGames.length > 0,
     designatedGame: designation?.game || null,
     designatedGameScore,
     tiebreakerOffered,
     projectedStandings,
+    inputFingerprint,
   };
 }
 
@@ -258,36 +319,81 @@ export async function executeWeeklyWrapUpForPool(
   }
 
   return await db.$transaction(async (tx: any) => {
+    const season = options.season || 2026;
+    const seasonType = options.seasonType || 2;
+
+    // Check preview revision freshness if provided
+    if (options.previewRevision !== undefined) {
+      const manifest = await getAcceptedSlateManifest(tx, season, seasonType, weekNumber);
+      if (manifest && manifest.revision !== Number(options.previewRevision)) {
+        return {
+          applied: false,
+          reason: 'STALE_PREVIEW_REVISION',
+          poolId,
+          season,
+          weekNumber,
+        };
+      }
+    }
+
     // -------------------------------------------------------------------------
     // Step 1: Claim Invariant (Decision #24 & #55) - Atomic Claim on weekly_wrapups
     // -------------------------------------------------------------------------
-    const tableExists: any = await tx.$queryRaw`SELECT to_regclass('public.weekly_wrapups')::text as to_regclass;`;
+    let tableExists: any[] = [];
+    try {
+      if (typeof tx.$queryRaw === 'function') {
+        tableExists = (await tx.$queryRaw`SELECT to_regclass('public.weekly_wrapups')::text as to_regclass;`) as any[];
+      } else if (typeof tx.$queryRawUnsafe === 'function') {
+        tableExists = (await tx.$queryRawUnsafe(`SELECT to_regclass('public.weekly_wrapups')::text as to_regclass;`)) as any[];
+      }
+    } catch {
+      tableExists = [];
+    }
+
     if (!tableExists || !tableExists[0] || !tableExists[0].to_regclass) {
       return {
         applied: false,
         reason: 'CLAIM_STORE_UNAVAILABLE',
         poolId,
-        season: 2026,
+        season,
         weekNumber,
       };
     }
 
-    // Atomic insert into weekly_wrapups (prevents concurrent duplicate settlement)
-    const claimResult: any[] = ((await tx.$queryRawUnsafe(
-      `INSERT INTO public.weekly_wrapups (pool_id, week_number)
-       VALUES ($1::uuid, $2::int)
-       ON CONFLICT (pool_id, week_number) DO NOTHING
-       RETURNING pool_id, week_number;`,
-      poolId,
-      weekNumber
-    )) as any[]) || [];
+    // Atomic insert into weekly_wrapups with composite primary key (pool_id, season, week_number)
+    let claimResult: any[] = [];
+    try {
+      claimResult = ((await tx.$queryRawUnsafe(
+        `INSERT INTO public.weekly_wrapups (pool_id, season, week_number)
+         VALUES ($1::uuid, $2::int, $3::int)
+         ON CONFLICT (pool_id, season, week_number) DO NOTHING
+         RETURNING pool_id, season, week_number;`,
+        poolId,
+        season,
+        weekNumber
+      )) as any[]) || [];
+    } catch (err: any) {
+      // Fallback for pre-migration schema
+      if (err.message?.includes('column "season"') || err.message?.includes('constraint')) {
+        claimResult = ((await tx.$queryRawUnsafe(
+          `INSERT INTO public.weekly_wrapups (pool_id, week_number)
+           VALUES ($1::uuid, $2::int)
+           ON CONFLICT (pool_id, week_number) DO NOTHING
+           RETURNING pool_id, week_number;`,
+          poolId,
+          weekNumber
+        )) as any[]) || [];
+      } else {
+        throw err;
+      }
+    }
 
     if (!claimResult || claimResult.length === 0) {
       return {
         applied: false,
         reason: 'ALREADY_WRAPPED_UP',
         poolId,
-        season: 2026,
+        season,
         weekNumber,
       };
     }
@@ -320,7 +426,6 @@ export async function executeWeeklyWrapUpForPool(
     }
 
     const settings = (pool.settings as PoolSettings) || {};
-    const season = options.season || Number((settings as any).season) || 2026;
     const excludedWindows = settings.excludedGameWindows ?? settings.excluded_game_windows;
 
     // -------------------------------------------------------------------------
@@ -581,6 +686,42 @@ export async function executeWeeklyWrapUpForPool(
       }
     }
 
+    const auditSnapshot = {
+      poolId: pool.id,
+      season,
+      seasonType,
+      weekNumber,
+      settledAt: new Date().toISOString(),
+      appliedBy: options.appliedBy || pool.adminId,
+      inputFingerprint: options.inputFingerprint || null,
+      actualTiebreakerTotal,
+      tiebreakerOffered,
+      standings: rankedStandings.map((r) => ({
+        userId: r.userId,
+        score: r.score,
+        rank: r.rank,
+        shots: r.shots,
+        isSafeHaven: r.isSafeHaven,
+        isDeadPlace: r.isDeadPlace,
+      })),
+      topScorers: topScorers.map((t) => t.userId),
+      deadPlaceMembers: deadPlaceMembers.map((d) => d.userId),
+    };
+
+    try {
+      await tx.$queryRawUnsafe(
+        `UPDATE public.weekly_wrapups
+         SET summary = $1::jsonb
+         WHERE pool_id = $2::uuid AND (season = $3::int OR season IS NULL) AND week_number = $4::int;`,
+        JSON.stringify(auditSnapshot),
+        pool.id,
+        season,
+        weekNumber
+      ).catch(() => {});
+    } catch {
+      // Non-fatal if summary column absent
+    }
+
     return {
       applied: true,
       poolId: pool.id,
@@ -604,6 +745,7 @@ export async function executeWeeklyWrapUpForPool(
       targetGameId: designatedGameId,
       targetGameScore: actualTiebreakerTotal,
       tiebreakerOffered,
+      auditSnapshot,
     };
   }, { maxWait: 15000, timeout: 30000 });
 }
@@ -649,7 +791,11 @@ export async function runWrapUpEngine(options: WrapUpOptions = {}): Promise<{
         const wrapUpRes = await executeWeeklyWrapUpForPool(p.id, weekNumber, {
           prismaClient: db,
           season: options.season,
+          seasonType: options.seasonType,
           tiebreakerOffered: options.tiebreakerOffered,
+          previewRevision: options.previewRevision,
+          inputFingerprint: options.inputFingerprint,
+          appliedBy: options.appliedBy,
         });
         results.push(wrapUpRes);
         if (wrapUpRes.applied) {

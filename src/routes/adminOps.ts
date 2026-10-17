@@ -6,6 +6,7 @@ import { runWrapUpEngine, previewWeeklyWrapUpForPool } from '../services/wrapUpE
 import { sealSeason, getSeasonSealStatus } from '../services/seasonSeal';
 import { processTransportsBatch, getTransportsQueueStatus } from '../services/transports';
 import { runRetentionPruning, getRetentionStatus } from '../services/retentionService';
+import { refreshWeeklySlateInDb } from '../services/authoritativeSlateService';
 
 export const adminOpsRouter = Router();
 
@@ -73,13 +74,20 @@ adminOpsRouter.get('/scan-reminders/status', requireAuth, requireAdmin, async (_
  * Enforces Decision #54 (Mutations occur strictly via POST).
  */
 adminOpsRouter.post('/wrap-up', requireAuth, requireAdmin, async (req: Request, res: Response): Promise<void> => {
-  const { weekNumber, weekId, poolId } = req.body || {};
+  const { weekNumber, weekId, poolId, season, seasonType, previewRevision, inputFingerprint } = req.body || {};
   const targetWeek = weekNumber !== undefined ? Number(weekNumber) : (weekId !== undefined ? Number(weekId) : 1);
+  const targetSeason = season !== undefined ? Number(season) : 2026;
+  const targetSeasonType = seasonType !== undefined ? Number(seasonType) : 2;
 
   try {
     const { jobRun, engineResult } = await runWrapUpEngine({
       weekNumber: targetWeek,
+      season: targetSeason,
+      seasonType: targetSeasonType,
       poolId: typeof poolId === 'string' ? poolId : undefined,
+      previewRevision,
+      inputFingerprint,
+      appliedBy: req.user!.id,
     });
 
     res.status(200).json({
@@ -133,6 +141,7 @@ adminOpsRouter.get('/wrap-up/preview', requireAuth, async (req: Request, res: Re
   const poolId = (req.query.poolId || req.query.pool_id) as string;
   const weekNumber = Number(req.query.weekNumber || req.query.week || 1);
   const season = Number(req.query.season || 2026);
+  const seasonType = Number(req.query.seasonType || req.query.season_type || 2);
 
   if (!poolId) {
     res.status(400).json({ error: 'poolId is required.' });
@@ -140,7 +149,7 @@ adminOpsRouter.get('/wrap-up/preview', requireAuth, async (req: Request, res: Re
   }
 
   try {
-    const preview = await previewWeeklyWrapUpForPool(poolId, weekNumber, { season });
+    const preview = await previewWeeklyWrapUpForPool(poolId, weekNumber, { season, seasonType });
     res.status(200).json({
       status: preview.readyToSettle ? 'READY' : 'NOT_READY',
       preview,
@@ -149,6 +158,48 @@ adminOpsRouter.get('/wrap-up/preview', requireAuth, async (req: Request, res: Re
     console.error('Error generating wrap-up preview:', error);
     res.status(500).json({
       error: 'Failed to generate wrap-up preview',
+      details: error.message,
+    });
+  }
+});
+
+/**
+ * POST /api/admin/ops/slate/refresh
+ * Controlled commissioner refresh workflow for authoritative weekly slate.
+ * Fetches and validates ESPN observations before persisting accepted revision atomically.
+ * Protected by requireAuth & requireAdmin.
+ */
+adminOpsRouter.post('/slate/refresh', requireAuth, requireAdmin, async (req: Request, res: Response): Promise<void> => {
+  const { poolId, season, seasonType, weekNumber, weekId } = req.body || {};
+  const targetWeek = weekNumber !== undefined ? Number(weekNumber) : (weekId !== undefined ? Number(weekId) : 1);
+  const targetSeason = season !== undefined ? Number(season) : 2026;
+  const targetSeasonType = seasonType !== undefined ? Number(seasonType) : 2;
+
+  try {
+    const result = await refreshWeeklySlateInDb(prisma, {
+      poolId: typeof poolId === 'string' ? poolId : undefined,
+      seasonYear: targetSeason,
+      seasonType: targetSeasonType,
+      weekNumber: targetWeek,
+      operatorId: req.user!.id,
+    });
+
+    if (!result.success) {
+      res.status(422).json({
+        error: 'Authoritative slate refresh rejected',
+        reason: result.reason,
+      });
+      return;
+    }
+
+    res.status(200).json({
+      message: 'Weekly slate refreshed successfully',
+      result,
+    });
+  } catch (error: any) {
+    console.error('Error refreshing weekly slate:', error);
+    res.status(500).json({
+      error: 'Failed to refresh weekly slate',
       details: error.message,
     });
   }
