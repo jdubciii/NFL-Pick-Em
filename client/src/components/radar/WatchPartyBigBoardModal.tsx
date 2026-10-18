@@ -94,9 +94,9 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
 
   if (!isOpen) return null;
 
-  const activeRival = rivalUser || (members.find((m) => m.id !== currentUser.id) ?? { id: 'r1', name: 'jcone2' });
+  const activeRival = rivalUser || members.find((m) => m.id !== currentUser.id) || null;
   const viewerStanding = standings.find((s) => s.userId === currentUser.id);
-  const rivalStanding = standings.find((s) => s.userId === activeRival.id);
+  const rivalStanding = activeRival ? standings.find((s) => s.userId === activeRival.id) : null;
 
   const displayStandings = fieldMode === 'DEMO_10'
     ? DEMO_10_STANDINGS
@@ -116,17 +116,43 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
         };
       });
 
-  // Canonical Decider kickoff resolved from accepted games
-  const seaDenGame = games?.find(
+  // Canonical Decider kickoff resolved from accepted games requiring canonical event identity and weekly scope
+  const userPickMap = new Map(picks.filter((p) => p.userId === currentUser.id).map((p) => [p.gameId, p.selectedTeam]));
+  const rivalPickMap = new Map(picks.filter((p) => activeRival && p.userId === activeRival.id).map((p) => [p.gameId, p.selectedTeam]));
+
+  let liveDeciderGame: SlateGame | undefined;
+  let userPickOnDecider: string | undefined;
+  let rivalPickOnDecider: string | undefined;
+
+  if (activeRival && games && games.length > 0) {
+    liveDeciderGame = games.find((g) => {
+      if (!g.id) return false;
+      const uPick = userPickMap.get(g.id);
+      const rPick = rivalPickMap.get(g.id);
+      if (uPick && rPick && !areTeamIdentitiesEquivalent(uPick, rPick)) {
+        userPickOnDecider = uPick;
+        rivalPickOnDecider = rPick;
+        return true;
+      }
+      return false;
+    });
+  }
+
+  // Demo decider fixture strictly isolated to DEMO_10 mode
+  const seaDenDemoGame = games?.find(
     (g) =>
-      (areTeamIdentitiesEquivalent(g.awayTeam, 'SEA') && areTeamIdentitiesEquivalent(g.homeTeam, 'DEN')) ||
-      (areTeamIdentitiesEquivalent(g.homeTeam, 'SEA') && areTeamIdentitiesEquivalent(g.awayTeam, 'DEN'))
+      Boolean(g.id) &&
+      ((areTeamIdentitiesEquivalent(g.awayTeam, 'SEA') && areTeamIdentitiesEquivalent(g.homeTeam, 'DEN')) ||
+        (areTeamIdentitiesEquivalent(g.homeTeam, 'SEA') && areTeamIdentitiesEquivalent(g.awayTeam, 'DEN')))
   );
+
+  const targetDeciderGame = fieldMode === 'DEMO_10' ? seaDenDemoGame : liveDeciderGame;
+
   const deciderKickoff = resolveCanonicalGameKickoff({
-    id: seaDenGame?.id,
-    awayTeam: 'SEA',
-    homeTeam: 'DEN',
-    kickoffTime: seaDenGame?.kickoffTime || null,
+    id: targetDeciderGame?.id,
+    awayTeam: targetDeciderGame?.awayTeam || (fieldMode === 'DEMO_10' ? 'SEA' : ''),
+    homeTeam: targetDeciderGame?.homeTeam || (fieldMode === 'DEMO_10' ? 'DEN' : ''),
+    kickoffTime: targetDeciderGame?.kickoffTime || null,
     season: 2026,
     seasonType: 2,
     week: activeWeek,
@@ -312,13 +338,21 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
 
             {/* Duel Scoreboard */}
             {(() => {
+              if (fieldMode !== 'DEMO_10' && !activeRival) {
+                return (
+                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 mb-4 text-center text-slate-400 text-xs">
+                    No active rival in this pool. Head-to-head duel unlocks when another competitor joins.
+                  </div>
+                );
+              }
+
               const vPts = fieldMode === 'DEMO_10' ? 11 : (viewerStanding?.totalProvisionalPoints ?? 0);
               const rPts = fieldMode === 'DEMO_10' ? 9 : (rivalStanding?.totalProvisionalPoints ?? 0);
               const diff = vPts - rPts;
               const vTier = fieldMode === 'DEMO_10' ? 'Safe Haven (0 shots)' : formatCharterTierLabel(viewerStanding?.tier || 'SAFE_HAVEN');
               const rTier = fieldMode === 'DEMO_10' ? 'Danger Zone (1 shot)' : formatCharterTierLabel(rivalStanding?.tier || 'DANGER_ZONE');
               const vName = fieldMode === 'DEMO_10' ? 'jack.w.cone' : currentUser.name;
-              const rName = fieldMode === 'DEMO_10' ? 'jcone2' : activeRival.name;
+              const rName = fieldMode === 'DEMO_10' ? 'jcone2' : (activeRival?.name || 'Rival');
 
               return (
                 <div className="p-4 rounded-xl bg-slate-950 border border-amber-500/30 mb-4 text-center">
@@ -367,27 +401,58 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                 ACTIVE DUEL DECIDER // CONDITIONAL OUTCOMES
               </div>
-              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="font-bold text-white">SEA @ DEN</span>
-                  <span className="text-[10px] text-cyan-400 font-mono font-bold">{deciderKickoff.kickoffLabel}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-center text-xs">
-                  <div className="p-2 rounded bg-cyan-950/60 border border-cyan-500/40">
-                    <div className="font-bold text-cyan-300">SEA wins</div>
-                    <div className="text-xs font-mono font-bold text-white">+1 pt to jack.w.cone</div>
+              {fieldMode === 'DEMO_10' ? (
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-bold text-white">SEA @ DEN</span>
+                    <span className="text-[10px] text-cyan-400 font-mono font-bold">{deciderKickoff.kickoffLabel}</span>
                   </div>
-                  <div className="p-2 rounded bg-amber-950/60 border border-amber-500/40">
-                    <div className="font-bold text-amber-300">DEN wins</div>
-                    <div className="text-xs font-mono font-bold text-white">+1 pt to jcone2</div>
+                  <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                    <div className="p-2 rounded bg-cyan-950/60 border border-cyan-500/40">
+                      <div className="font-bold text-cyan-300">SEA wins</div>
+                      <div className="text-xs font-mono font-bold text-white">+1 pt to jack.w.cone</div>
+                    </div>
+                    <div className="p-2 rounded bg-amber-950/60 border border-amber-500/40">
+                      <div className="font-bold text-amber-300">DEN wins</div>
+                      <div className="text-xs font-mono font-bold text-white">+1 pt to jcone2</div>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-center text-slate-400">
+                    2 PT OUTCOME SPAN (+1 / +3 margin)
                   </div>
                 </div>
-                <div className="text-[10px] text-center text-slate-400">
-                  {fieldMode === 'DEMO_10'
-                    ? '2 PT OUTCOME SPAN (+1 / +3 margin)'
-                    : '2 PT OUTCOME SPAN (-1 / +1 margin)'}
+              ) : liveDeciderGame && userPickOnDecider && rivalPickOnDecider && activeRival ? (
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-bold text-white">{liveDeciderGame.awayTeam} @ {liveDeciderGame.homeTeam}</span>
+                    <span className="text-[10px] text-cyan-400 font-mono font-bold">
+                      {deciderKickoff.status === 'RESOLVED' ? deciderKickoff.kickoffLabel : 'Kickoff Unavailable'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                    <div className="p-2 rounded bg-cyan-950/60 border border-cyan-500/40">
+                      <div className="font-bold text-cyan-300">{userPickOnDecider} wins</div>
+                      <div className="text-xs font-mono font-bold text-white">+1 pt to {currentUser.name}</div>
+                    </div>
+                    <div className="p-2 rounded bg-amber-950/60 border border-amber-500/40">
+                      <div className="font-bold text-amber-300">{rivalPickOnDecider} wins</div>
+                      <div className="text-xs font-mono font-bold text-white">+1 pt to {activeRival.name}</div>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-center text-slate-400">
+                    DECISIVE DISAGREEMENT MATCHUP
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5 text-center text-xs text-slate-400">
+                  <div className="font-bold text-slate-300">No Decisive Disagreement</div>
+                  <div className="text-[11px] text-slate-500">
+                    {activeRival
+                      ? `All submitted picks between ${currentUser.name} and ${activeRival.name} are aligned or awaiting kickoff.`
+                      : 'Awaiting rival competitor to join pool.'}
+                  </div>
+                </div>
+              )}
 
               {/* Nemesis Record Badge */}
               <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-center">

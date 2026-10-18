@@ -12,6 +12,12 @@ import {
 import { DEMO_PENALTY_REELS } from '../client/src/components/shame/VerticalReelsFeed';
 import { DEMO_PARTICIPANTS } from '../client/src/components/shame/WeeklyRecapCardView';
 import { buildDeterministicWeeklyRecap } from '../src/services/weeklyRecapService';
+import {
+  resolveDefaultDesignation,
+  applyCommissionerOverride,
+  freezeDesignation,
+  GameSlateItem,
+} from '../src/services/weeklyDesignationService';
 
 describe('P41 — Runtime Mock Purge and Team Identity Normalization (Directive 6)', () => {
   // =========================================================================
@@ -332,5 +338,215 @@ describe('P41 — Runtime Mock Purge and Team Identity Normalization (Directive 
       mockWinningTeam
     );
     expect(isPickCorrect).toBe(true);
+  });
+
+  // =========================================================================
+  // Test 9: Profile Reminder Authority (Requires Manifest Authority)
+  // Verify that reminders require an approved weekly_slate_manifests record;
+  // legacy public.games records alone fail closed.
+  // =========================================================================
+  it('Test 9: Profile Reminder Authority: requires approved weekly_slate_manifests; fails closed without manifest', () => {
+    // When hasAcceptedSlate is false (e.g. no weekly_slate_manifests record found),
+    // planner must return isUnavailable: true and schedule zero reminders, even if games array is non-empty.
+    const legacyDbGames: DeadlineGameWindowInput[] = [
+      {
+        gameId: 'legacy-game-1',
+        awayTeam: 'DAL',
+        homeTeam: 'GB',
+        kickoffIso: '2026-10-19T00:20:00.000Z',
+      },
+      {
+        gameId: 'legacy-game-2',
+        awayTeam: 'SEA',
+        homeTeam: 'DEN',
+        kickoffIso: '2026-10-16T00:15:00.000Z',
+      },
+    ];
+
+    const planWithoutManifest = planDeadlineReminders({
+      userId: 'u_authenticated',
+      poolId: 'pool-auth-context',
+      season: 2026,
+      seasonType: 2,
+      week: 6,
+      optInEnabled: true,
+      permissionState: 'GRANTED',
+      isSlateSubmitted: false,
+      hasAcceptedSlate: false, // weekly_slate_manifests missing
+      nowMs: new Date('2026-10-15T12:00:00.000Z').getTime(),
+      games: legacyDbGames,
+    });
+
+    expect(planWithoutManifest.isUnavailable).toBe(true);
+    expect(planWithoutManifest.toSchedule).toEqual([]);
+    expect(planWithoutManifest.statusSummary).toContain('No accepted weekly slate available');
+  });
+
+  // =========================================================================
+  // Test 10: Watch Party Big Board Dynamic Decider Authority
+  // Verify that WatchParty duel decider requires canonical game ID and weekly scope,
+  // resolves from real pick disagreements, and produces honest empty states when absent.
+  // =========================================================================
+  it('Test 10: Watch Party Big Board Dynamic Decider: requires canonical event identity and activeWeek scope', () => {
+    // Canonical games with valid ID
+    const canonicalWeek6Games = [
+      {
+        id: '401872995',
+        awayTeam: 'SEA',
+        homeTeam: 'DEN',
+        kickoffTime: '2026-10-16T00:15:00.000Z',
+      },
+      {
+        id: '401873007',
+        awayTeam: 'DAL',
+        homeTeam: 'GB',
+        kickoffTime: '2026-10-19T00:20:00.000Z',
+      },
+    ];
+
+    // Case A: Disagreement exists between viewer and rival on canonical event 401872995
+    const viewerPicks = [
+      { userId: 'u_viewer', gameId: '401872995', selectedTeam: 'SEA' },
+      { userId: 'u_viewer', gameId: '401873007', selectedTeam: 'DAL' },
+    ];
+    const rivalPicks = [
+      { userId: 'u_rival', gameId: '401872995', selectedTeam: 'DEN' }, // Disagreement!
+      { userId: 'u_rival', gameId: '401873007', selectedTeam: 'DAL' },
+    ];
+
+    const userPickMap = new Map(viewerPicks.map((p) => [p.gameId, p.selectedTeam]));
+    const rivalPickMap = new Map(rivalPicks.map((p) => [p.gameId, p.selectedTeam]));
+
+    const deciderGame = canonicalWeek6Games.find((g) => {
+      if (!g.id) return false;
+      const u = userPickMap.get(g.id);
+      const r = rivalPickMap.get(g.id);
+      return u && r && !areTeamIdentitiesEquivalent(u, r);
+    });
+
+    expect(deciderGame).toBeDefined();
+    expect(deciderGame?.id).toBe('401872995');
+
+    // Kickoff resolution strictly requires canonical event ID and week scope
+    const kickoff = resolveCanonicalGameKickoff({
+      id: deciderGame?.id,
+      awayTeam: deciderGame?.awayTeam,
+      homeTeam: deciderGame?.homeTeam,
+      kickoffTime: deciderGame?.kickoffTime,
+      season: 2026,
+      seasonType: 2,
+      week: 6,
+    });
+    expect(kickoff.status).toBe('RESOLVED');
+    expect(kickoff.isResolved).toBe(true);
+    expect(kickoff.kickoffDisplay).toBe('Thu 5:15 PM');
+
+    // Case B: No disagreement (picks aligned): decider is undefined -> honest empty state
+    const alignedRivalPicks = [
+      { userId: 'u_rival', gameId: '401872995', selectedTeam: 'SEA' }, // Aligned with viewer
+      { userId: 'u_rival', gameId: '401873007', selectedTeam: 'DAL' },
+    ];
+    const alignedRivalMap = new Map(alignedRivalPicks.map((p) => [p.gameId, p.selectedTeam]));
+    const noDeciderGame = canonicalWeek6Games.find((g) => {
+      if (!g.id) return false;
+      const u = userPickMap.get(g.id);
+      const r = alignedRivalMap.get(g.id);
+      return u && r && !areTeamIdentitiesEquivalent(u, r);
+    });
+    expect(noDeciderGame).toBeUndefined();
+  });
+
+  // =========================================================================
+  // Test 11: Lions Bye & Designation Contract (Directive 8 & Section 5)
+  // Verify Detroit on BYE yields COMMISSIONER_SELECTION_REQUIRED, schedule ambiguity
+  // yields UNRESOLVED, commissioner override requires in-slate target, and freeze is immutable.
+  // =========================================================================
+  it('Test 11: Lions Bye & Designation Contract: bye yields COMMISSIONER_SELECTION_REQUIRED, freeze is immutable', () => {
+    const futureKickoff = new Date(Date.now() + 86400000).toISOString();
+
+    // 11A: Week 6 slate with Detroit on BYE (no DET game in slate)
+    const week6SlateNoLions: GameSlateItem[] = [
+      {
+        id: '401872995',
+        externalGameId: '401872995',
+        homeTeamId: 'DEN',
+        awayTeamId: 'SEA',
+        kickoffTime: futureKickoff,
+      },
+      {
+        id: '401873007',
+        externalGameId: '401873007',
+        homeTeamId: 'GB',
+        awayTeamId: 'DAL',
+        kickoffTime: futureKickoff,
+      },
+    ];
+
+    const byeRes = resolveDefaultDesignation(week6SlateNoLions);
+    expect(byeRes.status).toBe('COMMISSIONER_SELECTION_REQUIRED');
+    expect(byeRes.eventId).toBeNull();
+    expect(byeRes.game).toBeNull();
+
+    // 11B: Slate with Detroit game -> DEFAULT_LIONS
+    const slateWithLions: GameSlateItem[] = [
+      ...week6SlateNoLions,
+      {
+        id: 'lions-game-1',
+        externalGameId: '401873009',
+        homeTeamId: 'DET',
+        awayTeamId: 'MIN',
+        kickoffTime: futureKickoff,
+      },
+    ];
+    const lionsRes = resolveDefaultDesignation(slateWithLions);
+    expect(lionsRes.status).toBe('DEFAULT_LIONS');
+    expect(lionsRes.eventId).toBe('401873009');
+    expect(lionsRes.game?.homeTeamId).toBe('DET');
+
+    // 11C: Ambiguous schedule (empty slate) -> UNRESOLVED
+    const unresolvedRes = resolveDefaultDesignation([]);
+    expect(unresolvedRes.status).toBe('UNRESOLVED');
+
+    // 11D: Valid commissioner override within slate
+    const overrideResult = applyCommissionerOverride({
+      currentSettings: {},
+      season: 2026,
+      week: 6,
+      targetGameId: '401872995',
+      games: week6SlateNoLions,
+      requestingUserId: 'admin_user_id',
+      poolAdminId: 'admin_user_id',
+      isUserActiveMember: true,
+    });
+    expect(overrideResult.designation.provenance).toBe('COMMISSIONER_OVERRIDE');
+    expect(overrideResult.designation.eventId).toBe('401872995');
+    expect(overrideResult.designation.isFrozen).toBe(false);
+
+    // 11E: Freeze designation after first prediction acknowledged
+    const frozenSettings = freezeDesignation({
+      currentSettings: overrideResult.updatedSettings,
+      season: 2026,
+      week: 6,
+      designatedEventId: '401872995',
+      firstPredictionUserId: 'first_user_id',
+      games: week6SlateNoLions,
+    });
+    const frozenDesignation = frozenSettings.tiebreaker_designations['2026']['6'];
+    expect(frozenDesignation.isFrozen).toBe(true);
+    expect(frozenDesignation.firstPredictionUserId).toBe('first_user_id');
+
+    // 11F: Override after freeze is strictly rejected
+    expect(() =>
+      applyCommissionerOverride({
+        currentSettings: frozenSettings,
+        season: 2026,
+        week: 6,
+        targetGameId: '401873007',
+        games: week6SlateNoLions,
+        requestingUserId: 'admin_user_id',
+        poolAdminId: 'admin_user_id',
+        isUserActiveMember: true,
+      })
+    ).toThrow(/FROZEN/);
   });
 });

@@ -94,6 +94,28 @@ export const ProfilePage: React.FC = () => {
           return;
         }
 
+        // Check for approved weekly_slate_manifests storage for (season: 2026, season_type: 2, week: 6)
+        // Gatekeeper Ruling: The mere existence of records in public.games must not establish an accepted slate.
+        // Reminders strictly require an approved, season/week-scoped canonical manifest record.
+        const { data: manifestRecord, error: manifestErr } = await supabase
+          .from('weekly_slate_manifests')
+          .select('season, season_type, week_number, manifest_fingerprint')
+          .eq('season', 2026)
+          .eq('season_type', 2)
+          .eq('week_number', 6)
+          .maybeSingle();
+
+        if (!isMounted) return;
+
+        if (manifestErr || !manifestRecord) {
+          // In the absence of approved weekly_slate_manifests storage, fail closed.
+          // Preserve disabled/unavailable state without inventing kickoff windows.
+          setManifestGames([]);
+          setHasAcceptedSlate(false);
+          setIsSlateSubmitted(false);
+          return;
+        }
+
         const { data: dbGames } = await supabase
           .from('games')
           .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, status')
