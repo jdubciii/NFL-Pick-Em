@@ -40,34 +40,34 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
 
   return (
     <div className="sticky top-0 z-40 w-full bg-zinc-950/95 backdrop-blur-md border-b border-zinc-800/80">
-      <header className="h-14 min-h-[56px] max-h-[56px] w-full flex items-center justify-between px-4">
-        <div className="flex items-center gap-2">
+      <header className="h-14 min-h-[56px] max-h-[56px] w-full flex items-center justify-between px-3 sm:px-4">
+        <div className="flex items-center gap-1.5 shrink-0">
           <span className="text-sm font-black tracking-wider text-white uppercase select-none leading-none">
             NFL PICK'EM
           </span>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0 min-h-[32px]">
+        <div className="flex items-center gap-1.5 shrink-0 min-h-[32px]">
           <button
             type="button"
             onClick={() => window.dispatchEvent(new CustomEvent('open-pool-lounge'))}
-            className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 text-xs font-semibold text-cyan-300 transition-colors shadow-sm active:scale-95"
+            className="flex items-center gap-1 px-2 py-1 rounded bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 text-xs font-semibold text-cyan-300 transition-colors shadow-sm active:scale-95 shrink-0"
             title="Open Pool Lounge"
           >
-            <span className="text-sm">💬</span>
-            <span className="text-[11px] font-bold">Lounge</span>
+            <span className="text-xs">💬</span>
+            <span className="text-[10px] sm:text-[11px] font-bold">Lounge</span>
           </button>
           {rightContent ? rightContent : <div className="w-1" />}
         </div>
       </header>
 
       {!hideSubHeader && (
-        <div className="h-7 w-full bg-slate-900/90 border-t border-slate-800/60 px-4 flex items-center justify-between text-[10px] font-mono select-none">
-          <div className="flex items-center gap-2">
-            <span className="font-black text-cyan-400 tracking-wider uppercase">{poolName}</span>
+        <div className="h-7 w-full bg-slate-900/90 border-t border-slate-800/60 px-3 sm:px-4 flex items-center justify-between text-[10px] font-mono select-none">
+          <div className="flex items-center gap-1.5 sm:gap-2 truncate">
+            <span className="font-black text-cyan-400 tracking-wider uppercase truncate">{poolName}</span>
             <span className="text-slate-600">·</span>
-            <span className="font-bold text-slate-300 uppercase">{scope}</span>
+            <span className="font-bold text-slate-300 uppercase truncate">{scope}</span>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 shrink-0">
             <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[9px] font-black uppercase tracking-wider ${phaseStyle.badge}`}>
               <span className={`w-1.5 h-1.5 rounded-full ${phaseStyle.dot}`} />
               <span>{phase}</span>

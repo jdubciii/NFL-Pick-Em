@@ -33,7 +33,8 @@ export async function fetchLiveNFLScores(weekNumber: number = 5): Promise<LiveGa
       let mappedStatus: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL' = 'SCHEDULED';
       let state = 'PRE';
       let displayClock = event.status?.displayClock || '0:00';
-      let periodLabel = `Q${event.status?.period || 1}`;
+      const rawPeriod = Number(event.status?.period) || 1;
+      let periodLabel = rawPeriod >= 5 ? 'OT' : `Q${rawPeriod}`;
 
       if (statusName === 'STATUS_FINAL') {
         mappedStatus = 'FINAL';
@@ -49,17 +50,22 @@ export async function fetchLiveNFLScores(weekNumber: number = 5): Promise<LiveGa
         state = 'LIVE';
       }
 
+      const rawHomeCode = (home.team?.abbreviation || 'HOM').trim().toUpperCase();
+      const rawAwayCode = (away.team?.abbreviation || 'AWY').trim().toUpperCase();
+      const homeCode = rawHomeCode === 'WSH' ? 'WAS' : rawHomeCode === 'JAC' ? 'JAX' : rawHomeCode;
+      const awayCode = rawAwayCode === 'WSH' ? 'WAS' : rawAwayCode === 'JAC' ? 'JAX' : rawAwayCode;
+
       return {
         id: event.id,
         name: event.name,
         shortName: event.shortName,
         homeTeam: {
-          code: home.team?.abbreviation || 'HOM',
+          code: homeCode,
           name: home.team?.displayName || 'Home',
           score: home.score || '0'
         },
         awayTeam: {
-          code: away.team?.abbreviation || 'AWY',
+          code: awayCode,
           name: away.team?.displayName || 'Away',
           score: away.score || '0'
         },

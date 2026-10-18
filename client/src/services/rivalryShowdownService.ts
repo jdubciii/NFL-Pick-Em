@@ -176,7 +176,7 @@ export function calculateRivalryShowdown(
       } else if (!isFinal) {
         // Unfinished game with differing selections -> Battleground!
         const statusDesc = live ? live.status : 'SCHEDULED';
-        const qc = live && isLive ? `Q${live.period} ${live.clock}` : undefined;
+        const qc = live && isLive ? `${(live.period && live.period >= 5) ? 'OT' : `Q${live.period}`} ${live.clock}` : undefined;
 
         battlegrounds.push({
           gameId: game.id,

@@ -14,7 +14,7 @@ import { triggerHaptic } from '../utils/haptics';
 import { isKickoffLocked } from '../services/lockEnforcementService';
 import { fetchLiveNFLScores } from '../services/liveScoreService';
 import { getCurrentNFLWeek } from '../services/nflCalendarService';
-import { resolveCanonicalGameKickoff, areTeamIdentitiesEquivalent } from '../services/dependableInfoService';
+import { resolveCanonicalGameKickoff, areTeamIdentitiesEquivalent, normalizeTeamIdentity } from '../services/dependableInfoService';
 import type { MatrixResponsePayload } from './LeagueMatrixView';
 import { AppHeader } from './common/AppHeader';
 
@@ -183,8 +183,10 @@ export const WeeklyPicks: React.FC = () => {
         const competitors = competition?.competitors || [];
         const home = competitors.find((c: any) => c.homeAway === 'home') || {};
         const away = competitors.find((c: any) => c.homeAway === 'away') || {};
-        const homeAbbr = home.team?.abbreviation || 'HOM';
-        const awayAbbr = away.team?.abbreviation || 'AWY';
+        const rawHomeAbbr = home.team?.abbreviation || 'HOM';
+        const rawAwayAbbr = away.team?.abbreviation || 'AWY';
+        const homeAbbr = normalizeTeamIdentity(rawHomeAbbr);
+        const awayAbbr = normalizeTeamIdentity(rawAwayAbbr);
         const statusName = event.status?.type?.name || '';
         const statusDetail = event.status?.type?.detail || event.status?.type?.description || event.status?.type?.shortDetail || '';
         const isHalftime = statusName === 'STATUS_HALFTIME' || statusDetail.toLowerCase().includes('halftime');
@@ -225,9 +227,10 @@ export const WeeklyPicks: React.FC = () => {
         const displayClockVal =
           liveScore?.displayClock ||
           (isHalftime ? 'HALFTIME' : event.status?.displayClock || '0:00');
+        const rawPeriod = Number(event.status?.period) || 1;
         const periodLabelVal =
           liveScore?.periodLabel ||
-          (mappedStatus === 'FINAL' ? 'FINAL' : isHalftime ? 'HALF' : `Q${event.status?.period || 1}`);
+          (mappedStatus === 'FINAL' ? 'FINAL' : isHalftime ? 'HALF' : (rawPeriod >= 5 ? 'OT' : `Q${rawPeriod}`));
 
         let spread: number | null = null;
         const oddsDetail = competition?.odds?.[0]?.details;
@@ -842,8 +845,8 @@ export const WeeklyPicks: React.FC = () => {
             : 'PRE-KICKOFF'
         }
         rightContent={
-          <div className="flex items-center gap-2">
-            <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 ${
+          <div className="flex items-center gap-1.5 shrink-0">
+            <div className={`px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-bold border flex items-center gap-1 ${
               slateStatus === 'OPEN' 
                 ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400' 
                 : 'bg-zinc-800 border-zinc-700 text-zinc-400'
@@ -854,19 +857,26 @@ export const WeeklyPicks: React.FC = () => {
 
             <button
               onClick={togglePicksProtection}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border transition-all ${
+              className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] sm:text-xs font-bold border transition-all ${
                 isPicksProtected
                   ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
                   : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700'
               }`}
-            >
-              {isPicksProtected ? <Lock className="w-3 h-3 text-amber-400"/> : <Unlock className="w-3 h-3 text-zinc-400"/>}
-              <span>
-                {isPicksProtected
+              title={
+                isPicksProtected
                   ? 'SUBMITTED · EDIT LOCKED (TAP TO EDIT)'
                   : games.length > 0 && Object.keys(userPicks).filter((k) => Boolean(userPicks[k])).length >= games.length
                   ? 'SUBMITTED · EDITABLE'
-                  : 'DRAFT · UNSUBMITTED'}
+                  : 'DRAFT · UNSUBMITTED'
+              }
+            >
+              {isPicksProtected ? <Lock className="w-3 h-3 text-amber-400"/> : <Unlock className="w-3 h-3 text-zinc-400"/>}
+              <span className="hidden xs:inline">
+                {isPicksProtected
+                  ? 'LOCKED'
+                  : games.length > 0 && Object.keys(userPicks).filter((k) => Boolean(userPicks[k])).length >= games.length
+                  ? 'SUBMITTED'
+                  : 'DRAFT'}
               </span>
             </button>
           </div>

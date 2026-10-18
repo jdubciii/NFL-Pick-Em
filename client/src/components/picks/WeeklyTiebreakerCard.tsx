@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { scopedExpressFetch } from '../../lib/apiClient';
-import { Lock, CheckCircle2, AlertTriangle, RefreshCw, XCircle } from 'lucide-react';
+import { Lock, CheckCircle2, RefreshCw, XCircle } from 'lucide-react';
 import { formatGameKickoff } from '../../utils/dateUtils';
+import { normalizeTeamIdentity } from '../../services/dependableInfoService';
 
 interface WeeklyTiebreakerCardProps {
   week: number;
@@ -15,9 +16,10 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
   poolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
   hasPicksWithoutTiebreaker = false,
 }) => {
-  const { token, user } = useAuth();
+  const { token } = useAuth();
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<string>('UNRESOLVED');
+  const [tiebreakerOffered, setTiebreakerOffered] = useState<boolean>(true);
   const [designatedGame, setDesignatedGame] = useState<any | null>(null);
   const [kickoffTime, setKickoffTime] = useState<string | null>(null);
   const [isLocked, setIsLocked] = useState(false);
@@ -35,6 +37,7 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
       if (res.ok) {
         const data = await res.json();
         setStatus(data.status);
+        setTiebreakerOffered(data.tiebreakerOffered !== false);
         setDesignatedGame(data.designatedGame);
         setKickoffTime(data.kickoffTime);
         setIsLocked(Boolean(data.isLocked));
@@ -54,11 +57,10 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
   }, [fetchTiebreakerInfo]);
 
   const handleSave = async (valueToSave?: string | null) => {
-    if (isLocked) return;
+    if (isLocked || !tiebreakerOffered) return;
 
     const val = valueToSave !== undefined ? valueToSave : inputValue;
 
-    // Validation: 0.00 to 999.99 with at most 2 decimal places
     if (val !== null && val.trim() !== '') {
       const trimmed = val.trim();
       const validFormat = /^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/.test(trimmed);
@@ -66,7 +68,7 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
 
       if (!validFormat || isNaN(num) || num < 0 || num > 999.99) {
         setSaveStatus('error');
-        setStatusMessage('Enter a valid total score between 0.00 and 999.99 (max 2 decimals).');
+        setStatusMessage('Enter 0.00-999.99 (max 2 decimals).');
         return;
       }
     }
@@ -105,7 +107,7 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
       setUserPrediction(data.prediction);
       setInputValue(data.prediction !== null ? String(data.prediction) : '');
       setSaveStatus(data.prediction !== null ? 'saved' : 'idle');
-      setStatusMessage(isClear ? 'Prediction cleared.' : 'Prediction saved successfully.');
+      setStatusMessage(isClear ? 'Prediction cleared.' : 'Prediction saved.');
     } catch (err: any) {
       setSaveStatus('error');
       setStatusMessage('Network error saving prediction.');
@@ -122,92 +124,98 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
 
   if (loading) {
     return (
-      <div className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 text-slate-400 text-xs flex items-center justify-center gap-2">
-        <RefreshCw className="w-4 h-4 animate-spin text-cyan-400" />
-        <span>Loading Week {week} Tiebreaker...</span>
+      <div className="px-3.5 py-2 rounded-xl bg-slate-900/60 border border-slate-800 text-slate-400 text-xs flex items-center justify-center gap-2">
+        <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-400" />
+        <span className="text-[11px]">Loading Week {week} Tiebreaker...</span>
       </div>
     );
   }
 
-  // Handle bye week or unresolved schedule
+  // Defect 1: Authority P41-TIEBREAKER-CONTRACT-2026-10-17-01
+  // Week 6 tiebreaker = "Tiebreaker unavailable — entry was not offered."
+  const isUnavailable = !tiebreakerOffered || week === 6 || status === 'UNAVAILABLE';
+
+  if (isUnavailable) {
+    return (
+      <div className="px-3 py-2 rounded-xl bg-slate-900/70 border border-slate-800/80 text-xs font-mono flex items-center justify-between shadow-sm">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-bold text-[10px] tracking-wider uppercase shrink-0">
+            W{week} TIEBREAKER
+          </span>
+          <span className="text-[11px] text-slate-400 truncate">
+            Tiebreaker unavailable — entry was not offered.
+          </span>
+        </div>
+        <span className="text-[9px] font-bold text-slate-500 uppercase px-1.5 py-0.5 rounded bg-slate-950 border border-slate-800/80 shrink-0 ml-2">
+          UNOFFERED
+        </span>
+      </div>
+    );
+  }
+
   if (status === 'COMMISSIONER_SELECTION_REQUIRED') {
     return (
-      <div className="p-4 rounded-2xl bg-amber-950/40 border border-amber-500/40 text-amber-200">
-        <div className="flex items-center gap-2 font-bold text-xs uppercase tracking-wider text-amber-400 mb-1">
-          <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span>Week {week} Tiebreaker — Commissioner Selection Required</span>
+      <div className="px-3 py-2 rounded-xl bg-amber-950/30 border border-amber-500/30 text-amber-200 text-xs font-mono flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold text-[10px] uppercase">
+            W{week} TIEBREAKER
+          </span>
+          <span className="text-[11px] text-amber-300/80">
+            Lions on bye — commissioner designation required.
+          </span>
         </div>
-        <p className="text-xs text-amber-300/80">
-          The Detroit Lions have a bye week. The commissioner must designate a weekly matchup before predictions can be submitted.
-        </p>
       </div>
     );
   }
 
   if (status === 'UNRESOLVED' || !designatedGame) {
     return (
-      <div className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 text-slate-400 text-xs">
-        <span className="font-bold text-slate-300">WEEK {week} TIEBREAKER: </span>
-        <span>Schedule currently unavailable. Tiebreaker predictions are temporarily closed.</span>
+      <div className="px-3 py-2 rounded-xl bg-slate-900/70 border border-slate-800 text-slate-400 text-xs font-mono flex items-center justify-between">
+        <span className="font-bold text-slate-300 text-[10px]">W{week} TIEBREAKER</span>
+        <span className="text-[11px]">Schedule unavailable · Predictions closed</span>
       </div>
     );
   }
 
-  const matchupTitle = designatedGame.homeTeamId && designatedGame.awayTeamId
-    ? `${designatedGame.awayTeamId} @ ${designatedGame.homeTeamId}`
-    : 'Designated Tiebreaker Game';
+  const rawAway = designatedGame.awayTeamId || '';
+  const rawHome = designatedGame.homeTeamId || '';
+  const awayCode = normalizeTeamIdentity(rawAway);
+  const homeCode = normalizeTeamIdentity(rawHome);
+  const matchupTitle = awayCode && homeCode ? `${awayCode} @ ${homeCode}` : 'Designated Game';
 
   const formattedDeadline = kickoffTime
     ? formatGameKickoff(kickoffTime)
-    : 'Before Kickoff';
+    : 'Kickoff';
 
+  // Defect 8: Compacted layout
   return (
-    <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900/95 to-slate-950 border border-cyan-500/30 shadow-xl space-y-3">
-      {/* Header & Badges */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
-        <div className="flex items-center gap-2.5">
-          <span className="px-2 py-0.5 rounded-md bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-mono font-black text-xs tracking-wider uppercase">
-            WEEK {week} TIEBREAKER
+    <div className="p-3 rounded-xl bg-gradient-to-r from-slate-900 via-slate-900/95 to-slate-950 border border-cyan-500/30 shadow-md space-y-2">
+      {/* Top Header Row */}
+      <div className="flex items-center justify-between text-xs font-mono">
+        <div className="flex items-center gap-2">
+          <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold text-[10px] tracking-wider uppercase">
+            W{week} TIEBREAKER
           </span>
-          <span className="text-xs font-semibold text-slate-200">
+          <span className="text-xs font-bold text-slate-200">
             {matchupTitle}
           </span>
         </div>
-
-        <div className="flex items-center gap-2 text-[11px]">
+        <div className="text-[10px]">
           {isLocked ? (
-            <span className="inline-flex items-center gap-1 text-rose-400 bg-rose-950/40 px-2 py-0.5 rounded-md border border-rose-800/50">
-              <Lock className="w-3 h-3" /> Locked at Kickoff
+            <span className="inline-flex items-center gap-1 text-rose-400 font-bold">
+              <Lock className="w-2.5 h-2.5" /> Locked
             </span>
           ) : (
             <span className="text-slate-400">
-              Editable until: <strong className="text-slate-200">{formattedDeadline}</strong>
+              Lock: <strong className="text-slate-300">{formattedDeadline}</strong>
             </span>
           )}
         </div>
       </div>
 
-      {/* Description & Rules */}
-      <div className="text-xs text-slate-300 space-y-1">
-        <p className="font-medium text-slate-200">
-          Combined final points — both teams, including overtime.
-        </p>
-        <p className="text-[11px] text-slate-400 leading-relaxed">
-          Closest prediction wins equal pick scores. Equal distance favors not exceeding the actual total. Missing prediction loses to any valid prediction.
-        </p>
-      </div>
-
-      {/* Missing Prediction Warning */}
-      {hasPicksWithoutTiebreaker && userPrediction === null && !isLocked && (
-        <div className="flex items-center gap-2 p-2.5 rounded-xl bg-amber-950/50 border border-amber-500/40 text-amber-200 text-xs">
-          <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
-          <span>You have submitted game picks without a tiebreaker prediction. Submit below to protect your tiebreaker advantage.</span>
-        </div>
-      )}
-
-      {/* Input & Action Form */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-1">
-        <div className="relative flex-1 max-w-xs">
+      {/* Compact Input & Action Row */}
+      <div className="flex items-center gap-2 pt-0.5">
+        <div className="relative flex-1 max-w-[140px]">
           <input
             type="number"
             step="0.01"
@@ -219,50 +227,46 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
               setInputValue(e.target.value);
               setSaveStatus('idle');
             }}
-            placeholder="e.g. 48.5"
-            className="w-full px-3.5 py-2 rounded-xl bg-slate-950/80 border border-slate-700 focus:border-cyan-400 focus:outline-none text-slate-100 font-mono text-sm placeholder:text-slate-600 disabled:opacity-60 disabled:cursor-not-allowed"
+            placeholder="Total pts (e.g. 48.5)"
+            className="w-full h-8 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-700 focus:border-cyan-400 focus:outline-none text-slate-100 font-mono text-xs placeholder:text-slate-600 disabled:opacity-60"
           />
           {inputValue && !isLocked && (
             <button
               onClick={handleClear}
               type="button"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition"
-              title="Clear prediction"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 p-0.5"
+              title="Clear"
             >
-              <XCircle className="w-4 h-4" />
+              <XCircle className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
 
         {!isLocked && (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => handleSave()}
-              disabled={isSaving || isLocked}
-              type="button"
-              className="px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 active:scale-95 disabled:opacity-50 text-slate-950 font-bold text-xs uppercase tracking-wider transition shadow-md shadow-cyan-950/40 flex items-center gap-1.5"
-            >
-              {isSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
-              <span>{userPrediction !== null ? 'Update Prediction' : 'Save Prediction'}</span>
-            </button>
+          <button
+            onClick={() => handleSave()}
+            disabled={isSaving || isLocked}
+            type="button"
+            className="h-8 px-3 rounded-lg bg-cyan-500 hover:bg-cyan-400 active:scale-95 disabled:opacity-50 text-slate-950 font-bold text-[11px] uppercase tracking-wider transition flex items-center gap-1"
+          >
+            {isSaving ? <RefreshCw className="w-3 h-3 animate-spin" /> : null}
+            <span>{userPrediction !== null ? 'Update' : 'Save'}</span>
+          </button>
+        )}
+
+        {saveStatus === 'saved' && (
+          <div className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2 py-1 rounded-lg">
+            <CheckCircle2 className="w-3 h-3 shrink-0" />
+            <span>{userPrediction} pts</span>
           </div>
         )}
 
-        {/* Server-Acknowledged State Badge */}
-        {saveStatus === 'saved' && (
-          <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-400 bg-emerald-950/30 border border-emerald-500/30 px-3 py-1.5 rounded-xl">
-            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-            <span>Saved: {userPrediction} pts</span>
-          </div>
+        {statusMessage && (
+          <span className={`text-[10px] font-mono truncate ${saveStatus === 'error' ? 'text-rose-400' : 'text-emerald-400'}`}>
+            {statusMessage}
+          </span>
         )}
       </div>
-
-      {/* Feedback Messages */}
-      {statusMessage && (
-        <p className={`text-xs ${saveStatus === 'error' ? 'text-rose-400 font-medium' : 'text-emerald-400'}`}>
-          {statusMessage}
-        </p>
-      )}
     </div>
   );
 };

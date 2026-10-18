@@ -730,9 +730,11 @@ export const RadarPage: React.FC = () => {
                             swingLiveMatch && ['IN_PROGRESS', 'LIVE', 'HALFTIME', 'FINAL'].includes((swingLiveMatch.status || '').toUpperCase())
                           );
                           if (swingLiveMatch && isLiveOrFinal) {
-                            return swingLiveMatch.status === 'FINAL'
+                            return (swingLiveMatch.status as string) === 'FINAL'
                               ? 'FINAL'
-                              : `Q${swingLiveMatch.period} ${swingLiveMatch.clock}`;
+                              : (swingLiveMatch.status as string) === 'HALFTIME'
+                              ? 'HALFTIME'
+                              : `${(swingLiveMatch.period && swingLiveMatch.period >= 5) ? 'OT' : (swingLiveMatch.period ? `Q${swingLiveMatch.period}` : 'LIVE')} ${swingLiveMatch.clock || ''}`.trim();
                           }
                           return activeSwingGame.gameStatus || 'PRE-KICKOFF';
                         })()}

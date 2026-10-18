@@ -142,10 +142,10 @@ export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({
             ? 'HALFTIME'
             : isScheduled
             ? 'SCHEDULED'
-            : `${espnGame.periodLabel || `Q${espnGame.period}`} - ${espnGame.displayClock || espnGame.clock}`
+            : `${(espnGame.period && espnGame.period >= 5) ? 'OT' : (espnGame.periodLabel || (espnGame.period ? `Q${espnGame.period}` : 'LIVE'))} - ${espnGame.displayClock || espnGame.clock || ''}`
           : isFinal
           ? 'FINAL'
-          : `${(item as LiveGameflowCardData).quarter} - ${(item as LiveGameflowCardData).timeRemaining}`;
+          : `${(item as LiveGameflowCardData).quarter === 'Q5' || (item as LiveGameflowCardData).quarter === '5' ? 'OT' : (item as LiveGameflowCardData).quarter} - ${(item as LiveGameflowCardData).timeRemaining}`;
         const situation = isEspnGame
           ? espnGame.downDistanceText
           : `${(item as LiveGameflowCardData).possession} ball: ${(item as LiveGameflowCardData).downAndDistance} (Ball on ${(item as LiveGameflowCardData).yardLine} YD)`;

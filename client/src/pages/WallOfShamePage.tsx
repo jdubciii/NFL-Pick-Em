@@ -10,6 +10,7 @@ import {
   AuthoritativeWeeklyStandingRow,
 } from '../services/seasonStoryService';
 import { WeeklyRecapCardView } from '../components/shame/WeeklyRecapCardView';
+import { fetchLiveNFLScores, LiveGame } from '../services/liveScoreService';
 
 export function WallOfShamePage() {
   const { user } = useAuth();
@@ -17,6 +18,19 @@ export function WallOfShamePage() {
   const [dockets] = useState<any[]>([]);
   const [ladderData, setLadderData] = useState<any[]>([]);
   const [inspectSettledFixture, setInspectSettledFixture] = useState<boolean>(false);
+  const [liveScores, setLiveScores] = useState<LiveGame[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    fetchLiveNFLScores(6)
+      .then((scores: LiveGame[]) => {
+        if (isMounted) setLiveScores(scores);
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -153,7 +167,15 @@ export function WallOfShamePage() {
       <AppHeader
         poolName="MAIN LEAGUE"
         scope={activeTab === 'infamy' ? 'SEASON LEDGER' : 'WEEK 6'}
-        phase={activeTab === 'infamy' ? 'SETTLED' : 'PRE-KICKOFF'}
+        phase={
+          activeTab === 'infamy'
+            ? 'SETTLED'
+            : liveScores.length > 0 && liveScores.every((g) => (g.status || '').toUpperCase() === 'FINAL')
+            ? 'SETTLED'
+            : liveScores.some((g) => ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()))
+            ? 'GAMES LIVE'
+            : 'PRE-KICKOFF'
+        }
       />
 
       {/* Persistent 3-Tab Segmented Header */}

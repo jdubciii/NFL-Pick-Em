@@ -553,14 +553,14 @@ export async function executeWeeklyWrapUpForPool(
       const taggedGames = allGames.filter((g: any) => g.week === weekNumber && (g.season === season || g.season === null));
       if (taggedGames.length > 0) {
         games = taggedGames;
-      } else {
         const poolPickGameIds: any[] = ((await tx.$queryRawUnsafe(
           `SELECT DISTINCT game_id FROM public.picks WHERE pool_id = $1::uuid AND (week = $2::int OR week IS NULL);`,
           poolId,
           weekNumber
         ).catch(() => [])) as any[]) || [];
-        if (poolPickGameIds.length > 0) {
-          const pickGameSet = new Set(poolPickGameIds.map((p: any) => p.game_id));
+        const validPickIds = poolPickGameIds.map((p: any) => p.game_id).filter(Boolean);
+        if (validPickIds.length > 0) {
+          const pickGameSet = new Set(validPickIds);
           games = allGames.filter((g: any) => pickGameSet.has(g.id) || pickGameSet.has(g.externalGameId));
         }
       }

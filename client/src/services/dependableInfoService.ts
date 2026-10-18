@@ -683,11 +683,16 @@ export function buildPersonalRootingQueue(
         consequenceText = `${article} ${vPick} win ${marginChangeStr}`;
       }
 
+      const normAway = normalizeTeamIdentity(g.awayTeam);
+      const normHome = normalizeTeamIdentity(g.homeTeam);
+      const normVPick = normalizeTeamIdentity(vPick);
+      const normAgainst = normalizeTeamIdentity(against);
+
       return {
         gameId: g.gameId,
-        matchupLabel: `${g.awayTeam.toUpperCase()} @ ${g.homeTeam.toUpperCase()}`,
-        rootForTeam: vPick,
-        againstTeam: against,
+        matchupLabel: `${normAway} @ ${normHome}`,
+        rootForTeam: normVPick,
+        againstTeam: normAgainst,
         gameStatus,
         priorityScore,
         reasonBadge,

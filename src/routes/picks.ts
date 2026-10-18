@@ -270,7 +270,38 @@ picksRouter.get('/tiebreaker', requireAuth, async (req: Request, res: Response):
       return;
     }
 
-    const games = await prisma.game.findMany();
+    const isCommissioner = pool.adminId === userId;
+
+    // Authority: P41-TIEBREAKER-CONTRACT-2026-10-17-01
+    // Week 6 tiebreaker = "Tiebreaker unavailable — entry was not offered."
+    const settings = (pool.settings as any) || {};
+    const tiebreakerOffered = settings?.tiebreaker_unavailable_weeks?.[season]?.[weekNumber] !== true;
+
+    if (!tiebreakerOffered) {
+      res.status(200).json({
+        status: 'UNAVAILABLE',
+        tiebreakerOffered: false,
+        designatedGame: null,
+        eventId: null,
+        provenance: null,
+        isFrozen: false,
+        frozenAt: null,
+        kickoffTime: null,
+        isLocked: true,
+        userPrediction: null,
+        reason: 'Tiebreaker unavailable — entry was not offered.',
+        readiness: isCommissioner ? [] : undefined,
+      });
+      return;
+    }
+
+    const games = await prisma.game.findMany({
+      where: {
+        season,
+        week: weekNumber,
+      },
+      orderBy: { kickoffTime: 'asc' },
+    });
     const designation = getWeeklyDesignation(pool.settings, season, weekNumber, games as any);
 
     const userSubmission = await prisma.weeklySubmission.findUnique({
@@ -283,7 +314,6 @@ picksRouter.get('/tiebreaker', requireAuth, async (req: Request, res: Response):
       },
     });
 
-    const isCommissioner = pool.adminId === userId;
     const kickoffTime = designation.game?.kickoffTime ? new Date(designation.game.kickoffTime) : null;
     const isLocked = kickoffTime ? new Date() >= kickoffTime : false;
 
@@ -375,8 +405,25 @@ picksRouter.post('/tiebreaker', requireAuth, async (req: Request, res: Response)
       return;
     }
 
+    // Authority: P41-TIEBREAKER-CONTRACT-2026-10-17-01
+    const settings = (pool.settings as any) || {};
+    const tiebreakerOffered = settings?.tiebreaker_unavailable_weeks?.[season]?.[weekNumber] !== true;
+
+    if (!tiebreakerOffered) {
+      res.status(403).json({
+        error: 'TIEBREAKER_UNAVAILABLE: Tiebreaker unavailable — entry was not offered.',
+      });
+      return;
+    }
+
     // 2. Fetch games and resolve designated tiebreaker game
-    const games = await prisma.game.findMany();
+    const games = await prisma.game.findMany({
+      where: {
+        season,
+        week: weekNumber,
+      },
+      orderBy: { kickoffTime: 'asc' },
+    });
     const designation = getWeeklyDesignation(pool.settings, season, weekNumber, games as any);
 
     if (!designation.game) {

@@ -4,7 +4,7 @@ import { TeamLogo } from '../common/TeamLogo';
 import { NFL_TEAMS } from '../../utils/teamAssets';
 import { Lock } from 'lucide-react';
 import { isKickoffLocked } from '../../services/lockEnforcementService';
-import { formatAttributedSpread, areTeamIdentitiesEquivalent } from '../../services/dependableInfoService';
+import { formatAttributedSpread, areTeamIdentitiesEquivalent, normalizeTeamIdentity } from '../../services/dependableInfoService';
 
 export interface SwipeMatchup {
   id: string;
@@ -307,6 +307,51 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
         </AnimatePresence>
       </div>
 
+      {/* Quick Action Control Bar (Swipe & Tap Affordances) */}
+      {activeCard && (
+        <div className="flex items-center justify-between gap-2 mt-3 px-1 font-mono text-xs select-none">
+          <button
+            type="button"
+            disabled={checkKickoffLocked(activeCard) || isPicksProtected}
+            onClick={() => handleCardExit('LEFT')}
+            className="flex-1 py-2 px-2.5 rounded-xl bg-slate-900 border border-cyan-500/40 hover:bg-cyan-950/60 active:scale-95 text-cyan-300 font-black text-xs transition flex items-center justify-center gap-1.5 shadow-md disabled:opacity-40"
+            title={`Pick ${normalizeTeamIdentity(activeCard.awayTeam)}`}
+          >
+            <span>◀</span>
+            <span className="truncate">{normalizeTeamIdentity(activeCard.awayTeam)}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowIntel(true)}
+            className="py-2 px-3 rounded-xl bg-slate-900 border border-slate-700 hover:bg-slate-800 active:scale-95 text-slate-300 font-bold text-xs transition flex items-center gap-1 shadow-md"
+            title="Matchup Intel (Down)"
+          >
+            <span>⚡ Intel</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleCardExit('UP')}
+            className="py-2 px-3 rounded-xl bg-slate-900 border border-slate-700 hover:bg-slate-800 active:scale-95 text-amber-400 font-bold text-xs transition flex items-center gap-1 shadow-md"
+            title="Skip Matchup (Up)"
+          >
+            <span>▲ Skip</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={checkKickoffLocked(activeCard) || isPicksProtected}
+            onClick={() => handleCardExit('RIGHT')}
+            className="flex-1 py-2 px-2.5 rounded-xl bg-slate-900 border border-cyan-500/40 hover:bg-cyan-950/60 active:scale-95 text-cyan-300 font-black text-xs transition flex items-center justify-center gap-1.5 shadow-md disabled:opacity-40"
+            title={`Pick ${normalizeTeamIdentity(activeCard.homeTeam)}`}
+          >
+            <span className="truncate">{normalizeTeamIdentity(activeCard.homeTeam)}</span>
+            <span>▶</span>
+          </button>
+        </div>
+      )}
+
       {/* Matchup Intel Bottom Sheet */}
       <AnimatePresence>
         {showIntel && (
@@ -356,13 +401,13 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
               <div className="space-y-3 overflow-y-auto flex-1 pr-1 text-xs touch-pan-y">
                 <div className="flex items-center justify-around p-3 bg-slate-950 rounded-2xl border border-slate-800">
                   <div className="flex items-center space-x-2">
-                    <TeamLogo abbr={activeCard.awayTeam} size="sm" />
-                    <span className="font-black text-sm">{activeCard.awayTeam}</span>
+                    <TeamLogo abbr={normalizeTeamIdentity(activeCard.awayTeam)} size="sm" />
+                    <span className="font-black text-sm">{normalizeTeamIdentity(activeCard.awayTeam)}</span>
                   </div>
                   <span className="text-slate-600 font-black">@</span>
                   <div className="flex items-center space-x-2">
-                    <span className="font-black text-sm">{activeCard.homeTeam}</span>
-                    <TeamLogo abbr={activeCard.homeTeam} size="sm" />
+                    <span className="font-black text-sm">{normalizeTeamIdentity(activeCard.homeTeam)}</span>
+                    <TeamLogo abbr={normalizeTeamIdentity(activeCard.homeTeam)} size="sm" />
                   </div>
                 </div>
 
@@ -422,8 +467,10 @@ const SwipeCardItem: React.FC<{
   const homeOpacity = useTransform(x, [40, 130], [0, 1]);
   const skipOpacity = useTransform(y, [-110, -40], [1, 0]);
 
-  const awayMeta = NFL_TEAMS[matchup.awayTeam];
-  const homeMeta = NFL_TEAMS[matchup.homeTeam];
+  const awayCode = normalizeTeamIdentity(matchup.awayTeam);
+  const homeCode = normalizeTeamIdentity(matchup.homeTeam);
+  const awayMeta = NFL_TEAMS[awayCode];
+  const homeMeta = NFL_TEAMS[homeCode];
 
   const isFinal = matchup.gameStatus === 'FINAL';
   const isKickoffPassed = Boolean(
@@ -451,10 +498,12 @@ const SwipeCardItem: React.FC<{
   const homeIsWin = isFinal && homeSelected && areTeamIdentitiesEquivalent(winningTeam, matchup.homeTeam);
   const homeIsLoss = isFinal && homeSelected && winningTeam !== null && !areTeamIdentitiesEquivalent(winningTeam, matchup.homeTeam);
 
+  const intelOpacity = useTransform(y, [40, 110], [0, 1]);
+
   return (
     <motion.div
       style={{ x, y, rotate, willChange: 'transform, opacity' }}
-      drag="x"
+      drag={true}
       dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
       dragElastic={0.65}
       initial={{ scale: 0.94, opacity: 0 }}
@@ -465,20 +514,22 @@ const SwipeCardItem: React.FC<{
         const absY = Math.abs(info.offset.y);
 
         if (absX > absY) {
-          if (info.offset.x < -110 || (info.offset.x < -60 && info.velocity.x < -500)) {
-            onSwipe('LEFT');
-          } else if (info.offset.x > 110 || (info.offset.x > 60 && info.velocity.x > 500)) {
-            onSwipe('RIGHT');
+          if (!isCardLocked) {
+            if (info.offset.x < -110 || (info.offset.x < -60 && info.velocity.x < -500)) {
+              onSwipe('LEFT');
+            } else if (info.offset.x > 110 || (info.offset.x > 60 && info.velocity.x > 500)) {
+              onSwipe('RIGHT');
+            }
           }
         } else {
           if (info.offset.y < -95 || (info.offset.y < -50 && info.velocity.y < -500)) {
             onSwipe('UP');
-          } else if (info.offset.y > 75) {
+          } else if (info.offset.y > 75 || (info.offset.y > 40 && info.velocity.y > 500)) {
             onOpenIntel();
           }
         }
       }}
-      className={`absolute w-full h-[450px] bg-slate-900/95 border-2 rounded-3xl p-4 shadow-2xl flex flex-col justify-between backdrop-blur-2xl z-20 select-none ${
+      className={`absolute w-full h-[450px] bg-slate-900/95 border-2 rounded-3xl p-4 shadow-2xl flex flex-col justify-between backdrop-blur-2xl z-20 select-none touch-none ${
         isCardLocked ? 'border-amber-600/50 cursor-grab active:cursor-grabbing' : 'border-slate-700/80 cursor-grab active:cursor-grabbing'
       }`}
     >
@@ -486,26 +537,33 @@ const SwipeCardItem: React.FC<{
         <>
           <motion.div
             style={{ opacity: awayOpacity }}
-            className="absolute top-6 left-5 px-3.5 py-1 rounded-2xl bg-cyan-950/95 border-2 border-cyan-400 text-cyan-300 font-black text-xs uppercase -rotate-12 z-30 shadow-[0_0_15px_rgba(34,211,238,0.5)]"
+            className="absolute top-6 left-5 px-3.5 py-1 rounded-2xl bg-cyan-950/95 border-2 border-cyan-400 text-cyan-300 font-black text-xs uppercase -rotate-12 z-30 shadow-[0_0_15px_rgba(34,211,238,0.5)] pointer-events-none"
           >
-            PICK {matchup.awayTeam} ◀
+            PICK {awayCode} ◀
           </motion.div>
 
           <motion.div
             style={{ opacity: homeOpacity }}
-            className="absolute top-6 right-5 px-3.5 py-1 rounded-2xl bg-cyan-950/95 border-2 border-cyan-400 text-cyan-300 font-black text-xs uppercase rotate-12 z-30 shadow-[0_0_15px_rgba(34,211,238,0.5)]"
+            className="absolute top-6 right-5 px-3.5 py-1 rounded-2xl bg-cyan-950/95 border-2 border-cyan-400 text-cyan-300 font-black text-xs uppercase rotate-12 z-30 shadow-[0_0_15px_rgba(34,211,238,0.5)] pointer-events-none"
           >
-            ▶ PICK {matchup.homeTeam}
-          </motion.div>
-
-          <motion.div
-            style={{ opacity: skipOpacity }}
-            className="absolute top-5 left-1/2 -translate-x-1/2 px-3.5 py-1 rounded-2xl bg-amber-950/90 border-2 border-amber-400 text-amber-300 font-black text-[11px] uppercase z-30 shadow-lg"
-          >
-            ▲ SKIP FOR LATER ▲
+            ▶ PICK {homeCode}
           </motion.div>
         </>
       )}
+
+      <motion.div
+        style={{ opacity: skipOpacity }}
+        className="absolute top-5 left-1/2 -translate-x-1/2 px-3.5 py-1 rounded-2xl bg-amber-950/90 border-2 border-amber-400 text-amber-300 font-black text-[11px] uppercase z-30 shadow-lg pointer-events-none"
+      >
+        ▲ SKIP FOR LATER ▲
+      </motion.div>
+
+      <motion.div
+        style={{ opacity: intelOpacity }}
+        className="absolute bottom-5 left-1/2 -translate-x-1/2 px-3.5 py-1 rounded-2xl bg-indigo-950/90 border-2 border-indigo-400 text-indigo-300 font-black text-[11px] uppercase z-30 shadow-lg pointer-events-none"
+      >
+        ▼ MATCHUP INTEL ▼
+      </motion.div>
 
       {/* Header Info with Live Gameday Scoreboard / Status Indicator */}
       <div className="flex items-center justify-between border-b border-slate-800 pb-2.5 text-xs">
@@ -568,10 +626,10 @@ const SwipeCardItem: React.FC<{
                 : 'border-cyan-400 ring-2 ring-cyan-500/40'
               : 'border-slate-700/80'
           }`}>
-            <TeamLogo abbr={matchup.awayTeam} size="lg" />
+            <TeamLogo abbr={awayCode} size="lg" />
           </div>
-          <span className="text-lg font-black text-white">{matchup.awayTeam}</span>
-          <span className="text-[10px] text-slate-400 font-bold">{awayMeta?.name || 'Away'}</span>
+          <span className="text-lg font-black text-white">{awayCode}</span>
+          <span className="text-[10px] text-slate-400 font-bold">{awayMeta?.name || awayCode}</span>
           {isFinal ? (
             awaySelected ? (
               awayIsWin ? (
@@ -625,10 +683,10 @@ const SwipeCardItem: React.FC<{
                 : 'border-cyan-400 ring-2 ring-cyan-500/40'
               : 'border-slate-700/80'
           }`}>
-            <TeamLogo abbr={matchup.homeTeam} size="lg" />
+            <TeamLogo abbr={homeCode} size="lg" />
           </div>
-          <span className="text-lg font-black text-white">{matchup.homeTeam}</span>
-          <span className="text-[10px] text-slate-400 font-bold">{homeMeta?.name || 'Home'}</span>
+          <span className="text-lg font-black text-white">{homeCode}</span>
+          <span className="text-[10px] text-slate-400 font-bold">{homeMeta?.name || homeCode}</span>
           {isFinal ? (
             homeSelected ? (
               homeIsWin ? (
