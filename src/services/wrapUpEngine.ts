@@ -58,6 +58,7 @@ export interface PoolWrapUpResult {
   targetGameScore?: number | null;
   tiebreakerOffered?: boolean;
   auditSnapshot?: any;
+  existingRecord?: any;
 }
 
 export interface WrapUpEngineRunResult {
@@ -324,10 +325,10 @@ export async function executeWeeklyWrapUpForPool(
     const season = options.season || 2026;
     const seasonType = options.seasonType || 2;
 
-    // Check preview revision freshness if provided
+    // Check preview revision freshness if provided (Fail-Closed: Decision #55)
     if (options.previewRevision !== undefined) {
       const manifest = await getAcceptedSlateManifest(tx, season, seasonType, weekNumber);
-      if (manifest && manifest.revision !== Number(options.previewRevision)) {
+      if (!manifest || manifest.revision !== Number(options.previewRevision)) {
         return {
           applied: false,
           reason: 'STALE_PREVIEW_REVISION',
@@ -362,41 +363,81 @@ export async function executeWeeklyWrapUpForPool(
       };
     }
 
-    // Atomic insert into weekly_wrapups with composite primary key (pool_id, season, week_number)
-    let claimResult: any[] = [];
+    // Probe schema capabilities on weekly_wrapups to maintain backwards compatibility with pre-migration databases
+    let hasSeasonCol = false;
     try {
+      const colCheck: any[] = ((await tx.$queryRawUnsafe(
+        `SELECT column_name FROM information_schema.columns WHERE table_name = 'weekly_wrapups' AND column_name = 'season';`
+      ).catch(() => [])) as any[]) || [];
+      hasSeasonCol = colCheck.length > 0;
+    } catch {
+      hasSeasonCol = false;
+    }
+
+    // Atomic insert into weekly_wrapups
+    let claimResult: any[] = [];
+    if (hasSeasonCol) {
       claimResult = ((await tx.$queryRawUnsafe(
-        `INSERT INTO public.weekly_wrapups (pool_id, season, week_number)
-         VALUES ($1::uuid, $2::int, $3::int)
+        `INSERT INTO public.weekly_wrapups (pool_id, season, week_number, applied_by, input_fingerprint, accepted_revision)
+         VALUES ($1::uuid, $2::int, $3::int, $4::uuid, $5::text, $6::int)
          ON CONFLICT (pool_id, season, week_number) DO NOTHING
          RETURNING pool_id, season, week_number;`,
         poolId,
         season,
+        weekNumber,
+        options.appliedBy || null,
+        options.inputFingerprint || null,
+        options.previewRevision !== undefined ? Number(options.previewRevision) : null
+      )) as any[]) || [];
+    } else {
+      claimResult = ((await tx.$queryRawUnsafe(
+        `INSERT INTO public.weekly_wrapups (pool_id, week_number)
+         VALUES ($1::uuid, $2::int)
+         ON CONFLICT (pool_id, week_number) DO NOTHING
+         RETURNING pool_id, week_number;`,
+        poolId,
         weekNumber
       )) as any[]) || [];
-    } catch (err: any) {
-      // Fallback for pre-migration schema
-      if (err.message?.includes('column "season"') || err.message?.includes('constraint')) {
-        claimResult = ((await tx.$queryRawUnsafe(
-          `INSERT INTO public.weekly_wrapups (pool_id, week_number)
-           VALUES ($1::uuid, $2::int)
-           ON CONFLICT (pool_id, week_number) DO NOTHING
-           RETURNING pool_id, week_number;`,
-          poolId,
-          weekNumber
-        )) as any[]) || [];
-      } else {
-        throw err;
-      }
     }
 
     if (!claimResult || claimResult.length === 0) {
+      let existing: any[] = [];
+      if (hasSeasonCol) {
+        existing = ((await tx.$queryRawUnsafe(
+          `SELECT pool_id, season, week_number, applied_by, completed_at, input_fingerprint, accepted_revision, summary
+           FROM public.weekly_wrapups
+           WHERE pool_id = $1::uuid AND (season = $2::int OR season IS NULL) AND week_number = $3::int;`,
+          poolId,
+          season,
+          weekNumber
+        ).catch(() => [])) as any[]) || [];
+      } else {
+        existing = ((await tx.$queryRawUnsafe(
+          `SELECT pool_id, week_number, completed_at, summary
+           FROM public.weekly_wrapups
+           WHERE pool_id = $1::uuid AND week_number = $2::int;`,
+          poolId,
+          weekNumber
+        ).catch(() => [])) as any[]) || [];
+      }
+
+      const existingRecord = existing[0] || null;
       return {
         applied: false,
         reason: 'ALREADY_WRAPPED_UP',
         poolId,
         season,
         weekNumber,
+        existingRecord: existingRecord ? {
+          poolId: existingRecord.pool_id,
+          season: existingRecord.season,
+          weekNumber: existingRecord.week_number,
+          appliedBy: existingRecord.applied_by,
+          completedAt: existingRecord.completed_at,
+          inputFingerprint: existingRecord.input_fingerprint,
+          acceptedRevision: existingRecord.accepted_revision,
+          summary: existingRecord.summary,
+        } : null,
       };
     }
 
@@ -712,15 +753,30 @@ export async function executeWeeklyWrapUpForPool(
     };
 
     try {
-      await tx.$queryRawUnsafe(
-        `UPDATE public.weekly_wrapups
-         SET summary = $1::jsonb
-         WHERE pool_id = $2::uuid AND (season = $3::int OR season IS NULL) AND week_number = $4::int;`,
-        JSON.stringify(auditSnapshot),
-        pool.id,
-        season,
-        weekNumber
-      ).catch(() => {});
+      if (hasSeasonCol) {
+        await tx.$queryRawUnsafe(
+          `UPDATE public.weekly_wrapups
+           SET summary = $1::jsonb,
+               input_fingerprint = coalesce(input_fingerprint, $5),
+               accepted_revision = coalesce(accepted_revision, $6)
+           WHERE pool_id = $2::uuid AND (season = $3::int OR season IS NULL) AND week_number = $4::int;`,
+          JSON.stringify(auditSnapshot),
+          pool.id,
+          season,
+          weekNumber,
+          options.inputFingerprint || null,
+          options.previewRevision !== undefined ? Number(options.previewRevision) : null
+        );
+      } else {
+        await tx.$queryRawUnsafe(
+          `UPDATE public.weekly_wrapups
+           SET summary = $1::jsonb
+           WHERE pool_id = $2::uuid AND week_number = $3::int;`,
+          JSON.stringify(auditSnapshot),
+          pool.id,
+          weekNumber
+        );
+      }
     } catch {
       // Non-fatal if summary column absent
     }

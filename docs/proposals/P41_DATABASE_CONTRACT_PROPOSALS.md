@@ -14,8 +14,8 @@
 | `games.external_game_id` | `text UNIQUE` | Proposed redundant `event_id` | **No duplicate column**. Uses canonical `external_game_id` directly for ESPN event text IDs (`401872995`..`401873008`). |
 | `games.home_score`, `away_score` | `integer NULL` | Proposed adding duplicate scores | **No duplicate score columns**. Reuses existing `home_score` and `away_score`. |
 | `games.status` | `enum GameStatus` (`SCHEDULED`, `IN_PROGRESS`, `FINAL`, `POSTPONED`, `CANCELED`) | Proposed `source_status text` | **No duplicate status column**. Reuses existing `GameStatus` enum with normalized mappings. |
-| `games` additive columns | None | Ad-hoc definitions | `season int NOT NULL DEFAULT 2026`, `season_type int NOT NULL DEFAULT 2`, `week int NULL`, `observation_time timestamptz NULL`, `manifest_revision int NOT NULL DEFAULT 1`. |
-| Existing 16 `games` rows | 16 rows (`2026_w05_*`) | Risk of ID collision / guessing | **Preserved 100%**. UUIDs intact. `week` set to `5` based on `external_game_id ILIKE '%w05%'`. |
+| `games` additive columns | None | Ad-hoc definitions | `season int NULL`, `season_type int DEFAULT 2 NULL`, `week int NULL`, `observation_time timestamptz NULL`, `manifest_revision int NULL`. Avoids unconditional defaults that silently certify legacy records. |
+| Existing 16 `games` rows | 16 rows (`401872964`..`401872979`) with kickoff dates Oct 4–5, 2026 | Incorrect synthetic `2026_w05_*` predicate | **Preserved 100% untouched**. Retracts synthetic `2026_w05_*` predicate. UUIDs, numeric ESPN text IDs, scores, statuses, and notes intact. Unverified season/week remains strictly `NULL` / unassigned until separately reviewed with source-backed provider evidence. |
 | `pools.id` | `uuid PRIMARY KEY` | Guessed `TEXT` in summary | Strictly typed `uuid REFERENCES public.pools(id)`. |
 | `weekly_submissions` unique key | `weekly_submissions_pool_id_user_id_week_number_key` on `(pool_id, user_id, week_number)` | Guessed `weekly_submissions_pool_id_week_number_user_id_key` | Exact verified name dropped concurrently; replaced with season-aware unique index on `(pool_id, season, season_type, week_number, user_id)`. |
 | Pool settings location | `public.pools.settings` (`jsonb`) | Guessed `public.pool_settings` table | **`public.pool_settings` does NOT exist**. Stored strictly within `pools.settings` JSONB under `season_tiebreaker_config`. |
@@ -29,18 +29,27 @@
 ## Proposal A — Canonical Games & Weekly Slate Manifests DDL
 
 ### 1. Objective
-Add season, season type, week number, and observation provenance to `public.games` without duplicating existing score/status columns. Establish `public.weekly_slate_manifests` for compact durable slate versioning. Preserve internal UUIDs and all 16 existing Week 5 rows.
+Add season, season type, week number, and observation provenance to `public.games` without duplicating existing score/status columns or silently certifying unverified legacy records. Establish `public.weekly_slate_manifests` for compact durable slate versioning. Preserve internal UUIDs and all 16 existing production games records (`401872964` through `401872979`).
+
+> [!IMPORTANT]
+> **PRODUCTION GAMES PRESERVATION & RETRACTION NOTICE (2026-10-18)**
+> 1. **Retraction**: The earlier draft statement that the 16 existing games records use synthetic `2026_w05_*` identifiers is **EXPLICITLY RETRACTED**.
+> 2. **Live Facts**: Production contains 16 rows with numeric ESPN-style text identifiers `401872964` through `401872979`. Stored kickoffs are October 4, 2026 (15 rows) and October 5, 2026 (1 row). Zero rows match `external_game_id ILIKE '2026_w05_%'`.
+> 3. **Preservation**: The earlier proposed `UPDATE public.games SET week = 5 ... WHERE external_game_id ILIKE '2026_w05_%'` is **DELETED**. Unverified historical records are NOT classified solely from kickoff dates or ID ranges.
+> 4. **Nullable Provenance**: The additive columns `season`, `week`, and `manifest_revision` are added as **NULLABLE** without unconditional NOT NULL defaults that would silently certify legacy records. Their values remain `NULL` (unassigned) until separately reviewed with source-backed provider evidence.
+> 5. **Distinction**: Canonical slate entries (e.g. Week 6) are distinguished in queries by explicit criteria: `WHERE season = 2026 AND week = 6 AND manifest_revision IS NOT NULL`.
 
 ### 2. DDL Specification (Nonexecuted)
 ```sql
 -- Step 1: Add additive columns to public.games
 -- Existing home_score, away_score, status, and external_game_id are preserved directly.
+-- Columns remain nullable so legacy unclassified records are not falsely certified.
 ALTER TABLE public.games
-  ADD COLUMN IF NOT EXISTS season integer DEFAULT 2026 NOT NULL,
-  ADD COLUMN IF NOT EXISTS season_type integer DEFAULT 2 NOT NULL,
+  ADD COLUMN IF NOT EXISTS season integer NULL,
+  ADD COLUMN IF NOT EXISTS season_type integer DEFAULT 2 NULL,
   ADD COLUMN IF NOT EXISTS week integer NULL,
   ADD COLUMN IF NOT EXISTS observation_time timestamptz NULL,
-  ADD COLUMN IF NOT EXISTS manifest_revision integer DEFAULT 1 NOT NULL;
+  ADD COLUMN IF NOT EXISTS manifest_revision integer NULL;
 
 -- Step 2: Performance & scope indexes on public.games
 CREATE INDEX CONCURRENTLY IF NOT EXISTS games_season_week_idx
@@ -49,12 +58,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS games_season_week_idx
 CREATE INDEX CONCURRENTLY IF NOT EXISTS games_external_id_canonical_idx
   ON public.games (external_game_id);
 
--- Step 3: Classify existing 16 Week 5 games safely
-UPDATE public.games
-SET week = 5, season = 2026, season_type = 2
-WHERE external_game_id ILIKE '2026_w05_%' AND week IS NULL;
-
--- Step 4: Compact durable weekly manifest table (League-Wide Canonical Slate)
+-- Step 3: Compact durable weekly manifest table (League-Wide Canonical Slate)
 CREATE TABLE IF NOT EXISTS public.weekly_slate_manifests (
   season integer NOT NULL,
   season_type integer NOT NULL DEFAULT 2,
@@ -82,6 +86,33 @@ CREATE POLICY "Allow service role manage slate manifests"
   USING (true)
   WITH CHECK (true);
 ```
+
+### 3. Target Prisma Model Alignment
+To ensure all reads cleanly distinguish legacy unclassified games from accepted canonical slate entries:
+```prisma
+model Game {
+  id                String     @id @default(uuid()) @db.Uuid
+  externalGameId    String     @unique @map("external_game_id")
+  homeTeamId        String     @map("home_team_id")
+  awayTeamId        String     @map("away_team_id")
+  kickoffTime       DateTime   @map("kickoff_time")
+  status            GameStatus @default(SCHEDULED)
+  homeScore         Int?       @map("home_score")
+  awayScore         Int?       @map("away_score")
+  commissionerNotes String?    @map("commissioner_notes")
+  season            Int?       @map("season")
+  seasonType        Int?       @default(2) @map("season_type")
+  week              Int?       @map("week")
+  observationTime   DateTime?  @map("observation_time")
+  manifestRevision  Int?       @map("manifest_revision")
+  picks             Pick[]
+
+  @@index([season, seasonType, week])
+  @@map("games")
+}
+```
+All affected application queries must filter canonical slate entries explicitly:
+`where: { season: 2026, week: targetWeek, manifestRevision: { not: null } }`. Unclassified historical records (`season IS NULL` / `week IS NULL`) remain safely isolated from weekly slate operations.
 
 ### 3. Alternative Pool-Scoped Manifest DDL (If custom pool windows are enabled)
 ```sql
@@ -373,7 +404,7 @@ USING (
     AND EXISTS (
       SELECT 1 FROM public.games g
       WHERE (g.external_game_id = picks.game_id OR g.id::text = picks.game_id)
-        AND g.kickoff_time <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
+        AND g.kickoff_time <= now()
     )
   )
 );
@@ -393,7 +424,7 @@ WITH CHECK (
   AND EXISTS (
     SELECT 1 FROM public.games g
     WHERE (g.external_game_id = picks.game_id OR g.id::text = picks.game_id)
-      AND g.kickoff_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
+      AND g.kickoff_time > now()
   )
 );
 
@@ -412,7 +443,7 @@ USING (
   AND EXISTS (
     SELECT 1 FROM public.games g
     WHERE (g.external_game_id = picks.game_id OR g.id::text = picks.game_id)
-      AND g.kickoff_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
+      AND g.kickoff_time > now()
   )
 )
 WITH CHECK (
@@ -428,7 +459,7 @@ USING (
   AND EXISTS (
     SELECT 1 FROM public.games g
     WHERE (g.external_game_id = picks.game_id OR g.id::text = picks.game_id)
-      AND g.kickoff_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
+      AND g.kickoff_time > now()
   )
 );
 
@@ -463,7 +494,7 @@ BEGIN
     RAISE EXCEPTION 'FAIL_CLOSED: Game % not found or kickoff undefined', NEW.game_id;
   END IF;
 
-  IF (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') >= v_kickoff THEN
+  IF now() >= v_kickoff THEN
     RAISE EXCEPTION 'KICKOFF_LOCKED: Pick submission closed at %', v_kickoff;
   END IF;
 
@@ -476,4 +507,80 @@ CREATE TRIGGER trg_check_pick_kickoff_and_immutability
   BEFORE INSERT OR UPDATE ON public.picks
   FOR EACH ROW
   EXECUTE FUNCTION public.check_pick_kickoff_and_immutability();
+
+-- Step 7: Revoke unauthorized mutations on public.games from anon and authenticated
+REVOKE INSERT, UPDATE, DELETE ON public.games FROM anon, authenticated;
+GRANT SELECT ON public.games TO anon, authenticated;
+```
+
+---
+
+## 6. Staged Production Cutover & Security-Preserving Forward Recovery Plan
+
+### 6.1 Cutover Staging & Architectural Prerequisites
+The cutover must follow a strict non-destructive, staged progression:
+
+```
+Stage 1: Preflight Verification & Additive Schema (Proposals A, D part 1)
+               ↓
+Stage 2: Concurrent Replacement Indexes & Submission Constraint Transition (Proposals C, D part 2)
+               ↓
+Stage 3: Separately Approved Canonical Games Import (Proposal B)
+               ↓
+Stage 4: Application Cutover (Deploy New Application Code)
+               ↓
+Stage 5: RLS Security Cutover (Proposal E — Atomic Drop Old & Grant Granular Policies)
+```
+
+#### Detailed Stage Specifications:
+
+1. **Stage 1: Preflight Verification & Additive Schema (Proposals A & D part 1)**
+   - *Transactional DDL block*:
+     - `ALTER TABLE public.games ADD COLUMN IF NOT EXISTS season integer NULL, ADD COLUMN IF NOT EXISTS season_type integer DEFAULT 2 NULL, ADD COLUMN IF NOT EXISTS week integer NULL, ADD COLUMN IF NOT EXISTS observation_time timestamptz NULL, ADD COLUMN IF NOT EXISTS manifest_revision integer NULL;`
+     - `CREATE TABLE IF NOT EXISTS public.weekly_slate_manifests (...)` + RLS + grants.
+     - `CREATE TABLE IF NOT EXISTS public.weekly_wrapups (...)` + RLS + grants.
+     - `ALTER TABLE public.penalty_ledger ADD COLUMN IF NOT EXISTS season integer DEFAULT 2026 NOT NULL, ADD COLUMN IF NOT EXISTS settlement_attribution text NULL;`
+   - *Application Compatibility*: Existing releases (v41/v73) operate with 100% compatibility because all new columns are nullable or have defaults.
+   - *Settlement Invariant*: Official settlement fails closed (`CLAIM_STORE_UNAVAILABLE` or `AUTHORITATIVE_SLATE_UNAVAILABLE`) until a verified slate manifest and canonical games exist.
+   - *Recovery*: If Stage 1 fails during execution, transaction rolls back automatically before commit. Once committed, additive columns and empty tables are harmless and do not need to be dropped.
+
+2. **Stage 2: Concurrent Replacement Indexes & Submission Constraint Transition (Proposal C & Proposal D part 2)**
+   - *Non-transactional / Concurrent Index DDL* (executed individually outside multi-statement transactions):
+     - `ALTER TABLE public.weekly_submissions ADD COLUMN IF NOT EXISTS season integer DEFAULT 2026 NOT NULL, ADD COLUMN IF NOT EXISTS season_type integer DEFAULT 2 NOT NULL;`
+     - `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS weekly_submissions_pool_season_week_user_idx ON public.weekly_submissions (pool_id, season, season_type, week_number, user_id);`
+     - Verify index validity: `SELECT indisvalid FROM pg_index WHERE indexrelid = 'weekly_submissions_pool_season_week_user_idx'::regclass;`
+     - `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_penalty_ledger_settlement_unique ON public.penalty_ledger (pool_id, user_id, season, week_number) WHERE reason LIKE 'WEEKLY_SETTLEMENT%' OR reason LIKE 'DEAD_PLACE_MONARCH%';`
+     - Verify validity.
+     - Atomically drop legacy constraint: `ALTER TABLE public.weekly_submissions DROP CONSTRAINT IF EXISTS weekly_submissions_pool_id_user_id_week_number_key;`
+     - Attach table constraint: `ALTER TABLE public.weekly_submissions ADD CONSTRAINT weekly_submissions_pool_season_week_user_key UNIQUE USING INDEX weekly_submissions_pool_season_week_user_idx;`
+   - *Duplicate-Write Protection*: The new index is built concurrently while the old constraint remains active; the transition is gapless.
+   - *Recovery*: If concurrent index build fails (e.g. deadlocks), drop the invalid index concurrently (`DROP INDEX CONCURRENTLY`) and re-run. Do not drop existing submission rows.
+
+3. **Stage 3: Separately Approved Canonical Games Import (Proposal B)**
+   - *Audited Data Operation*:
+     - Synchronize authoritative 14 NFL events for Week 6 (`401872995`..`401873008`) from verified ESPN provider capture.
+     - Legacy 16 records (`401872964`..`401872979`) are untouched (0 modifications, verified by row hash pre/post check).
+     - Joins all 80 existing Week 6 test picks across 9 events.
+   - *Recovery*: If import fails, transaction rolls back. If an event has incorrect kickoff, update via authoritative provider reconciliation, not destructive row deletion.
+
+4. **Stage 4: Application Cutover (Deploy New Application Code)**
+   - Deploy backend and client code.
+   - New code validates manifests, uses season-aware submission keys, and binds wrapup engine to composite keys.
+   - All direct pick saves from client continue using existing Supabase client path with `(pool_id, user_id, game_id)`.
+
+5. **Stage 5: RLS Security Cutover (Proposal E)**
+   - *Atomic RLS Replacement*:
+     - Execute inside single DDL script:
+       - Drop old policies: `DROP POLICY IF EXISTS "Allow authenticated read picks" ON public.picks; DROP POLICY IF EXISTS "Allow user upsert own picks" ON public.picks;`
+       - Create new granular policies: `picks_select_pool_member_policy`, `picks_insert_policy`, `picks_update_policy`, `picks_delete_policy`.
+       - Create immutability and kickoff trigger guard `trg_check_pick_kickoff_and_immutability`.
+       - Issue schema reload: `NOTIFY pgrst, 'reload schema';`
+   - *Zero Permissive OR Window*: The old policies are dropped and new policies created in the same transaction block, eliminating any window where an insecure permissive OR policy exists.
+   - *Preservation*: Member picks submitted before kickoff are accepted; member picks submitted after kickoff fail closed; other members cannot read unkicked picks.
+
+### 6.2 Security-Preserving Forward Recovery Invariants
+- **No Insecure Rollback**: In the event of an operational anomaly after Stage 5, the system must **NEVER** reinstate `Allow authenticated read picks` (`FOR SELECT USING (true)`) or `Allow user upsert own picks` (which lacked kickoff guards). Doing so would re-open pre-kickoff opponent pick leakage and post-kickoff modification escapes.
+- **No Destructive Drops**: Tables (`weekly_wrapups`, `weekly_slate_manifests`), columns (`season`, `week`), manifests, accepted picks, or committed settlement entries containing user or financial state are **NEVER DROPPED**.
+- **Financial & Settlement Invariance**: Committed settlement markers in `weekly_wrapups` are permanent. If an erroneous settlement must be compensated, reviewed offsetting reversal entries are inserted into `penalty_ledger` (`delta = -original_delta` with audit reason).
+- **Stop Condition Supremacy**: Any operational condition requiring unvetted destructive reversal SQL is an immediate **STOP CONDITION**.
 ```
