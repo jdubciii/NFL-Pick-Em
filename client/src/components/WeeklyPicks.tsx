@@ -819,7 +819,12 @@ export const WeeklyPicks: React.FC = () => {
 
   const formatKickoff = (isoString: string) => formatGameKickoff(isoString);
 
-  const isGameKickoffLocked = (g: GameItem) => isKickoffLocked(g.kickoffTime || (g as any).kickoff_time, now);
+  const isGameKickoffLocked = (g: GameItem): boolean => {
+    if (g.status === 'IN_PROGRESS' || g.status === 'FINAL' || g.gameStatus === 'LIVE' || g.gameStatus === 'FINAL' || g.isLive) {
+      return true;
+    }
+    return isKickoffLocked(g.kickoffTime || (g as any).kickoff_time, now);
+  };
   const allLocked = games.length > 0 && games.every(g => isGameKickoffLocked(g));
   const lockedCount = games.filter(g => isGameKickoffLocked(g)).length;
   const openCount = games.length - lockedCount;
@@ -910,7 +915,7 @@ export const WeeklyPicks: React.FC = () => {
       {isPicksProtected && (
         <div className="mx-4 mt-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-200 text-xs font-mono flex items-center justify-between gap-3 shadow-md">
           <div className="flex items-center gap-2">
-            <span>🛡️ Accidental-Edit Guard Active: Your {Object.keys(userPicks).filter((k) => Boolean(userPicks[k])).length || games.length} submitted picks are counted in the pool. Tap 'Unlock to Edit' to change any game whose official kickoff has not passed ({games.filter((g) => isKickoffLocked(g.kickoffTime)).length} of {games.length} kickoff-locked).</span>
+            <span>🛡️ Accidental-Edit Guard Active: Your {Object.keys(userPicks).filter((k) => Boolean(userPicks[k])).length || games.length} submitted picks are counted in the pool. Tap 'Unlock to Edit' to change any game whose official kickoff has not passed ({lockedCount} of {games.length} kickoff-locked).</span>
           </div>
           <button
             onClick={togglePicksProtection}

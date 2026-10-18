@@ -149,6 +149,12 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
         </span>
       </div>
 
+      {!isSettled && (
+        <div className="text-[10px] text-slate-400 px-1 font-mono">
+          Provisional projection based on live Sunday Sweat standings. Official penalties assign upon Monday Night settlement.
+        </div>
+      )}
+
       {/* 1. Safe Haven (0 shots) */}
       <div className="space-y-1.5">
         <div className="flex justify-between items-center px-1">
@@ -163,11 +169,11 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
             className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-900 flex items-center justify-between text-xs text-slate-300"
           >
             <div className="flex items-center gap-2">
-              <span className="font-black text-emerald-400">#{m.rank}</span>
+              <span className="font-black text-emerald-400">{m.displayRank || `#${m.rank}`}</span>
               <span className="font-bold">{m.userName || m.name}</span>
             </div>
             <span className="text-[10px] text-emerald-400 font-bold">
-              {isSettled ? (m.status || 'CLEARED (SAFE)') : 'PROJECTED SAFE'}
+              {isSettled ? (m.status || 'CLEARED (SAFE)') : (m.status || 'PROJECTED SAFE')}
             </span>
           </div>
         ))}
@@ -188,7 +194,7 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
               className="p-2.5 rounded-xl bg-slate-900/80 border border-amber-500/30 flex items-center justify-between text-xs"
             >
               <div className="flex items-center gap-2">
-                <span className="font-bold text-amber-400">#{m.rank}</span>
+                <span className="font-bold text-amber-400">{m.displayRank || `#${m.rank}`}</span>
                 <span className="font-semibold text-slate-200">{m.userName}</span>
               </div>
               <div className="flex items-center gap-2">
@@ -217,7 +223,7 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
               className="p-2.5 rounded-xl bg-rose-950/20 border border-rose-500/40 flex items-center justify-between text-xs"
             >
               <div className="flex items-center gap-2">
-                <span className="font-bold text-rose-400">#{m.rank}</span>
+                <span className="font-bold text-rose-400">{m.displayRank || `#${m.rank}`}</span>
                 <span className="font-semibold text-slate-100">{m.userName}</span>
               </div>
               <div className="flex items-center gap-2">
@@ -243,7 +249,9 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
               <div className="flex items-center gap-2">
                 <span className="text-lg">💀</span>
                 <div>
-                  <p className="text-sm font-black text-white">{pitMember.userName || 'No Unsettled Penalties'}</p>
+                  <p className="text-sm font-black text-white">
+                    {pitMember.displayRank ? `${pitMember.displayRank} ` : (pitMember.rank ? `#${pitMember.rank} ` : '')}{pitMember.userName || 'No Unsettled Penalties'}
+                  </p>
                   <p className="text-[9px] text-rose-300 font-bold uppercase">
                     DEAD PLACE MONARCH
                   </p>

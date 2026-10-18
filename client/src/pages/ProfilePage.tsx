@@ -252,17 +252,43 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const [adjudicatingId, setAdjudicatingId] = useState<string | null>(null);
   const [statusFeedback, setStatusFeedback] = useState<string | null>(null);
 
-  // Opt-in Deadline Reminder State
+  // Opt-in Deadline Reminder State (User-scoped storage)
+  const getUserAlertKey = (userId?: string) => userId ? `pickem_deadline_alerts_opted_in_${userId}` : 'pickem_deadline_alerts_opted_in';
+
   const [alertsOptedIn, setAlertsOptedIn] = useState<boolean>(() => {
     try {
-      const stored = localStorage.getItem('pickem_deadline_alerts_opted_in');
-      return stored !== null ? stored === 'true' : true;
+      // Defer to initial user storage if present, default to false so prompt is triggered
+      const key = typeof window !== 'undefined' && (window as any).__ACTIVE_USER_ID__ 
+        ? getUserAlertKey((window as any).__ACTIVE_USER_ID__) 
+        : 'pickem_deadline_alerts_opted_in';
+      const stored = localStorage.getItem(key);
+      return stored !== null ? stored === 'true' : false;
     } catch {
-      return true;
+      return false;
     }
   });
+
   const [permissionState, setPermissionState] = useState<'GRANTED' | 'DENIED' | 'PROMPT_REQUIRED'>('PROMPT_REQUIRED');
   const [testNotificationBanner, setTestNotificationBanner] = useState<string | null>(null);
+
+  // Sync user-specific opt-in preference when user context is authenticated
+  useEffect(() => {
+    if (!user?.id) return;
+    try {
+      const stored = localStorage.getItem(getUserAlertKey(user.id));
+      if (stored !== null) {
+        const isOpted = stored === 'true';
+        setAlertsOptedIn(isOpted);
+        if (isOpted) {
+          if (typeof window !== 'undefined' && 'Notification' in window) {
+            setPermissionState(Notification.permission === 'granted' ? 'GRANTED' : Notification.permission === 'denied' ? 'DENIED' : 'PROMPT_REQUIRED');
+          } else {
+            setPermissionState('GRANTED');
+          }
+        }
+      }
+    } catch {}
+  }, [user?.id]);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && 'Notification' in window) {
@@ -276,11 +302,46 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     }
   }, []);
 
-  const handleToggleOptIn = (val: boolean) => {
-    setAlertsOptedIn(val);
-    try {
-      localStorage.setItem('pickem_deadline_alerts_opted_in', String(val));
-    } catch {}
+  const handleToggleOptIn = async (val: boolean) => {
+    if (val) {
+      let resolvedPerm: 'GRANTED' | 'DENIED' | 'PROMPT_REQUIRED' = 'GRANTED';
+      if (typeof window !== 'undefined' && 'Notification' in window) {
+        try {
+          const res = await Notification.requestPermission();
+          if (res === 'granted') {
+            resolvedPerm = 'GRANTED';
+          } else if (res === 'denied') {
+            resolvedPerm = 'DENIED';
+          } else {
+            resolvedPerm = 'PROMPT_REQUIRED';
+          }
+        } catch (err) {
+          console.warn('Notification permission request error:', err);
+          resolvedPerm = 'GRANTED';
+        }
+      } else {
+        // In native Android WebView without window.Notification, treat explicit user opt-in as granted
+        resolvedPerm = 'GRANTED';
+      }
+
+      setPermissionState(resolvedPerm);
+      const isGranted = resolvedPerm === 'GRANTED';
+      setAlertsOptedIn(isGranted);
+      try {
+        localStorage.setItem(getUserAlertKey(user?.id), String(isGranted));
+      } catch {}
+
+      if (isGranted) {
+        setTestNotificationBanner('Kickoff deadline alerts scheduled! Pre-lock window reminders scheduled ~60m before kickoff.');
+      } else if (resolvedPerm === 'DENIED') {
+        setTestNotificationBanner('OS Notification permission denied. Please allow notifications in device application settings.');
+      }
+    } else {
+      setAlertsOptedIn(false);
+      try {
+        localStorage.setItem(getUserAlertKey(user?.id), 'false');
+      } catch {}
+    }
   };
 
   const handleCancelAllAlerts = () => {

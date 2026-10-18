@@ -11,6 +11,8 @@ import {
 } from '../services/seasonStoryService';
 import { WeeklyRecapCardView } from '../components/shame/WeeklyRecapCardView';
 import { fetchLiveNFLScores, LiveGame } from '../services/liveScoreService';
+import { calculateProvisionalStandings } from '../services/sweatProjectionService';
+import { scopedExpressFetch } from '../lib/apiClient';
 
 export function WallOfShamePage() {
   const { user } = useAuth();
@@ -57,65 +59,161 @@ export function WallOfShamePage() {
           .eq('pool_id', activePoolId);
 
         const penaltiesByUser = new Map<string, any[]>();
+        let hasSettledPenalties = false;
         if (penalties && penalties.length > 0) {
           for (const p of penalties) {
             const list = penaltiesByUser.get(p.user_id) || [];
             list.push(p);
             penaltiesByUser.set(p.user_id, list);
+            if (Number(p.delta || 0) > 0) {
+              hasSettledPenalties = true;
+            }
           }
         }
 
         if (members && members.length > 0 && isMounted) {
-          const mappedLadder = members.map((m: any, idx: number) => {
-            const u = m.users;
-            let displayName = u?.display_name || (u?.email ? u.email.split('@')[0] : m.user_id);
-            if (m.role === 'COMMISSIONER' || m.role === 'ADMIN') {
-              displayName = `${displayName} (Commissioner)`;
-            }
+          if (hasSettledPenalties) {
+            const mappedLadder = members.map((m: any, idx: number) => {
+              const u = m.users;
+              let displayName = u?.display_name || (u?.email ? u.email.split('@')[0] : m.user_id);
+              if (m.role === 'COMMISSIONER' || m.role === 'ADMIN') {
+                displayName = `${displayName} (Commissioner)`;
+              }
 
-            const userPenalties = penaltiesByUser.get(m.user_id) || [];
-            const totalDebt = userPenalties.reduce((sum, p) => sum + Number(p.delta || 0), 0);
+              const userPenalties = penaltiesByUser.get(m.user_id) || [];
+              const totalDebt = userPenalties.reduce((sum, p) => sum + Number(p.delta || 0), 0);
 
-            // For any active member who does not yet have penalty debt recorded in penalty_ledger:
-            // Default their record to 0.00s shot debt, status: 'CLEARED (SAFE)', and tier: 'SAFE HAVEN'
-            if (totalDebt <= 0) {
+              if (totalDebt <= 0) {
+                return {
+                  rank: 1,
+                  displayRank: '#1',
+                  userId: m.user_id,
+                  userName: displayName,
+                  name: displayName,
+                  shots: '0 shots',
+                  penaltyShots: 0,
+                  status: 'CLEARED (SAFE)',
+                  fsmDisplayStatus: 'Safe Haven',
+                  tier: 'SAFE HAVEN',
+                };
+              }
+
+              let tier = 'DANGER_LOW';
+              let status = 'Settled';
+              if (totalDebt >= 2.5) {
+                tier = 'PIT';
+                status = 'Awaiting Video';
+              } else if (totalDebt >= 2.0) {
+                tier = 'DANGER_HIGH';
+                status = 'High Risk';
+              }
+
               return {
-                rank: 1,
+                rank: idx + 1,
+                displayRank: `#${idx + 1}`,
                 userId: m.user_id,
                 userName: displayName,
                 name: displayName,
-                shots: '0 shots',
-                penaltyShots: 0,
-                status: 'CLEARED (SAFE)',
-                fsmDisplayStatus: 'Safe Haven',
-                tier: 'SAFE HAVEN',
+                shots: formatShotUnit(totalDebt),
+                penaltyShots: totalDebt,
+                status,
+                fsmDisplayStatus: status,
+                tier,
               };
-            }
+            });
 
-            let tier = 'DANGER_LOW';
-            let status = 'Settled';
-            if (totalDebt >= 2.5) {
-              tier = 'PIT';
-              status = 'Awaiting Video';
-            } else if (totalDebt >= 2.0) {
-              tier = 'DANGER_HIGH';
-              status = 'High Risk';
-            }
+            setLadderData(mappedLadder);
+          } else {
+            // Live / provisional week: compute exact provisional sweat standings
+            const { data: dbPicks } = await supabase
+              .from('picks')
+              .select('user_id, matchup_id, game_id, selected_team, week')
+              .eq('pool_id', activePoolId)
+              .eq('week', 6);
 
-            return {
-              rank: idx + 1,
-              userId: m.user_id,
-              userName: displayName,
-              name: displayName,
-              shots: formatShotUnit(totalDebt),
-              penaltyShots: totalDebt,
-              status,
-              fsmDisplayStatus: status,
-              tier,
-            };
-          });
+            let gamesList: any[] = [];
+            try {
+              const matrixRes = await scopedExpressFetch(`/api/pools/${activePoolId}/matrix?week_no=6`);
+              if (matrixRes.ok) {
+                const matrix = await matrixRes.json();
+                if (matrix.rows && matrix.rows.length > 0) {
+                  gamesList = matrix.rows.map((row: any) => ({
+                    id: row.game_id,
+                    homeTeam: row.home_team_id,
+                    awayTeam: row.away_team_id,
+                    spread: row.spread,
+                    kickoffTime: row.kickoff_time,
+                  }));
+                }
+              }
+            } catch (_) {}
 
-          setLadderData(mappedLadder);
+            const mappedMembers = members.map((m: any) => {
+              const u = m.users;
+              let displayName = u?.display_name || (u?.email ? u.email.split('@')[0] : m.user_id);
+              if (m.role === 'COMMISSIONER' || m.role === 'ADMIN') {
+                displayName = `${displayName} (Commissioner)`;
+              }
+              return { id: m.user_id, name: displayName };
+            });
+
+            const userPicks = (dbPicks || []).map((p: any) => ({
+              userId: p.user_id,
+              gameId: String(p.game_id || p.matchup_id),
+              selectedTeam: p.selected_team,
+              isSubmitted: true,
+              isHidden: false,
+            }));
+
+            const standings = calculateProvisionalStandings(
+              mappedMembers,
+              gamesList,
+              liveScores,
+              userPicks
+            );
+
+            const mappedLadder = standings.map((entry) => {
+              let tier = 'DANGER_LOW';
+              let status = `${entry.projectedPenalty.toFixed(2)} Shots`;
+              let fsmDisplayStatus = 'Provisional';
+
+              if (entry.tier === 'SAFE_HAVEN') {
+                tier = 'SAFE HAVEN';
+                status = 'PROJECTED SAFE';
+                fsmDisplayStatus = 'Safe Haven';
+              } else if (entry.tier === 'DANGER_ZONE') {
+                tier = 'DANGER_LOW';
+                status = 'Projected 1.00 Shot';
+                fsmDisplayStatus = 'Danger Zone';
+              } else if (entry.tier === 'THE_DROP') {
+                tier = 'DANGER_HIGH';
+                status = 'Projected 2.00 Shots';
+                fsmDisplayStatus = 'The Drop';
+              } else if (entry.tier === 'PIT') {
+                tier = 'PIT';
+                status = 'Projected Dead Place';
+                fsmDisplayStatus = 'Dead Place Monarch';
+              }
+
+              const rankStr = entry.isTied ? `T-#${entry.provisionalRank}` : `#${entry.provisionalRank}`;
+
+              return {
+                rank: entry.provisionalRank,
+                displayRank: rankStr,
+                userId: entry.userId,
+                userName: entry.userName,
+                name: entry.userName,
+                shots: `${entry.projectedPenalty.toFixed(2)} shots`,
+                penaltyShots: entry.projectedPenalty,
+                status,
+                fsmDisplayStatus,
+                tier,
+                points: entry.totalProvisionalPoints,
+              };
+            });
+
+            setLadderData(mappedLadder);
+          }
         }
       } catch (err) {
         console.error('Failed to load ladder data:', err);
@@ -126,7 +224,7 @@ export function WallOfShamePage() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [liveScores]);
 
   const currentUserId = user?.id || 'viewer';
   const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
@@ -175,6 +273,21 @@ export function WallOfShamePage() {
             : liveScores.some((g) => ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()))
             ? 'GAMES LIVE'
             : 'PRE-KICKOFF'
+        }
+        rightContent={
+          activeTab === 'infamy' ? (
+            <div className="px-2 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/15 text-amber-400 font-bold text-[10px]">
+              <span>AUDITED</span>
+            </div>
+          ) : liveScores.length > 0 && liveScores.every((g) => (g.status || '').toUpperCase() === 'FINAL') ? (
+            <div className="px-2 py-0.5 rounded-full border border-zinc-700 bg-zinc-800 text-zinc-400 font-bold text-[10px]">
+              <span>WEEK 6 FINAL</span>
+            </div>
+          ) : (
+            <div className="px-2 py-0.5 rounded-full border border-cyan-500/30 bg-cyan-500/15 text-cyan-400 font-bold text-[10px]">
+              <span>PROVISIONAL</span>
+            </div>
+          )
         }
       />
 

@@ -202,13 +202,7 @@ export const MatrixPage: React.FC = () => {
     }
   }, [allGamesUpcoming, selectedWeek]);
 
-  const [selectedRivalId, setSelectedRivalId] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem('pickem_selected_rival_id');
-    } catch (_) {
-      return null;
-    }
-  });
+  const [selectedRivalId, setSelectedRivalId] = useState<string | null>(null);
 
   const handleSelectRival = (rivalId: string | null) => {
     setSelectedRivalId(rivalId);
@@ -220,13 +214,6 @@ export const MatrixPage: React.FC = () => {
       }
     } catch (_) {}
   };
-
-  useEffect(() => {
-    const rivals = poolMembers.filter((u) => u.userId !== currentUserId);
-    if (rivals.length === 1 && !selectedRivalId) {
-      handleSelectRival(rivals[0].userId);
-    }
-  }, [poolMembers, currentUserId, selectedRivalId]);
 
   const [expandedTugGameId, setExpandedTugGameId] = useState<string | null>(null);
   const [showTopologyToast, setShowTopologyToast] = useState<boolean>(true);
@@ -311,6 +298,12 @@ export const MatrixPage: React.FC = () => {
                 WEEK {selectedWeek} FINAL
               </div>
             </div>
+          ) : isSlateLocked ? (
+            <div className="flex items-center gap-1.5">
+              <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-zinc-700 bg-zinc-800 text-zinc-400">
+                SLATE LOCKED
+              </div>
+            </div>
           ) : (
             <div className="flex items-center gap-1.5">
               <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-cyan-500/30 bg-cyan-500/15 text-cyan-400">
@@ -359,7 +352,10 @@ export const MatrixPage: React.FC = () => {
         {/* Segmented Controller: Preserving Gametrack */}
         <div className="flex gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800 text-[11px] font-bold">
           <button
-            onClick={() => setActiveTab('LEVERAGE')}
+            onClick={() => {
+              setSelectedRivalId(null);
+              setActiveTab('LEVERAGE');
+            }}
             className={`px-2.5 py-1 rounded transition ${
               activeTab === 'LEVERAGE'
                 ? 'bg-cyan-600 text-white shadow-sm'

@@ -1053,7 +1053,10 @@ export function resolveCanonicalGameKickoff(game?: CanonicalGameKickoffInput | n
     };
   }
 
-  const d = new Date(rawKickoff);
+  const rawStr = String(rawKickoff).trim();
+  const hasTz = rawStr.endsWith('Z') || /[+-]\d{2}(?::?\d{2})?$/.test(rawStr);
+  const normalizedCandidate = hasTz ? rawStr : `${rawStr}Z`;
+  const d = new Date(normalizedCandidate);
   if (isNaN(d.getTime())) {
     return {
       status: 'UNAVAILABLE',
