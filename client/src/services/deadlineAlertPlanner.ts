@@ -37,6 +37,8 @@ export interface DeadlinePlannerResult {
   toCancelIds: string[];
   unchangedIds: string[];
   statusSummary: string;
+  isUnavailable?: boolean;
+  unresolvedEventCount?: number;
 }
 
 function deterministicNumericId(key: string): number {
@@ -52,12 +54,14 @@ export function planDeadlineReminders(params: {
   userId: string | null | undefined;
   poolId: string | null | undefined;
   season?: number;
+  seasonType?: number;
   week: number;
   optInEnabled: boolean;
   permissionState: 'GRANTED' | 'DENIED' | 'PROMPT_REQUIRED';
   isSlateSubmitted: boolean;
   isSimulation?: boolean;
   isFixtureData?: boolean;
+  hasAcceptedSlate?: boolean;
   nowMs?: number;
   leadMinutes?: number;
   games: DeadlineGameWindowInput[];
@@ -65,6 +69,20 @@ export function planDeadlineReminders(params: {
 }): DeadlinePlannerResult {
   const existingIds = params.existingScheduledIds || [];
   const season = params.season ?? 2026;
+
+  // Without an accepted weekly slate, return an unavailable reminder state and create no ordinary reminder plan
+  if (params.hasAcceptedSlate === false || !params.games || params.games.length === 0) {
+    return {
+      isEnabled: Boolean(params.optInEnabled && params.permissionState === 'GRANTED'),
+      permissionState: params.permissionState,
+      toSchedule: [],
+      toCancelIds: [...existingIds],
+      unchangedIds: [],
+      statusSummary: 'No accepted weekly slate available — deadline reminder planning unavailable.',
+      isUnavailable: true,
+      unresolvedEventCount: 0,
+    };
+  }
 
   // Cancel all if logged out, pool invalid, opted out, permission denied, simulation, fixture, or slate already submitted
   if (
@@ -91,6 +109,8 @@ export function planDeadlineReminders(params: {
       toCancelIds: [...existingIds],
       unchangedIds: [],
       statusSummary: reason,
+      isUnavailable: false,
+      unresolvedEventCount: 0,
     };
   }
 
@@ -99,8 +119,14 @@ export function planDeadlineReminders(params: {
 
   // Group valid future scheduled games by exact kickoff minute ISO
   const groups = new Map<string, DeadlineGameWindowInput[]>();
+  let unresolvedCount = 0;
 
   for (const g of params.games) {
+    if (!g.gameId || !g.kickoffIso || !g.awayTeam || !g.homeTeam) {
+      unresolvedCount++;
+      continue;
+    }
+
     const rawStatus = (g.status || 'SCHEDULED').toUpperCase().trim();
     if (
       rawStatus === 'FINAL' ||
@@ -112,9 +138,12 @@ export function planDeadlineReminders(params: {
     ) {
       continue;
     }
-    if (!g.kickoffIso) continue;
     const koMs = new Date(g.kickoffIso).getTime();
-    if (Number.isNaN(koMs) || koMs <= nowMs) continue;
+    if (Number.isNaN(koMs)) {
+      unresolvedCount++;
+      continue;
+    }
+    if (koMs <= nowMs) continue;
 
     // Normalize to minute precision for simultaneous kickoff grouping
     const minuteIso = new Date(Math.floor(koMs / 60000) * 60000).toISOString();
@@ -179,15 +208,20 @@ export function planDeadlineReminders(params: {
   const unchangedIds = existingIds.filter((id) => desiredIdSet.has(id));
   const toSchedule = desiredReminders.filter((r) => !existingIdSet.has(r.reminderId));
 
+  const incompletenessNote = unresolvedCount > 0 ? ` (${unresolvedCount} unresolved event${unresolvedCount === 1 ? '' : 's'} excluded)` : '';
+  const statusSummary =
+    desiredReminders.length > 0
+      ? `${desiredReminders.length} kickoff window reminder${desiredReminders.length === 1 ? '' : 's'} active (~60m before kickoff)${incompletenessNote}`
+      : `No upcoming eligible kickoff windows require reminders${incompletenessNote}`;
+
   return {
     isEnabled: true,
     permissionState: 'GRANTED',
     toSchedule,
     toCancelIds,
     unchangedIds,
-    statusSummary:
-      desiredReminders.length > 0
-        ? `${desiredReminders.length} kickoff window reminder${desiredReminders.length === 1 ? '' : 's'} active (~60m before kickoff)`
-        : 'No upcoming eligible kickoff windows require reminders',
+    statusSummary,
+    isUnavailable: false,
+    unresolvedEventCount: unresolvedCount,
   };
 }

@@ -14,7 +14,7 @@ import { triggerHaptic } from '../utils/haptics';
 import { isKickoffLocked } from '../services/lockEnforcementService';
 import { fetchLiveNFLScores } from '../services/liveScoreService';
 import { getCurrentNFLWeek } from '../services/nflCalendarService';
-import { resolveCanonicalGameKickoff } from '../services/dependableInfoService';
+import { resolveCanonicalGameKickoff, areTeamIdentitiesEquivalent } from '../services/dependableInfoService';
 import type { MatrixResponsePayload } from './LeagueMatrixView';
 import { AppHeader } from './common/AppHeader';
 
@@ -241,6 +241,9 @@ export const WeeklyPicks: React.FC = () => {
           awayTeam: awayAbbr,
           homeTeam: homeAbbr,
           kickoffIso: event.date,
+          season: 2026,
+          seasonType: 2,
+          week: selectedWeek,
         });
 
         return {
@@ -412,7 +415,7 @@ export const WeeklyPicks: React.FC = () => {
     }
 
     setSavingPickForGameId(game.id);
-    const isUnselecting = (userPicks[game.id] || game.userPick) === selectedTeamId;
+    const isUnselecting = areTeamIdentitiesEquivalent(userPicks[game.id] || game.userPick, selectedTeamId);
     const teamToSend = isUnselecting ? null : selectedTeamId;
 
     // 1. Optimistically update local state

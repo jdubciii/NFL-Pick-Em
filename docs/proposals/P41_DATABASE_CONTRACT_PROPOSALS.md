@@ -114,12 +114,13 @@ Synchronize the official 2026 Week 6 NFL schedule from verified ESPN observation
 > 1. Claimed `401872995` was Seattle Seahawks at San Francisco 49ers (`SEA @ SF`), final score 24–20. **RETRACTED**. Genuine live HTTPS ESPN capture (`docs/evidence/P41_ESPN_LIVE_CAPTURE/espn_week6_2026_raw.json`, SHA-256 `f0826e586f9ccef338076212bd96708ae1d0ce007d7500e7208bc45ee29c3bae`) confirms `401872995` is **Seattle Seahawks at Denver Broncos** (`SEA @ DEN`), Final/OT score: DEN 17, SEA 14, kickoff `2026-10-16T00:15:00.000Z`.
 > 2. Inverted home and away teams on games `401872996`..`401873003`.
 > 3. Substituted fabricated non-Week-6 matchups for unpicked events `401873004`..`401873008`.
-> 
+>
 > The table below preserves the historical draft as **SUPERSEDED** and provides the **AUTHORITATIVE LIVE CAPTURE MANIFEST**.
 
 #### Verified Authoritative Candidate Manifest (Live ESPN Capture: 2026-10-18T06:18:25.722Z)
-*Raw Payload SHA-256: `f0826e586f9ccef338076212bd96708ae1d0ce007d7500e7208bc45ee29c3bae`*  
+*Raw Payload SHA-256: `f0826e586f9ccef338076212bd96708ae1d0ce007d7500e7208bc45ee29c3bae`*
 *Manifest Fingerprint: `c72f7e4c7a5579785acd9a4e1e7068f7c7d6bd06144fa531392bf9614ce7ad43`*
+*Team Normalization (Directive 5): Platform code `WAS`, input alias `WSH` -> `WAS`, verified ESPN provider team ID `28`, original provider abbreviation `WSH`.*
 
 | ESPN Event ID | Away Team | Home Team | Canonical Kickoff (UTC) | Status / Score | Saved Pick Count (in 80 picks) | Saved Selected Teams |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -136,7 +137,7 @@ Synchronize the official 2026 Week 6 NFL schedule from verified ESPN observation
 | `401873005` | BUF | LV | 2026-10-18T20:25:00.000Z | SCHEDULED | 0 | Unpicked |
 | `401873006` | LAC | KC | 2026-10-18T20:25:00.000Z | SCHEDULED | 0 | Unpicked |
 | `401873007` | DAL | GB | 2026-10-19T00:20:00.000Z | SCHEDULED (SNF) | 0 | Unpicked |
-| `401873008` | WSH | SF | 2026-10-20T00:15:00.000Z | SCHEDULED (MNF) | 0 | Unpicked |
+| `401873008` | WAS | SF | 2026-10-20T00:15:00.000Z | SCHEDULED (MNF) | 0 | Unpicked (Provider: WSH, ID: 28) |
 | **Total** | | | | | **80 picks** | **100% Resolved & Legitimate** |
 
 *Pick Reconciliation Note*: Every saved pick record (80 out of 80) across all 9 saved events matches an actual participating team of the authoritative ESPN event. There are **0 invalid selected teams** and **0 unresolved event IDs**.
@@ -158,7 +159,7 @@ Synchronize the official 2026 Week 6 NFL schedule from verified ESPN observation
 | `401873005` | DAL | DEN | Fabricated; actual is BUF @ LV |
 | `401873006` | CIN | GB | Fabricated; actual is LAC @ KC |
 | `401873007` | LAR | ARI | Fabricated; actual is DAL @ GB |
-| `401873008` | KC | MIN | Fabricated; actual is WSH @ SF |
+| `401873008` | KC | MIN | Fabricated; actual is WAS @ SF (Provider: WSH) |
 
 ### 3. Preflight, Upsert & Join Verification SQL (Nonexecuted — Production Hold)
 ```sql
@@ -185,7 +186,7 @@ INSERT INTO public.games (
   ('401873005', 'LV',  'BUF', '2026-10-18T20:25:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
   ('401873006', 'KC',  'LAC', '2026-10-18T20:25:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
   ('401873007', 'GB',  'DAL', '2026-10-19T00:20:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
-  ('401873008', 'SF',  'WSH', '2026-10-20T00:15:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6)
+  ('401873008', 'SF',  'WAS', '2026-10-20T00:15:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6)
 ON CONFLICT (external_game_id) DO UPDATE SET
   home_team_id = EXCLUDED.home_team_id,
   away_team_id = EXCLUDED.away_team_id,

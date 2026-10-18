@@ -8,6 +8,7 @@ import {
   applyCommissionerOverride,
   freezeDesignation,
 } from '../services/weeklyDesignationService';
+import { normalizeTeamCode } from '../services/authoritativeSlateService';
 
 export const picksRouter = Router();
 
@@ -75,8 +76,12 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
       return;
     }
 
-    // 3. Validate home/away team selection
-    if (selectedTeamId && selectedTeamId !== game.homeTeamId && selectedTeamId !== game.awayTeamId) {
+    // 3. Validate home/away team selection using normalized comparison
+    const normHome = normalizeTeamCode(game.homeTeamId);
+    const normAway = normalizeTeamCode(game.awayTeamId);
+    const normSelected = selectedTeamId ? normalizeTeamCode(selectedTeamId) : null;
+
+    if (normSelected && normSelected !== normHome && normSelected !== normAway) {
       res.status(400).json({ error: 'Selected team must be the home or away team for this game.' });
       return;
     }
@@ -188,7 +193,11 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
         continue;
       }
 
-      if (selectedTeamId && selectedTeamId !== game.homeTeamId && selectedTeamId !== game.awayTeamId) {
+      const normHome = normalizeTeamCode(game.homeTeamId);
+      const normAway = normalizeTeamCode(game.awayTeamId);
+      const normSelected = selectedTeamId ? normalizeTeamCode(selectedTeamId) : null;
+
+      if (normSelected && normSelected !== normHome && normSelected !== normAway) {
         continue;
       }
 

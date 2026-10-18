@@ -1,5 +1,6 @@
 import React from 'react';
 import { TeamLogo } from '../common/TeamLogo';
+import { areTeamIdentitiesEquivalent } from '../../services/dependableInfoService';
 
 export interface CompactGameRow {
   gameId: string;
@@ -47,11 +48,14 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
               : null
             : null;
 
-        const awayIsWin = isFinal && selected === g.awayTeam && winningTeam === g.awayTeam;
-        const awayIsLoss = isFinal && selected === g.awayTeam && winningTeam !== null && winningTeam !== g.awayTeam;
+        const awaySelected = areTeamIdentitiesEquivalent(selected, g.awayTeam);
+        const homeSelected = areTeamIdentitiesEquivalent(selected, g.homeTeam);
 
-        const homeIsWin = isFinal && selected === g.homeTeam && winningTeam === g.homeTeam;
-        const homeIsLoss = isFinal && selected === g.homeTeam && winningTeam !== null && winningTeam !== g.homeTeam;
+        const awayIsWin = isFinal && awaySelected && areTeamIdentitiesEquivalent(winningTeam, g.awayTeam);
+        const awayIsLoss = isFinal && awaySelected && winningTeam !== null && !areTeamIdentitiesEquivalent(winningTeam, g.awayTeam);
+
+        const homeIsWin = isFinal && homeSelected && areTeamIdentitiesEquivalent(winningTeam, g.homeTeam);
+        const homeIsLoss = isFinal && homeSelected && winningTeam !== null && !areTeamIdentitiesEquivalent(winningTeam, g.homeTeam);
 
         const handleAwayClick = () => {
           if (g.isLocked) {
@@ -84,7 +88,7 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
               disabled={g.isLocked}
               onClick={handleAwayClick}
               className={`flex-1 py-2 px-3 rounded-lg border font-black transition-all flex items-center justify-between ${
-                selected === g.awayTeam
+                awaySelected
                   ? isFinal
                     ? awayIsWin
                       ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300 shadow-md shadow-emerald-500/20 ring-1 ring-emerald-500/50'
@@ -106,7 +110,7 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
                 <span>{g.awayTeam}</span>
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider ml-1">AWAY</span>
               </div>
-              {selected === g.awayTeam && (
+              {awaySelected && (
                 <div>
                   {isFinal ? (
                     awayIsWin ? (
@@ -166,7 +170,7 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
               disabled={g.isLocked}
               onClick={handleHomeClick}
               className={`flex-1 py-2 px-3 rounded-lg border font-black transition-all flex items-center justify-between ${
-                selected === g.homeTeam
+                homeSelected
                   ? isFinal
                     ? homeIsWin
                       ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300 shadow-md shadow-emerald-500/20 ring-1 ring-emerald-500/50'
@@ -188,7 +192,7 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
                 <span>{g.homeTeam}</span>
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider ml-1">HOME</span>
               </div>
-              {selected === g.homeTeam && (
+              {homeSelected && (
                 <div>
                   {isFinal ? (
                     homeIsWin ? (

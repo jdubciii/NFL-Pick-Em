@@ -26,8 +26,10 @@ describe('Phase 41 Sprint 2 (P41-S2): Pool Lounge, Contextual Threads & Explicit
       id: 'g-w6-sea-den',
       awayTeam: 'SEA',
       homeTeam: 'DEN',
+      kickoffIso: '2026-10-16T00:15:00.000Z',
     };
     const resolvedKickoff = resolveCanonicalGameKickoff(seaDenGame);
+    expect(resolvedKickoff.status).toBe('RESOLVED');
     expect(resolvedKickoff.kickoffIso).toBe('2026-10-16T00:15:00.000Z');
     expect(resolvedKickoff.kickoffDisplay).toBe('Thu 5:15 PM');
     expect(resolvedKickoff.isThursdayNight).toBe(true);
@@ -49,6 +51,7 @@ describe('Phase 41 Sprint 2 (P41-S2): Pool Lounge, Contextual Threads & Explicit
       optInEnabled: true,
       permissionState: 'GRANTED',
       isSlateSubmitted: false,
+      hasAcceptedSlate: true,
       nowMs: new Date('2026-10-15T12:00:00.000Z').getTime(),
       games: deadlineWindows,
     });
@@ -56,15 +59,32 @@ describe('Phase 41 Sprint 2 (P41-S2): Pool Lounge, Contextual Threads & Explicit
     expect(plan.toSchedule[0].kickoffIso).toBe('2026-10-16T00:15:00.000Z');
     expect(plan.toSchedule[0].matchupSummary).toContain('SEA @ DEN');
 
-    // Other Week 6 games test deterministic fallback
-    const houJax = resolveCanonicalGameKickoff({ awayTeam: 'HOU', homeTeam: 'JAX' });
-    expect(houJax.kickoffDisplay).toBe('Sun 6:30 AM');
+    // Without canonical authority, resolveCanonicalGameKickoff returns UNAVAILABLE (never a fixed substitute)
+    const houJaxWithoutAuth = resolveCanonicalGameKickoff({ awayTeam: 'HOU', homeTeam: 'JAX' });
+    expect(houJaxWithoutAuth.status).toBe('UNAVAILABLE');
+    expect(houJaxWithoutAuth.kickoffDisplay).toBe('Unavailable');
 
-    const balCle = resolveCanonicalGameKickoff({ awayTeam: 'BAL', homeTeam: 'CLE' });
-    expect(balCle.kickoffDisplay).toBe('Sun 10:00 AM');
+    // With canonical authority, kickoff display formats correctly
+    const houJaxWithAuth = resolveCanonicalGameKickoff({
+      awayTeam: 'HOU',
+      homeTeam: 'JAX',
+      kickoffIso: '2026-10-18T13:30:00.000Z',
+    });
+    expect(houJaxWithAuth.kickoffDisplay).toBe('Sun 6:30 AM');
 
-    const dalGb = resolveCanonicalGameKickoff({ awayTeam: 'DAL', homeTeam: 'GB' });
-    expect(dalGb.kickoffDisplay).toBe('Sun 5:20 PM');
+    const balCleWithAuth = resolveCanonicalGameKickoff({
+      awayTeam: 'BAL',
+      homeTeam: 'CLE',
+      kickoffIso: '2026-10-18T17:00:00.000Z',
+    });
+    expect(balCleWithAuth.kickoffDisplay).toBe('Sun 10:00 AM');
+
+    const dalGbWithAuth = resolveCanonicalGameKickoff({
+      awayTeam: 'DAL',
+      homeTeam: 'GB',
+      kickoffIso: '2026-10-19T00:20:00.000Z',
+    });
+    expect(dalGbWithAuth.kickoffDisplay).toBe('Sun 5:20 PM');
 
     // 1B. Coherent Big Board 10-Member Demo Fixture Math (11 vs 9, +2 margin)
     const jackPoints = 11; // 9 banked + 2 live

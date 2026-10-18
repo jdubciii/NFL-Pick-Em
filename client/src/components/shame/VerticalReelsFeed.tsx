@@ -16,57 +16,96 @@ export interface PenaltyReel {
   initialReactions?: { beer: number; skull: number; fire: number };
 }
 
-export const VerticalReelsFeed: React.FC<{ reels?: PenaltyReel[] }> = ({ reels }) => {
-  // Production-grade fallback reels if none provided
-  const fallbackReels: PenaltyReel[] = [
-    {
-      id: 'reel-w4-1',
-      memberId: 'm10',
-      memberName: 'Big Jack',
-      week: 4,
-      seasonYear: 2026,
-      rank: 10,
-      penaltyShots: 2.5,
-      drinkName: 'Warm Tequila',
-      videoUrl: 'https://assets.mixkit.co/videos/preview/mixkit-cheering-with-beer-mugs-in-a-bar-42654-large.mp4',
-      posterUrl: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?auto=format&fit=crop&w=600&q=80',
-      verifiedCount: 8,
-      disputeCount: 1,
-      initialReactions: { beer: 19, skull: 14, fire: 9 }
-    },
-    {
-      id: 'reel-w3-1',
-      memberId: 'm9',
-      memberName: 'Rich B.',
-      week: 3,
-      seasonYear: 2026,
-      rank: 9,
-      penaltyShots: 2.0,
-      drinkName: 'Malort Double',
-      videoUrl: 'https://assets.mixkit.co/videos/preview/mixkit-pouring-a-drink-into-a-glass-at-a-bar-43187-large.mp4',
-      posterUrl: 'https://images.unsplash.com/photo-1551024709-8f23befc6f87?auto=format&fit=crop&w=600&q=80',
-      verifiedCount: 7,
-      disputeCount: 2,
-      initialReactions: { beer: 12, skull: 8, fire: 5 }
-    },
-    {
-      id: 'reel-w2-1',
-      memberId: 'm8',
-      memberName: 'Mike C.',
-      week: 2,
-      seasonYear: 2026,
-      rank: 8,
-      penaltyShots: 2.0,
-      drinkName: 'Pickle Vodka',
-      videoUrl: 'https://assets.mixkit.co/videos/preview/mixkit-bartender-serving-a-glass-of-cocktail-43186-large.mp4',
-      posterUrl: 'https://images.unsplash.com/photo-1574096079513-d8259312b785?auto=format&fit=crop&w=600&q=80',
-      verifiedCount: 9,
-      disputeCount: 0,
-      initialReactions: { beer: 16, skull: 11, fire: 7 }
-    }
-  ];
+// Isolated demo fixture for explicit test / demonstration use only (Decision #61)
+export const DEMO_PENALTY_REELS: PenaltyReel[] = [
+  {
+    id: 'reel-demo-w4-1',
+    memberId: 'm10',
+    memberName: 'Demo Member 10',
+    week: 4,
+    seasonYear: 2026,
+    rank: 10,
+    penaltyShots: 2.5,
+    drinkName: 'Warm Tequila',
+    videoUrl: 'https://assets.mixkit.co/videos/preview/mixkit-cheering-with-beer-mugs-in-a-bar-42654-large.mp4',
+    posterUrl: 'https://images.unsplash.com/photo-1514933651103-005eec06c04b?auto=format&fit=crop&w=600&q=80',
+    verifiedCount: 8,
+    disputeCount: 1,
+    initialReactions: { beer: 19, skull: 14, fire: 9 }
+  },
+  {
+    id: 'reel-demo-w3-1',
+    memberId: 'm9',
+    memberName: 'Demo Member 9',
+    week: 3,
+    seasonYear: 2026,
+    rank: 9,
+    penaltyShots: 2.0,
+    drinkName: 'Malort Double',
+    videoUrl: 'https://assets.mixkit.co/videos/preview/mixkit-pouring-a-drink-into-a-glass-at-a-bar-43187-large.mp4',
+    posterUrl: 'https://images.unsplash.com/photo-1551024709-8f23befc6f87?auto=format&fit=crop&w=600&q=80',
+    verifiedCount: 7,
+    disputeCount: 2,
+    initialReactions: { beer: 12, skull: 8, fire: 5 }
+  },
+  {
+    id: 'reel-demo-w2-1',
+    memberId: 'm8',
+    memberName: 'Demo Member 8',
+    week: 2,
+    seasonYear: 2026,
+    rank: 8,
+    penaltyShots: 2.0,
+    drinkName: 'Pickle Vodka',
+    videoUrl: 'https://assets.mixkit.co/videos/preview/mixkit-bartender-serving-a-glass-of-cocktail-43186-large.mp4',
+    posterUrl: 'https://images.unsplash.com/photo-1574096079513-d8259312b785?auto=format&fit=crop&w=600&q=80',
+    verifiedCount: 9,
+    disputeCount: 0,
+    initialReactions: { beer: 16, skull: 11, fire: 7 }
+  }
+];
 
-  const activeReels = reels && reels.length > 0 ? reels : fallbackReels;
+export interface VerticalReelsFeedProps {
+  reels?: PenaltyReel[];
+  isLoading?: boolean;
+  isUnavailable?: boolean;
+}
+
+export const VerticalReelsFeed: React.FC<VerticalReelsFeedProps> = ({
+  reels,
+  isLoading = false,
+  isUnavailable = false,
+}) => {
+  if (isLoading) {
+    return (
+      <div className="w-full h-72 flex flex-col items-center justify-center bg-slate-950 border border-slate-800 rounded-3xl p-6 text-center font-mono">
+        <span className="text-cyan-400 text-sm font-bold animate-pulse">Loading penalty reels...</span>
+      </div>
+    );
+  }
+
+  if (isUnavailable) {
+    return (
+      <div className="w-full h-72 flex flex-col items-center justify-center bg-slate-950 border border-slate-800 rounded-3xl p-6 text-center font-mono">
+        <span className="text-amber-400 text-sm font-bold mb-1">⚠️ Video Reels Unavailable</span>
+        <span className="text-slate-500 text-xs">Video storage or feed connection currently unavailable.</span>
+      </div>
+    );
+  }
+
+  const activeReels = reels || [];
+
+  if (activeReels.length === 0) {
+    return (
+      <div className="w-full h-72 flex flex-col items-center justify-center bg-slate-950 border border-slate-800 rounded-3xl p-6 text-center font-mono">
+        <span className="text-3xl mb-2">📹</span>
+        <span className="text-slate-300 text-sm font-bold mb-1">No Penalty Reels Recorded</span>
+        <span className="text-slate-500 text-xs max-w-sm">
+          Completed penalty videos verified by pool members will appear here. No fabricated submissions are displayed.
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className="relative w-full h-[calc(100dvh-175px)] overflow-y-scroll snap-y snap-mandatory bg-black rounded-3xl border border-slate-800 shadow-2xl select-none font-mono">
@@ -82,7 +121,7 @@ const ReelVideoItem: React.FC<{ reel: PenaltyReel }> = ({ reel }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
-  const [reactions, setReactions] = useState(reel.initialReactions || { beer: 12, skull: 8, fire: 5 });
+  const [reactions, setReactions] = useState(reel.initialReactions || { beer: 0, skull: 0, fire: 0 });
 
   useEffect(() => {
     const observer = new IntersectionObserver(

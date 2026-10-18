@@ -57,93 +57,109 @@ export const ProfilePage: React.FC = () => {
     } catch {}
   };
 
-  const handleRequestPermission = async () => {
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      try {
-        const res = await Notification.requestPermission();
-        if (res === 'granted') {
-          setPermissionState('GRANTED');
-          handleToggleOptIn(true);
-        } else if (res === 'denied') {
-          setPermissionState('DENIED');
-        } else {
-          setPermissionState('PROMPT_REQUIRED');
-        }
-      } catch {
-        // Fallback
-      }
-    } else {
-      setPermissionState('GRANTED');
-      handleToggleOptIn(true);
-    }
-  };
-
-  const handleSendTestReminder = () => {
-    const title = '[TEST NOTIFICATION — CONTROLLED TIMING CHECK]';
-    const body = 'Week 6 Kickoff Window Approaching — Tap to open Week 6 Picks (Read-Only Route Check)';
-    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-      try {
-        new Notification(title, { body, icon: '/favicon.ico' });
-      } catch {}
-    }
-    setTestNotificationBanner(`${title}: ${body}`);
-  };
-
   const handleCancelAllAlerts = () => {
     handleToggleOptIn(false);
-    setTestNotificationBanner(null);
+    setTestNotificationBanner('All app-owned scheduled reminders cancelled.');
   };
 
-  const week6WindowGames: DeadlineGameWindowInput[] = useMemo(() => [
-    {
-      gameId: 'g-w6-sea-den',
-      awayTeam: 'SEA',
-      homeTeam: 'DEN',
-      kickoffIso: '2026-10-16T00:15:00.000Z', // Thu 5:15 PM MST
-      status: 'SCHEDULED',
-      isPicked: false,
-    },
-    {
-      gameId: 'g-w6-hou-jax',
-      awayTeam: 'HOU',
-      homeTeam: 'JAX',
-      kickoffIso: '2026-10-18T13:30:00.000Z', // Sun 6:30 AM MST
-      status: 'SCHEDULED',
-      isPicked: false,
-    },
-    {
-      gameId: 'g-w6-chi-atl',
-      awayTeam: 'CHI',
-      homeTeam: 'ATL',
-      kickoffIso: '2026-10-18T17:00:00.000Z', // Sun 10:00 AM MST
-      status: 'SCHEDULED',
-      isPicked: false,
-    },
-    {
-      gameId: 'g-w6-mia-ind',
-      awayTeam: 'MIA',
-      homeTeam: 'IND',
-      kickoffIso: '2026-10-18T17:00:00.000Z', // Sun 10:00 AM MST
-      status: 'SCHEDULED',
-      isPicked: false,
-    },
-  ], []);
+  const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null);
+  const [manifestGames, setManifestGames] = useState<DeadlineGameWindowInput[]>([]);
+  const [isSlateSubmitted, setIsSlateSubmitted] = useState<boolean>(false);
+  const [hasAcceptedSlate, setHasAcceptedSlate] = useState<boolean>(false);
 
-  const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+  useEffect(() => {
+    if (!user?.id) {
+      setSelectedPoolId(null);
+      setManifestGames([]);
+      setHasAcceptedSlate(false);
+      return;
+    }
+
+    let isMounted = true;
+    async function loadMemberPoolAndSlate() {
+      try {
+        const { data: memberships } = await supabase
+          .from('pool_memberships')
+          .select('pool_id')
+          .eq('user_id', user!.id)
+          .eq('status', 'ACTIVE');
+
+        const resolvedPoolId = memberships?.[0]?.pool_id || null;
+        if (!isMounted) return;
+        setSelectedPoolId(resolvedPoolId);
+
+        if (!resolvedPoolId) {
+          setManifestGames([]);
+          setHasAcceptedSlate(false);
+          return;
+        }
+
+        const { data: dbGames } = await supabase
+          .from('games')
+          .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, status')
+          .eq('week', 6)
+          .order('kickoff_time', { ascending: true });
+
+        if (!isMounted) return;
+
+        if (!dbGames || dbGames.length === 0) {
+          setManifestGames([]);
+          setHasAcceptedSlate(false);
+          return;
+        }
+
+        const { data: dbPicks } = await supabase
+          .from('picks')
+          .select('game_id, selected_team')
+          .eq('pool_id', resolvedPoolId)
+          .eq('user_id', user!.id)
+          .eq('week', 6);
+
+        if (!isMounted) return;
+
+        const pickSet = new Set((dbPicks || []).map((p: any) => String(p.game_id)));
+
+        const windowGames: DeadlineGameWindowInput[] = dbGames.map((g: any) => ({
+          gameId: g.external_game_id || g.id,
+          awayTeam: g.away_team_id,
+          homeTeam: g.home_team_id,
+          kickoffIso: g.kickoff_time,
+          status: g.status,
+          isPicked: pickSet.has(String(g.external_game_id)) || pickSet.has(String(g.id)),
+        }));
+
+        setManifestGames(windowGames);
+        setHasAcceptedSlate(true);
+        setIsSlateSubmitted(windowGames.length > 0 && windowGames.every((g) => g.isPicked));
+      } catch {
+        if (isMounted) {
+          setManifestGames([]);
+          setHasAcceptedSlate(false);
+        }
+      }
+    }
+
+    loadMemberPoolAndSlate();
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id]);
 
   const deadlinePlan: DeadlinePlannerResult = useMemo(() => {
     return planDeadlineReminders({
-      userId: user?.id || 'viewer',
-      poolId: activePoolId,
+      userId: user?.id,
+      poolId: selectedPoolId,
       season: 2026,
+      seasonType: 2,
       week: 6,
       optInEnabled: alertsOptedIn,
       permissionState,
-      isSlateSubmitted: false,
-      games: week6WindowGames,
+      isSlateSubmitted,
+      hasAcceptedSlate,
+      games: manifestGames,
       nowMs: Date.now(),
     });
-  }, [user?.id, activePoolId, alertsOptedIn, permissionState, week6WindowGames]);
+  }, [user?.id, selectedPoolId, alertsOptedIn, permissionState, isSlateSubmitted, hasAcceptedSlate, manifestGames]);
 
   const isCommissioner = Boolean(
     role === 'ADMIN' || 
@@ -155,12 +171,16 @@ export const ProfilePage: React.FC = () => {
   const [activeMembersCount, setActiveMembersCount] = useState<number>(2);
 
   useEffect(() => {
+    if (!selectedPoolId) {
+      setActiveMembersCount(0);
+      return;
+    }
     async function loadActiveMembers() {
       try {
         const { count, error } = await supabase
           .from('pool_memberships')
           .select('*', { count: 'exact', head: true })
-          .eq('pool_id', activePoolId)
+          .eq('pool_id', selectedPoolId)
           .eq('status', 'ACTIVE');
         if (!error && typeof count === 'number') {
           setActiveMembersCount(count);
@@ -168,7 +188,7 @@ export const ProfilePage: React.FC = () => {
       } catch (_) {}
     }
     loadActiveMembers();
-  }, [activePoolId]);
+  }, [selectedPoolId]);
 
   useEffect(() => {
     if (!user) return;
@@ -180,13 +200,13 @@ export const ProfilePage: React.FC = () => {
   }, [user]);
 
   const loadPendingApplicants = useCallback(async () => {
-    if (!isCommissioner) {
+    if (!isCommissioner || !selectedPoolId) {
       setPendingApplicants([]);
       return;
     }
     try {
       const { data, error } = await supabase.rpc('get_pending_applicants', {
-        p_pool_id: activePoolId
+        p_pool_id: selectedPoolId
       });
 
       if (error) {
@@ -276,12 +296,12 @@ export const ProfilePage: React.FC = () => {
     return deriveSeasonStoryViewModel({
       isLoading: false,
       season: 2026,
-      poolId: activePoolId,
+      poolId: selectedPoolId || '',
       viewerUserId: user?.id || 'viewer',
       rawRecords: [], // Live database has 0 settled weeks currently
       currentOutstandingShotDebt: 0,
     });
-  }, [activePoolId, user?.id]);
+  }, [selectedPoolId, user?.id]);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white pb-24">
@@ -529,34 +549,33 @@ export const ProfilePage: React.FC = () => {
             <span className="text-[10px] text-slate-400 uppercase font-bold block mb-1">
               Planned Window Schedule
             </span>
-            <div className="text-white font-bold">
-              {deadlinePlan.toSchedule.length > 0
-                ? `3 Kickoff Windows Planned: Thu 5:15 PM, Sun 6:30 AM, Sun 10:00 AM`
-                : deadlinePlan.statusSummary}
-            </div>
+            {deadlinePlan.toSchedule.length > 0 ? (
+              <div className="space-y-1 my-1">
+                {deadlinePlan.toSchedule.map((item) => (
+                  <div key={item.reminderId} className="flex justify-between items-center text-xs">
+                    <span className="text-white font-medium">{item.matchupSummary}</span>
+                    <span className="text-cyan-400 font-mono text-[11px]">
+                      {new Date(item.kickoffIso).toLocaleTimeString('en-US', {
+                        hour: 'numeric',
+                        minute: '2-digit',
+                        timeZone: 'America/Los_Angeles',
+                      })}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-white font-bold">{deadlinePlan.statusSummary}</div>
+            )}
             <div className="text-[10px] text-slate-500 mt-1">
               {deadlinePlan.statusSummary}
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-2 pt-1">
-            {permissionState !== 'GRANTED' && (
-              <button
-                type="button"
-                onClick={handleRequestPermission}
-                className="flex-1 py-2 px-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 active:scale-95 text-slate-950 font-black text-xs uppercase tracking-wider transition shadow-md"
-              >
-                Request Notification Permission &amp; Enable
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={handleSendTestReminder}
-              className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 border border-slate-700 text-white font-bold text-xs uppercase tracking-wider transition"
-            >
-              Send Labelled Test Reminder Now
-            </button>
+          <div className="flex flex-col sm:flex-row gap-2 pt-1 items-center justify-between">
+            <span className="text-[11px] text-slate-400">
+              🛡️ Verified cancellation only — background notification generation deactivated.
+            </span>
 
             {alertsOptedIn && (
               <button

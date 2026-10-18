@@ -15,6 +15,7 @@ import {
 import {
   getAcceptedSlateManifest,
   WeeklySlateManifest,
+  normalizeTeamCode,
 } from './authoritativeSlateService';
 import type { PoolSettings } from '../types/pool';
 
@@ -233,7 +234,8 @@ export async function previewWeeklyWrapUpForPool(
   for (const pick of picks) {
     if (pick.status === GameStatus.FINAL && pick.home_score !== null && pick.away_score !== null) {
       const winner = pick.home_score > pick.away_score ? pick.home_team_id : (pick.away_score > pick.home_score ? pick.away_team_id : null);
-      if (winner && (pick.selected_team === winner || pick.selected_team_id === winner)) {
+      const selected = pick.selected_team || pick.selected_team_id;
+      if (winner && selected && normalizeTeamCode(selected) === normalizeTeamCode(winner)) {
         const cur = memberScoresMap.get(pick.user_id) || 0;
         memberScoresMap.set(pick.user_id, cur + 1);
       }
@@ -527,7 +529,8 @@ export async function executeWeeklyWrapUpForPool(
     for (const pick of picks) {
       if (pick.status === GameStatus.FINAL && pick.home_score !== null && pick.away_score !== null) {
         const winner = pick.home_score > pick.away_score ? pick.home_team_id : (pick.away_score > pick.home_score ? pick.away_team_id : null);
-        if (winner && (pick.selected_team === winner || pick.selected_team_id === winner)) {
+        const selected = pick.selected_team || pick.selected_team_id;
+        if (winner && selected && normalizeTeamCode(selected) === normalizeTeamCode(winner)) {
           const cur = memberScoresMap.get(pick.user_id) || 0;
           memberScoresMap.set(pick.user_id, cur + 1);
         }

@@ -26,42 +26,6 @@ interface PoolLoungeDrawerProps {
   initialContextCard?: CanonicalContextCardAttachment | null;
 }
 
-const INITIAL_DEMO_MESSAGES: PoolLoungeMessage[] = [
-  {
-    id: 'msg-seed-1',
-    poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
-    authorUserId: 'u2',
-    authorDisplayName: 'jcone2',
-    clientRequestId: 'req-seed-001',
-    body: 'TNF kickoff is locked for SEA @ DEN. Big duel deciding matchup right out of the gate.',
-    parentMessageId: null,
-    contextCard: {
-      targetKind: 'CANONICAL_GAME',
-      season: 2026,
-      week: 6,
-      entityId: 'g-w6-sea-den',
-      settlementRevision: 0,
-      title: 'SEA @ DEN',
-      subtitle: 'Week 6 Matchup Discussion',
-      deepLinkTab: 'matrix',
-    },
-    createdAtIso: '2026-10-15T18:30:00.000Z',
-    deliveryState: 'SENT',
-  },
-  {
-    id: 'msg-seed-2',
-    poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
-    authorUserId: 'u1',
-    authorDisplayName: 'jack.w.cone',
-    clientRequestId: 'req-seed-002',
-    body: 'Locked and loaded with Seattle. Winner claims the early Safe Haven driver seat.',
-    parentMessageId: 'msg-seed-1',
-    contextCard: null,
-    createdAtIso: '2026-10-15T18:45:00.000Z',
-    deliveryState: 'SENT',
-  },
-];
-
 export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
   isOpen,
   onClose,

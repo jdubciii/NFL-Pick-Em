@@ -22,7 +22,7 @@ interface WeeklyRecapCardViewProps {
   rivalUserId?: string;
 }
 
-const DEMO_PARTICIPANTS: SettledParticipantSummary[] = [
+export const DEMO_PARTICIPANTS: SettledParticipantSummary[] = [
   {
     userId: 'u1',
     displayName: 'jack.w.cone',
@@ -64,28 +64,7 @@ export const WeeklyRecapCardView: React.FC<WeeklyRecapCardViewProps> = ({
     ? DEMO_PARTICIPANTS
     : liveParticipants.length > 0
     ? liveParticipants
-    : [
-        {
-          userId: viewerUserId,
-          displayName: 'jack.w.cone',
-          rank: 1,
-          points: 0,
-          totalGames: 14,
-          shotsIncurred: 0,
-          tierName: 'SAFE HAVEN',
-          tiebreakResolved: false,
-        },
-        {
-          userId: rivalUserId,
-          displayName: 'jcone2',
-          rank: 2,
-          points: 0,
-          totalGames: 14,
-          shotsIncurred: 0,
-          tierName: 'SAFE HAVEN',
-          tiebreakResolved: false,
-        },
-      ];
+    : [];
 
   const recap: DeterministicRecapCardModel = buildDeterministicWeeklyRecap({
     format,
@@ -172,6 +151,10 @@ export const WeeklyRecapCardView: React.FC<WeeklyRecapCardViewProps> = ({
   };
 
   const exportAsPng = async () => {
+    if (!recap.canExportOfficialVerdict) {
+      showToast('Export blocked: Unavailable or unsettled inputs cannot produce an official export.');
+      return;
+    }
     const canvas = canvasRef.current;
     if (!canvas) return;
 

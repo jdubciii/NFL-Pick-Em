@@ -6,7 +6,7 @@ import {
   UserPickItem,
 } from '../../services/sweatProjectionService';
 import { LiveGame } from '../../services/liveScoreService';
-import { RootingQueueItem, resolveCanonicalGameKickoff } from '../../services/dependableInfoService';
+import { RootingQueueItem, resolveCanonicalGameKickoff, areTeamIdentitiesEquivalent } from '../../services/dependableInfoService';
 
 interface WatchPartyBigBoardModalProps {
   isOpen: boolean;
@@ -116,10 +116,20 @@ export const WatchPartyBigBoardModal: React.FC<WatchPartyBigBoardModalProps> = (
         };
       });
 
-  // Canonical Decider kickoff
+  // Canonical Decider kickoff resolved from accepted games
+  const seaDenGame = games?.find(
+    (g) =>
+      (areTeamIdentitiesEquivalent(g.awayTeam, 'SEA') && areTeamIdentitiesEquivalent(g.homeTeam, 'DEN')) ||
+      (areTeamIdentitiesEquivalent(g.homeTeam, 'SEA') && areTeamIdentitiesEquivalent(g.awayTeam, 'DEN'))
+  );
   const deciderKickoff = resolveCanonicalGameKickoff({
+    id: seaDenGame?.id,
     awayTeam: 'SEA',
     homeTeam: 'DEN',
+    kickoffTime: seaDenGame?.kickoffTime || null,
+    season: 2026,
+    seasonType: 2,
+    week: activeWeek,
   });
 
   return (

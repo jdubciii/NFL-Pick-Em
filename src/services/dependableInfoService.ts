@@ -917,75 +917,163 @@ export function classifyPickDistributionBadge(
   };
 }
 
+/**
+ * Canonical NFL Team Identity Normalization (Directive P41-RUNTIME-MOCK-PURGE-AND-TEAM-IDENTITY-2026-10-18-01)
+ * Platform code: WAS
+ * Input alias: WSH -> WAS
+ * Original provider abbreviation: WSH
+ * Provider team ID: 28
+ */
+export function normalizeTeamIdentity(raw: string | null | undefined): string {
+  if (!raw) return '';
+  const clean = raw.trim().toUpperCase();
+  if (clean === 'WSH') return 'WAS';
+  if (clean === 'JAC') return 'JAX';
+  return clean;
+}
+
+export function areTeamIdentitiesEquivalent(teamA: string | null | undefined, teamB: string | null | undefined): boolean {
+  if (!teamA || !teamB) return false;
+  return normalizeTeamIdentity(teamA) === normalizeTeamIdentity(teamB);
+}
+
+export function formatCanonicalKickoffDisplay(isoString: string): string {
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return 'Unavailable';
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    weekday: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+  return formatter.format(d);
+}
+
+export type CanonicalKickoffStatus = 'RESOLVED' | 'UNAVAILABLE';
+
 export interface CanonicalKickoffResolution {
+  status: CanonicalKickoffStatus;
+  isResolved: boolean;
   kickoffIso: string;
   kickoffLabel: string;
   kickoffDisplay: string;
   gameId: string;
   isThursdayNight: boolean;
+  reason?: string;
 }
 
-export function resolveCanonicalGameKickoff(game: {
+export interface CanonicalGameRef {
   id?: string;
-  awayTeam: string;
-  homeTeam: string;
+  externalGameId?: string | null;
+  homeTeamId?: string;
+  awayTeamId?: string;
+  kickoffTime?: string | Date | null;
+  kickoffIso?: string | null;
+  season?: number | null;
+  seasonType?: number | null;
+  week?: number | null;
+}
+
+export interface CanonicalGameKickoffInput {
+  id?: string;
+  awayTeam?: string;
+  homeTeam?: string;
   kickoff?: string | Date | null;
   kickoffIso?: string | null;
   kickoffTime?: string | null;
-}): CanonicalKickoffResolution {
-  const away = (game.awayTeam || '').toUpperCase().trim();
-  const home = (game.homeTeam || '').toUpperCase().trim();
-  const matchupKey = `${away}@${home}`;
+  season?: number | null;
+  seasonType?: number | null;
+  week?: number | null;
+  acceptedCanonicalGames?: CanonicalGameRef[] | null;
+}
 
-  const CANONICAL_WEEK6_SCHEDULE: Record<string, { iso: string; label: string; canonicalEventId: string }> = {
-    'SEA@DEN': { iso: '2026-10-16T00:15:00.000Z', label: 'Thu 5:15 PM', canonicalEventId: '401872995' },
-    'HOU@JAX': { iso: '2026-10-18T13:30:00.000Z', label: 'Sun 6:30 AM', canonicalEventId: '401872996' },
-    'CHI@ATL': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', canonicalEventId: '401872999' },
-    'BAL@CLE': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', canonicalEventId: '401872997' },
-    'TEN@IND': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', canonicalEventId: '401873003' },
-    'NYJ@NE': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', canonicalEventId: '401873001' },
-    'NO@NYG': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', canonicalEventId: '401873000' },
-    'CAR@PHI': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', canonicalEventId: '401872998' },
-    'PIT@TB': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', canonicalEventId: '401873002' },
-    'ARI@LAR': { iso: '2026-10-18T20:05:00.000Z', label: 'Sun 1:05 PM', canonicalEventId: '401873004' },
-    'LAC@KC': { iso: '2026-10-18T20:25:00.000Z', label: 'Sun 1:25 PM', canonicalEventId: '401873006' },
-    'BUF@LV': { iso: '2026-10-18T20:25:00.000Z', label: 'Sun 1:25 PM', canonicalEventId: '401873005' },
-    'DAL@GB': { iso: '2026-10-19T00:20:00.000Z', label: 'Sun 5:20 PM', canonicalEventId: '401873007' },
-    'WSH@SF': { iso: '2026-10-20T00:15:00.000Z', label: 'Mon 5:15 PM', canonicalEventId: '401873008' },
-  };
+export function resolveCanonicalGameKickoff(game?: CanonicalGameKickoffInput | null): CanonicalKickoffResolution {
+  if (!game) {
+    return {
+      status: 'UNAVAILABLE',
+      isResolved: false,
+      kickoffIso: '',
+      kickoffLabel: 'Kickoff unavailable',
+      kickoffDisplay: 'Unavailable',
+      gameId: '',
+      isThursdayNight: false,
+    };
+  }
+  const away = normalizeTeamIdentity(game.awayTeam);
+  const home = normalizeTeamIdentity(game.homeTeam);
 
-  const storedRaw = game.kickoffIso || game.kickoffTime || (game.kickoff ? new Date(game.kickoff).toISOString() : null);
-  const canonicalEntry = CANONICAL_WEEK6_SCHEDULE[matchupKey];
+  // If accepted canonical games list is supplied, match by ID or teams
+  let matchedCanonical: CanonicalGameRef | undefined;
+  if (Array.isArray(game.acceptedCanonicalGames) && game.acceptedCanonicalGames.length > 0) {
+    matchedCanonical = game.acceptedCanonicalGames.find((cg) => {
+      if (game.id && (cg.id === game.id || cg.externalGameId === game.id)) return true;
+      if (away && home && cg.awayTeamId && cg.homeTeamId) {
+        return (
+          areTeamIdentitiesEquivalent(cg.awayTeamId, away) &&
+          areTeamIdentitiesEquivalent(cg.homeTeamId, home)
+        );
+      }
+      return false;
+    });
 
-  let kickoffIso: string;
-  let kickoffLabel: string;
-
-  if (storedRaw && !Number.isNaN(new Date(storedRaw).getTime())) {
-    kickoffIso = new Date(storedRaw).toISOString();
-    if (canonicalEntry) {
-      kickoffLabel = canonicalEntry.label;
-    } else {
-      const d = new Date(kickoffIso);
-      const day = d.toLocaleDateString('en-US', { weekday: 'short' });
-      const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-      kickoffLabel = `${day} ${time}`;
+    // Check scope if present on matched canonical record
+    if (matchedCanonical) {
+      if (game.season && matchedCanonical.season && game.season !== matchedCanonical.season) {
+        matchedCanonical = undefined;
+      } else if (game.week && matchedCanonical.week && game.week !== matchedCanonical.week) {
+        matchedCanonical = undefined;
+      }
     }
-  } else if (canonicalEntry) {
-    kickoffIso = canonicalEntry.iso;
-    kickoffLabel = canonicalEntry.label;
-  } else {
-    kickoffIso = '';
-    kickoffLabel = 'Scheduled';
   }
 
-  const gameId = game.id || (canonicalEntry ? canonicalEntry.canonicalEventId : '');
-  const isThursdayNight = kickoffLabel.includes('Thu');
+  // Resolve raw kickoff time candidate strictly from accepted source
+  const rawKickoff =
+    game.kickoffIso ||
+    game.kickoffTime ||
+    (game.kickoff ? (typeof game.kickoff === 'string' ? game.kickoff : new Date(game.kickoff).toISOString()) : null) ||
+    matchedCanonical?.kickoffIso ||
+    (matchedCanonical?.kickoffTime ? new Date(matchedCanonical.kickoffTime).toISOString() : null);
+
+  if (!rawKickoff) {
+    return {
+      status: 'UNAVAILABLE',
+      isResolved: false,
+      kickoffIso: '',
+      kickoffLabel: 'Unavailable',
+      kickoffDisplay: 'Unavailable',
+      gameId: game.id || matchedCanonical?.externalGameId || matchedCanonical?.id || '',
+      isThursdayNight: false,
+      reason: 'MISSING_KICKOFF_AUTHORITY',
+    };
+  }
+
+  const d = new Date(rawKickoff);
+  if (isNaN(d.getTime())) {
+    return {
+      status: 'UNAVAILABLE',
+      isResolved: false,
+      kickoffIso: '',
+      kickoffLabel: 'Unavailable',
+      kickoffDisplay: 'Unavailable',
+      gameId: game.id || matchedCanonical?.externalGameId || matchedCanonical?.id || '',
+      isThursdayNight: false,
+      reason: 'INVALID_KICKOFF_TIMESTAMP',
+    };
+  }
+
+  const kickoffIso = d.toISOString();
+  const kickoffDisplay = formatCanonicalKickoffDisplay(kickoffIso);
+  const isThursdayNight = kickoffDisplay.startsWith('Thu');
+  const resolvedGameId = game.id || matchedCanonical?.externalGameId || matchedCanonical?.id || '';
 
   return {
+    status: 'RESOLVED',
+    isResolved: true,
     kickoffIso,
-    kickoffLabel,
-    kickoffDisplay: kickoffLabel,
-    gameId,
+    kickoffLabel: kickoffDisplay,
+    kickoffDisplay,
+    gameId: resolvedGameId,
     isThursdayNight,
   };
 }

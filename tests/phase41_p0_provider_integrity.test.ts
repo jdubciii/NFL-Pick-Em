@@ -217,7 +217,7 @@ describe('P41 — P0 Provider Integrity & Mock Source Purge Regression Suite', (
   // =========================================================================
   it('8. Correct Lions Designation: Detroit on BYE yields COMMISSIONER_SELECTION_REQUIRED, never DEFAULT_LIONS', () => {
     const observation = validateAndTransformESPNScoreboard(rawCaptureJson, WEEK6_SCOPE);
-    
+
     // Check week 6 teams on bye from real ESPN metadata
     const teamsOnBye = rawCaptureJson.week.teamsOnBye.map((t: any) => t.abbreviation);
     expect(teamsOnBye).toContain('DET');
@@ -300,7 +300,7 @@ describe('P41 — P0 Provider Integrity & Mock Source Purge Regression Suite', (
   // =========================================================================
   // 10. Read-Only Preview Behavior
   // =========================================================================
-  it('10. Read-Only Preview Behavior: resolveCanonicalGameKickoff is idempotent and pure (Decision #54)', () => {
+  it('10. Read-Only Preview Behavior: resolveCanonicalGameKickoff is idempotent, pure, and fails closed without authority (Decisions #54, #55)', () => {
     const seaDenInput = {
       id: '401872995',
       awayTeam: 'SEA',
@@ -311,16 +311,32 @@ describe('P41 — P0 Provider Integrity & Mock Source Purge Regression Suite', (
     const res1 = resolveCanonicalGameKickoff(seaDenInput);
     const res2 = resolveCanonicalGameKickoff(seaDenInput);
     expect(res1).toEqual(res2);
+    expect(res1.status).toBe('RESOLVED');
+    expect(res1.isResolved).toBe(true);
     expect(res1.gameId).toBe('401872995');
     expect(res1.isThursdayNight).toBe(true);
     expect(res1.kickoffDisplay).toBe('Thu 5:15 PM');
 
-    // DAL @ GB genuine SNF
-    const dalGb = resolveCanonicalGameKickoff({
+    // DAL @ GB without canonical kickoff authority returns explicit UNAVAILABLE (no fixed substitute)
+    const dalGbWithoutAuthority = resolveCanonicalGameKickoff({
       awayTeam: 'DAL',
       homeTeam: 'GB',
     });
-    expect(dalGb.kickoffDisplay).toBe('Sun 5:20 PM');
-    expect(dalGb.gameId).toBe('401873007');
+    expect(dalGbWithoutAuthority.status).toBe('UNAVAILABLE');
+    expect(dalGbWithoutAuthority.isResolved).toBe(false);
+    expect(dalGbWithoutAuthority.kickoffIso).toBe('');
+    expect(dalGbWithoutAuthority.kickoffDisplay).toBe('Unavailable');
+
+    // DAL @ GB with canonical kickoff authority resolves correctly
+    const dalGbWithAuthority = resolveCanonicalGameKickoff({
+      id: '401873007',
+      awayTeam: 'DAL',
+      homeTeam: 'GB',
+      kickoffIso: '2026-10-19T00:20:00.000Z',
+    });
+    expect(dalGbWithAuthority.status).toBe('RESOLVED');
+    expect(dalGbWithAuthority.isResolved).toBe(true);
+    expect(dalGbWithAuthority.kickoffDisplay).toBe('Sun 5:20 PM');
+    expect(dalGbWithAuthority.gameId).toBe('401873007');
   });
 });

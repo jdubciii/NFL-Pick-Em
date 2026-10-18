@@ -91,6 +91,7 @@ export function normalizeTeamAbbreviation(rawAbbrev: string): string {
   if (!rawAbbrev) return 'UNK';
   const clean = rawAbbrev.trim().toUpperCase();
   if (clean === 'WSH') return 'WAS';
+  if (clean === 'JAC') return 'JAX';
   return clean;
 }
 
