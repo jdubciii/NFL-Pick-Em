@@ -1,0 +1,236 @@
+{
+  "url": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=6",
+  "captureTimeUtc": "2026-10-18T06:18:25.722Z",
+  "httpStatus": 200,
+  "httpStatusText": "OK",
+  "sha256": "f0826e586f9ccef338076212bd96708ae1d0ce007d7500e7208bc45ee29c3bae",
+  "byteLength": 245176,
+  "season": {
+    "type": 2,
+    "year": 2026
+  },
+  "week": {
+    "number": 6,
+    "teamsOnBye": [
+      {
+        "id": "4",
+        "name": "Cincinnati Bengals",
+        "abbreviation": "CIN"
+      },
+      {
+        "id": "8",
+        "name": "Detroit Lions",
+        "abbreviation": "DET"
+      },
+      {
+        "id": "15",
+        "name": "Miami Dolphins",
+        "abbreviation": "MIA"
+      },
+      {
+        "id": "16",
+        "name": "Minnesota Vikings",
+        "abbreviation": "MIN"
+      }
+    ]
+  },
+  "eventCount": 14,
+  "events": [
+    {
+      "eventId": "401872996",
+      "name": "Houston Texans at Jacksonville Jaguars",
+      "dateUtc": "2026-10-18T13:30Z",
+      "statusName": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "detail": "Sun, October 18th at 9:30 AM EDT",
+      "shortDetail": "10/18 - 9:30 AM EDT",
+      "homeTeam": "JAX",
+      "homeScore": 0,
+      "awayTeam": "HOU",
+      "awayScore": 0
+    },
+    {
+      "eventId": "401872999",
+      "name": "Chicago Bears at Atlanta Falcons",
+      "dateUtc": "2026-10-18T17:00Z",
+      "statusName": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "detail": "Sun, October 18th at 1:00 PM EDT",
+      "shortDetail": "10/18 - 1:00 PM EDT",
+      "homeTeam": "ATL",
+      "homeScore": 0,
+      "awayTeam": "CHI",
+      "awayScore": 0
+    },
+    {
+      "eventId": "401872997",
+      "name": "Baltimore Ravens at Cleveland Browns",
+      "dateUtc": "2026-10-18T17:00Z",
+      "statusName": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "detail": "Sun, October 18th at 1:00 PM EDT",
+      "shortDetail": "10/18 - 1:00 PM EDT",
+      "homeTeam": "CLE",
+      "homeScore": 0,
+      "awayTeam": "BAL",
+      "awayScore": 0
+    },
+    {
+      "eventId": "401873003",
+      "name": "Tennessee Titans at Indianapolis Colts",
+      "dateUtc": "2026-10-18T17:00Z",
+      "statusName": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "detail": "Sun, October 18th at 1:00 PM EDT",
+      "shortDetail": "10/18 - 1:00 PM EDT",
+      "homeTeam": "IND",
+      "homeScore": 0,
+      "awayTeam": "TEN",
+      "awayScore": 0
+    },
+    {
+      "eventId": "401873001",
+      "name": "New York Jets at New England Patriots",
+      "dateUtc": "2026-10-18T17:00Z",
+      "statusName": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "detail": "Sun, October 18th at 1:00 PM EDT",
+      "shortDetail": "10/18 - 1:00 PM EDT",
+      "homeTeam": "NE",
+      "homeScore": 0,
+      "awayTeam": "NYJ",
+      "awayScore": 0
+    },
+    {
+      "eventId": "401873000",
+      "name": "New Orleans Saints at New York Giants",
+      "dateUtc": "2026-10-18T17:00Z",
+      "statusName": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "detail": "Sun, October 18th at 1:00 PM EDT",
+      "shortDetail": "10/18 - 1:00 PM EDT",
+      "homeTeam": "NYG",
+      "homeScore": 0,
+      "awayTeam": "NO",
+      "awayScore": 0
+    },
+    {
+      "eventId": "401872998",
+      "name": "Carolina Panthers at Philadelphia Eagles",
+      "dateUtc": "2026-10-18T17:00Z",
+      "statusName": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "detail": "Sun, October 18th at 1:00 PM EDT",
+      "shortDetail": "10/18 - 1:00 PM EDT",
+      "homeTeam": "PHI",
+      "homeScore": 0,
+      "awayTeam": "CAR",
+      "awayScore": 0
+    },
+    {
+      "eventId": "401873002",
+      "name": "Pittsburgh Steelers at Tampa Bay Buccaneers",
+      "dateUtc": "2026-10-18T17:00Z",
+      "statusName": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "detail": "Sun, October 18th at 1:00 PM EDT",
+      "shortDetail": "10/18 - 1:00 PM EDT",
+      "homeTeam": "TB",
+      "homeScore": 0,
+      "awayTeam": "PIT",
+      "awayScore": 0
+    },
+    {
+      "eventId": "401873004",
+      "name": "Arizona Cardinals at Los Angeles Rams",
+      "dateUtc": "2026-10-18T20:05Z",
+      "statusName": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "detail": "Sun, October 18th at 4:05 PM EDT",
+      "shortDetail": "10/18 - 4:05 PM EDT",
+      "homeTeam": "LAR",
+      "homeScore": 0,
+      "awayTeam": "ARI",
+      "awayScore": 0
+    },
+    {
+      "eventId": "401873006",
+      "name": "Los Angeles Chargers at Kansas City Chiefs",
+      "dateUtc": "2026-10-18T20:25Z",
+      "statusName": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "detail": "Sun, October 18th at 4:25 PM EDT",
+      "shortDetail": "10/18 - 4:25 PM EDT",
+      "homeTeam": "KC",
+      "homeScore": 0,
+      "awayTeam": "LAC",
+      "awayScore": 0
+    },
+    {
+      "eventId": "401873005",
+      "name": "Buffalo Bills at Las Vegas Raiders",
+      "dateUtc": "2026-10-18T20:25Z",
+      "statusName": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "detail": "Sun, October 18th at 4:25 PM EDT",
+      "shortDetail": "10/18 - 4:25 PM EDT",
+      "homeTeam": "LV",
+      "homeScore": 0,
+      "awayTeam": "BUF",
+      "awayScore": 0
+    },
+    {
+      "eventId": "401873007",
+      "name": "Dallas Cowboys at Green Bay Packers",
+      "dateUtc": "2026-10-19T00:20Z",
+      "statusName": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "detail": "Sun, October 18th at 8:20 PM EDT",
+      "shortDetail": "10/18 - 8:20 PM EDT",
+      "homeTeam": "GB",
+      "homeScore": 0,
+      "awayTeam": "DAL",
+      "awayScore": 0
+    },
+    {
+      "eventId": "401872995",
+      "name": "Seattle Seahawks at Denver Broncos",
+      "dateUtc": "2026-10-16T00:15Z",
+      "statusName": "STATUS_FINAL",
+      "state": "post",
+      "completed": true,
+      "detail": "Final/OT",
+      "shortDetail": "Final/OT",
+      "homeTeam": "DEN",
+      "homeScore": 17,
+      "awayTeam": "SEA",
+      "awayScore": 14
+    },
+    {
+      "eventId": "401873008",
+      "name": "Washington Commanders at San Francisco 49ers",
+      "dateUtc": "2026-10-20T00:15Z",
+      "statusName": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "detail": "Mon, October 19th at 8:15 PM EDT",
+      "shortDetail": "10/19 - 8:15 PM EDT",
+      "homeTeam": "SF",
+      "homeScore": 0,
+      "awayTeam": "WSH",
+      "awayScore": 0
+    }
+  ]
+}

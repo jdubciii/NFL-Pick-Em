@@ -94,13 +94,6 @@ const LEAGUE_MEMBER_CHIPS = [
   { label: 'Mark Brickner', value: 'mark.b@nflpickem.com' },
 ];
 
-const mockInfamyRecords: InfamyRecord[] = [
-  { memberId: 'm1', name: 'Big Jack', shotsDrank: 4, deadPlaceFinishes: 2, maxSingleWeekDebt: 2.5 },
-  { memberId: 'm2', name: 'Matt Brickner', shotsDrank: 8, deadPlaceFinishes: 3, maxSingleWeekDebt: 3 },
-  { memberId: 'm3', name: 'Justin Brickner', shotsDrank: 5, deadPlaceFinishes: 1, maxSingleWeekDebt: 2 },
-  { memberId: 'm4', name: 'Nick S.', shotsDrank: 2, deadPlaceFinishes: 1, maxSingleWeekDebt: 1 },
-  { memberId: 'm5', name: 'Mike C.', shotsDrank: 1, deadPlaceFinishes: 0, maxSingleWeekDebt: 1 },
-];
 
 /**
  * Formats incoming cumulative shots value into an odometer readout with padded whole number portion and exact 2-decimal precision.
@@ -573,7 +566,7 @@ export const WallOfShame: React.FC = () => {
                     deadPlaceFinishes: m.dead_place_finishes || 0,
                     maxSingleWeekDebt: (m.dead_place_finishes || 0) * 1.0 || 1.0,
                   }))
-                : mockInfamyRecords
+                : []
             }
           />
         </div>

@@ -21,33 +21,33 @@ describe('Phase 41: Authoritative Slate & Persistence Contract', () => {
     events: [
       {
         id: '401872995',
-        date: '2026-10-15T20:15:00Z',
-        name: 'Seattle Seahawks at San Francisco 49ers',
+        date: '2026-10-16T00:15:00Z',
+        name: 'Seattle Seahawks at Denver Broncos',
         competitions: [
           {
             id: '401872995',
-            date: '2026-10-15T20:15:00Z',
+            date: '2026-10-16T00:15:00Z',
             competitors: [
-              { homeAway: 'home', team: { abbreviation: 'SF', displayName: 'San Francisco 49ers' }, score: '24' },
-              { homeAway: 'away', team: { abbreviation: 'SEA', displayName: 'Seattle Seahawks' }, score: '20' },
+              { homeAway: 'home', team: { abbreviation: 'DEN', displayName: 'Denver Broncos' }, score: '17' },
+              { homeAway: 'away', team: { abbreviation: 'SEA', displayName: 'Seattle Seahawks' }, score: '14' },
             ],
-            status: { type: { name: 'STATUS_FINAL', completed: true, state: 'post' } },
+            status: { type: { name: 'STATUS_FINAL', completed: true, state: 'post', detail: 'Final/OT' } },
           },
         ],
       },
       {
         id: '401872996',
-        date: '2026-10-18T17:00:00Z',
-        name: 'Jacksonville Jaguars at Houston Texans',
+        date: '2026-10-18T13:30:00Z',
+        name: 'Houston Texans at Jacksonville Jaguars',
         competitions: [
           {
             id: '401872996',
-            date: '2026-10-18T17:00:00Z',
+            date: '2026-10-18T13:30:00Z',
             competitors: [
-              { homeAway: 'home', team: { abbreviation: 'HOU', displayName: 'Houston Texans' }, score: '10' },
-              { homeAway: 'away', team: { abbreviation: 'JAX', displayName: 'Jacksonville Jaguars' }, score: '14' },
+              { homeAway: 'home', team: { abbreviation: 'JAX', displayName: 'Jacksonville Jaguars' } },
+              { homeAway: 'away', team: { abbreviation: 'HOU', displayName: 'Houston Texans' } },
             ],
-            status: { type: { name: 'STATUS_IN_PROGRESS', state: 'in' } },
+            status: { type: { name: 'STATUS_SCHEDULED', state: 'pre' } },
           },
         ],
       },
@@ -82,11 +82,11 @@ describe('Phase 41: Authoritative Slate & Persistence Contract', () => {
 
       const game1 = observation.events[0];
       expect(game1.externalGameId).toBe('401872995');
-      expect(game1.homeTeamId).toBe('SF');
+      expect(game1.homeTeamId).toBe('DEN');
       expect(game1.awayTeamId).toBe('SEA');
       expect(game1.status).toBe(GameStatus.FINAL);
-      expect(game1.homeScore).toBe(24);
-      expect(game1.awayScore).toBe(20);
+      expect(game1.homeScore).toBe(17);
+      expect(game1.awayScore).toBe(14);
       expect(observation.manifestFingerprint).toMatch(/^[0-9a-f]{64}$/);
     });
 
@@ -203,12 +203,12 @@ describe('Phase 41: Authoritative Slate & Persistence Contract', () => {
 
     it('generates deterministic SHA-256 manifest fingerprints independent of event ordering', () => {
       const eventsA = [
-        { externalGameId: '401872995', homeTeamId: 'SF', awayTeamId: 'SEA', kickoffTime: '2026-10-15T20:15:00.000Z' },
-        { externalGameId: '401872996', homeTeamId: 'HOU', awayTeamId: 'JAX', kickoffTime: '2026-10-18T17:00:00.000Z' },
+        { externalGameId: '401872995', homeTeamId: 'DEN', awayTeamId: 'SEA', kickoffTime: '2026-10-16T00:15:00.000Z' },
+        { externalGameId: '401872996', homeTeamId: 'JAX', awayTeamId: 'HOU', kickoffTime: '2026-10-18T13:30:00.000Z' },
       ];
       const eventsB = [
-        { externalGameId: '401872996', homeTeamId: 'HOU', awayTeamId: 'JAX', kickoffTime: '2026-10-18T17:00:00.000Z' },
-        { externalGameId: '401872995', homeTeamId: 'SF', awayTeamId: 'SEA', kickoffTime: '2026-10-15T20:15:00.000Z' },
+        { externalGameId: '401872996', homeTeamId: 'JAX', awayTeamId: 'HOU', kickoffTime: '2026-10-18T13:30:00.000Z' },
+        { externalGameId: '401872995', homeTeamId: 'DEN', awayTeamId: 'SEA', kickoffTime: '2026-10-16T00:15:00.000Z' },
       ];
 
       const hashA = computeManifestFingerprint(2026, 2, 6, eventsA);

@@ -18,7 +18,7 @@ export const EvidenceSubmissionDrawer: React.FC<EvidenceSubmissionDrawerProps> =
   const [progress, setProgress] = useState(0);
   const [isStalled, setIsStalled] = useState(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
-  const [fileSizeMb, setFileSizeMb] = useState<number>(14.2);
+  const [fileSizeMb, setFileSizeMb] = useState<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastProgressRef = useRef<number>(0);
 
@@ -46,9 +46,8 @@ export const EvidenceSubmissionDrawer: React.FC<EvidenceSubmissionDrawerProps> =
         setStep('METADATA');
       }
     } else {
-      // Dev mock default fallback if file picker dismissed
-      setFileSizeMb(14.2);
-      setStep('METADATA');
+      setFileSizeMb(0);
+      setStep('SOURCE');
     }
   };
 

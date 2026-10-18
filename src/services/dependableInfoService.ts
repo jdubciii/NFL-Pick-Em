@@ -937,20 +937,21 @@ export function resolveCanonicalGameKickoff(game: {
   const home = (game.homeTeam || '').toUpperCase().trim();
   const matchupKey = `${away}@${home}`;
 
-  const CANONICAL_WEEK6_SCHEDULE: Record<string, { iso: string; label: string; fallbackId: string }> = {
-    'SEA@DEN': { iso: '2026-10-16T00:15:00.000Z', label: 'Thu 5:15 PM', fallbackId: 'g-w6-sea-den' },
-    'HOU@JAX': { iso: '2026-10-18T13:30:00.000Z', label: 'Sun 6:30 AM', fallbackId: 'g-w6-hou-jax' },
-    'NE@JAX': { iso: '2026-10-18T13:30:00.000Z', label: 'Sun 6:30 AM', fallbackId: 'g-w6-ne-jax' },
-    'CHI@ATL': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', fallbackId: 'g-w6-chi-atl' },
-    'BAL@CLE': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', fallbackId: 'g-w6-bal-cle' },
-    'TEN@IND': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', fallbackId: 'g-w6-ten-ind' },
-    'MIA@IND': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', fallbackId: 'g-w6-mia-ind' },
-    'NYJ@NE': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', fallbackId: 'g-w6-nyj-ne' },
-    'NO@NYG': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', fallbackId: 'g-w6-no-nyg' },
-    'CAR@PHI': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', fallbackId: 'g-w6-car-phi' },
-    'DAL@GB': { iso: '2026-10-18T20:25:00.000Z', label: 'Sun 1:25 PM', fallbackId: 'g-w6-dal-gb' },
-    'KC@SF': { iso: '2026-10-18T20:25:00.000Z', label: 'Sun 1:25 PM', fallbackId: 'g-w6-kc-sf' },
-    'BUF@NYJ': { iso: '2026-10-19T00:15:00.000Z', label: 'Mon 5:15 PM', fallbackId: 'g-w6-buf-nyj' },
+  const CANONICAL_WEEK6_SCHEDULE: Record<string, { iso: string; label: string; canonicalEventId: string }> = {
+    'SEA@DEN': { iso: '2026-10-16T00:15:00.000Z', label: 'Thu 5:15 PM', canonicalEventId: '401872995' },
+    'HOU@JAX': { iso: '2026-10-18T13:30:00.000Z', label: 'Sun 6:30 AM', canonicalEventId: '401872996' },
+    'CHI@ATL': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', canonicalEventId: '401872999' },
+    'BAL@CLE': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', canonicalEventId: '401872997' },
+    'TEN@IND': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', canonicalEventId: '401873003' },
+    'NYJ@NE': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', canonicalEventId: '401873001' },
+    'NO@NYG': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', canonicalEventId: '401873000' },
+    'CAR@PHI': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', canonicalEventId: '401872998' },
+    'PIT@TB': { iso: '2026-10-18T17:00:00.000Z', label: 'Sun 10:00 AM', canonicalEventId: '401873002' },
+    'ARI@LAR': { iso: '2026-10-18T20:05:00.000Z', label: 'Sun 1:05 PM', canonicalEventId: '401873004' },
+    'LAC@KC': { iso: '2026-10-18T20:25:00.000Z', label: 'Sun 1:25 PM', canonicalEventId: '401873006' },
+    'BUF@LV': { iso: '2026-10-18T20:25:00.000Z', label: 'Sun 1:25 PM', canonicalEventId: '401873005' },
+    'DAL@GB': { iso: '2026-10-19T00:20:00.000Z', label: 'Sun 5:20 PM', canonicalEventId: '401873007' },
+    'WSH@SF': { iso: '2026-10-20T00:15:00.000Z', label: 'Mon 5:15 PM', canonicalEventId: '401873008' },
   };
 
   const storedRaw = game.kickoffIso || game.kickoffTime || (game.kickoff ? new Date(game.kickoff).toISOString() : null);
@@ -973,11 +974,11 @@ export function resolveCanonicalGameKickoff(game: {
     kickoffIso = canonicalEntry.iso;
     kickoffLabel = canonicalEntry.label;
   } else {
-    kickoffIso = new Date().toISOString();
+    kickoffIso = '';
     kickoffLabel = 'Scheduled';
   }
 
-  const gameId = game.id || (canonicalEntry ? canonicalEntry.fallbackId : `g-${away.toLowerCase()}-${home.toLowerCase()}`);
+  const gameId = game.id || (canonicalEntry ? canonicalEntry.canonicalEventId : '');
   const isThursdayNight = kickoffLabel.includes('Thu');
 
   return {

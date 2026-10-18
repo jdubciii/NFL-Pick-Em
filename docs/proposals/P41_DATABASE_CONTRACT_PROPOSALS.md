@@ -108,26 +108,59 @@ CREATE TABLE IF NOT EXISTS public.pool_slate_manifests (
 ### 1. Objective
 Synchronize the official 2026 Week 6 NFL schedule from verified ESPN observations into `public.games` using canonical ESPN event text IDs (`401872995`..`401873008`), resolving all 80 existing picks across 9 events without modifying any pick row.
 
-### 2. Candidate Manifest Mapping & Pick Coverage Proof
-| ESPN Event ID | Away Team | Home Team | Canonical Kickoff (UTC) | Pick Count (in 80 picks) | Pick Teams Selected |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| `401872995` | SEA | SF | 2026-10-15T20:15:00.000Z | 1 | SEA: 1 |
-| `401872996` | JAX | HOU | 2026-10-18T17:00:00.000Z | 9 | JAX: 8, HOU: 1 |
-| `401872997` | BAL | CLE | 2026-10-18T17:00:00.000Z | 10 | BAL: 8, CLE: 2 |
-| `401872998` | PHI | CAR | 2026-10-18T17:00:00.000Z | 10 | PHI: 7, CAR: 3 |
-| `401872999` | CHI | ATL | 2026-10-18T17:00:00.000Z | 10 | CHI: 7, ATL: 3 |
-| `401873000` | NYG | NO | 2026-10-18T17:00:00.000Z | 10 | NYG: 7, NO: 3 |
-| `401873001` | NE | NYJ | 2026-10-18T17:00:00.000Z | 10 | NE: 8, NYJ: 2 |
-| `401873002` | PIT | TB | 2026-10-18T17:00:00.000Z | 10 | PIT: 9, TB: 1 |
-| `401873003` | IND | TEN | 2026-10-18T17:00:00.000Z | 10 | IND: 9, TEN: 1 |
-| `401873004` | LAC | MIA | 2026-10-18T20:05:00.000Z | 0 | Unpicked |
-| `401873005` | DAL | DEN | 2026-10-18T20:25:00.000Z | 0 | Unpicked |
-| `401873006` | CIN | GB | 2026-10-18T20:25:00.000Z | 0 | Unpicked |
-| `401873007` | LAR | ARI | 2026-10-18T20:20:00.000Z | 0 | Unpicked (SNF) |
-| `401873008` | KC | MIN | 2026-10-19T20:15:00.000Z | 0 | Unpicked (MNF) |
-| **Total** | | | | **80 picks** | **100% Resolved** |
+> [!CAUTION]
+> **P0 PROVIDER CONTAMINATION RETRACTION & SUPERSEDED NOTICE (2026-10-18)**
+> The initial table draft below contained synthetic test mocks:
+> 1. Claimed `401872995` was Seattle Seahawks at San Francisco 49ers (`SEA @ SF`), final score 24–20. **RETRACTED**. Genuine live HTTPS ESPN capture (`docs/evidence/P41_ESPN_LIVE_CAPTURE/espn_week6_2026_raw.json`, SHA-256 `f0826e586f9ccef338076212bd96708ae1d0ce007d7500e7208bc45ee29c3bae`) confirms `401872995` is **Seattle Seahawks at Denver Broncos** (`SEA @ DEN`), Final/OT score: DEN 17, SEA 14, kickoff `2026-10-16T00:15:00.000Z`.
+> 2. Inverted home and away teams on games `401872996`..`401873003`.
+> 3. Substituted fabricated non-Week-6 matchups for unpicked events `401873004`..`401873008`.
+> 
+> The table below preserves the historical draft as **SUPERSEDED** and provides the **AUTHORITATIVE LIVE CAPTURE MANIFEST**.
 
-### 3. Preflight, Upsert & Join Verification SQL (Nonexecuted)
+#### Verified Authoritative Candidate Manifest (Live ESPN Capture: 2026-10-18T06:18:25.722Z)
+*Raw Payload SHA-256: `f0826e586f9ccef338076212bd96708ae1d0ce007d7500e7208bc45ee29c3bae`*  
+*Manifest Fingerprint: `c72f7e4c7a5579785acd9a4e1e7068f7c7d6bd06144fa531392bf9614ce7ad43`*
+
+| ESPN Event ID | Away Team | Home Team | Canonical Kickoff (UTC) | Status / Score | Saved Pick Count (in 80 picks) | Saved Selected Teams |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `401872995` | SEA | DEN | 2026-10-16T00:15:00.000Z | FINAL (DEN 17, SEA 14 OT) | 1 | SEA: 1 |
+| `401872996` | HOU | JAX | 2026-10-18T13:30:00.000Z | SCHEDULED | 10 | HOU: 1, JAX: 9 |
+| `401872997` | BAL | CLE | 2026-10-18T17:00:00.000Z | SCHEDULED | 10 | BAL: 9, CLE: 1 |
+| `401872998` | CAR | PHI | 2026-10-18T17:00:00.000Z | SCHEDULED | 10 | CAR: 3, PHI: 7 |
+| `401872999` | CHI | ATL | 2026-10-18T17:00:00.000Z | SCHEDULED | 10 | CHI: 7, ATL: 3 |
+| `401873000` | NO | NYG | 2026-10-18T17:00:00.000Z | SCHEDULED | 9 | NO: 3, NYG: 6 |
+| `401873001` | NYJ | NE | 2026-10-18T17:00:00.000Z | SCHEDULED | 10 | NYJ: 2, NE: 8 |
+| `401873002` | PIT | TB | 2026-10-18T17:00:00.000Z | SCHEDULED | 10 | PIT: 9, TB: 1 |
+| `401873003` | TEN | IND | 2026-10-18T17:00:00.000Z | SCHEDULED | 10 | TEN: 1, IND: 9 |
+| `401873004` | ARI | LAR | 2026-10-18T20:05:00.000Z | SCHEDULED | 0 | Unpicked |
+| `401873005` | BUF | LV | 2026-10-18T20:25:00.000Z | SCHEDULED | 0 | Unpicked |
+| `401873006` | LAC | KC | 2026-10-18T20:25:00.000Z | SCHEDULED | 0 | Unpicked |
+| `401873007` | DAL | GB | 2026-10-19T00:20:00.000Z | SCHEDULED (SNF) | 0 | Unpicked |
+| `401873008` | WSH | SF | 2026-10-20T00:15:00.000Z | SCHEDULED (MNF) | 0 | Unpicked |
+| **Total** | | | | | **80 picks** | **100% Resolved & Legitimate** |
+
+*Pick Reconciliation Note*: Every saved pick record (80 out of 80) across all 9 saved events matches an actual participating team of the authoritative ESPN event. There are **0 invalid selected teams** and **0 unresolved event IDs**.
+
+#### Historical Superseded Mapping (Nonauthoritative Initial Draft — For Audit Trace Only)
+*Status: SUPERSEDED — DO NOT EXECUTE*
+| ESPN Event ID | Claimed Away | Claimed Home | Initial Error Description |
+| :--- | :--- | :--- | :--- |
+| `401872995` | SEA | SF | Fabricated matchup; actual event is SEA @ DEN (Final 14–17 OT) |
+| `401872996` | JAX | HOU | Inverted; actual is HOU @ JAX |
+| `401872997` | BAL | CLE | Verified away/home orientation is BAL @ CLE |
+| `401872998` | PHI | CAR | Inverted; actual is CAR @ PHI |
+| `401872999` | CHI | ATL | Verified away/home orientation is CHI @ ATL |
+| `401873000` | NYG | NO | Inverted; actual is NO @ NYG |
+| `401873001` | NE | NYJ | Inverted; actual is NYJ @ NE |
+| `401873002` | PIT | TB | Verified away/home orientation is PIT @ TB |
+| `401873003` | IND | TEN | Inverted; actual is TEN @ IND |
+| `401873004` | LAC | MIA | Fabricated; actual is ARI @ LAR |
+| `401873005` | DAL | DEN | Fabricated; actual is BUF @ LV |
+| `401873006` | CIN | GB | Fabricated; actual is LAC @ KC |
+| `401873007` | LAR | ARI | Fabricated; actual is DAL @ GB |
+| `401873008` | KC | MIN | Fabricated; actual is WSH @ SF |
+
+### 3. Preflight, Upsert & Join Verification SQL (Nonexecuted — Production Hold)
 ```sql
 BEGIN;
 
@@ -135,28 +168,29 @@ BEGIN;
 SELECT count(*)::int AS pre_import_pick_count FROM public.picks WHERE week = 6;
 -- Assert pre_import_pick_count = 80
 
--- 2. Upsert canonical Week 6 events
+-- 2. Upsert canonical Week 6 events (Verified against Live ESPN Capture)
 INSERT INTO public.games (
   external_game_id, home_team_id, away_team_id, kickoff_time, status, season, season_type, week
 ) VALUES
-  ('401872995', 'SF',  'SEA', '2026-10-15T20:15:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
-  ('401872996', 'HOU', 'JAX', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401872995', 'DEN', 'SEA', '2026-10-16T00:15:00Z', 'FINAL'::"GameStatus",     2026, 2, 6),
+  ('401872996', 'JAX', 'HOU', '2026-10-18T13:30:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
   ('401872997', 'CLE', 'BAL', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
-  ('401872998', 'CAR', 'PHI', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401872998', 'PHI', 'CAR', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
   ('401872999', 'ATL', 'CHI', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
-  ('401873000', 'NO',  'NYG', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
-  ('401873001', 'NYJ', 'NE',  '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401873000', 'NYG', 'NO',  '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401873001', 'NE',  'NYJ', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
   ('401873002', 'TB',  'PIT', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
-  ('401873003', 'TEN', 'IND', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
-  ('401873004', 'MIA', 'LAC', '2026-10-18T20:05:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
-  ('401873005', 'DEN', 'DAL', '2026-10-18T20:25:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
-  ('401873006', 'GB',  'CIN', '2026-10-18T20:25:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
-  ('401873007', 'ARI', 'LAR', '2026-10-18T20:20:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
-  ('401873008', 'MIN', 'KC',  '2026-10-19T20:15:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6)
+  ('401873003', 'IND', 'TEN', '2026-10-18T17:00:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401873004', 'LAR', 'ARI', '2026-10-18T20:05:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401873005', 'LV',  'BUF', '2026-10-18T20:25:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401873006', 'KC',  'LAC', '2026-10-18T20:25:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401873007', 'GB',  'DAL', '2026-10-19T00:20:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6),
+  ('401873008', 'SF',  'WSH', '2026-10-20T00:15:00Z', 'SCHEDULED'::"GameStatus", 2026, 2, 6)
 ON CONFLICT (external_game_id) DO UPDATE SET
   home_team_id = EXCLUDED.home_team_id,
   away_team_id = EXCLUDED.away_team_id,
   kickoff_time = EXCLUDED.kickoff_time,
+  status = EXCLUDED.status,
   season = EXCLUDED.season,
   season_type = EXCLUDED.season_type,
   week = EXCLUDED.week;
@@ -179,17 +213,44 @@ COMMIT;
 Add `season` and `season_type` to `public.weekly_submissions` to prevent cross-season collision, replacing the verified legacy unique index `weekly_submissions_pool_id_user_id_week_number_key` on `(pool_id, user_id, week_number)`.
 
 ### 2. Settings & Designation Storage
-The designated tiebreaker game is stored inside `public.pools.settings` (`jsonb`) at:
+The designated tiebreaker game is stored inside `public.pools.settings` (`jsonb`).
+
+> [!WARNING]
+> **CORRECTION: DETROIT LIONS WEEK 6 BYE WEEK**
+> In official NFL 2026 Week 6, the Detroit Lions have a **BYE** (`teamsOnBye: [CIN, DET, MIA, MIN]`).
+> Per `weeklyDesignationService.ts`:
+> - Rule 2: If exactly one eligible Lions game exists -> `DEFAULT_LIONS`.
+> - Rule 3: If Detroit has a bye or no Lions game exists -> `COMMISSIONER_SELECTION_REQUIRED`.
+> The earlier draft example labeling `401872995` (SEA @ DEN) as `DEFAULT_LIONS` was **DEFECTIVE AND RETRACTED**. An event that is not a Detroit Lions game must never be represented as an automatically designated Lions game.
+
+Correct storage representation for Week 6:
 ```json
 {
   "season_tiebreaker_config": {
     "2026": {
       "6": {
-        "status": "DEFAULT_LIONS",
-        "game_id": "401872995",
-        "provenance": "DEFAULT_LIONS",
-        "is_frozen": true,
-        "designated_at": "2026-10-15T12:00:00Z"
+        "status": "COMMISSIONER_SELECTION_REQUIRED",
+        "game_id": null,
+        "provenance": null,
+        "is_frozen": false,
+        "reason": "Detroit Lions have a bye week in 2026 Week 6. Commissioner selection required."
+      }
+    }
+  }
+}
+```
+Or when the commissioner designates an eligible Week 6 game (e.g. DAL @ GB):
+```json
+{
+  "season_tiebreaker_config": {
+    "2026": {
+      "6": {
+        "status": "COMMISSIONER_OVERRIDE",
+        "game_id": "401873007",
+        "provenance": "COMMISSIONER_OVERRIDE",
+        "is_frozen": false,
+        "designated_by": "00000000-0000-0000-0000-000000000001",
+        "designated_at": "2026-10-16T12:00:00Z"
       }
     }
   }

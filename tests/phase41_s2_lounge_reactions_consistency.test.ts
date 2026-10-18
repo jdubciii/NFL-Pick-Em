@@ -64,7 +64,7 @@ describe('Phase 41 Sprint 2 (P41-S2): Pool Lounge, Contextual Threads & Explicit
     expect(balCle.kickoffDisplay).toBe('Sun 10:00 AM');
 
     const dalGb = resolveCanonicalGameKickoff({ awayTeam: 'DAL', homeTeam: 'GB' });
-    expect(dalGb.kickoffDisplay).toBe('Sun 1:25 PM');
+    expect(dalGb.kickoffDisplay).toBe('Sun 5:20 PM');
 
     // 1B. Coherent Big Board 10-Member Demo Fixture Math (11 vs 9, +2 margin)
     const jackPoints = 11; // 9 banked + 2 live

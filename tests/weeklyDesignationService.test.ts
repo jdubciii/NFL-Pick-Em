@@ -47,14 +47,14 @@ describe('Weekly Game Designation & Freeze Contract (Section 5)', () => {
       const awayLionsGames: GameSlateItem[] = [
         {
           id: 'g1',
-          externalGameId: '401872995',
+          externalGameId: 'synthetic-lions-game-away',
           homeTeamId: 'DAL',
           awayTeamId: 'DET',
           kickoffTime: futureKickoff,
         },
         {
           id: 'g2',
-          externalGameId: '401873000',
+          externalGameId: 'synthetic-other-game',
           homeTeamId: 'GB',
           awayTeamId: 'MIN',
           kickoffTime: futureKickoff,
@@ -62,7 +62,7 @@ describe('Weekly Game Designation & Freeze Contract (Section 5)', () => {
       ];
       const res = resolveDefaultDesignation(awayLionsGames);
       expect(res.status).toBe('DEFAULT_LIONS');
-      expect(res.eventId).toBe('401872995');
+      expect(res.eventId).toBe('synthetic-lions-game-away');
       expect(res.game?.awayTeamId).toBe('DET');
     });
 

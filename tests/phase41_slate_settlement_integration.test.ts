@@ -87,21 +87,21 @@ describe('Phase 41: Slate Settlement Integration & Preview Contract', () => {
 
     it('returns NOT READY when unpicked Monday game is not yet FINAL', async () => {
       const finishedGame = {
-        id: 'g-sun',
+        id: 'g-thu',
         externalGameId: '401872995',
-        homeTeamId: 'SF',
+        homeTeamId: 'DEN',
         awayTeamId: 'SEA',
-        kickoffTime: new Date('2026-10-15T20:15:00Z'),
+        kickoffTime: new Date('2026-10-16T00:15:00Z'),
         status: GameStatus.FINAL,
-        homeScore: 24,
-        awayScore: 20,
+        homeScore: 17,
+        awayScore: 14,
       };
       const unpickedPendingMondayGame = {
         id: 'g-mnf',
         externalGameId: '401873008',
-        homeTeamId: 'MIN',
-        awayTeamId: 'KC',
-        kickoffTime: new Date('2026-10-19T20:15:00Z'),
+        homeTeamId: 'SF',
+        awayTeamId: 'WSH',
+        kickoffTime: new Date('2026-10-20T00:15:00Z'),
         status: GameStatus.SCHEDULED, // NOT FINAL!
         homeScore: null,
         awayScore: null,
@@ -244,12 +244,12 @@ describe('Phase 41: Slate Settlement Integration & Preview Contract', () => {
       const mockGame = {
         id: 'g-final',
         externalGameId: '401872995',
-        homeTeamId: 'SF',
+        homeTeamId: 'DEN',
         awayTeamId: 'SEA',
-        kickoffTime: new Date('2026-10-15T20:15:00Z'),
+        kickoffTime: new Date('2026-10-16T00:15:00Z'),
         status: GameStatus.FINAL,
-        homeScore: 24,
-        awayScore: 20,
+        homeScore: 17,
+        awayScore: 14,
       };
 
       const mockTx: any = {
@@ -264,16 +264,16 @@ describe('Phase 41: Slate Settlement Integration & Preview Contract', () => {
           }
           if (sql.includes('SELECT p.user_id, p.game_id')) {
             return [
-              // Member 1 picked winner SF (1 point)
+              // Member 1 picked winner DEN (1 point)
               {
                 user_id: MEMBER_1_ID,
                 game_id: '401872995',
-                selected_team: 'SF',
+                selected_team: 'DEN',
                 selected_team_id: null,
-                home_team_id: 'SF',
+                home_team_id: 'DEN',
                 away_team_id: 'SEA',
-                home_score: 24,
-                away_score: 20,
+                home_score: 17,
+                away_score: 14,
                 status: GameStatus.FINAL,
               },
               // Member 2 picked loser SEA (0 points)
@@ -282,10 +282,10 @@ describe('Phase 41: Slate Settlement Integration & Preview Contract', () => {
                 game_id: '401872995',
                 selected_team: 'SEA',
                 selected_team_id: null,
-                home_team_id: 'SF',
+                home_team_id: 'DEN',
                 away_team_id: 'SEA',
-                home_score: 24,
-                away_score: 20,
+                home_score: 17,
+                away_score: 14,
                 status: GameStatus.FINAL,
               },
             ];
