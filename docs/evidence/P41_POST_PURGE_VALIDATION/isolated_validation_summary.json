@@ -1,7 +1,7 @@
 {
   "metadata": {
     "authority": "P41-POST-PURGE-VALIDATION-2026-10-18-01",
-    "timestamp": "2026-10-18T18:24:53.095Z",
+    "timestamp": "2026-10-18T19:50:30.343Z",
     "postgres_version": "PostgreSQL 17.6 on x86_64-windows, compiled by msvc-19.44.35213, 64-bit",
     "postgrest_version": "PostgREST 16.4",
     "isolation": {
@@ -21,9 +21,9 @@
     "06_proposal_e_picks_security.sql": "a39e8ba26e5ceaba8d405926c184862060dce0bb379d8cd69748513957776e96"
   },
   "reconciliation": {
-    "legacy_16_games_pre_ddl_hash": "af0a875d22bcfd7486a931b0773eb9a1b12a7f45ac40345ca297211564ef55fb",
-    "legacy_16_games_post_ddl_hash": "af0a875d22bcfd7486a931b0773eb9a1b12a7f45ac40345ca297211564ef55fb",
-    "legacy_16_games_post_import_hash": "af0a875d22bcfd7486a931b0773eb9a1b12a7f45ac40345ca297211564ef55fb",
+    "legacy_16_games_pre_ddl_hash": "0e9f1e2232cd48c3b850497f401899fd2a99acce60476abc63820783db52cac5",
+    "legacy_16_games_post_ddl_hash": "0e9f1e2232cd48c3b850497f401899fd2a99acce60476abc63820783db52cac5",
+    "legacy_16_games_post_import_hash": "0e9f1e2232cd48c3b850497f401899fd2a99acce60476abc63820783db52cac5",
     "legacy_unclassified_verified": true,
     "baseline_80_picks_resolved_count": 80
   },
@@ -64,7 +64,7 @@
         "gameCount": 16,
         "pickCount": 80,
         "distinctEvents": 9,
-        "pre_ddl_hash": "af0a875d22bcfd7486a931b0773eb9a1b12a7f45ac40345ca297211564ef55fb"
+        "pre_ddl_hash": "0e9f1e2232cd48c3b850497f401899fd2a99acce60476abc63820783db52cac5"
       }
     },
     {
@@ -80,8 +80,8 @@
       "layer": "SQL",
       "passed": true,
       "details": {
-        "pre_hash": "af0a875d22bcfd7486a931b0773eb9a1b12a7f45ac40345ca297211564ef55fb",
-        "post_hash": "af0a875d22bcfd7486a931b0773eb9a1b12a7f45ac40345ca297211564ef55fb"
+        "pre_hash": "0e9f1e2232cd48c3b850497f401899fd2a99acce60476abc63820783db52cac5",
+        "post_hash": "0e9f1e2232cd48c3b850497f401899fd2a99acce60476abc63820783db52cac5"
       }
     },
     {
@@ -334,15 +334,15 @@
         "status": 201,
         "body": [
           {
-            "id": "5b936fff-b6df-446a-b33a-41f4bd9b2e08",
+            "id": "eb27b9b6-940d-4142-9c4e-5cc38da4d748",
             "pool_id": "9b893bef-3b5a-4ffa-951d-8ba27f9c9782",
             "user_id": "10000000-0000-0000-0000-000000000001",
             "game_id": "401873008",
             "selected_team_id": "SF",
             "week": 6,
             "submitted_by": "10000000-0000-0000-0000-000000000001",
-            "created_at": "2026-10-18T11:24:55.98459-07:00",
-            "updated_at": "2026-10-18T11:24:55.98459-07:00",
+            "created_at": "2026-10-18T12:50:33.933365-07:00",
+            "updated_at": "2026-10-18T12:50:33.933365-07:00",
             "matchup_id": "401873008",
             "selected_team": null
           }
@@ -358,15 +358,15 @@
         "status": 200,
         "body": [
           {
-            "id": "5b936fff-b6df-446a-b33a-41f4bd9b2e08",
+            "id": "eb27b9b6-940d-4142-9c4e-5cc38da4d748",
             "pool_id": "9b893bef-3b5a-4ffa-951d-8ba27f9c9782",
             "user_id": "10000000-0000-0000-0000-000000000001",
             "game_id": "401873008",
             "selected_team_id": "WAS",
             "week": 6,
             "submitted_by": "10000000-0000-0000-0000-000000000001",
-            "created_at": "2026-10-18T11:24:55.98459-07:00",
-            "updated_at": "2026-10-18T11:24:55.98459-07:00",
+            "created_at": "2026-10-18T12:50:33.933365-07:00",
+            "updated_at": "2026-10-18T12:50:33.933365-07:00",
             "matchup_id": "401873008",
             "selected_team": null
           }

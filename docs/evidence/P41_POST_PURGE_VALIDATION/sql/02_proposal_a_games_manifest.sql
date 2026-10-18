@@ -2,12 +2,15 @@
 -- Proposal A: Canonical Games & Weekly Slate Manifests DDL
 
 -- Step 1: Add additive columns to public.games
+-- Columns remain nullable so legacy unclassified records are not falsely certified.
 ALTER TABLE public.games
-  ADD COLUMN IF NOT EXISTS season integer DEFAULT 2026 NOT NULL,
-  ADD COLUMN IF NOT EXISTS season_type integer DEFAULT 2 NOT NULL,
+  ADD COLUMN IF NOT EXISTS canonical_kickoff_time timestamptz NULL,
+  ADD COLUMN IF NOT EXISTS lock_effective_at timestamptz NULL,
+  ADD COLUMN IF NOT EXISTS season integer NULL,
+  ADD COLUMN IF NOT EXISTS season_type integer DEFAULT 2 NULL,
   ADD COLUMN IF NOT EXISTS week integer NULL,
   ADD COLUMN IF NOT EXISTS observation_time timestamptz NULL,
-  ADD COLUMN IF NOT EXISTS manifest_revision integer DEFAULT 1 NOT NULL;
+  ADD COLUMN IF NOT EXISTS manifest_revision integer NULL;
 
 -- Step 2: Performance & scope indexes on public.games
 CREATE INDEX IF NOT EXISTS games_season_week_idx
@@ -16,12 +19,7 @@ CREATE INDEX IF NOT EXISTS games_season_week_idx
 CREATE INDEX IF NOT EXISTS games_external_id_canonical_idx
   ON public.games (external_game_id);
 
--- Step 3: Classify existing 16 Week 5 games safely
-UPDATE public.games
-SET week = 5, season = 2026, season_type = 2
-WHERE external_game_id ILIKE '2026_w05_%' AND week IS NULL;
-
--- Step 4: Compact durable weekly manifest table (League-Wide Canonical Slate)
+-- Step 3: Compact durable weekly manifest table (League-Wide Canonical Slate)
 CREATE TABLE IF NOT EXISTS public.weekly_slate_manifests (
   season integer NOT NULL,
   season_type integer NOT NULL DEFAULT 2,
