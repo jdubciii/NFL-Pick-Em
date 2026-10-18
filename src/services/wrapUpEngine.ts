@@ -29,6 +29,8 @@ export interface WrapUpOptions {
   inputFingerprint?: string;
   appliedBy?: string;
   prismaClient?: typeof prisma;
+  settlementEnabled?: boolean;
+  penaltyPostingEnabled?: boolean;
 }
 
 export interface PoolWrapUpResult {
@@ -43,6 +45,8 @@ export interface PoolWrapUpResult {
     | 'CLAIM_STORE_UNAVAILABLE'
     | 'STALE_PREVIEW_REVISION'
     | 'AUTHORITATIVE_SLATE_UNAVAILABLE'
+    | 'SETTLEMENT_DISABLED'
+    | 'PENALTY_POSTING_DISABLED'
     | string;
   poolId: string;
   season: number;
@@ -325,6 +329,37 @@ export async function executeWeeklyWrapUpForPool(
     const season = options.season || 2026;
     const seasonType = options.seasonType || 2;
 
+    // Separate Activation Controls (P41 Section 6):
+    // If settlement or penalty posting is disabled, refuse official settlement with zero writes.
+    // Do not commit a marker and defer charges.
+    const isSettlementEnabled = options.settlementEnabled !== undefined
+      ? options.settlementEnabled
+      : (process.env.SETTLEMENT_ENABLED !== 'false');
+
+    const isPenaltyPostingEnabled = options.penaltyPostingEnabled !== undefined
+      ? options.penaltyPostingEnabled
+      : (process.env.PENALTY_POSTING_ENABLED !== 'false');
+
+    if (!isSettlementEnabled) {
+      return {
+        applied: false,
+        reason: 'SETTLEMENT_DISABLED',
+        poolId,
+        season,
+        weekNumber,
+      };
+    }
+
+    if (!isPenaltyPostingEnabled) {
+      return {
+        applied: false,
+        reason: 'PENALTY_POSTING_DISABLED',
+        poolId,
+        season,
+        weekNumber,
+      };
+    }
+
     // Check preview revision freshness if provided (Fail-Closed: Decision #55)
     if (options.previewRevision !== undefined) {
       const manifest = await getAcceptedSlateManifest(tx, season, seasonType, weekNumber);
@@ -374,7 +409,8 @@ export async function executeWeeklyWrapUpForPool(
       hasSeasonCol = false;
     }
 
-    // Atomic insert into weekly_wrapups
+    // Step 1: Atomic insert into weekly_wrapups
+    // Claim execution marker immediately to serialize concurrent processes
     let claimResult: any[] = [];
     if (hasSeasonCol) {
       claimResult = ((await tx.$queryRawUnsafe(
@@ -441,6 +477,25 @@ export async function executeWeeklyWrapUpForPool(
       };
     }
 
+    // Helper to purge in-flight incomplete claim marker on refusal (Zero writes on refusal)
+    const cleanupIncompleteClaim = async () => {
+      try {
+        if (hasSeasonCol) {
+          await tx.$queryRawUnsafe(
+            `DELETE FROM public.weekly_wrapups WHERE pool_id = $1::uuid AND season = $2::int AND week_number = $3::int AND summary IS NULL;`,
+            poolId, season, weekNumber
+          );
+        } else {
+          await tx.$queryRawUnsafe(
+            `DELETE FROM public.weekly_wrapups WHERE pool_id = $1::uuid AND week_number = $2::int AND summary IS NULL;`,
+            poolId, weekNumber
+          );
+        }
+      } catch {
+        // ignore
+      }
+    };
+
     // -------------------------------------------------------------------------
     // Step 2: Fetch Pool and Active Members
     // -------------------------------------------------------------------------
@@ -461,10 +516,12 @@ export async function executeWeeklyWrapUpForPool(
     });
 
     if (!pool) {
+      await cleanupIncompleteClaim();
       throw new Error(`Pool with ID ${poolId} not found.`);
     }
 
     if (pool.memberships.length === 0) {
+      await cleanupIncompleteClaim();
       throw new Error(`Pool with ID ${poolId} has no active members.`);
     }
 
@@ -473,13 +530,47 @@ export async function executeWeeklyWrapUpForPool(
 
     // -------------------------------------------------------------------------
     // Step 3: Complete-Slate Check (Decision #27 & Section 8)
+    // Coordinated against Accepted Slate Manifest to include unpicked games
     // -------------------------------------------------------------------------
-    const games = await tx.game.findMany();
+    const manifest = await getAcceptedSlateManifest(tx, season, seasonType, weekNumber);
+    const allGames = await tx.game.findMany();
+    let games = allGames;
+
+    if (manifest && manifest.eventIds && manifest.eventIds.length > 0) {
+      const eventSet = new Set(manifest.eventIds);
+      games = allGames.filter((g: any) => eventSet.has(g.externalGameId) || eventSet.has(g.id));
+      if (games.length < manifest.eventIds.length) {
+        await cleanupIncompleteClaim();
+        return {
+          applied: false,
+          reason: 'AUTHORITATIVE_SLATE_UNAVAILABLE',
+          poolId,
+          season,
+          weekNumber,
+        };
+      }
+    } else {
+      const taggedGames = allGames.filter((g: any) => g.week === weekNumber && (g.season === season || g.season === null));
+      if (taggedGames.length > 0) {
+        games = taggedGames;
+      } else {
+        const poolPickGameIds: any[] = ((await tx.$queryRawUnsafe(
+          `SELECT DISTINCT game_id FROM public.picks WHERE pool_id = $1::uuid AND (week = $2::int OR week IS NULL);`,
+          poolId,
+          weekNumber
+        ).catch(() => [])) as any[]) || [];
+        if (poolPickGameIds.length > 0) {
+          const pickGameSet = new Set(poolPickGameIds.map((p: any) => p.game_id));
+          games = allGames.filter((g: any) => pickGameSet.has(g.id) || pickGameSet.has(g.externalGameId));
+        }
+      }
+    }
     const nonExcludedGames = games.filter(
       (game: any) => !isGameInExcludedWindow(game.kickoffTime, excludedWindows)
     );
 
     if (nonExcludedGames.length === 0) {
+      await cleanupIncompleteClaim();
       throw new Error('NO_GAMES_FOR_WEEK: No games found in weekly slate.');
     }
 
@@ -489,6 +580,7 @@ export async function executeWeeklyWrapUpForPool(
     );
 
     if (pendingGames.length > 0) {
+      await cleanupIncompleteClaim();
       const sortedPending = [...pendingGames].sort(
         (a: any, b: any) => new Date(a.kickoffTime).getTime() - new Date(b.kickoffTime).getTime()
       );
@@ -519,11 +611,13 @@ export async function executeWeeklyWrapUpForPool(
       // For weeks with tiebreaker offered: strictly require designated game and official FINAL score
       const designation = getWeeklyDesignation(pool.settings, season, weekNumber, games as any);
       if (!designation.game) {
+        await cleanupIncompleteClaim();
         throw new Error(`DESIGNATED_GAME_UNAVAILABLE: Tiebreaker game unresolved (${designation.status}). ${designation.reason || ''}`);
       }
 
       const designatedGame = designation.game;
       if (designatedGame.status !== GameStatus.FINAL || designatedGame.homeScore === null || designatedGame.awayScore === null) {
+        await cleanupIncompleteClaim();
         throw new Error('DESIGNATED_GAME_NOT_FINAL: Designated tiebreaker game has not reached official FINAL score.');
       }
 

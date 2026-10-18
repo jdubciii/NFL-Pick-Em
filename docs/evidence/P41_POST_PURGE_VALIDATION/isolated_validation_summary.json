@@ -1,7 +1,7 @@
 {
   "metadata": {
     "authority": "P41-POST-PURGE-VALIDATION-2026-10-18-01",
-    "timestamp": "2026-10-18T17:27:43.294Z",
+    "timestamp": "2026-10-18T18:24:53.095Z",
     "postgres_version": "PostgreSQL 17.6 on x86_64-windows, compiled by msvc-19.44.35213, 64-bit",
     "postgrest_version": "PostgREST 16.4",
     "isolation": {
@@ -13,17 +13,17 @@
   },
   "sql_hashes": {
     "00_init_auth_and_roles.sql": "7c907e8090ecafbee143a251b0391eeb90bfddaa30dad3493ed672d36204f727",
-    "01_baseline_schema.sql": "94033fbbad968577298c3ad16a8af633d7cf9918b18a6e5fee444265e83d050b",
-    "02_proposal_a_games_manifest.sql": "119d349e2a80669379ae5d5531482593c7637d0a7ff46e475c8da97d2b352d17",
-    "03_proposal_b_games_import.sql": "43446c507b93ae6914d5c6bdbc376199ba0c42e269f8f605805be76844b94e37",
+    "01_baseline_schema.sql": "d2fea221766aaf973e4dec62a91e1c2aa985de038c4ce6b4dadf42ac46d9e1bd",
+    "02_proposal_a_games_manifest.sql": "50926ff835a1d1c3f9a90c38d7fd99570a814478e5fb0f627d46d09f9ecdbb21",
+    "03_proposal_b_games_import.sql": "2e0f7e8a1703df9a3ea736a99afc74a52b83eb5fb2feb5db81928a4a3f65b472",
     "04_proposal_c_submissions_designation.sql": "abcc55fcbd90eed210ed03923dd9ec6c598373f36c1de3d061fc40b66b7f0e0d",
     "05_proposal_d_settlement_ledger.sql": "b7f60eb9d46ca820be25118f4b4506835ddc13e12b297b5f6bd88a34c61fddbe",
-    "06_proposal_e_picks_security.sql": "fb059cbb3f8d74b7a4bb59d61c89b9fe225594801080ddcc19a94e2d8fd626b5"
+    "06_proposal_e_picks_security.sql": "a39e8ba26e5ceaba8d405926c184862060dce0bb379d8cd69748513957776e96"
   },
   "reconciliation": {
-    "legacy_16_games_pre_ddl_hash": "56d44861bf07fcd96ae852f8b1c0912535229b3b3f79b8c90ad5687b233f2ba7",
-    "legacy_16_games_post_ddl_hash": "56d44861bf07fcd96ae852f8b1c0912535229b3b3f79b8c90ad5687b233f2ba7",
-    "legacy_16_games_post_import_hash": "56d44861bf07fcd96ae852f8b1c0912535229b3b3f79b8c90ad5687b233f2ba7",
+    "legacy_16_games_pre_ddl_hash": "af0a875d22bcfd7486a931b0773eb9a1b12a7f45ac40345ca297211564ef55fb",
+    "legacy_16_games_post_ddl_hash": "af0a875d22bcfd7486a931b0773eb9a1b12a7f45ac40345ca297211564ef55fb",
+    "legacy_16_games_post_import_hash": "af0a875d22bcfd7486a931b0773eb9a1b12a7f45ac40345ca297211564ef55fb",
     "legacy_unclassified_verified": true,
     "baseline_80_picks_resolved_count": 80
   },
@@ -64,7 +64,7 @@
         "gameCount": 16,
         "pickCount": 80,
         "distinctEvents": 9,
-        "pre_ddl_hash": "56d44861bf07fcd96ae852f8b1c0912535229b3b3f79b8c90ad5687b233f2ba7"
+        "pre_ddl_hash": "af0a875d22bcfd7486a931b0773eb9a1b12a7f45ac40345ca297211564ef55fb"
       }
     },
     {
@@ -80,8 +80,8 @@
       "layer": "SQL",
       "passed": true,
       "details": {
-        "pre_hash": "56d44861bf07fcd96ae852f8b1c0912535229b3b3f79b8c90ad5687b233f2ba7",
-        "post_hash": "56d44861bf07fcd96ae852f8b1c0912535229b3b3f79b8c90ad5687b233f2ba7"
+        "pre_hash": "af0a875d22bcfd7486a931b0773eb9a1b12a7f45ac40345ca297211564ef55fb",
+        "post_hash": "af0a875d22bcfd7486a931b0773eb9a1b12a7f45ac40345ca297211564ef55fb"
       }
     },
     {
@@ -259,6 +259,73 @@
       "details": {}
     },
     {
+      "name": "Timezone session invariance: UTC, America/Phoenix, America/New_York canonical instants match exactly",
+      "group": "Timezone",
+      "layer": "SQL",
+      "passed": true,
+      "details": {
+        "tzUTC": 1792109700000,
+        "tzPHX": 1792109700000,
+        "tzNYC": 1792109700000
+      }
+    },
+    {
+      "name": "Persisted effective lock prevents postponement from reopening closed deadline",
+      "group": "Kickoff_Lock",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Trigger guards user_id, game_id, matchup_id immutability on UPDATE",
+      "group": "Immutability",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Unchanged upsert values allowed on conflict (IS NOT DISTINCT FROM)",
+      "group": "Immutability",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Omitted matchup_id derived from game_id on INSERT",
+      "group": "Derivation",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Trigger validates participating teams: rejects non-playing team selection",
+      "group": "Validation",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Blanket SELECT * FROM public.games DENIED for authenticated role (Least Privilege)",
+      "group": "Privilege",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Safe RPC get_pool_canonical_games returns safe field DTO (omits commissioner_notes & legacy records)",
+      "group": "Safe_DTO",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Safe RPC get_pool_canonical_games returns 0 rows for nonmember",
+      "group": "Safe_DTO",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
       "name": "HTTP POST /picks: Member 01 inserts pick for future game",
       "group": "HTTP_Gateway",
       "layer": "HTTP",
@@ -267,15 +334,17 @@
         "status": 201,
         "body": [
           {
-            "id": "b3d00513-e67f-42ba-ad5f-e8cad037fd13",
+            "id": "5b936fff-b6df-446a-b33a-41f4bd9b2e08",
             "pool_id": "9b893bef-3b5a-4ffa-951d-8ba27f9c9782",
             "user_id": "10000000-0000-0000-0000-000000000001",
             "game_id": "401873008",
             "selected_team_id": "SF",
             "week": 6,
             "submitted_by": "10000000-0000-0000-0000-000000000001",
-            "created_at": "2026-10-18T10:27:45.380019-07:00",
-            "updated_at": "2026-10-18T10:27:45.380019-07:00"
+            "created_at": "2026-10-18T11:24:55.98459-07:00",
+            "updated_at": "2026-10-18T11:24:55.98459-07:00",
+            "matchup_id": "401873008",
+            "selected_team": null
           }
         ]
       }
@@ -289,15 +358,17 @@
         "status": 200,
         "body": [
           {
-            "id": "b3d00513-e67f-42ba-ad5f-e8cad037fd13",
+            "id": "5b936fff-b6df-446a-b33a-41f4bd9b2e08",
             "pool_id": "9b893bef-3b5a-4ffa-951d-8ba27f9c9782",
             "user_id": "10000000-0000-0000-0000-000000000001",
             "game_id": "401873008",
             "selected_team_id": "WAS",
             "week": 6,
             "submitted_by": "10000000-0000-0000-0000-000000000001",
-            "created_at": "2026-10-18T10:27:45.380019-07:00",
-            "updated_at": "2026-10-18T10:27:45.380019-07:00"
+            "created_at": "2026-10-18T11:24:55.98459-07:00",
+            "updated_at": "2026-10-18T11:24:55.98459-07:00",
+            "matchup_id": "401873008",
+            "selected_team": null
           }
         ]
       }
@@ -309,7 +380,7 @@
       "passed": true,
       "details": {
         "status": 400,
-        "body": "{\"code\":\"P0001\",\"details\":null,\"hint\":null,\"message\":\"KICKOFF_LOCKED: Pick submission closed at 2026-10-15 17:15:00-07\"}"
+        "body": "{\"code\":\"P0001\",\"details\":null,\"hint\":null,\"message\":\"KICKOFF_LOCKED: Pick modification closed at 2026-10-15 17:15:00-07\"}"
       }
     },
     {
@@ -406,11 +477,64 @@
         "hasSummary": true,
         "dupeChargeBlocked": true
       }
+    },
+    {
+      "name": "Step 8: Gating Flag SETTLEMENT_ENABLED=false refuses official settlement with zero writes",
+      "group": "Activation",
+      "layer": "Logic",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Step 9: Gating Flag PENALTY_POSTING_ENABLED=false refuses settlement with zero writes (no marker committed)",
+      "group": "Activation",
+      "layer": "Logic",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Step 10: Real wrapUpEngine blocks settlement on unfinalized manifest games (WEEK_NOT_FINAL)",
+      "group": "Settlement",
+      "layer": "Logic",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Step 11: Real wrapUpEngine execution inside single transaction on PG17 (Complete FINAL slate & zero-pick member)",
+      "group": "Settlement",
+      "layer": "App_Service",
+      "passed": true,
+      "details": {
+        "applied": true,
+        "membersProcessed": 3,
+        "zeroPickMemberIncluded": true,
+        "topScorersCount": 1,
+        "deadPlaceCount": 2
+      }
+    },
+    {
+      "name": "Step 12: Real wrapUpEngine retry returns existing result with zero duplicate ledger charges",
+      "group": "Settlement",
+      "layer": "App_Service",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Step 13: Express Route Control: POST /api/admin/ops/slate/refresh blocked when SLATE_REFRESH_ENABLED=false",
+      "group": "Activation",
+      "layer": "HTTP",
+      "passed": true,
+      "details": {
+        "status": 403,
+        "body": {
+          "error": "REFRESH_EXECUTION_DISABLED: Authoritative slate refresh execution is currently disabled by operational controls."
+        }
+      }
     }
   ],
   "summary": {
-    "total": 45,
-    "passed": 45,
+    "total": 60,
+    "passed": 60,
     "failed": 0,
     "not_run": 0
   }

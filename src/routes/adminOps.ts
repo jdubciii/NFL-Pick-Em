@@ -148,6 +148,30 @@ adminOpsRouter.get('/wrap-up/preview', requireAuth, async (req: Request, res: Re
     return;
   }
 
+  const actorId = req.user!.id;
+  const pool = await prisma.pool.findUnique({
+    where: { id: poolId },
+    include: {
+      memberships: {
+        where: { userId: actorId, status: 'ACTIVE' },
+      },
+    },
+  });
+
+  if (!pool) {
+    res.status(404).json({ error: 'Pool not found.' });
+    return;
+  }
+
+  const isAdmin = req.user?.role === 'ADMIN';
+  const isCommissioner = pool.adminId === actorId;
+  const isActiveMember = pool.memberships.length > 0;
+
+  if (!isAdmin && !isCommissioner && !isActiveMember) {
+    res.status(403).json({ error: 'FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED: Must be an ACTIVE member or commissioner of the requested pool.' });
+    return;
+  }
+
   try {
     const preview = await previewWeeklyWrapUpForPool(poolId, weekNumber, { season, seasonType });
     res.status(200).json({
@@ -170,6 +194,14 @@ adminOpsRouter.get('/wrap-up/preview', requireAuth, async (req: Request, res: Re
  * Protected by requireAuth & requireAdmin.
  */
 adminOpsRouter.post('/slate/refresh', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  // Separate route availability from refresh execution authorization (P41 Section 6)
+  if (process.env.SLATE_REFRESH_ENABLED !== 'true') {
+    res.status(403).json({
+      error: 'REFRESH_EXECUTION_DISABLED: Authoritative slate refresh execution is currently disabled by operational controls.',
+    });
+    return;
+  }
+
   const { poolId, season, seasonType, weekNumber, weekId } = req.body || {};
   if (!poolId || typeof poolId !== 'string') {
     res.status(400).json({ error: 'poolId is required.' });
