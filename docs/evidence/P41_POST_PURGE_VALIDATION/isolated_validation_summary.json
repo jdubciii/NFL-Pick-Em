@@ -1,0 +1,382 @@
+{
+  "metadata": {
+    "authority": "P41-POST-PURGE-VALIDATION-2026-10-18-01",
+    "timestamp": "2026-10-18T15:15:10.449Z",
+    "postgres_version": "PostgreSQL 18.6 (x86_64-windows)",
+    "postgrest_version": "PostgREST 16.4",
+    "isolation": {
+      "host": "127.0.0.1",
+      "port": 54329,
+      "database": "pickem_isolated_test_db",
+      "fail_closed_checks": true
+    }
+  },
+  "sql_hashes": {
+    "00_init_auth_and_roles.sql": "7c907e8090ecafbee143a251b0391eeb90bfddaa30dad3493ed672d36204f727",
+    "01_baseline_schema.sql": "1147071e91bbee53cf9b8bfe88a302523e5fbb3141a07f2f9300bd9d0565c89b",
+    "02_proposal_a_games_manifest.sql": "5ee2271dd1e76d20084311e873e9dc822553cd040119b35d9a92c19fee63baf2",
+    "03_proposal_b_games_import.sql": "43446c507b93ae6914d5c6bdbc376199ba0c42e269f8f605805be76844b94e37",
+    "04_proposal_c_submissions_designation.sql": "abcc55fcbd90eed210ed03923dd9ec6c598373f36c1de3d061fc40b66b7f0e0d",
+    "05_proposal_d_settlement_ledger.sql": "b7f60eb9d46ca820be25118f4b4506835ddc13e12b297b5f6bd88a34c61fddbe",
+    "06_proposal_e_picks_security.sql": "bcf8b580eaa9a9af5b700dc489dd6572d4f58a98ee8fc08f58ba1c097c8e9b8a"
+  },
+  "tests": [
+    {
+      "name": "Fail-Closed Target Identity Verification",
+      "group": "Preflight",
+      "layer": "SQL",
+      "passed": true,
+      "details": {
+        "row": {
+          "db": "pickem_isolated_test_db",
+          "usr": "postgres",
+          "addr": "127.0.0.1",
+          "port": 54329
+        }
+      }
+    },
+    {
+      "name": "Apply 00_init_auth_and_roles.sql",
+      "group": "Baseline",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Apply 01_baseline_schema.sql",
+      "group": "Baseline",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Seed Synthetic Users, Pools, Memberships & Historical Baseline Picks",
+      "group": "Seeding",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Proposal A: Canonical Games & Weekly Slate Manifests DDL",
+      "group": "Proposals",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Proposal B: Canonical Games Import (Week 6 14-Event Schedule)",
+      "group": "Proposals",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Proposal C: Season-Safe Submissions and Designation DDL",
+      "group": "Proposals",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Proposal D: Settlement Records & Penalty Ledger Attribution DDL",
+      "group": "Proposals",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Proposal E: Direct Supabase Pick Security, Grants & Trigger Guards",
+      "group": "Proposals",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Prisma Model Schema Compatibility Reads",
+      "group": "Prisma",
+      "layer": "ORM",
+      "passed": true,
+      "details": {
+        "gamesCount": 3,
+        "poolsCount": 2,
+        "membershipsCount": 4,
+        "picksCount": 1
+      }
+    },
+    {
+      "name": "PostgREST 16.4 Native Gateway Bound & Ready",
+      "group": "Gateway",
+      "layer": "HTTP",
+      "passed": true,
+      "details": {
+        "url": "http://127.0.0.1:3001",
+        "port": 3001
+      }
+    },
+    {
+      "name": "Member A sees Member B pick AFTER kickoff",
+      "group": "RLS_SELECT",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Member A CANNOT see Member B pick BEFORE kickoff (Privacy)",
+      "group": "RLS_SELECT",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Inactive member CANNOT see other members picks after kickoff",
+      "group": "RLS_SELECT",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Nonmember CANNOT see pool picks after kickoff",
+      "group": "RLS_SELECT",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Cross-pool member CANNOT see Pool 1 picks after kickoff",
+      "group": "RLS_SELECT",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Member A inserts pick BEFORE kickoff",
+      "group": "Picks_Mutation",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Member A updates pick BEFORE kickoff",
+      "group": "Picks_Mutation",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Member A deletes pick BEFORE kickoff",
+      "group": "Picks_Mutation",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Member A INSERT rejected AFTER kickoff (Trigger / RLS check)",
+      "group": "Kickoff_Lock",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Member B UPDATE rejected AFTER kickoff (RLS / Trigger KICKOFF_LOCKED)",
+      "group": "Kickoff_Lock",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Member B DELETE rejected AFTER kickoff (RLS blocks delete, 0 rows)",
+      "group": "Kickoff_Lock",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Trigger guards pool_id immutability on UPDATE",
+      "group": "Immutability",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Trigger guards user_id immutability on UPDATE",
+      "group": "Immutability",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Trigger guards week immutability on UPDATE",
+      "group": "Immutability",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "HTTP POST /picks: Member A inserts pick for future game",
+      "group": "HTTP_Gateway",
+      "layer": "HTTP",
+      "passed": true,
+      "details": {
+        "status": 201,
+        "body": [
+          {
+            "id": "99da2932-5993-4ee5-a327-3ec4bc4dc4d7",
+            "pool_id": "11111111-1111-1111-1111-111111111111",
+            "user_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "game_id": "401873008",
+            "selected_team_id": "SF",
+            "week": 6,
+            "submitted_by": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "created_at": "2026-10-18T08:15:12.439472-07:00",
+            "updated_at": "2026-10-18T08:15:12.439472-07:00"
+          }
+        ]
+      }
+    },
+    {
+      "name": "HTTP Upsert: Member A upserts pick via merge-duplicates",
+      "group": "HTTP_Gateway",
+      "layer": "HTTP",
+      "passed": true,
+      "details": {
+        "status": 200,
+        "body": [
+          {
+            "id": "99da2932-5993-4ee5-a327-3ec4bc4dc4d7",
+            "pool_id": "11111111-1111-1111-1111-111111111111",
+            "user_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "game_id": "401873008",
+            "selected_team_id": "WAS",
+            "week": 6,
+            "submitted_by": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "created_at": "2026-10-18T08:15:12.439472-07:00",
+            "updated_at": "2026-10-18T08:15:12.439472-07:00"
+          }
+        ]
+      }
+    },
+    {
+      "name": "HTTP POST rejected for past game: KICKOFF_LOCKED enforced",
+      "group": "HTTP_Gateway",
+      "layer": "HTTP",
+      "passed": true,
+      "details": {
+        "status": 400,
+        "body": "{\"code\":\"P0001\",\"details\":null,\"hint\":null,\"message\":\"KICKOFF_LOCKED: Pick submission closed at 2026-10-15 17:15:00-07\"}"
+      }
+    },
+    {
+      "name": "HTTP POST rejected for nonmember (RLS active membership check)",
+      "group": "HTTP_Gateway",
+      "layer": "HTTP",
+      "passed": true,
+      "details": {
+        "status": 403
+      }
+    },
+    {
+      "name": "HTTP GET /picks preserves kickoff privacy (other members picks hidden before kickoff)",
+      "group": "HTTP_Gateway",
+      "layer": "HTTP",
+      "passed": true,
+      "details": {
+        "picksCount": 3,
+        "seesLockedOther": true,
+        "seesUpcomingOther": false
+      }
+    },
+    {
+      "name": "Insert weekly submission for Season 2026 Week 6",
+      "group": "Submissions",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Cross-Season Collision Prevention: 2026 and 2027 same week coexist",
+      "group": "Submissions",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Duplicate submission in same season/week rejected by unique index",
+      "group": "Submissions",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Designation storage within pools.settings: Detroit Lions BYE correctly handled",
+      "group": "Designation",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Complete-Slate FINAL requirement: settlement blocked when games are SCHEDULED",
+      "group": "Settlement",
+      "layer": "Logic",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Two-process settlement concurrency: exactly ONE claim wins, second is rejected",
+      "group": "Concurrency",
+      "layer": "SQL",
+      "passed": true,
+      "details": {
+        "procA_rowCount": 1,
+        "procB_rowCount": 0
+      }
+    },
+    {
+      "name": "Atomic failure and rollback: zero orphan penalty ledger rows committed",
+      "group": "Rollback",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Refresh-versus-settlement race: concurrent game score update does not corrupt settlement claim",
+      "group": "Concurrency",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Duplicate-charge prevention: partial unique index blocks second settlement penalty",
+      "group": "Ledger",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Idempotent retry: subsequent settlement returns 0 rows without modifying store",
+      "group": "Ledger",
+      "layer": "SQL",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Ratified tiebreaker ranking: points priority, tiebreaker prediction distance",
+      "group": "Tiebreaker",
+      "layer": "Logic",
+      "passed": true,
+      "details": {}
+    },
+    {
+      "name": "Ratified tier penalties: Dead Place receives 2.5 shots per ratified schedule",
+      "group": "Tiebreaker",
+      "layer": "Logic",
+      "passed": true,
+      "details": {}
+    }
+  ],
+  "summary": {
+    "total": 42,
+    "passed": 42,
+    "failed": 0,
+    "not_run": 0
+  }
+}
