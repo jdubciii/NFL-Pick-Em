@@ -18,7 +18,198 @@ interface PendingApplicant {
   displayName: string;
 }
 
-export const ProfilePage: React.FC = () => {
+export interface ProfilePageProps {
+  poolId?: string | null;
+  season?: number;
+  seasonType?: number;
+  week?: number;
+}
+
+export interface ProfileScopeResolutionInput {
+  userId?: string | null;
+  propPoolId?: string | null;
+  propSeason?: number | null;
+  propSeasonType?: number | null;
+  propWeek?: number | null;
+  supabaseClient: any;
+}
+
+export interface ProfileScopeResolutionResult {
+  hasAcceptedSlate: boolean;
+  resolvedPoolId: string | null;
+  resolvedScope: { season: number; seasonType: number; week: number } | null;
+  manifestRecord: any | null;
+  windowGames: DeadlineGameWindowInput[];
+  isSlateSubmitted: boolean;
+  unavailabilityReason?: string;
+}
+
+export async function resolveProfileReminderScope(
+  input: ProfileScopeResolutionInput
+): Promise<ProfileScopeResolutionResult> {
+  const { userId, propPoolId, propSeason, propSeasonType, propWeek, supabaseClient } = input;
+
+  if (!userId) {
+    return {
+      hasAcceptedSlate: false,
+      resolvedPoolId: null,
+      resolvedScope: null,
+      manifestRecord: null,
+      windowGames: [],
+      isSlateSubmitted: false,
+      unavailabilityReason: 'UNAUTHENTICATED',
+    };
+  }
+
+  // 1. Resolve active pool membership
+  let resolvedPoolId: string | null = null;
+  let poolSettings: any = null;
+
+  if (propPoolId) {
+    const { data: specificMem, error: memErr } = await supabaseClient
+      .from('pool_memberships')
+      .select('pool_id, status, pools(id, settings)')
+      .eq('user_id', userId)
+      .eq('pool_id', propPoolId)
+      .eq('status', 'ACTIVE')
+      .maybeSingle();
+
+    if (memErr || !specificMem || specificMem.status !== 'ACTIVE') {
+      return {
+        hasAcceptedSlate: false,
+        resolvedPoolId: null,
+        resolvedScope: null,
+        manifestRecord: null,
+        windowGames: [],
+        isSlateSubmitted: false,
+        unavailabilityReason: 'INACTIVE_OR_INVALID_POOL_MEMBERSHIP',
+      };
+    }
+    resolvedPoolId = specificMem.pool_id;
+    poolSettings = specificMem.pools?.settings || null;
+  } else {
+    const { data: memberships, error: memErr } = await supabaseClient
+      .from('pool_memberships')
+      .select('pool_id, status, pools(id, settings)')
+      .eq('user_id', userId)
+      .eq('status', 'ACTIVE');
+
+    if (memErr || !memberships || memberships.length === 0) {
+      return {
+        hasAcceptedSlate: false,
+        resolvedPoolId: null,
+        resolvedScope: null,
+        manifestRecord: null,
+        windowGames: [],
+        isSlateSubmitted: false,
+        unavailabilityReason: 'NO_ACTIVE_POOL_MEMBERSHIPS',
+      };
+    }
+    resolvedPoolId = memberships[0].pool_id;
+    poolSettings = memberships[0].pools?.settings || null;
+  }
+
+  // 2. Resolve verified application context for season, season_type, and week.
+  // Do not infer solely from device clock. Require explicit pool/app context.
+  const resolvedSeason = propSeason ?? poolSettings?.season ?? null;
+  const resolvedSeasonType = propSeasonType ?? poolSettings?.season_type ?? (resolvedSeason ? 2 : null);
+  const resolvedWeek = propWeek ?? poolSettings?.current_week ?? null;
+
+  if (resolvedSeason === null || resolvedSeasonType === null || resolvedWeek === null) {
+    return {
+      hasAcceptedSlate: false,
+      resolvedPoolId,
+      resolvedScope: null,
+      manifestRecord: null,
+      windowGames: [],
+      isSlateSubmitted: false,
+      unavailabilityReason: 'UNRESOLVED_SEASON_OR_WEEK_SCOPE',
+    };
+  }
+
+  const resolvedScope = {
+    season: resolvedSeason,
+    seasonType: resolvedSeasonType,
+    week: resolvedWeek,
+  };
+
+  // 3. Query weekly_slate_manifests for the exact resolved scope
+  const { data: manifestRecord, error: manifestErr } = await supabaseClient
+    .from('weekly_slate_manifests')
+    .select('season, season_type, week_number, manifest_fingerprint')
+    .eq('season', resolvedSeason)
+    .eq('season_type', resolvedSeasonType)
+    .eq('week_number', resolvedWeek)
+    .maybeSingle();
+
+  if (manifestErr || !manifestRecord) {
+    return {
+      hasAcceptedSlate: false,
+      resolvedPoolId,
+      resolvedScope,
+      manifestRecord: null,
+      windowGames: [],
+      isSlateSubmitted: false,
+      unavailabilityReason: manifestErr ? 'MANIFEST_ACCESS_DENIED' : 'MISSING_ACCEPTED_MANIFEST',
+    };
+  }
+
+  // 4. Query games for the exact resolved week
+  const { data: dbGames, error: gamesErr } = await supabaseClient
+    .from('games')
+    .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, status')
+    .eq('week', resolvedWeek)
+    .order('kickoff_time', { ascending: true });
+
+  if (gamesErr || !dbGames || dbGames.length === 0) {
+    return {
+      hasAcceptedSlate: false,
+      resolvedPoolId,
+      resolvedScope,
+      manifestRecord,
+      windowGames: [],
+      isSlateSubmitted: false,
+      unavailabilityReason: 'NO_GAMES_FOUND_FOR_SCOPE',
+    };
+  }
+
+  // 5. Query user's picks for this resolved pool and week
+  const { data: dbPicks } = await supabaseClient
+    .from('picks')
+    .select('game_id, selected_team')
+    .eq('pool_id', resolvedPoolId)
+    .eq('user_id', userId)
+    .eq('week', resolvedWeek);
+
+  const pickSet = new Set((dbPicks || []).map((p: any) => String(p.game_id)));
+
+  const windowGames: DeadlineGameWindowInput[] = dbGames.map((g: any) => ({
+    gameId: g.external_game_id || g.id,
+    awayTeam: g.away_team_id,
+    homeTeam: g.home_team_id,
+    kickoffIso: g.kickoff_time,
+    status: g.status,
+    isPicked: pickSet.has(String(g.external_game_id)) || pickSet.has(String(g.id)),
+  }));
+
+  const isSlateSubmitted = windowGames.length > 0 && windowGames.every((g) => g.isPicked);
+
+  return {
+    hasAcceptedSlate: true,
+    resolvedPoolId,
+    resolvedScope,
+    manifestRecord,
+    windowGames,
+    isSlateSubmitted,
+  };
+}
+
+export const ProfilePage: React.FC<ProfilePageProps> = ({
+  poolId: propPoolId,
+  season: propSeason,
+  seasonType: propSeasonType,
+  week: propWeek,
+}) => {
   const { user, token } = useAuth();
   const [role, setRole] = useState<string>('USER');
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -63,6 +254,7 @@ export const ProfilePage: React.FC = () => {
   };
 
   const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null);
+  const [activeScope, setActiveScope] = useState<{ season: number; seasonType: number; week: number } | null>(null);
   const [manifestGames, setManifestGames] = useState<DeadlineGameWindowInput[]>([]);
   const [isSlateSubmitted, setIsSlateSubmitted] = useState<boolean>(false);
   const [hasAcceptedSlate, setHasAcceptedSlate] = useState<boolean>(false);
@@ -70,93 +262,39 @@ export const ProfilePage: React.FC = () => {
   useEffect(() => {
     if (!user?.id) {
       setSelectedPoolId(null);
+      setActiveScope(null);
       setManifestGames([]);
       setHasAcceptedSlate(false);
+      setIsSlateSubmitted(false);
       return;
     }
 
     let isMounted = true;
     async function loadMemberPoolAndSlate() {
       try {
-        const { data: memberships } = await supabase
-          .from('pool_memberships')
-          .select('pool_id')
-          .eq('user_id', user!.id)
-          .eq('status', 'ACTIVE');
-
-        const resolvedPoolId = memberships?.[0]?.pool_id || null;
-        if (!isMounted) return;
-        setSelectedPoolId(resolvedPoolId);
-
-        if (!resolvedPoolId) {
-          setManifestGames([]);
-          setHasAcceptedSlate(false);
-          return;
-        }
-
-        // Check for approved weekly_slate_manifests storage for (season: 2026, season_type: 2, week: 6)
-        // Gatekeeper Ruling: The mere existence of records in public.games must not establish an accepted slate.
-        // Reminders strictly require an approved, season/week-scoped canonical manifest record.
-        const { data: manifestRecord, error: manifestErr } = await supabase
-          .from('weekly_slate_manifests')
-          .select('season, season_type, week_number, manifest_fingerprint')
-          .eq('season', 2026)
-          .eq('season_type', 2)
-          .eq('week_number', 6)
-          .maybeSingle();
+        const res = await resolveProfileReminderScope({
+          userId: user?.id,
+          propPoolId,
+          propSeason,
+          propSeasonType,
+          propWeek,
+          supabaseClient: supabase,
+        });
 
         if (!isMounted) return;
 
-        if (manifestErr || !manifestRecord) {
-          // In the absence of approved weekly_slate_manifests storage, fail closed.
-          // Preserve disabled/unavailable state without inventing kickoff windows.
+        setSelectedPoolId(res.resolvedPoolId);
+        setActiveScope(res.resolvedScope);
+        setManifestGames(res.windowGames);
+        setHasAcceptedSlate(res.hasAcceptedSlate);
+        setIsSlateSubmitted(res.isSlateSubmitted);
+      } catch {
+        if (isMounted) {
+          setSelectedPoolId(null);
+          setActiveScope(null);
           setManifestGames([]);
           setHasAcceptedSlate(false);
           setIsSlateSubmitted(false);
-          return;
-        }
-
-        const { data: dbGames } = await supabase
-          .from('games')
-          .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, status')
-          .eq('week', 6)
-          .order('kickoff_time', { ascending: true });
-
-        if (!isMounted) return;
-
-        if (!dbGames || dbGames.length === 0) {
-          setManifestGames([]);
-          setHasAcceptedSlate(false);
-          return;
-        }
-
-        const { data: dbPicks } = await supabase
-          .from('picks')
-          .select('game_id, selected_team')
-          .eq('pool_id', resolvedPoolId)
-          .eq('user_id', user!.id)
-          .eq('week', 6);
-
-        if (!isMounted) return;
-
-        const pickSet = new Set((dbPicks || []).map((p: any) => String(p.game_id)));
-
-        const windowGames: DeadlineGameWindowInput[] = dbGames.map((g: any) => ({
-          gameId: g.external_game_id || g.id,
-          awayTeam: g.away_team_id,
-          homeTeam: g.home_team_id,
-          kickoffIso: g.kickoff_time,
-          status: g.status,
-          isPicked: pickSet.has(String(g.external_game_id)) || pickSet.has(String(g.id)),
-        }));
-
-        setManifestGames(windowGames);
-        setHasAcceptedSlate(true);
-        setIsSlateSubmitted(windowGames.length > 0 && windowGames.every((g) => g.isPicked));
-      } catch {
-        if (isMounted) {
-          setManifestGames([]);
-          setHasAcceptedSlate(false);
         }
       }
     }
@@ -165,15 +303,15 @@ export const ProfilePage: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [user?.id]);
+  }, [user?.id, propPoolId, propSeason, propSeasonType, propWeek]);
 
   const deadlinePlan: DeadlinePlannerResult = useMemo(() => {
     return planDeadlineReminders({
       userId: user?.id,
       poolId: selectedPoolId,
-      season: 2026,
-      seasonType: 2,
-      week: 6,
+      season: activeScope?.season ?? 0,
+      seasonType: activeScope?.seasonType ?? 2,
+      week: activeScope?.week ?? 0,
       optInEnabled: alertsOptedIn,
       permissionState,
       isSlateSubmitted,
@@ -181,7 +319,7 @@ export const ProfilePage: React.FC = () => {
       games: manifestGames,
       nowMs: Date.now(),
     });
-  }, [user?.id, selectedPoolId, alertsOptedIn, permissionState, isSlateSubmitted, hasAcceptedSlate, manifestGames]);
+  }, [user?.id, selectedPoolId, activeScope, alertsOptedIn, permissionState, isSlateSubmitted, hasAcceptedSlate, manifestGames]);
 
   const isCommissioner = Boolean(
     role === 'ADMIN' || 

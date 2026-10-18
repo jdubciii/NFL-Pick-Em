@@ -18,6 +18,8 @@ import {
   freezeDesignation,
   GameSlateItem,
 } from '../src/services/weeklyDesignationService';
+import { normalizeTeamCode } from '../src/services/authoritativeSlateService';
+import { resolveProfileReminderScope } from '../client/src/pages/ProfilePage';
 
 describe('P41 — Runtime Mock Purge and Team Identity Normalization (Directive 6)', () => {
   // =========================================================================
@@ -289,6 +291,16 @@ describe('P41 — Runtime Mock Purge and Team Identity Normalization (Directive 
     expect(areTeamIdentitiesEquivalent('WAS', 'WAS')).toBe(true);
     expect(areTeamIdentitiesEquivalent('JAC', 'JAX')).toBe(true);
 
+    // normalizeTeamCode parity (authoritativeSlateService)
+    expect(normalizeTeamCode('WSH')).toBe('WAS');
+    expect(normalizeTeamCode('WAS')).toBe('WAS');
+    expect(normalizeTeamCode('JAC')).toBe('JAX');
+    expect(normalizeTeamCode('JAX')).toBe('JAX');
+    expect(normalizeTeamCode('DET')).toBe('DET');
+    expect(normalizeTeamCode('KC')).toBe('KC');
+    expect(normalizeTeamCode('UNKNOWN_CODE')).toBe('UNKNOWN_CODE');
+    expect(normalizeTeamCode('')).toBe('UNK');
+
     // Conflicting / distinct teams are strictly rejected
     expect(areTeamIdentitiesEquivalent('WAS', 'DAL')).toBe(false);
     expect(areTeamIdentitiesEquivalent('WSH', 'NYG')).toBe(false);
@@ -296,6 +308,21 @@ describe('P41 — Runtime Mock Purge and Team Identity Normalization (Directive 
     expect(areTeamIdentitiesEquivalent('SEA', 'DEN')).toBe(false);
     expect(areTeamIdentitiesEquivalent('WAS', null)).toBe(false);
     expect(areTeamIdentitiesEquivalent(undefined, 'WSH')).toBe(false);
+
+    // Pick competitor membership validation:
+    // If a game is SF vs WAS, picking DAL or KC is rejected
+    const gameCompetitors = { home: normalizeTeamCode('SF'), away: normalizeTeamCode('WSH') }; // SF vs WAS
+    const pickWAS = normalizeTeamCode('WSH'); // WAS
+    const pickSF = normalizeTeamCode('SF');   // SF
+    const pickDAL = normalizeTeamCode('DAL'); // DAL
+
+    const isPickWASValid = pickWAS === gameCompetitors.home || pickWAS === gameCompetitors.away;
+    const isPickSFValid = pickSF === gameCompetitors.home || pickSF === gameCompetitors.away;
+    const isPickDALValid = pickDAL === gameCompetitors.home || pickDAL === gameCompetitors.away;
+
+    expect(isPickWASValid).toBe(true);
+    expect(isPickSFValid).toBe(true);
+    expect(isPickDALValid).toBe(false);
   });
 
   // =========================================================================
@@ -548,5 +575,179 @@ describe('P41 — Runtime Mock Purge and Team Identity Normalization (Directive 
         isUserActiveMember: true,
       })
     ).toThrow(/FROZEN/);
+  });
+
+  // =========================================================================
+  // Test 12: Profile Scope & Manifest Authority Dynamic Resolution Suite
+  // Demonstrates dynamic resolution from pool/app context without clock guessing,
+  // and strict fail-closed behavior across all missing/denied/inactive scopes.
+  // =========================================================================
+  it('Test 12: Profile Scope & Manifest Authority Dynamic Resolution Suite', async () => {
+    // Helper to construct a mock Supabase client with programmable responses
+    function createMockSupabase(config: {
+      membership?: any;
+      memberships?: any[];
+      manifestRecord?: any;
+      manifestError?: any;
+      games?: any[];
+      gamesError?: any;
+      picks?: any[];
+    }) {
+      return {
+        from: (table: string) => {
+          if (table === 'pool_memberships') {
+            return {
+              select: () => ({
+                eq: (col1: string, val1: any) => ({
+                  eq: (col2: string, val2: any) => {
+                    if (config.membership !== undefined) {
+                      return {
+                        eq: () => ({
+                          maybeSingle: async () => ({ data: config.membership, error: null }),
+                        }),
+                        maybeSingle: async () => ({ data: config.membership, error: null }),
+                      };
+                    }
+                    return Promise.resolve({ data: config.memberships || [], error: null });
+                  },
+                }),
+              }),
+            };
+          }
+          if (table === 'weekly_slate_manifests') {
+            return {
+              select: () => ({
+                eq: (_c1: string, _v1: any) => ({
+                  eq: (_c2: string, _v2: any) => ({
+                    eq: (_c3: string, _v3: any) => ({
+                      maybeSingle: async () => ({
+                        data: config.manifestRecord || null,
+                        error: config.manifestError || null,
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          if (table === 'games') {
+            return {
+              select: () => ({
+                eq: (_c: string, _v: any) => ({
+                  order: () => Promise.resolve({
+                    data: config.games || [],
+                    error: config.gamesError || null,
+                  }),
+                }),
+              }),
+            };
+          }
+          if (table === 'picks') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  eq: () => ({
+                    eq: () => Promise.resolve({ data: config.picks || [], error: null }),
+                  }),
+                }),
+              }),
+            };
+          }
+          return {};
+        },
+      };
+    }
+
+    const testDbGames = [
+      { id: 'g1', external_game_id: '401872995', home_team_id: 'DEN', away_team_id: 'SEA', kickoff_time: '2026-10-16T00:15:00.000Z', status: 'FINAL' },
+      { id: 'g2', external_game_id: '401873007', home_team_id: 'GB', away_team_id: 'DAL', kickoff_time: '2026-10-19T00:20:00.000Z', status: 'SCHEDULED' },
+    ];
+
+    // Case 1: Authenticated user in original pool viewing Week 6 with accepted manifest
+    const sb1 = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c' },
+      games: testDbGames,
+      picks: [{ game_id: '401872995', selected_team: 'SEA' }],
+    });
+    const res1 = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sb1 });
+    expect(res1.hasAcceptedSlate).toBe(true);
+    expect(res1.resolvedScope).toEqual({ season: 2026, seasonType: 2, week: 6 });
+    expect(res1.windowGames.length).toBe(2);
+    expect(res1.isSlateSubmitted).toBe(false); // Only 1 of 2 picked
+
+    // Case 2: Same user selecting a different week (Week 7)
+    const sb2 = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 7, manifest_fingerprint: 'week7fp' },
+      games: [{ id: 'g3', external_game_id: '401873010', home_team_id: 'KC', away_team_id: 'LAC', kickoff_time: '2026-10-23T00:15:00.000Z', status: 'SCHEDULED' }],
+      picks: [{ game_id: '401873010', selected_team: 'KC' }],
+    });
+    const res2 = await resolveProfileReminderScope({ userId: 'u1', propWeek: 7, supabaseClient: sb2 });
+    expect(res2.hasAcceptedSlate).toBe(true);
+    expect(res2.resolvedScope?.week).toBe(7);
+    expect(res2.isSlateSubmitted).toBe(true);
+
+    // Case 3: A different season (2027)
+    const sb3 = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } }],
+      manifestRecord: { season: 2027, season_type: 2, week_number: 1, manifest_fingerprint: 's2027w1fp' },
+      games: [{ id: 'g4', external_game_id: '5001', home_team_id: 'DET', away_team_id: 'GB', kickoff_time: '2027-09-10T00:15:00.000Z', status: 'SCHEDULED' }],
+    });
+    const res3 = await resolveProfileReminderScope({ userId: 'u1', propSeason: 2027, propWeek: 1, supabaseClient: sb3 });
+    expect(res3.hasAcceptedSlate).toBe(true);
+    expect(res3.resolvedScope?.season).toBe(2027);
+
+    // Case 4: A different ACTIVE pool
+    const sb4 = createMockSupabase({
+      membership: { pool_id: 'pool-alternate', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } },
+      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c' },
+      games: testDbGames,
+      picks: [],
+    });
+    const res4 = await resolveProfileReminderScope({ userId: 'u1', propPoolId: 'pool-alternate', supabaseClient: sb4 });
+    expect(res4.hasAcceptedSlate).toBe(true);
+    expect(res4.resolvedPoolId).toBe('pool-alternate');
+
+    // Case 5: Inactive membership (status !== 'ACTIVE')
+    const sb5 = createMockSupabase({
+      membership: { pool_id: 'pool-pending', status: 'PENDING' },
+    });
+    const res5 = await resolveProfileReminderScope({ userId: 'u1', propPoolId: 'pool-pending', supabaseClient: sb5 });
+    expect(res5.hasAcceptedSlate).toBe(false);
+    expect(res5.unavailabilityReason).toBe('INACTIVE_OR_INVALID_POOL_MEMBERSHIP');
+    expect(res5.windowGames).toEqual([]);
+
+    // Case 6: Missing manifest storage for scope
+    const sb6 = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } }],
+      manifestRecord: null, // No manifest record in table!
+      games: testDbGames,
+    });
+    const res6 = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sb6 });
+    expect(res6.hasAcceptedSlate).toBe(false);
+    expect(res6.unavailabilityReason).toBe('MISSING_ACCEPTED_MANIFEST');
+    expect(res6.windowGames).toEqual([]);
+
+    // Case 7: Denied manifest access (RLS error or network error)
+    const sb7 = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } }],
+      manifestError: { message: 'permission denied for table weekly_slate_manifests' },
+      games: testDbGames,
+    });
+    const res7 = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sb7 });
+    expect(res7.hasAcceptedSlate).toBe(false);
+    expect(res7.unavailabilityReason).toBe('MANIFEST_ACCESS_DENIED');
+    expect(res7.windowGames).toEqual([]);
+
+    // Case 8: Games present in DB without an accepted manifest
+    const sb8 = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } }],
+      manifestRecord: null, // Missing manifest
+      games: testDbGames,   // Games present!
+    });
+    const res8 = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sb8 });
+    expect(res8.hasAcceptedSlate).toBe(false);
+    expect(res8.windowGames).toEqual([]);
   });
 });
