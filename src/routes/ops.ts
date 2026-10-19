@@ -10,7 +10,7 @@ import {
   listOverrides,
   getPoolOpsStatus,
 } from '../services/overrideService';
-import { previewWeeklyWrapUpForPool } from '../services/wrapUpEngine';
+import * as wrapUpEngine from '../services/wrapUpEngine';
 
 export const opsRouter = Router({ mergeParams: true });
 
@@ -409,13 +409,13 @@ export async function handlePoolWrapUpPreview(req: Request, res: Response): Prom
     return;
   }
 
-  const isCommissioner = pool.adminId === actorId;
   const isActiveMember = pool.memberships.length > 0;
 
-  // Strict tenant boundary (Decision #20, Directive Section 6):
-  // Global admin role does NOT bypass pool membership!
-  if (!isCommissioner && !isActiveMember) {
-    res.status(403).json({ error: 'FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED: Must be an ACTIVE member or commissioner of the requested pool.' });
+  // Strict tenant boundary (Decision #20, Directive Section 6, Architect Finding 1):
+  // Active membership is strictly required for all actors (including pool commissioner/owner).
+  // Pool ownership or commissioner role does NOT bypass the active membership requirement!
+  if (!isActiveMember) {
+    res.status(403).json({ error: 'FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED: Must be an ACTIVE member of the requested pool.' });
     return;
   }
 
@@ -425,7 +425,7 @@ export async function handlePoolWrapUpPreview(req: Request, res: Response): Prom
   const seasonType = req.query.seasonType ? Number(req.query.seasonType) : undefined;
 
   try {
-    const preview = await previewWeeklyWrapUpForPool(poolId, weekNumber, { season, seasonType });
+    const preview = await wrapUpEngine.previewWeeklyWrapUpForPool(poolId, weekNumber, { season, seasonType });
 
     // Pre-kickoff privacy gating (Contract & Finding 1):
     // Missing, invalid, or pre-kickoff deadlines strictly omit other members' numeric predictions!

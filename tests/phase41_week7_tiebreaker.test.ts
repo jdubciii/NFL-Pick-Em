@@ -125,6 +125,54 @@ function setupMockDom() {
         this.listeners[evt] = this.listeners[evt].filter(f => f !== fn);
       }
     }
+    click() {
+      if (this.disabled) return;
+      const event: any = {
+        type: 'click',
+        target: this,
+        currentTarget: this,
+        bubbles: true,
+        cancelable: true,
+        defaultPrevented: false,
+        isTrusted: true,
+        timeStamp: Date.now(),
+        preventDefault() { this.defaultPrevented = true; },
+        stopPropagation() { this.bubbles = false; },
+      };
+      if (typeof (this as any).onclick === 'function') {
+        (this as any).onclick(event);
+      }
+      const reactPropsKey = Object.keys(this).find(k => k.startsWith('__reactProps$'));
+      if (reactPropsKey && (this as any)[reactPropsKey]?.onClick) {
+        (this as any)[reactPropsKey].onClick(event);
+        return;
+      }
+      let curr: any = this;
+      while (curr) {
+        if (curr.listeners && curr.listeners['click']) {
+          for (const l of [...curr.listeners['click']]) {
+            l.call(curr, event);
+          }
+        }
+        if (!event.bubbles) break;
+        curr = curr.parentNode;
+      }
+    }
+    dispatchEvent(event: any) {
+      event.target = this;
+      event.currentTarget = this;
+      let curr: any = this;
+      while (curr) {
+        if (curr.listeners && curr.listeners[event.type]) {
+          for (const l of [...curr.listeners[event.type]]) {
+            l.call(curr, event);
+          }
+        }
+        if (!event.bubbles) break;
+        curr = curr.parentNode;
+      }
+      return true;
+    }
     appendChild(child: any) {
       child.parentNode = this;
       this.childNodes.push(child);
@@ -208,6 +256,7 @@ import * as authoritativeSlateService from '../src/services/authoritativeSlateSe
 import { opsRouter } from '../src/routes/ops';
 import { adminOpsRouter } from '../src/routes/adminOps';
 import { handleGetPoolMatrix } from '../src/server';
+import * as wrapUpEngine from '../src/services/wrapUpEngine';
 import {
   previewWeeklyWrapUpForPool,
   executeWeeklyWrapUpForPool,
@@ -2867,24 +2916,348 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(data.error).toContain('Invalid pool ID format');
     });
 
-    it('enforces non-overrideable Week 6 2026 tiebreaker exclusion in wrap-up engine (Finding 2)', async () => {
+    it('allows active pool commissioner to fetch wrap-up preview on both canonical aliases (/wrap-up/preview and /ops/wrap-up/preview) (Finding 1)', async () => {
+      const mockPoolWithActiveAdmin = {
+        ...mockPool,
+        adminId: ADMIN_ID,
+        memberships: [
+          { userId: ADMIN_ID, status: 'ACTIVE' },
+          { userId: MEMBER_1_ID, status: 'ACTIVE' },
+        ],
+      };
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPoolWithActiveAdmin as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(mockWeek7Games as any);
+      vi.spyOn(prisma.pick, 'findMany').mockResolvedValue([]);
+      vi.spyOn(prisma.weeklySubmission, 'findMany').mockResolvedValue([
+        { userId: ADMIN_ID, weekNumber: 7, tieBreakerPrediction: 42.0, isFinalized: false },
+        { userId: MEMBER_1_ID, weekNumber: 7, tieBreakerPrediction: 50.0, isFinalized: false },
+      ] as any);
+      (vi.spyOn(prisma, '$queryRaw') as any).mockResolvedValue([{ to_regclass: 'public.weekly_wrapups' }]);
+      (vi.spyOn(prisma, '$queryRawUnsafe') as any).mockResolvedValue([]);
+
+      const token = createAuthToken(ADMIN_ID, 'ADMIN');
+
+      // Canonical Alias 1: /api/pools/:pool_id/wrap-up/preview
+      const res1 = await fetch(`${baseUrl}/api/pools/${POOL_ID}/wrap-up/preview?week=7&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(res1.status).toBe(200);
+      const data1 = await res1.json();
+      expect(data1.preview).toBeDefined();
+      expect(data1.preview.projectedStandings).toBeDefined();
+
+      // Canonical Alias 2: /api/pools/:pool_id/ops/wrap-up/preview
+      const res2 = await fetch(`${baseUrl}/api/pools/${POOL_ID}/ops/wrap-up/preview?week=7&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(res2.status).toBe(200);
+      const data2 = await res2.json();
+      expect(data2.preview).toBeDefined();
+      expect(data2.preview.projectedStandings).toBeDefined();
+    });
+
+    it('strictly denies inactive pool commissioner on both canonical preview aliases before preview work occurs (Finding 1)', async () => {
+      // Commissioner whose membership is INACTIVE in the pool (filtered out by where: { status: 'ACTIVE' })
+      const mockPoolWithInactiveAdmin = {
+        ...mockPool,
+        adminId: ADMIN_ID,
+        memberships: [], // filtered active memberships is empty!
+      };
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPoolWithInactiveAdmin as any);
+      const previewSpy = vi.spyOn(wrapUpEngine, 'previewWeeklyWrapUpForPool');
+
+      const token = createAuthToken(ADMIN_ID, 'ADMIN');
+
+      // Canonical Alias 1: /api/pools/:pool_id/wrap-up/preview
+      const res1 = await fetch(`${baseUrl}/api/pools/${POOL_ID}/wrap-up/preview?week=7&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(res1.status).toBe(403);
+      const data1 = await res1.json();
+      expect(data1.error).toContain('FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED');
+
+      // Canonical Alias 2: /api/pools/:pool_id/ops/wrap-up/preview
+      const res2 = await fetch(`${baseUrl}/api/pools/${POOL_ID}/ops/wrap-up/preview?week=7&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(res2.status).toBe(403);
+      const data2 = await res2.json();
+      expect(data2.error).toContain('FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED');
+
+      // Zero preview work occurred before denial
+      expect(previewSpy).not.toHaveBeenCalled();
+    });
+
+    it('strictly denies absent-membership commissioner on both canonical preview aliases before preview work occurs (Finding 1)', async () => {
+      // Commissioner with no membership record at all in this pool
+      const mockPoolWithAbsentAdmin = {
+        ...mockPool,
+        adminId: ADMIN_ID,
+        memberships: [],
+      };
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPoolWithAbsentAdmin as any);
+      const previewSpy = vi.spyOn(wrapUpEngine, 'previewWeeklyWrapUpForPool');
+
+      const token = createAuthToken(ADMIN_ID, 'ADMIN');
+
+      // Canonical Alias 1: /api/pools/:pool_id/wrap-up/preview
+      const res1 = await fetch(`${baseUrl}/api/pools/${POOL_ID}/wrap-up/preview?week=7&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(res1.status).toBe(403);
+      const data1 = await res1.json();
+      expect(data1.error).toContain('FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED');
+
+      // Canonical Alias 2: /api/pools/:pool_id/ops/wrap-up/preview
+      const res2 = await fetch(`${baseUrl}/api/pools/${POOL_ID}/ops/wrap-up/preview?week=7&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(res2.status).toBe(403);
+      const data2 = await res2.json();
+      expect(data2.error).toContain('FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED');
+
+      // Zero preview work occurred before denial
+      expect(previewSpy).not.toHaveBeenCalled();
+    });
+
+    it('strictly masks other members predictions in wrap-up preview when designated kickoffTime is missing or invalid (Finding 1)', async () => {
       const mockPoolWithMembers = {
         ...mockPool,
-        memberships: [{ userId: MEMBER_1_ID, status: 'ACTIVE' }],
+        memberships: [
+          { userId: MEMBER_1_ID, status: 'ACTIVE' },
+          { userId: MEMBER_2_ID, status: 'ACTIVE' },
+        ],
       };
       vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPoolWithMembers as any);
+
+      // Case A: Missing kickoffTime
+      vi.spyOn(wrapUpEngine, 'previewWeeklyWrapUpForPool').mockResolvedValueOnce({
+        poolId: POOL_ID,
+        weekNumber: 7,
+        season: 2026,
+        readyToSettle: false,
+        reasonsIfNotReady: ['DESIGNATED_GAME_UNAVAILABLE'],
+        tiebreakerOffered: true,
+        designatedGame: {
+          id: 'g-w7-det',
+          externalGameId: '401873010',
+          homeTeamId: 'MIN',
+          awayTeamId: 'DET',
+          kickoffTime: null as any,
+        },
+        projectedStandings: [
+          { userId: MEMBER_1_ID, score: 5, tieBreakerPrediction: 45.0, rank: 1, shots: 0 },
+          { userId: MEMBER_2_ID, score: 5, tieBreakerPrediction: 52.0, rank: 1, shots: 0 },
+        ],
+      } as any);
+
+      const token = createAuthToken(MEMBER_1_ID);
+      const resMissing = await fetch(`${baseUrl}/api/pools/${POOL_ID}/wrap-up/preview?week=7&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(resMissing.status).toBe(200);
+      const dataMissing = await resMissing.json();
+      const m1Missing = dataMissing.preview.projectedStandings.find((s: any) => s.userId === MEMBER_1_ID);
+      const m2Missing = dataMissing.preview.projectedStandings.find((s: any) => s.userId === MEMBER_2_ID);
+      expect(m1Missing.tieBreakerPrediction).toBe(45);
+      expect(m2Missing.tieBreakerPrediction).toBeUndefined(); // Masked!
+
+      // Case B: Invalid kickoffTime string
+      vi.spyOn(wrapUpEngine, 'previewWeeklyWrapUpForPool').mockResolvedValueOnce({
+        poolId: POOL_ID,
+        weekNumber: 7,
+        season: 2026,
+        readyToSettle: false,
+        reasonsIfNotReady: ['DESIGNATED_GAME_UNAVAILABLE'],
+        tiebreakerOffered: true,
+        designatedGame: {
+          id: 'g-w7-det',
+          externalGameId: '401873010',
+          homeTeamId: 'MIN',
+          awayTeamId: 'DET',
+          kickoffTime: 'invalid-kickoff-timestamp',
+        },
+        projectedStandings: [
+          { userId: MEMBER_1_ID, score: 5, tieBreakerPrediction: 45.0, rank: 1, shots: 0 },
+          { userId: MEMBER_2_ID, score: 5, tieBreakerPrediction: 52.0, rank: 1, shots: 0 },
+        ],
+      } as any);
+
+      const resInvalid = await fetch(`${baseUrl}/api/pools/${POOL_ID}/wrap-up/preview?week=7&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(resInvalid.status).toBe(200);
+      const dataInvalid = await resInvalid.json();
+      const m1Invalid = dataInvalid.preview.projectedStandings.find((s: any) => s.userId === MEMBER_1_ID);
+      const m2Invalid = dataInvalid.preview.projectedStandings.find((s: any) => s.userId === MEMBER_2_ID);
+      expect(m1Invalid.tieBreakerPrediction).toBe(45);
+      expect(m2Invalid.tieBreakerPrediction).toBeUndefined(); // Masked!
+    });
+
+    it('enforces non-overrideable Week 6 2026 tiebreaker exclusion in preview and mock execution with conflicting predictions proving zero ranking or penalty effects (Finding 2)', async () => {
+      const MEMBER_3_ID = 'd4444444-4444-4444-4444-444444444444';
+      const mockPool3Members = {
+        ...mockPool,
+        memberships: [
+          { userId: MEMBER_1_ID, status: 'ACTIVE' },
+          { userId: MEMBER_2_ID, status: 'ACTIVE' },
+          { userId: MEMBER_3_ID, status: 'ACTIVE' },
+        ],
+      };
+
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool3Members as any);
       vi.spyOn(prisma.game, 'findMany').mockResolvedValue([]);
       (vi.spyOn(prisma, '$queryRaw') as any).mockResolvedValue([{ to_regclass: 'public.weekly_wrapups' }]);
       (vi.spyOn(prisma, '$queryRawUnsafe') as any).mockResolvedValue([]);
 
-      // Caller attempts to override tiebreakerOffered to true for Week 6 2026
+      // Mock submissions with conflicting predictions
+      vi.spyOn(prisma.weeklySubmission, 'findMany').mockResolvedValue([
+        { userId: MEMBER_1_ID, weekNumber: 6, tieBreakerPrediction: 35.0, isFinalized: true },
+        { userId: MEMBER_2_ID, weekNumber: 6, tieBreakerPrediction: 58.0, isFinalized: true },
+        { userId: MEMBER_3_ID, weekNumber: 6, tieBreakerPrediction: null, isFinalized: true },
+      ] as any);
+
+      // Part 1: PREVIEW with explicit tiebreakerOffered: true
       const preview = await previewWeeklyWrapUpForPool(POOL_ID, 6, {
+        season: 2026,
+        tiebreakerOffered: true, // Caller attempts override!
+      });
+
+      expect(preview.tiebreakerOffered).toBe(false);
+      // All 3 members have identical pick scores (0) and conflicting predictions (35.0 vs 58.0 vs null).
+      // Verify tiebreaker predictions produce zero ranking differentiation or penalty effects:
+      const p1 = preview.projectedStandings.find((s) => s.userId === MEMBER_1_ID);
+      const p2 = preview.projectedStandings.find((s) => s.userId === MEMBER_2_ID);
+      const p3 = preview.projectedStandings.find((s) => s.userId === MEMBER_3_ID);
+
+      expect(p1).toBeDefined();
+      expect(p2).toBeDefined();
+      expect(p3).toBeDefined();
+
+      // Identical score -> identical shared rank 1 and 0 shots (safe haven)
+      expect(p1!.rank).toBe(1);
+      expect(p2!.rank).toBe(1);
+      expect(p3!.rank).toBe(1);
+      expect(p1!.shots).toBe(0);
+      expect(p2!.shots).toBe(0);
+      expect(p3!.shots).toBe(0);
+
+      // Part 2: MOCK EXECUTION with explicit tiebreakerOffered: true and conflicting predictions
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 6,
+        eventIds: ['401872995'],
+      } as any);
+
+      const week6FinalGames = [
+        {
+          id: 'g-w6-1',
+          externalGameId: '401872995',
+          homeTeamId: 'KC',
+          awayTeamId: 'DEN',
+          status: GameStatus.FINAL,
+          homeScore: 24,
+          awayScore: 17,
+          kickoffTime: pastKickoff,
+        },
+      ];
+
+      const createdPenalties: any[] = [];
+      const updatedMemberships: any[] = [];
+
+      vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        const tx = {
+          $queryRaw: vi.fn().mockResolvedValue([{ to_regclass: 'public.weekly_wrapups' }]),
+          $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+            if (sql.includes('information_schema.columns')) {
+              return [{ column_name: 'season' }];
+            }
+            if (sql.includes('INSERT INTO public.weekly_wrapups')) {
+              return [{ pool_id: POOL_ID, season: 2026, week_number: 6 }];
+            }
+            if (sql.includes('FROM public.picks')) {
+              return [
+                { user_id: MEMBER_1_ID, game_id: '401872995', selected_team: 'KC', home_team_id: 'KC', away_team_id: 'DEN', home_score: 24, away_score: 17, status: GameStatus.FINAL },
+                { user_id: MEMBER_2_ID, game_id: '401872995', selected_team: 'KC', home_team_id: 'KC', away_team_id: 'DEN', home_score: 24, away_score: 17, status: GameStatus.FINAL },
+                { user_id: MEMBER_3_ID, game_id: '401872995', selected_team: 'KC', home_team_id: 'KC', away_team_id: 'DEN', home_score: 24, away_score: 17, status: GameStatus.FINAL },
+              ];
+            }
+            return [];
+          }),
+          pool: {
+            findUnique: vi.fn().mockResolvedValue(mockPool3Members),
+          },
+          game: {
+            findMany: vi.fn().mockResolvedValue(week6FinalGames),
+          },
+          weeklySubmission: {
+            findMany: vi.fn().mockResolvedValue([
+              { userId: MEMBER_1_ID, weekNumber: 6, tieBreakerPrediction: 35.0, isFinalized: true },
+              { userId: MEMBER_2_ID, weekNumber: 6, tieBreakerPrediction: 58.0, isFinalized: true },
+              { userId: MEMBER_3_ID, weekNumber: 6, tieBreakerPrediction: null, isFinalized: true },
+            ]),
+          },
+          penaltyLedger: {
+            create: vi.fn().mockImplementation(({ data }: any) => {
+              createdPenalties.push(data);
+              return Promise.resolve({ id: 'pen-' + Math.random(), ...data });
+            }),
+            aggregate: vi.fn().mockResolvedValue({ _sum: { delta: 0 } }),
+          },
+          poolMemberStat: {
+            upsert: vi.fn().mockResolvedValue({}),
+          },
+          poolMembership: {
+            update: vi.fn().mockImplementation(({ where, data }: any) => {
+              updatedMemberships.push({ where, data });
+              return Promise.resolve({ id: 'mem-' + Math.random(), ...data });
+            }),
+          },
+          outboxEvent: {
+            createMany: vi.fn().mockResolvedValue({ count: 0 }),
+          },
+          inboxMessage: {
+            createMany: vi.fn().mockResolvedValue({ count: 0 }),
+          },
+          jobRun: {
+            create: vi.fn().mockResolvedValue({ id: 'job-1' }),
+            update: vi.fn().mockResolvedValue({ id: 'job-1' }),
+          },
+          weeklyWrapup: {
+            create: vi.fn().mockResolvedValue({ id: 'wrap-1' }),
+          },
+        };
+        return cb(tx);
+      });
+
+      const execResult = await executeWeeklyWrapUpForPool(POOL_ID, 6, {
         season: 2026,
         tiebreakerOffered: true,
       });
 
-      // Must strictly remain false!
-      expect(preview.tiebreakerOffered).toBe(false);
+      expect(execResult.applied).toBe(true);
+      expect(execResult.tiebreakerOffered).toBe(false);
+
+      const r1 = execResult.standings.find((r: any) => r.userId === MEMBER_1_ID);
+      const r2 = execResult.standings.find((r: any) => r.userId === MEMBER_2_ID);
+      const r3 = execResult.standings.find((r: any) => r.userId === MEMBER_3_ID);
+
+      expect(r1).toBeDefined();
+      expect(r2).toBeDefined();
+      expect(r3).toBeDefined();
+
+      expect(r1.rank).toBe(1);
+      expect(r2.rank).toBe(1);
+      expect(r3.rank).toBe(1);
+      expect(r1.shots).toBe(0);
+      expect(r2.shots).toBe(0);
+      expect(r3.shots).toBe(0);
+      expect(r1.isSafeHaven).toBe(true);
+      expect(r2.isSafeHaven).toBe(true);
+      expect(r3.isSafeHaven).toBe(true);
+
+      expect(createdPenalties).toHaveLength(0);
     });
   });
 
@@ -3147,6 +3520,135 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
         vi.useRealTimers();
       }
     });
+
+    it('mounts actual WeeklyTiebreakerCard and asserts failed Clear preserves acknowledged prediction badge and draft, and Retry resends clear: true (Finding 8)', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container);
+
+      const futureIso = new Date(Date.now() + 86400000).toISOString();
+      const mockInitialData = {
+        status: 'DEFAULT_LIONS',
+        tiebreakerOffered: true,
+        designatedGame: {
+          id: 'g-w7-det',
+          externalGameId: '401873010',
+          homeTeamId: 'MIN',
+          awayTeamId: 'DET',
+          kickoffTime: futureIso,
+          status: 'SCHEDULED',
+        },
+        kickoffTime: futureIso,
+        isLocked: false,
+        userPrediction: 48.5,
+      };
+
+      const fetchCalls: Array<{ url: string; options?: any }> = [];
+      let postCount = 0;
+      vi.spyOn(apiClient, 'scopedExpressFetch').mockImplementation(async (url: string, opts?: any) => {
+        fetchCalls.push({ url, options: opts });
+        if (opts?.method === 'POST') {
+          postCount++;
+          if (postCount === 1) {
+            // First POST: simulate failure during clear!
+            return {
+              ok: false,
+              status: 500,
+              json: async () => ({ error: 'Database locked during clear' }),
+            } as any;
+          } else {
+            // Second POST: retry succeeds!
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ prediction: null }),
+            } as any;
+          }
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => mockInitialData,
+        } as any;
+      });
+
+      function findElementsByTag(el: any, tag: string): any[] {
+        const res: any[] = [];
+        if (el.tagName === tag.toUpperCase()) res.push(el);
+        for (const child of el.children || []) {
+          res.push(...findElementsByTag(child, tag));
+        }
+        return res;
+      }
+
+      try {
+        // 1. Mount actual component inside act()
+        await act(async () => {
+          root.render(React.createElement(WeeklyTiebreakerCard, { week: 7, poolId: POOL_ID }));
+        });
+
+        // 2. Initial state: confirmed prediction badge rendered, input has value 48.5, Clear button rendered
+        const inputsInit = findElementsByTag(container, 'input');
+        expect(inputsInit).toHaveLength(1);
+        expect(inputsInit[0].value).toBe('48.5');
+        expect(container.textContent).toContain('48.5 pts');
+
+        const buttonsInit = findElementsByTag(container, 'button');
+        const clearBtn = buttonsInit.find((b: any) => b.textContent?.includes('Clear'));
+        expect(clearBtn).toBeDefined();
+
+        // 3. User clicks Clear button -> triggers failed clear mutation
+        await act(async () => {
+          clearBtn.click();
+        });
+
+        // 4. Assert first POST payload sent clear: true
+        const firstPost = fetchCalls.find((c) => c.options?.method === 'POST');
+        expect(firstPost).toBeDefined();
+        expect(JSON.parse(firstPost!.options.body)).toEqual({
+          pool_id: POOL_ID,
+          week: 7,
+          season: 2026,
+          clear: true,
+        });
+
+        // 5. Assert preserved acknowledged value and preserved draft on failure
+        const inputsAfterFailure = findElementsByTag(container, 'input');
+        expect(inputsAfterFailure[0].value).toBe('48.5'); // Draft preserved!
+        expect(container.textContent).toContain('48.5 pts'); // Confirmed badge preserved!
+        expect(container.textContent).toContain('Database locked during clear'); // Error shown!
+
+        const retryBtn = findElementsByTag(container, 'button').find((b: any) => b.textContent?.includes('Retry'));
+        expect(retryBtn).toBeDefined();
+
+        // 6. User clicks Retry button -> triggers retry mutation
+        await act(async () => {
+          retryBtn.click();
+        });
+
+        // 7. Assert second POST also sent clear: true (retained clear mutation intent!)
+        const postCalls = fetchCalls.filter((c) => c.options?.method === 'POST');
+        expect(postCalls).toHaveLength(2);
+        expect(JSON.parse(postCalls[1].options.body)).toEqual({
+          pool_id: POOL_ID,
+          week: 7,
+          season: 2026,
+          clear: true,
+        });
+
+        // 8. On success: confirmed badge is unmounted, input is blanked, Save button appears
+        expect(container.textContent).not.toContain('48.5 pts');
+        const inputsFinal = findElementsByTag(container, 'input');
+        expect(inputsFinal[0].value).toBe('');
+        const buttonsFinal = findElementsByTag(container, 'button');
+        expect(buttonsFinal.some((b: any) => b.textContent?.includes('Clear'))).toBe(false);
+        expect(buttonsFinal.some((b: any) => b.textContent?.includes('Update'))).toBe(false);
+      } finally {
+        await act(async () => {
+          root.unmount();
+        });
+      }
+    });
   });
 
   describe('16. Matrix Privacy Clock via Authoritative Canonical Slate Helper (Finding 10)', () => {
@@ -3335,6 +3837,85 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       // Competitor prediction MUST remain masked to null (never released by unapproved synthetic kickoff data)
       expect(data.summary[MEMBER_1_ID].tiebreaker_guess).toBe(45);
       expect(data.summary[MEMBER_2_ID].tiebreaker_guess).toBeNull();
+    });
+
+    it('reveals competitor tiebreaker predictions in matrix at the EXACT kickoff timestamp (now.getTime() === designatedKickoff.getTime()) (Finding 10)', async () => {
+      const exactKickoffMs = 1792380000000;
+      const exactKickoffIso = new Date(exactKickoffMs).toISOString();
+
+      vi.useFakeTimers();
+      vi.setSystemTime(exactKickoffMs);
+
+      const exactKickoffGames = [
+        {
+          id: 'g-w7-det',
+          externalGameId: '401873010',
+          homeTeamId: 'MIN',
+          awayTeamId: 'DET',
+          kickoffTime: exactKickoffIso,
+          status: GameStatus.SCHEDULED,
+          homeScore: null,
+          awayScore: null,
+        },
+        {
+          id: 'g-w7-gb',
+          externalGameId: '401873011',
+          homeTeamId: 'GB',
+          awayTeamId: 'HOU',
+          kickoffTime: exactKickoffIso,
+          status: GameStatus.SCHEDULED,
+          homeScore: null,
+          awayScore: null,
+        },
+      ];
+
+      const mockPoolWithMembers = {
+        ...mockPool,
+        memberships: [
+          {
+            userId: MEMBER_1_ID,
+            status: 'ACTIVE',
+            user: { id: MEMBER_1_ID, email: 'member1@example.com' },
+            stat: { totalShotsDrank: 4 },
+          },
+          {
+            userId: MEMBER_2_ID,
+            status: 'ACTIVE',
+            user: { id: MEMBER_2_ID, email: 'member2@example.com' },
+            stat: { totalShotsDrank: 2 },
+          },
+        ],
+      };
+
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPoolWithMembers as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: MEMBER_1_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(exactKickoffGames as any);
+      vi.spyOn(prisma.pick, 'findMany').mockResolvedValue([]);
+      vi.spyOn(prisma.weeklySubmission, 'findMany').mockResolvedValue([
+        { userId: MEMBER_1_ID, weekNumber: 7, tieBreakerPrediction: 45.0, isFinalized: false },
+        { userId: MEMBER_2_ID, weekNumber: 7, tieBreakerPrediction: 52.0, isFinalized: false },
+      ] as any);
+
+      try {
+        const token = createAuthToken(MEMBER_1_ID);
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/matrix?week=7`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+
+        // At EXACT kickoff boundary (now.getTime() >= designatedKickoff.getTime() evaluates to true):
+        // Competitor tiebreaker guess is revealed (52), not masked to null!
+        expect(data.summary[MEMBER_1_ID].tiebreaker_guess).toBe(45);
+        expect(data.summary[MEMBER_2_ID].tiebreaker_guess).toBe(52);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });
