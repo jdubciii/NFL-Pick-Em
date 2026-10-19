@@ -353,31 +353,22 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
 
     // Validate prediction input: range 0.00 to 999.99 with at most 2 decimal places
     let parsedPrediction: number | null = null;
+    const isOmitted = !isClear && (rawPrediction === undefined || rawPrediction === '');
 
     if (isClear) {
       parsedPrediction = null;
-    } else {
-      if (rawPrediction === undefined || rawPrediction === '') {
-        // Omitted prediction fields preserve existing prediction
-        const existing = await prisma.weeklySubmission.findUnique({
-          where: { poolId_userId_weekNumber: { poolId, userId, weekNumber } },
-        });
-        parsedPrediction = existing?.tieBreakerPrediction !== null && existing?.tieBreakerPrediction !== undefined
-          ? Number(existing.tieBreakerPrediction)
-          : null;
-      } else {
-        const predStr = String(rawPrediction).trim();
-        const validFormat = /^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/.test(predStr);
-        const numVal = Number(predStr);
+    } else if (!isOmitted) {
+      const predStr = String(rawPrediction).trim();
+      const validFormat = /^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/.test(predStr);
+      const numVal = Number(predStr);
 
-        if (!validFormat || isNaN(numVal) || numVal < 0 || numVal > 999.99 || !isFinite(numVal)) {
-          res.status(400).json({
-            error: 'INVALID_PREDICTION: Prediction must be a valid number between 0.00 and 999.99 with at most two decimal places.',
-          });
-          return;
-        }
-        parsedPrediction = Math.round(numVal * 100) / 100;
+      if (!validFormat || isNaN(numVal) || numVal < 0 || numVal > 999.99 || !isFinite(numVal)) {
+        res.status(400).json({
+          error: 'INVALID_PREDICTION: Prediction must be a valid number between 0.00 and 999.99 with at most two decimal places.',
+        });
+        return;
       }
+      parsedPrediction = Math.round(numVal * 100) / 100;
     }
 
     // Transactional save with mandatory row-level lock, fresh settings resolution, kickoff lock, and atomic freeze
@@ -410,7 +401,24 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
         throw new Error('KICKOFF_PASSED: Cannot submit, edit, or clear tiebreaker prediction after kickoff.');
       }
 
-      // 5. Upsert weekly submission using transaction client
+      // 5. Upsert weekly submission with atomic omission preservation using transaction client
+      let resolvedPrediction: number | null = parsedPrediction;
+      const shouldUpdatePrediction = !isOmitted;
+
+      if (isOmitted) {
+        // Resolve preserved value strictly INSIDE transaction under row lock
+        const existingSubmission = typeof tx.weeklySubmission?.findUnique === 'function'
+          ? await tx.weeklySubmission.findUnique({
+              where: { poolId_userId_weekNumber: { poolId, userId, weekNumber } },
+            })
+          : await prisma.weeklySubmission.findUnique({
+              where: { poolId_userId_weekNumber: { poolId, userId, weekNumber } },
+            });
+        resolvedPrediction = existingSubmission?.tieBreakerPrediction !== null && existingSubmission?.tieBreakerPrediction !== undefined
+          ? Number(existingSubmission.tieBreakerPrediction)
+          : null;
+      }
+
       const submission = await tx.weeklySubmission.upsert({
         where: {
           poolId_userId_weekNumber: {
@@ -419,21 +427,25 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
             weekNumber,
           },
         },
-        update: {
-          tieBreakerPrediction: parsedPrediction,
-          updatedAt: new Date(),
-        },
+        update: shouldUpdatePrediction
+          ? {
+              tieBreakerPrediction: resolvedPrediction,
+              updatedAt: new Date(),
+            }
+          : {
+              updatedAt: new Date(),
+            },
         create: {
           poolId,
           userId,
           weekNumber,
-          tieBreakerPrediction: parsedPrediction,
+          tieBreakerPrediction: resolvedPrediction,
           isFinalized: false,
         },
       });
 
       // 6. Freeze Rule: freeze designation atomically upon first valid non-null prediction
-      if (parsedPrediction !== null && !designation.isFrozen) {
+      if (shouldUpdatePrediction && resolvedPrediction !== null && !designation.isFrozen) {
         const updatedSettings = freezeDesignation({
           currentSettings,
           season,
@@ -449,12 +461,16 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
         });
       }
 
-      return { submission, designation };
+      return { submission, designation, effectivePrediction: resolvedPrediction };
     });
 
     res.status(200).json({
-      message: isClear ? 'Tiebreaker prediction cleared successfully.' : 'Tiebreaker prediction saved successfully.',
-      prediction: parsedPrediction,
+      message: isClear
+        ? 'Tiebreaker prediction cleared successfully.'
+        : isOmitted
+        ? 'Tiebreaker prediction preserved.'
+        : 'Tiebreaker prediction saved successfully.',
+      prediction: result.effectivePrediction,
       weekNumber,
       designatedGameId: result.designation.eventId,
       submission: result.submission,
@@ -605,6 +621,9 @@ export async function handlePostTiebreakerOverride(req: Request, res: Response):
     if (
       error.message?.startsWith('DESIGNATION_FROZEN') ||
       error.message?.startsWith('KICKOFF_PASSED') ||
+      error.message?.startsWith('UNVERIFIED_KICKOFF') ||
+      error.message?.startsWith('UNRESOLVED_DESIGNATION') ||
+      error.message?.startsWith('INVALID_TARGET') ||
       error.message?.includes('Target game')
     ) {
       res.status(400).json({ error: error.message });

@@ -250,5 +250,122 @@ describe('Weekly Game Designation & Freeze Contract (Section 5)', () => {
         });
       }).toThrow('DESIGNATION_FROZEN');
     });
+
+    it('rejects override with UNVERIFIED_KICKOFF when existing designated game has missing kickoffTime', () => {
+      const missingKickoffGames: GameSlateItem[] = [
+        {
+          id: 'g1',
+          externalGameId: '401872999',
+          homeTeamId: 'DET',
+          awayTeamId: 'CHI',
+          kickoffTime: null as any,
+        },
+        {
+          id: 'g2',
+          externalGameId: '401873000',
+          homeTeamId: 'GB',
+          awayTeamId: 'MIN',
+          kickoffTime: futureKickoff,
+        },
+      ];
+
+      expect(() => {
+        applyCommissionerOverride({
+          currentSettings: poolSettings,
+          season: 2026,
+          week: 7,
+          targetGameId: '401873000',
+          games: missingKickoffGames,
+          requestingUserId: adminId,
+          poolAdminId: adminId,
+          isUserActiveMember: true,
+        });
+      }).toThrow('UNVERIFIED_KICKOFF');
+    });
+
+    it('rejects override with UNVERIFIED_KICKOFF when existing designated game has invalid kickoffTime string', () => {
+      const invalidKickoffGames: GameSlateItem[] = [
+        {
+          id: 'g1',
+          externalGameId: '401872999',
+          homeTeamId: 'DET',
+          awayTeamId: 'CHI',
+          kickoffTime: 'not-a-valid-date' as any,
+        },
+        {
+          id: 'g2',
+          externalGameId: '401873000',
+          homeTeamId: 'GB',
+          awayTeamId: 'MIN',
+          kickoffTime: futureKickoff,
+        },
+      ];
+
+      expect(() => {
+        applyCommissionerOverride({
+          currentSettings: poolSettings,
+          season: 2026,
+          week: 7,
+          targetGameId: '401873000',
+          games: invalidKickoffGames,
+          requestingUserId: adminId,
+          poolAdminId: adminId,
+          isUserActiveMember: true,
+        });
+      }).toThrow('UNVERIFIED_KICKOFF');
+    });
+
+    it('rejects override with UNVERIFIED_KICKOFF when stored designated game is missing from weekly slate', () => {
+      const settingsWithStored = {
+        tiebreaker_designations: {
+          '2026': {
+            '7': {
+              eventId: '999999999', // Not in sampleGames!
+              provenance: 'COMMISSIONER_OVERRIDE',
+              isFrozen: false,
+            },
+          },
+        },
+      };
+
+      expect(() => {
+        applyCommissionerOverride({
+          currentSettings: settingsWithStored,
+          season: 2026,
+          week: 7,
+          targetGameId: '401873000',
+          games: sampleGames,
+          requestingUserId: adminId,
+          poolAdminId: adminId,
+          isUserActiveMember: true,
+        });
+      }).toThrow('UNVERIFIED_KICKOFF');
+    });
+
+    it('preserves legitimate initial commissioner selection when Lions are on bye (COMMISSIONER_SELECTION_REQUIRED)', () => {
+      const byeWeekGames: GameSlateItem[] = [
+        {
+          id: 'g2',
+          externalGameId: '401873000',
+          homeTeamId: 'GB',
+          awayTeamId: 'MIN',
+          kickoffTime: futureKickoff,
+        },
+      ];
+
+      const initial = applyCommissionerOverride({
+        currentSettings: poolSettings,
+        season: 2026,
+        week: 6,
+        targetGameId: '401873000',
+        games: byeWeekGames,
+        requestingUserId: adminId,
+        poolAdminId: adminId,
+        isUserActiveMember: true,
+      });
+
+      expect(initial.designation.eventId).toBe('401873000');
+      expect(initial.designation.provenance).toBe('COMMISSIONER_OVERRIDE');
+    });
   });
 });

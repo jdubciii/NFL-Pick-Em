@@ -29,29 +29,43 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  // Active request tracking to discard stale context responses
+  // Active request and mutation tracking to discard stale context responses
   const activeReqRef = useRef<number>(0);
+  const activeMutationRef = useRef<number>(0);
+  type MutationIntent = { type: 'save'; value: string } | { type: 'clear' } | null;
+  const [failedMutationIntent, setFailedMutationIntent] = useState<MutationIntent>(null);
 
   const fetchTiebreakerInfo = useCallback(async () => {
     if (!token || !poolId) {
+      activeReqRef.current++;
+      activeMutationRef.current++;
       setLoading(false);
       return;
     }
 
     const currentReqId = ++activeReqRef.current;
+    const currentPoolId = poolId;
+    const currentWeek = week;
+
     try {
       setLoading(true);
       let res = await scopedExpressFetch(`/api/pools/${poolId}/tiebreaker?week=${week}&season=2026`);
+
+      // Guard after initial response
+      if (currentReqId !== activeReqRef.current || poolId !== currentPoolId || week !== currentWeek) return;
+
       if (!res.ok && res.status === 404) {
         // Fallback to legacy path for backward compatibility
         res = await scopedExpressFetch(`/api/picks/tiebreaker?pool_id=${poolId}&week=${week}&season=2026`);
+        // Guard after fallback response
+        if (currentReqId !== activeReqRef.current || poolId !== currentPoolId || week !== currentWeek) return;
       }
 
-      // Discard response if stale context request completed
-      if (currentReqId !== activeReqRef.current) return;
+      const data = await res.json();
+      // Guard after awaiting res.json()
+      if (currentReqId !== activeReqRef.current || poolId !== currentPoolId || week !== currentWeek) return;
 
       if (res.ok) {
-        const data = await res.json();
         setStatus(data.status);
         setTiebreakerOffered(data.tiebreakerOffered === true);
         setDesignatedGame(data.designatedGame);
@@ -61,28 +75,32 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
         setInputValue(data.userPrediction !== null && data.userPrediction !== undefined ? String(data.userPrediction) : '');
         setSaveStatus(data.userPrediction !== null ? 'saved' : 'idle');
         setStatusMessage(null);
+        setFailedMutationIntent(null);
       } else {
         setStatus('ERROR');
         setIsLocked(true);
         setTiebreakerOffered(false);
-        setStatusMessage('Failed to load tiebreaker info.');
+        setStatusMessage(data.error || 'Failed to load tiebreaker info.');
       }
     } catch (err) {
-      if (currentReqId !== activeReqRef.current) return;
+      if (currentReqId !== activeReqRef.current || poolId !== currentPoolId || week !== currentWeek) return;
       console.error('Failed to load tiebreaker info:', err);
       setStatus('ERROR');
       setIsLocked(true);
       setTiebreakerOffered(false);
       setStatusMessage('Network error loading tiebreaker.');
     } finally {
-      if (currentReqId === activeReqRef.current) {
+      if (currentReqId === activeReqRef.current && poolId === currentPoolId && week === currentWeek) {
         setLoading(false);
       }
     }
   }, [poolId, week, token]);
 
-  // Context switch: clear stale pool/week status
+  // Context switch: clear stale pool/week status and invalidate in-flight async work
   useEffect(() => {
+    activeReqRef.current++;
+    activeMutationRef.current++;
+    setFailedMutationIntent(null);
     setStatus('LOADING');
     setTiebreakerOffered(false);
     setIsLocked(true);
@@ -93,7 +111,12 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
     setSaveStatus('idle');
     setStatusMessage(null);
     fetchTiebreakerInfo();
-  }, [fetchTiebreakerInfo]);
+    return () => {
+      // Invalidate on unmount or next context change
+      activeReqRef.current++;
+      activeMutationRef.current++;
+    };
+  }, [fetchTiebreakerInfo, poolId, week, token]);
 
   // App resume & visibility listener: refresh state on return
   useEffect(() => {
@@ -113,27 +136,43 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
   const handleSave = async (valueToSave?: string | null) => {
     if (isLocked || !tiebreakerOffered || !poolId) return;
 
-    const val = valueToSave !== undefined ? valueToSave : inputValue;
-    const isExplicitClear = valueToSave === null;
+    let isExplicitClear = false;
+    let rawVal: string = inputValue;
+
+    if (valueToSave === null) {
+      isExplicitClear = true;
+    } else if (valueToSave !== undefined) {
+      rawVal = valueToSave;
+    } else if (failedMutationIntent?.type === 'clear') {
+      isExplicitClear = true;
+    } else if (failedMutationIntent?.type === 'save') {
+      rawVal = failedMutationIntent.value;
+    }
 
     let numVal: number | null = null;
     if (!isExplicitClear) {
-      if (val === null || val === undefined || val.trim() === '') {
+      if (rawVal === null || rawVal === undefined || rawVal.trim() === '') {
         setSaveStatus('error');
         setStatusMessage('Enter a valid prediction (0.00-999.99).');
+        setFailedMutationIntent({ type: 'save', value: '' });
         return;
       }
-      const trimmed = val.trim();
+      const trimmed = rawVal.trim();
       const validFormat = /^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/.test(trimmed);
       const parsed = Number(trimmed);
 
       if (!validFormat || isNaN(parsed) || parsed < 0 || parsed > 999.99 || !isFinite(parsed)) {
         setSaveStatus('error');
         setStatusMessage('Enter 0.00-999.99 (max 2 decimals).');
+        setFailedMutationIntent({ type: 'save', value: rawVal });
         return;
       }
       numVal = Math.round(parsed * 100) / 100;
     }
+
+    const currentMutationId = ++activeMutationRef.current;
+    const currentPoolId = poolId;
+    const currentWeek = week;
 
     try {
       setIsSaving(true);
@@ -158,6 +197,9 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
         body: JSON.stringify(payload),
       });
 
+      // Guard after initial response
+      if (currentMutationId !== activeMutationRef.current || poolId !== currentPoolId || week !== currentWeek) return;
+
       if (!res.ok && res.status === 404) {
         // Fallback to legacy path
         res = await scopedExpressFetch('/api/picks/tiebreaker', {
@@ -165,31 +207,44 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
+        // Guard after fallback response
+        if (currentMutationId !== activeMutationRef.current || poolId !== currentPoolId || week !== currentWeek) return;
       }
 
       const data = await res.json();
+      // Guard after awaiting res.json()
+      if (currentMutationId !== activeMutationRef.current || poolId !== currentPoolId || week !== currentWeek) return;
+
       if (!res.ok) {
         setSaveStatus('error');
-        setStatusMessage(data.error || 'Failed to save prediction.');
+        setStatusMessage(data.error || (isExplicitClear ? 'Failed to clear prediction.' : 'Failed to save prediction.'));
+        setFailedMutationIntent(isExplicitClear ? { type: 'clear' } : { type: 'save', value: rawVal });
+        // NOTE: Confirmed userPrediction and inputValue remain preserved!
         return;
       }
 
+      // Mutation succeeded: clear failed intent and update confirmed value
+      setFailedMutationIntent(null);
       setUserPrediction(data.prediction ?? null);
       setInputValue(data.prediction !== null && data.prediction !== undefined ? String(data.prediction) : '');
       setSaveStatus(data.prediction !== null ? 'saved' : 'idle');
       setStatusMessage(isExplicitClear ? 'Prediction cleared.' : 'Prediction saved.');
     } catch (err: any) {
-      // Failed mutation preserves confirmed state, with Retry
+      if (currentMutationId !== activeMutationRef.current || poolId !== currentPoolId || week !== currentWeek) return;
       setSaveStatus('error');
-      setStatusMessage('Network error saving prediction.');
+      setStatusMessage(isExplicitClear ? 'Network error clearing prediction.' : 'Network error saving prediction.');
+      setFailedMutationIntent(isExplicitClear ? { type: 'clear' } : { type: 'save', value: rawVal });
+      // Preserves confirmed value!
     } finally {
-      setIsSaving(false);
+      if (currentMutationId === activeMutationRef.current && poolId === currentPoolId && week === currentWeek) {
+        setIsSaving(false);
+      }
     }
   };
 
   const handleClear = () => {
     if (isLocked) return;
-    setInputValue('');
+    // Do NOT blank draft before acknowledgment; preserve confirmed state until confirmed!
     handleSave(null);
   };
 
@@ -212,9 +267,33 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
     );
   }
 
+  // Distinct load-error state with Retry (Finding 4)
+  if (status === 'ERROR') {
+    return (
+      <div className="px-3.5 py-2.5 rounded-xl bg-slate-900/80 border border-rose-500/30 text-rose-300 text-xs font-mono flex items-center justify-between shadow-sm">
+        <div className="flex items-center gap-2 min-w-0">
+          <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+          <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-bold text-[10px] tracking-wider uppercase shrink-0">
+            W{week} TIEBREAKER
+          </span>
+          <span className="text-[11px] text-rose-300/90 truncate">
+            {statusMessage || 'Failed to load tiebreaker info.'}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => fetchTiebreakerInfo()}
+          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-rose-300 hover:text-white font-bold text-[10px] uppercase tracking-wider transition shrink-0 ml-2 border border-slate-700"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
   // Defect 1: Authority P41-TIEBREAKER-CONTRACT-2026-10-17-01
   // Week 6 tiebreaker = "Tiebreaker unavailable — entry was not offered."
-  const isUnavailable = !tiebreakerOffered || week === 6 || status === 'UNAVAILABLE';
+  const isUnavailable = week === 6 || status === 'UNAVAILABLE' || (!tiebreakerOffered && status !== 'LOADING');
 
   if (isUnavailable) {
     return (

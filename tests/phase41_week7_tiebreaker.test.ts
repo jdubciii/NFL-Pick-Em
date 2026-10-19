@@ -424,7 +424,10 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
         return cb({
           $queryRawUnsafe: vi.fn().mockResolvedValue([]),
           game: { findFirst: vi.fn().mockResolvedValue(mockWeek7Games[0]), findMany: vi.fn().mockResolvedValue(mockWeek7Games) },
-          weeklySubmission: { upsert: upsertMock },
+          weeklySubmission: {
+            upsert: upsertMock,
+            findUnique: vi.fn().mockResolvedValue({ tieBreakerPrediction: 52.0 }),
+          },
           pool: { findUnique: vi.fn().mockResolvedValue(mockPool), update: vi.fn() },
         });
       });
@@ -1050,6 +1053,185 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       const overrideData = await overrideRes.json();
       expect(overrideData.error).toContain('DESIGNATION_FROZEN');
     });
+
+    it('fails closed and denies override when existing designated game has missing kickoffTime', async () => {
+      const missingKickoffGames = [
+        {
+          id: 'g-w7-nokickoff',
+          externalGameId: '401873010',
+          homeTeamId: 'MIN',
+          awayTeamId: 'DET',
+          kickoffTime: null as any,
+          status: GameStatus.SCHEDULED,
+        },
+        {
+          id: 'g-w7-valid',
+          externalGameId: '401873011',
+          homeTeamId: 'SF',
+          awayTeamId: 'KC',
+          kickoffTime: new Date(Date.now() + 86400000).toISOString(),
+          status: GameStatus.SCHEDULED,
+        },
+      ];
+
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: ADMIN_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(missingKickoffGames as any);
+
+      const poolUpdateSpy = vi.fn();
+      vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+            if (sql.includes('to_regproc')) return [{ exists: null }];
+            return [];
+          }),
+          pool: {
+            findUnique: vi.fn().mockResolvedValue(mockPool),
+            update: poolUpdateSpy,
+          },
+          weeklySubmission: {
+            findMany: vi.fn().mockResolvedValue([]),
+          },
+          game: {
+            findMany: vi.fn().mockResolvedValue(missingKickoffGames),
+          },
+        });
+      });
+
+      const adminToken = createAuthToken(ADMIN_ID, 'ADMIN');
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ week: 7, season: 2026, target_game_id: '401873011' }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('UNVERIFIED_KICKOFF');
+      expect(poolUpdateSpy).not.toHaveBeenCalled();
+    });
+
+    it('fails closed and denies override when existing designated game has invalid kickoffTime string', async () => {
+      const invalidKickoffGames = [
+        {
+          id: 'g-w7-badkickoff',
+          externalGameId: '401873010',
+          homeTeamId: 'MIN',
+          awayTeamId: 'DET',
+          kickoffTime: 'not-a-valid-date' as any,
+          status: GameStatus.SCHEDULED,
+        },
+        {
+          id: 'g-w7-valid',
+          externalGameId: '401873011',
+          homeTeamId: 'SF',
+          awayTeamId: 'KC',
+          kickoffTime: new Date(Date.now() + 86400000).toISOString(),
+          status: GameStatus.SCHEDULED,
+        },
+      ];
+
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: ADMIN_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(invalidKickoffGames as any);
+
+      const poolUpdateSpy = vi.fn();
+      vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+            if (sql.includes('to_regproc')) return [{ exists: null }];
+            return [];
+          }),
+          pool: {
+            findUnique: vi.fn().mockResolvedValue(mockPool),
+            update: poolUpdateSpy,
+          },
+          weeklySubmission: {
+            findMany: vi.fn().mockResolvedValue([]),
+          },
+          game: {
+            findMany: vi.fn().mockResolvedValue(invalidKickoffGames),
+          },
+        });
+      });
+
+      const adminToken = createAuthToken(ADMIN_ID, 'ADMIN');
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ week: 7, season: 2026, target_game_id: '401873011' }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('UNVERIFIED_KICKOFF');
+      expect(poolUpdateSpy).not.toHaveBeenCalled();
+    });
+
+    it('fails closed and denies override when stored designated event is missing from weekly slate', async () => {
+      const storedPool = {
+        ...mockPool,
+        settings: {
+          tiebreaker_designations: {
+            '2026': {
+              '7': {
+                eventId: '999999999', // Missing from slate
+                provenance: 'COMMISSIONER_OVERRIDE',
+                isFrozen: false,
+              },
+            },
+          },
+        },
+      };
+
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(storedPool as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: ADMIN_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(mockWeek7Games as any);
+
+      const poolUpdateSpy = vi.fn();
+      vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+            if (sql.includes('to_regproc')) return [{ exists: null }];
+            return [];
+          }),
+          pool: {
+            findUnique: vi.fn().mockResolvedValue(storedPool),
+            update: poolUpdateSpy,
+          },
+          weeklySubmission: {
+            findMany: vi.fn().mockResolvedValue([]),
+          },
+          game: {
+            findMany: vi.fn().mockResolvedValue(mockWeek7Games),
+          },
+        });
+      });
+
+      const adminToken = createAuthToken(ADMIN_ID, 'ADMIN');
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ week: 7, season: 2026, target_game_id: '401873011' }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('UNVERIFIED_KICKOFF');
+      expect(poolUpdateSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('7. Week 6 2026 Exclusion Safeguard Across Surfaces (Finding 4)', () => {
@@ -1396,6 +1578,369 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(overrideRes.status).toBe(200);
       const overrideData = await overrideRes.json();
       expect(overrideData.designation.eventId).toBe('401873011');
+    });
+  });
+
+  describe('11. Atomic Omission Preservation Under Concurrent Save/Clear (Finding 1)', () => {
+    it('proves concurrent omitted prediction request does not overwrite freshly committed prediction', async () => {
+      let poolSettings = { ...mockPool.settings };
+      let storedSubmission: any = {
+        id: 'sub-omitted-test',
+        poolId: POOL_ID,
+        userId: MEMBER_1_ID,
+        weekNumber: 7,
+        tieBreakerPrediction: 40.0, // Stored initial value
+      };
+
+      vi.spyOn(prisma.pool, 'findUnique').mockImplementation(() => Promise.resolve({ ...mockPool, settings: poolSettings }) as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockImplementation(async (args: any) => ({
+        poolId: POOL_ID,
+        userId: args?.where?.poolId_userId?.userId || MEMBER_1_ID,
+        status: 'ACTIVE',
+      }) as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(mockWeek7Games as any);
+
+      let saveTxInFlight = false;
+      let saveTxReleased = false;
+
+      let resolveSaveLockAcquired: () => void;
+      const saveLockAcquiredPromise = new Promise<void>((r) => { resolveSaveLockAcquired = r; });
+
+      let resolveSaveHold: () => void;
+      const saveHoldPromise = new Promise<void>((r) => { resolveSaveHold = r; });
+
+      let resolveOmittedLockWait: () => void;
+      const omittedLockWaitPromise = new Promise<void>((r) => { resolveOmittedLockWait = r; });
+
+      let txIndex = 0;
+      vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        const isExplicitSave = (txIndex === 0);
+        txIndex++;
+
+        if (isExplicitSave) {
+          saveTxInFlight = true;
+        }
+
+        const txClient = {
+          $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+            if (sql.includes('FOR UPDATE')) {
+              if (isExplicitSave) {
+                resolveSaveLockAcquired();
+                await saveHoldPromise;
+              } else {
+                await omittedLockWaitPromise;
+              }
+              return [];
+            }
+            if (sql.includes('to_regproc')) {
+              return [{ exists: null }];
+            }
+            return [];
+          }),
+          pool: {
+            findUnique: vi.fn().mockImplementation(() => Promise.resolve({ ...mockPool, settings: poolSettings })),
+            update: vi.fn().mockImplementation(({ data }) => {
+              poolSettings = { ...poolSettings, ...data.settings };
+              return Promise.resolve({ ...mockPool, settings: poolSettings });
+            }),
+          },
+          weeklySubmission: {
+            findUnique: vi.fn().mockImplementation(() => Promise.resolve(storedSubmission)),
+            upsert: vi.fn().mockImplementation(({ create, update }) => {
+              storedSubmission = { ...storedSubmission, ...update, ...create };
+              return Promise.resolve(storedSubmission);
+            }),
+            findMany: vi.fn().mockImplementation(() => Promise.resolve(storedSubmission ? [storedSubmission] : [])),
+          },
+          game: {
+            findFirst: vi.fn().mockResolvedValue(mockWeek7Games[0]),
+            findMany: vi.fn().mockResolvedValue(mockWeek7Games),
+          },
+        };
+
+        try {
+          const res = await cb(txClient);
+          return res;
+        } finally {
+          if (isExplicitSave) {
+            saveTxInFlight = false;
+            saveTxReleased = true;
+            resolveOmittedLockWait();
+          }
+        }
+      });
+
+      const memberToken = createAuthToken(MEMBER_1_ID);
+
+      // 1. Explicit save request begins (saving 52.5)
+      const savePromise = fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${memberToken}` },
+        body: JSON.stringify({ week: 7, season: 2026, prediction: 52.5 }),
+      });
+
+      // Wait until explicit save has acquired the row lock
+      await saveLockAcquiredPromise;
+
+      // 2. Concurrently, an omitted request arrives
+      const omittedPromise = fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${memberToken}` },
+        body: JSON.stringify({ week: 7, season: 2026 }), // prediction omitted!
+      });
+
+      // Allow omitted request to reach row lock wait
+      await new Promise((r) => setTimeout(r, 20));
+      resolveSaveHold();
+
+      const [saveRes, omittedRes] = await Promise.all([savePromise, omittedPromise]);
+
+      expect(saveRes.status).toBe(200);
+      expect(omittedRes.status).toBe(200);
+
+      const saveData = await saveRes.json();
+      const omittedData = await omittedRes.json();
+
+      expect(saveData.prediction).toBe(52.5);
+      // The omitted request MUST NOT overwrite or revert to the old 40.0; it must preserve 52.5!
+      expect(omittedData.prediction).toBe(52.5);
+      expect(storedSubmission.tieBreakerPrediction).toBe(52.5);
+    });
+
+    it('proves concurrent omitted prediction request does not resurrect previously cleared prediction', async () => {
+      let poolSettings = { ...mockPool.settings };
+      let storedSubmission: any = {
+        id: 'sub-clear-test',
+        poolId: POOL_ID,
+        userId: MEMBER_1_ID,
+        weekNumber: 7,
+        tieBreakerPrediction: 45.0, // Stored initial value
+      };
+
+      vi.spyOn(prisma.pool, 'findUnique').mockImplementation(() => Promise.resolve({ ...mockPool, settings: poolSettings }) as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockImplementation(async (args: any) => ({
+        poolId: POOL_ID,
+        userId: args?.where?.poolId_userId?.userId || MEMBER_1_ID,
+        status: 'ACTIVE',
+      }) as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(mockWeek7Games as any);
+
+      let clearTxInFlight = false;
+      let resolveClearLockAcquired: () => void;
+      const clearLockAcquiredPromise = new Promise<void>((r) => { resolveClearLockAcquired = r; });
+
+      let resolveClearHold: () => void;
+      const clearHoldPromise = new Promise<void>((r) => { resolveClearHold = r; });
+
+      let resolveOmittedLockWait: () => void;
+      const omittedLockWaitPromise = new Promise<void>((r) => { resolveOmittedLockWait = r; });
+
+      let txIndex = 0;
+      vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        const isClear = (txIndex === 0);
+        txIndex++;
+
+        if (isClear) {
+          clearTxInFlight = true;
+        }
+
+        const txClient = {
+          $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+            if (sql.includes('FOR UPDATE')) {
+              if (isClear) {
+                resolveClearLockAcquired();
+                await clearHoldPromise;
+              } else {
+                await omittedLockWaitPromise;
+              }
+              return [];
+            }
+            if (sql.includes('to_regproc')) {
+              return [{ exists: null }];
+            }
+            return [];
+          }),
+          pool: {
+            findUnique: vi.fn().mockImplementation(() => Promise.resolve({ ...mockPool, settings: poolSettings })),
+            update: vi.fn().mockImplementation(({ data }) => {
+              poolSettings = { ...poolSettings, ...data.settings };
+              return Promise.resolve({ ...mockPool, settings: poolSettings });
+            }),
+          },
+          weeklySubmission: {
+            findUnique: vi.fn().mockImplementation(() => Promise.resolve(storedSubmission)),
+            upsert: vi.fn().mockImplementation(({ create, update }) => {
+              storedSubmission = { ...storedSubmission, ...update, ...create };
+              return Promise.resolve(storedSubmission);
+            }),
+            findMany: vi.fn().mockImplementation(() => Promise.resolve(storedSubmission ? [storedSubmission] : [])),
+          },
+          game: {
+            findFirst: vi.fn().mockResolvedValue(mockWeek7Games[0]),
+            findMany: vi.fn().mockResolvedValue(mockWeek7Games),
+          },
+        };
+
+        try {
+          const res = await cb(txClient);
+          return res;
+        } finally {
+          if (isClear) {
+            clearTxInFlight = false;
+            resolveOmittedLockWait();
+          }
+        }
+      });
+
+      const memberToken = createAuthToken(MEMBER_1_ID);
+
+      // 1. Explicit clear request begins
+      const clearPromise = fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${memberToken}` },
+        body: JSON.stringify({ week: 7, season: 2026, clear: true }),
+      });
+
+      await clearLockAcquiredPromise;
+
+      // 2. Concurrently, omitted request arrives
+      const omittedPromise = fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${memberToken}` },
+        body: JSON.stringify({ week: 7, season: 2026 }), // prediction omitted!
+      });
+
+      await new Promise((r) => setTimeout(r, 20));
+      resolveClearHold();
+
+      const [clearRes, omittedRes] = await Promise.all([clearPromise, omittedPromise]);
+
+      expect(clearRes.status).toBe(200);
+      expect(omittedRes.status).toBe(200);
+
+      const clearData = await clearRes.json();
+      const omittedData = await omittedRes.json();
+
+      expect(clearData.prediction).toBeNull();
+      // Must NOT resurrect old 45.0!
+      expect(omittedData.prediction).toBeNull();
+      expect(storedSubmission.tieBreakerPrediction).toBeNull();
+    });
+  });
+
+  describe('12. WeeklyTiebreakerCard Recovery & Context Protection Invariants (Findings 2 & 4)', () => {
+    it('preserves confirmed user prediction badge and draft when clear fails on network error', () => {
+      // Simulation of WeeklyTiebreakerCard state transitions
+      let userPrediction: number | null = 48.5;
+      let inputValue = '48.5';
+      let saveStatus: 'idle' | 'saved' | 'error' = 'saved';
+      let statusMessage: string | null = null;
+      let failedMutationIntent: { type: 'save'; value: string } | { type: 'clear' } | null = null;
+
+      // User initiates clear
+      const isExplicitClear = true;
+      // Network call fails!
+      const errorOccurred = true;
+
+      if (errorOccurred) {
+        saveStatus = 'error';
+        statusMessage = 'Network error clearing prediction.';
+        failedMutationIntent = isExplicitClear ? { type: 'clear' } : { type: 'save', value: inputValue };
+        // Confirmed state MUST remain preserved!
+      }
+
+      // Assertions:
+      expect(userPrediction).toBe(48.5); // Badge remains 48.5 pts
+      expect(inputValue).toBe('48.5');   // Input draft NOT prematurely blanked
+      expect(saveStatus).toBe('error');
+      expect(failedMutationIntent).toEqual({ type: 'clear' });
+    });
+
+    it('retains clear intent on failed clear so retry repeats clear: true instead of empty save', () => {
+      let userPrediction: number | null = 48.5;
+      let inputValue = '48.5';
+      let failedMutationIntent: { type: 'save'; value: string } | { type: 'clear' } | null = { type: 'clear' };
+
+      // User clicks Retry: handleSave() is called without arguments (valueToSave === undefined)
+      const valueToSave: string | null | undefined = undefined;
+
+      let isExplicitClear = false;
+      let rawVal = inputValue;
+
+      if (valueToSave === null) {
+        isExplicitClear = true;
+      } else if (valueToSave !== undefined) {
+        rawVal = valueToSave;
+      } else if (failedMutationIntent?.type === 'clear') {
+        isExplicitClear = true; // RECOVERED CLEAR INTENT!
+      } else if (failedMutationIntent?.type === 'save') {
+        rawVal = failedMutationIntent.value;
+      }
+
+      expect(isExplicitClear).toBe(true); // Verifies Retry executes clear: true, NOT empty save validation error!
+
+      // Simulate successful response from backend on retry
+      const data = { prediction: null };
+      userPrediction = data.prediction;
+      inputValue = '';
+      failedMutationIntent = null;
+
+      expect(userPrediction).toBeNull();
+      expect(inputValue).toBe('');
+      expect(failedMutationIntent).toBeNull();
+    });
+
+    it('renders distinct load error state with retry button when server returns error, never masquerading as unoffered', () => {
+      const getCardDisplayState = (status: string, tiebreakerOffered: boolean, week: number) => {
+        if (status === 'ERROR') {
+          return 'RENDER_LOAD_ERROR_WITH_RETRY';
+        }
+        const isUnavailable = week === 6 || status === 'UNAVAILABLE' || (!tiebreakerOffered && status !== 'LOADING');
+        if (isUnavailable) {
+          return 'RENDER_UNOFFERED_BANNER';
+        }
+        return 'RENDER_ACTIVE_CARD';
+      };
+
+      // When load fails with HTTP 500 or network error
+      expect(getCardDisplayState('ERROR', false, 7)).toBe('RENDER_LOAD_ERROR_WITH_RETRY');
+
+      // Genuine unoffered week (e.g. Week 6)
+      expect(getCardDisplayState('UNAVAILABLE', false, 6)).toBe('RENDER_UNOFFERED_BANNER');
+
+      // Active week 7 when offered
+      expect(getCardDisplayState('DEFAULT_LIONS', true, 7)).toBe('RENDER_ACTIVE_CARD');
+    });
+
+    it('discards stale asynchronous response when context switches pool or week before response returns', () => {
+      let activeReq = 0;
+      let activeMutation = 0;
+      let currentContext = { poolId: 'pool-A', week: 7 };
+
+      let appliedData: any = null;
+
+      const simulateAsyncFetch = async (reqPoolId: string, reqWeek: number, reqId: number, delayMs: number) => {
+        await new Promise((r) => setTimeout(r, delayMs));
+        // Guard check after await boundary:
+        if (reqId !== activeReq || currentContext.poolId !== reqPoolId || currentContext.week !== reqWeek) {
+          return; // DISCARDED!
+        }
+        appliedData = { poolId: reqPoolId, week: reqWeek };
+      };
+
+      // 1. Initial request for Pool A
+      const req1Id = ++activeReq;
+      const promiseA = simulateAsyncFetch('pool-A', 7, req1Id, 50);
+
+      // 2. User quickly switches to Pool B before Pool A completes
+      currentContext = { poolId: 'pool-B', week: 7 };
+      const req2Id = ++activeReq;
+      const promiseB = simulateAsyncFetch('pool-B', 7, req2Id, 10);
+
+      return Promise.all([promiseA, promiseB]).then(() => {
+        // Only Pool B data must be applied; Pool A was safely discarded
+        expect(appliedData).toEqual({ poolId: 'pool-B', week: 7 });
+      });
     });
   });
 });

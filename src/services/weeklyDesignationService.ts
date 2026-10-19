@@ -209,12 +209,43 @@ export function applyCommissionerOverride(params: {
     throw new Error('DESIGNATION_FROZEN: Cannot change designated tiebreaker game after predictions have been received');
   }
 
-  // 5. If existing game had a kickoff, check that it hasn't passed
-  if (existing.game) {
+  // 5. Verify authoritative deadline of existing designation (Fail-Closed)
+  const storedDesignation = currentSettings?.tiebreaker_designations?.[String(season)]?.[String(week)]
+    || currentSettings?.tiebreaker_designations?.[season]?.[week];
+
+  if (storedDesignation?.eventId) {
+    // A stored designation exists and is being replaced
+    if (!existing.game || existing.status === 'UNRESOLVED') {
+      throw new Error(`UNVERIFIED_KICKOFF: Stored designated game (${storedDesignation.eventId}) is unresolved or missing from weekly slate. Replacement denied.`);
+    }
+    if (!existing.game.kickoffTime) {
+      throw new Error('UNVERIFIED_KICKOFF: Missing kickoff time for existing designated game. Replacement denied.');
+    }
     const oldKickoff = new Date(existing.game.kickoffTime);
+    if (isNaN(oldKickoff.getTime())) {
+      throw new Error('UNVERIFIED_KICKOFF: Invalid kickoff time for existing designated game. Replacement denied.');
+    }
     if (now >= oldKickoff) {
       throw new Error('KICKOFF_PASSED: Cannot change designation because the existing designated game has already kicked off');
     }
+  } else if (existing.status === 'DEFAULT_LIONS') {
+    // Default Lions designation is active and being overridden
+    if (!existing.game || !existing.game.kickoffTime) {
+      throw new Error('UNVERIFIED_KICKOFF: Missing kickoff time for existing default designated game. Replacement denied.');
+    }
+    const oldKickoff = new Date(existing.game.kickoffTime);
+    if (isNaN(oldKickoff.getTime())) {
+      throw new Error('UNVERIFIED_KICKOFF: Invalid kickoff time for existing default designated game. Replacement denied.');
+    }
+    if (now >= oldKickoff) {
+      throw new Error('KICKOFF_PASSED: Cannot change designation because the existing designated game has already kicked off');
+    }
+  } else if (existing.status === 'UNRESOLVED') {
+    // Schedule is unresolved or ambiguous; fail closed
+    throw new Error(`UNRESOLVED_DESIGNATION: Cannot override when existing schedule state is unresolved (${existing.reason || 'unresolved'}).`);
+  } else if (existing.status === 'COMMISSIONER_SELECTION_REQUIRED') {
+    // Legitimate initial selection when Lions are on bye or no Lions game exists in slate.
+    // Allowed to proceed to set initial designation.
   }
 
   // 6. Find target game in the weekly slate
@@ -226,8 +257,14 @@ export function applyCommissionerOverride(params: {
     throw new Error('INVALID_TARGET: Target game is not in the specified weekly slate');
   }
 
-  // 7. Verify proposed new target game is before kickoff
+  // 7. Verify proposed new target game has valid authoritative kickoff deadline and has not passed
+  if (!targetGame.kickoffTime) {
+    throw new Error('UNVERIFIED_KICKOFF: Target game kickoff time is missing');
+  }
   const newKickoff = new Date(targetGame.kickoffTime);
+  if (isNaN(newKickoff.getTime())) {
+    throw new Error('UNVERIFIED_KICKOFF: Target game kickoff time is invalid');
+  }
   if (now >= newKickoff) {
     throw new Error('KICKOFF_PASSED: Target game has already kicked off');
   }
