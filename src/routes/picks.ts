@@ -25,7 +25,17 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
   const rawGameId = req.body.game_id || req.body.gameId;
   const rawSelectedTeamId = req.body.selected_team_id !== undefined 
     ? req.body.selected_team_id 
-    : req.body.selectedTeamId;
+    : (req.body.selectedTeamId !== undefined
+      ? req.body.selectedTeamId
+      : (req.body.selected_team !== undefined
+        ? req.body.selected_team
+        : (req.body.selectedTeam !== undefined
+          ? req.body.selectedTeam
+          : (req.body.team_id !== undefined
+            ? req.body.team_id
+            : (req.body.teamId !== undefined
+              ? req.body.teamId
+              : req.body.team)))));
 
   if (!poolId || !rawGameId) {
     res.status(400).json({ error: 'pool_id and game_id are required fields.' });
@@ -33,7 +43,7 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
   }
 
   const gameId = String(rawGameId).trim();
-  const selectedTeamId = rawSelectedTeamId && String(rawSelectedTeamId).trim().length > 0
+  const selectedTeamId = rawSelectedTeamId !== undefined && rawSelectedTeamId !== null && String(rawSelectedTeamId).trim().length > 0
     ? String(rawSelectedTeamId).trim()
     : null;
 
@@ -76,14 +86,23 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
       return;
     }
 
-    // 3. Validate home/away team selection using normalized comparison
+    // 3. Validate home/away team selection using normalized comparison (Fail-closed)
     const normHome = normalizeTeamCode(game.homeTeamId);
     const normAway = normalizeTeamCode(game.awayTeamId);
     const normSelected = selectedTeamId ? normalizeTeamCode(selectedTeamId) : null;
 
-    if (normSelected && normSelected !== normHome && normSelected !== normAway) {
-      res.status(400).json({ error: 'Selected team must be the home or away team for this game.' });
-      return;
+    if (normSelected) {
+      if (normHome === 'UNK' || normAway === 'UNK') {
+        res.status(400).json({ error: 'Game participants cannot be verified.' });
+        return;
+      }
+
+      if (normSelected !== normHome && normSelected !== normAway) {
+        res.status(400).json({
+          error: `Selected team '${selectedTeamId}' is not a participant in this game (${normAway} @ ${normHome}).`,
+        });
+        return;
+      }
     }
 
     // 4. Extract lock_offset (in minutes) from pool.settings JSON and evaluate lock status
@@ -95,7 +114,7 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
       return;
     }
 
-    // 5. Upsert pick record using internal game.id
+    // 5. Upsert pick record using internal game.id and normalized selected team
     const pick = await prisma.pick.upsert({
       where: {
         poolId_userId_gameId: {
@@ -105,14 +124,14 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
         },
       },
       update: {
-        selectedTeamId,
+        selectedTeamId: normSelected,
         submittedById: userId,
       },
       create: {
         poolId,
         userId,
         gameId: game.id,
-        selectedTeamId,
+        selectedTeamId: normSelected,
         submittedById: userId,
       },
     });
@@ -173,8 +192,20 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
     const savedPicks = [];
     for (const item of picksList) {
       const rawGameId = item.game_id || item.gameId;
-      const rawSelected = item.selected_team_id !== undefined ? item.selected_team_id : item.selectedTeamId;
-      const selectedTeamId = rawSelected && String(rawSelected).trim().length > 0
+      const rawSelected = item.selected_team_id !== undefined
+        ? item.selected_team_id
+        : (item.selectedTeamId !== undefined
+          ? item.selectedTeamId
+          : (item.selected_team !== undefined
+            ? item.selected_team
+            : (item.selectedTeam !== undefined
+              ? item.selectedTeam
+              : (item.team_id !== undefined
+                ? item.team_id
+                : (item.teamId !== undefined
+                  ? item.teamId
+                  : item.team)))));
+      const selectedTeamId = rawSelected !== undefined && rawSelected !== null && String(rawSelected).trim().length > 0
         ? String(rawSelected).trim()
         : null;
 
@@ -197,8 +228,10 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
       const normAway = normalizeTeamCode(game.awayTeamId);
       const normSelected = selectedTeamId ? normalizeTeamCode(selectedTeamId) : null;
 
-      if (normSelected && normSelected !== normHome && normSelected !== normAway) {
-        continue;
+      if (normSelected) {
+        if (normHome === 'UNK' || normAway === 'UNK' || (normSelected !== normHome && normSelected !== normAway)) {
+          continue;
+        }
       }
 
       const pick = await prisma.pick.upsert({
@@ -210,14 +243,14 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
           },
         },
         update: {
-          selectedTeamId,
+          selectedTeamId: normSelected,
           submittedById: userId,
         },
         create: {
           poolId,
           userId,
           gameId: game.id,
-          selectedTeamId,
+          selectedTeamId: normSelected,
           submittedById: userId,
         },
       });

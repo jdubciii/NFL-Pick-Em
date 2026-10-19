@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db/client';
 import { requireAuth, requireAdmin, requirePoolCommissioner } from '../middleware/auth';
+import { normalizeTeamCode } from '../services/authoritativeSlateService';
 
 export const adminRouter = Router();
 
@@ -133,38 +134,75 @@ adminRouter.get('/audit-logs', requireAuth, requireAdmin, async (_req: Request, 
 const handleAdminPickOverride = async (req: Request, res: Response): Promise<void> => {
   const userId = req.body.user_id || req.body.userId;
   const poolId = req.pool?.id || req.body.pool_id || req.body.poolId || req.params.pool_id;
-  const gameId = req.body.game_id || req.body.gameId;
+  const rawGameId = req.body.game_id || req.body.gameId;
   const rawSelectedTeamId = req.body.selected_team_id !== undefined
     ? req.body.selected_team_id
-    : req.body.selectedTeamId;
+    : (req.body.selectedTeamId !== undefined
+      ? req.body.selectedTeamId
+      : (req.body.selected_team !== undefined
+        ? req.body.selected_team
+        : (req.body.selectedTeam !== undefined
+          ? req.body.selectedTeam
+          : (req.body.team_id !== undefined
+            ? req.body.team_id
+            : (req.body.teamId !== undefined
+              ? req.body.teamId
+              : req.body.team)))));
 
-  if (!userId || !poolId || !gameId) {
+  if (!userId || !poolId || !rawGameId) {
     res.status(400).json({ error: 'user_id, pool_id, and game_id are required fields.' });
     return;
   }
 
+  const gameId = String(rawGameId).trim();
   // Ensure missing or empty inputs map to null
-  const selectedTeamId = rawSelectedTeamId && String(rawSelectedTeamId).trim().length > 0
+  const selectedTeamId = rawSelectedTeamId !== undefined && rawSelectedTeamId !== null && String(rawSelectedTeamId).trim().length > 0
     ? String(rawSelectedTeamId).trim()
     : null;
 
   const adminId = req.user!.id;
 
   try {
-    // 1. Query existing pick to capture old state for auditing
+    // 1. Fetch game details to verify existence and participants
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(gameId);
+    const game = await prisma.game.findFirst({
+      where: isUuid
+        ? { OR: [{ id: gameId }, { externalGameId: gameId }] }
+        : { externalGameId: gameId },
+    });
+
+    if (!game) {
+      res.status(404).json({ error: 'Game not found.' });
+      return;
+    }
+
+    // Validate home/away team selection using normalized comparison (Fail-closed)
+    const normHome = normalizeTeamCode(game.homeTeamId);
+    const normAway = normalizeTeamCode(game.awayTeamId);
+    const normSelected = selectedTeamId ? normalizeTeamCode(selectedTeamId) : null;
+
+    if (normSelected) {
+      if (normHome === 'UNK' || normAway === 'UNK') {
+        res.status(400).json({ error: 'Game participants cannot be verified.' });
+        return;
+      }
+      if (normSelected !== normHome && normSelected !== normAway) {
+        res.status(400).json({
+          error: `Selected team '${selectedTeamId}' is not a participant in this game (${normAway} @ ${normHome}).`,
+        });
+        return;
+      }
+    }
+
+    // 2. Query existing pick to capture old state for auditing
     const existingPick = await prisma.pick.findUnique({
       where: {
         poolId_userId_gameId: {
           poolId,
           userId,
-          gameId,
+          gameId: game.id,
         },
       },
-    });
-
-    // 2. Fetch game details to verify if already finalized
-    const game = await prisma.game.findUnique({
-      where: { id: gameId },
     });
 
     // 3. Execute transaction: Upsert pick, upsert PickResult if finalized, and create AuditLog
@@ -174,31 +212,32 @@ const handleAdminPickOverride = async (req: Request, res: Response): Promise<voi
           poolId_userId_gameId: {
             poolId,
             userId,
-            gameId,
+            gameId: game.id,
           },
         },
         update: {
-          selectedTeamId,
+          selectedTeamId: normSelected,
           submittedById: adminId,
         },
         create: {
           poolId,
           userId,
-          gameId,
-          selectedTeamId,
+          gameId: game.id,
+          selectedTeamId: normSelected,
           submittedById: adminId,
         },
       });
 
       // If the targeted game is FINAL or has scores, immediately re-grade and upsert PickResult
-      if (game && (game.status === 'FINAL' || (game.homeScore !== null && game.awayScore !== null))) {
+      if (game.status === 'FINAL' || (game.homeScore !== null && game.awayScore !== null)) {
         let winner: string | null = null;
         if (game.homeScore !== null && game.awayScore !== null) {
           if (game.homeScore > game.awayScore) winner = game.homeTeamId;
           else if (game.awayScore > game.homeScore) winner = game.awayTeamId;
         }
 
-        const isCorrect = Boolean(winner && selectedTeamId && selectedTeamId === winner);
+        const normWinner = winner ? normalizeTeamCode(winner) : null;
+        const isCorrect = Boolean(normWinner && normSelected && normSelected === normWinner);
         const pointsAwarded = isCorrect ? 1.0 : 0.0;
 
         await tx.pickResult.upsert({
