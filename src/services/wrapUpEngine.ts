@@ -192,9 +192,9 @@ export async function previewWeeklyWrapUpForPool(
   }
 
   const isWeek6Unavailable = (weekNumber === 6 && season === 2026);
-  const tiebreakerOffered = options.tiebreakerOffered !== undefined
+  const tiebreakerOffered = !isWeek6Unavailable && (options.tiebreakerOffered !== undefined
     ? options.tiebreakerOffered
-    : (!isWeek6Unavailable && settings?.tiebreaker_unavailable_weeks?.[season]?.[weekNumber] !== true);
+    : (settings?.tiebreaker_unavailable_weeks?.[season]?.[weekNumber] !== true));
 
   let designatedGameScore: number | null = null;
   let designatedGameItem: any | null = null;
@@ -600,9 +600,9 @@ export async function executeWeeklyWrapUpForPool(
     // -------------------------------------------------------------------------
     // If fair timely entry was not offered to all members before deadline (e.g. Week 6),
     const isWeek6Unavailable = (weekNumber === 6 && season === 2026);
-    const tiebreakerOffered = options.tiebreakerOffered !== undefined
+    const tiebreakerOffered = !isWeek6Unavailable && (options.tiebreakerOffered !== undefined
       ? options.tiebreakerOffered
-      : (!isWeek6Unavailable && (pool.settings as any)?.tiebreaker_unavailable_weeks?.[season]?.[weekNumber] !== true);
+      : ((pool.settings as any)?.tiebreaker_unavailable_weeks?.[season]?.[weekNumber] !== true));
 
     let actualTiebreakerTotal: number | null = null;
     let designatedGameId: string | null = null;

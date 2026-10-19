@@ -49,17 +49,10 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
 
     try {
       setLoading(true);
-      let res = await scopedExpressFetch(`/api/pools/${poolId}/tiebreaker?week=${week}&season=2026`);
+      const res = await scopedExpressFetch(`/api/pools/${poolId}/tiebreaker?week=${week}&season=2026`);
 
       // Guard after initial response
       if (currentReqId !== activeReqRef.current || poolId !== currentPoolId || week !== currentWeek) return;
-
-      if (!res.ok && res.status === 404) {
-        // Fallback to legacy path for backward compatibility
-        res = await scopedExpressFetch(`/api/picks/tiebreaker?pool_id=${poolId}&week=${week}&season=2026`);
-        // Guard after fallback response
-        if (currentReqId !== activeReqRef.current || poolId !== currentPoolId || week !== currentWeek) return;
-      }
 
       const data = await res.json();
       // Guard after awaiting res.json()
@@ -70,7 +63,17 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
         setTiebreakerOffered(data.tiebreakerOffered === true);
         setDesignatedGame(data.designatedGame);
         setKickoffTime(data.kickoffTime);
-        setIsLocked(Boolean(data.isLocked));
+
+        // Strict Fail-Closed Lock Check (Finding 8):
+        // Require explicit isLocked === false, valid kickoff time, and resolved typed designation.
+        // All missing/unknown fields remain locked.
+        const hasValidKickoff = Boolean(data.kickoffTime && !isNaN(new Date(data.kickoffTime).getTime()));
+        const hasResolvedDesignation = Boolean(
+          data.status === 'DEFAULT_LIONS' || data.status === 'COMMISSIONER_OVERRIDE'
+        );
+        const isExplicitlyUnlocked = data.isLocked === false && hasResolvedDesignation && hasValidKickoff;
+        setIsLocked(!isExplicitlyUnlocked);
+
         setUserPrediction(data.userPrediction ?? null);
         setInputValue(data.userPrediction !== null && data.userPrediction !== undefined ? String(data.userPrediction) : '');
         setSaveStatus(data.userPrediction !== null ? 'saved' : 'idle');
@@ -191,25 +194,14 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
         payload.prediction = numVal;
       }
 
-      let res = await scopedExpressFetch(`/api/pools/${poolId}/tiebreaker`, {
+      const res = await scopedExpressFetch(`/api/pools/${poolId}/tiebreaker`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
-      // Guard after initial response
+      // Guard after response
       if (currentMutationId !== activeMutationRef.current || poolId !== currentPoolId || week !== currentWeek) return;
-
-      if (!res.ok && res.status === 404) {
-        // Fallback to legacy path
-        res = await scopedExpressFetch('/api/picks/tiebreaker', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        // Guard after fallback response
-        if (currentMutationId !== activeMutationRef.current || poolId !== currentPoolId || week !== currentWeek) return;
-      }
 
       const data = await res.json();
       // Guard after awaiting res.json()

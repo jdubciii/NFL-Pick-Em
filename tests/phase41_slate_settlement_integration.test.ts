@@ -276,7 +276,19 @@ describe('Phase 41: Slate Settlement Integration & Preview Contract', () => {
                 away_score: 14,
                 status: GameStatus.FINAL,
               },
-              // Member 2 picked loser SEA (0 points)
+              // Members 3..10 picked winner DEN (1 point, shared 1st place)
+              ...Array.from({ length: 8 }, (_, i) => ({
+                user_id: `mem-${i + 3}`,
+                game_id: '401872995',
+                selected_team: 'DEN',
+                selected_team_id: null,
+                home_team_id: 'DEN',
+                away_team_id: 'SEA',
+                home_score: 17,
+                away_score: 14,
+                status: GameStatus.FINAL,
+              })),
+              // Member 2 picked loser SEA (0 points, rank 10 / dead place)
               {
                 user_id: MEMBER_2_ID,
                 game_id: '401872995',
@@ -300,6 +312,11 @@ describe('Phase 41: Slate Settlement Integration & Preview Contract', () => {
             memberships: [
               { userId: MEMBER_1_ID, status: 'ACTIVE', user: { id: MEMBER_1_ID } },
               { userId: MEMBER_2_ID, status: 'ACTIVE', user: { id: MEMBER_2_ID } },
+              ...Array.from({ length: 8 }, (_, i) => ({
+                userId: `mem-${i + 3}`,
+                status: 'ACTIVE',
+                user: { id: `mem-${i + 3}` },
+              })),
             ],
             settings: { season: 2026 },
           }),
@@ -350,7 +367,7 @@ describe('Phase 41: Slate Settlement Integration & Preview Contract', () => {
       expect(audit.poolId).toBe(POOL_ID);
       expect(audit.season).toBe(2026);
       expect(audit.weekNumber).toBe(6);
-      expect(audit.standings.length).toBe(2);
+      expect(audit.standings.length).toBe(10);
     });
   });
 });

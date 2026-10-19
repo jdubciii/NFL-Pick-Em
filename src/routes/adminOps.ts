@@ -7,6 +7,7 @@ import { sealSeason, getSeasonSealStatus } from '../services/seasonSeal';
 import { processTransportsBatch, getTransportsQueueStatus } from '../services/transports';
 import { runRetentionPruning, getRetentionStatus } from '../services/retentionService';
 import { refreshWeeklySlateInDb } from '../services/authoritativeSlateService';
+import { handlePoolWrapUpPreview } from './ops';
 
 export const adminOpsRouter = Router();
 
@@ -137,55 +138,7 @@ adminOpsRouter.get('/wrap-up/status', requireAuth, requireAdmin, async (_req: Re
  * Evaluates slate completeness, designated game status, and projected rankings/penalties.
  * Strictly adheres to Decision #54 (NO WRITES ON GET).
  */
-adminOpsRouter.get('/wrap-up/preview', requireAuth, async (req: Request, res: Response): Promise<void> => {
-  const poolId = (req.query.poolId || req.query.pool_id) as string;
-  const weekNumber = Number(req.query.weekNumber || req.query.week || 1);
-  const season = Number(req.query.season || 2026);
-  const seasonType = Number(req.query.seasonType || req.query.season_type || 2);
-
-  if (!poolId) {
-    res.status(400).json({ error: 'poolId is required.' });
-    return;
-  }
-
-  const actorId = req.user!.id;
-  const pool = await prisma.pool.findUnique({
-    where: { id: poolId },
-    include: {
-      memberships: {
-        where: { userId: actorId, status: 'ACTIVE' },
-      },
-    },
-  });
-
-  if (!pool) {
-    res.status(404).json({ error: 'Pool not found.' });
-    return;
-  }
-
-  const isAdmin = req.user?.role === 'ADMIN';
-  const isCommissioner = pool.adminId === actorId;
-  const isActiveMember = pool.memberships.length > 0;
-
-  if (!isAdmin && !isCommissioner && !isActiveMember) {
-    res.status(403).json({ error: 'FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED: Must be an ACTIVE member or commissioner of the requested pool.' });
-    return;
-  }
-
-  try {
-    const preview = await previewWeeklyWrapUpForPool(poolId, weekNumber, { season, seasonType });
-    res.status(200).json({
-      status: preview.readyToSettle ? 'READY' : 'NOT_READY',
-      preview,
-    });
-  } catch (error: any) {
-    console.error('Error generating wrap-up preview:', error);
-    res.status(500).json({
-      error: 'Failed to generate wrap-up preview',
-      details: error.message,
-    });
-  }
-});
+adminOpsRouter.get('/wrap-up/preview', requireAuth, handlePoolWrapUpPreview);
 
 /**
  * POST /api/admin/ops/slate/refresh

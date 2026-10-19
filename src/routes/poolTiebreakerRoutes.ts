@@ -45,41 +45,46 @@ export function isTiebreakerUnavailableWeek(season: number, weekNumber: number, 
  * 4. Zero synthetic pattern inference and ZERO all-games fallback.
  * 5. Returns [] when no authoritative records exist, safely failing closed.
  */
+export interface GetGamesOptions {
+  supabaseClient?: any;
+  authToken?: string;
+}
+
 export async function getGamesForWeek(
   weekNumber: number,
   season: number = 2026,
   poolId?: string,
-  dbClient: any = prisma
+  dbClient: any = prisma,
+  options?: GetGamesOptions
 ): Promise<any[]> {
-  // Source 1: Approved pool-scoped canonical games RPC (Proposal E, EVIDENCE_P41_POST_PURGE_VALIDATION.md:174)
-  if (poolId && typeof dbClient.$queryRawUnsafe === 'function') {
+  // Source 1: Caller-bound Supabase RPC (Finding 6: requires auth.uid() caller identity)
+  // Invoked strictly via caller-bound client; plain unauthenticated Prisma SQL lacks auth.uid() session context.
+  if (poolId && options?.supabaseClient && typeof options.supabaseClient.rpc === 'function') {
     try {
-      // Safely probe routine existence in PostgreSQL to prevent transaction block abort on unmigrated instances
-      const reg: any = await dbClient.$queryRawUnsafe(
-        `SELECT to_regproc('public.get_pool_canonical_games')::text as exists;`
-      ).catch(() => [{ exists: 'mocked' }]);
-
-      if (reg && reg[0] && reg[0].exists !== null) {
-        const rpcGames: any[] = await dbClient.$queryRawUnsafe(
-          `SELECT id, external_game_id as "externalGameId", home_team_id as "homeTeamId", away_team_id as "awayTeamId",
-                  kickoff_time as "kickoffTime", status,
-                  home_score as "homeScore", away_score as "awayScore"
-           FROM public.get_pool_canonical_games($1::uuid, $2::int, $3::int)
-           ORDER BY kickoff_time ASC;`,
-          poolId,
-          season,
-          weekNumber
-        );
-        if (Array.isArray(rpcGames) && rpcGames.length > 0) {
-          return rpcGames;
-        }
+      const { data, error } = await options.supabaseClient.rpc('get_pool_canonical_games', {
+        p_pool_id: poolId,
+        p_season: season,
+        p_week: weekNumber,
+      });
+      if (!error && Array.isArray(data) && data.length > 0) {
+        return data.map((g: any) => ({
+          id: g.id,
+          externalGameId: String(g.externalGameId || g.external_game_id || g.id),
+          homeTeamId: g.homeTeamId || g.home_team_id,
+          awayTeamId: g.awayTeamId || g.away_team_id,
+          kickoffTime: g.kickoffTime || g.kickoff_time,
+          status: g.status,
+          homeScore: g.homeScore !== undefined ? g.homeScore : g.home_score,
+          awayScore: g.awayScore !== undefined ? g.awayScore : g.away_score,
+        }));
       }
     } catch {
-      // RPC not available or failed; fallback to next approved source
+      // Caller-bound RPC not available or failed; fallback to next approved source
     }
   }
 
   // Source 2: Authoritative weekly slate manifest (P41-AUTHORITATIVE-SLATE-ARCHITECTURE)
+  // Finding 5: Manifest resolves strictly via exact event IDs; unfiltered findFirst() removed!
   try {
     const manifest = await authoritativeSlateService.getAcceptedSlateManifest(dbClient, season, 2, weekNumber);
     if (manifest && Array.isArray(manifest.eventIds) && manifest.eventIds.length > 0) {
@@ -92,11 +97,6 @@ export async function getGamesForWeek(
         });
         if (Array.isArray(games) && games.length > 0) {
           return games;
-        }
-      } else if (typeof dbClient.game?.findFirst === 'function') {
-        const game = await dbClient.game.findFirst();
-        if (game) {
-          return [game];
         }
       }
     }

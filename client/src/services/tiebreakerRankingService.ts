@@ -219,7 +219,6 @@ export function calculateRankingsAndPenalties(
 
   // 4. Calculate penalties according to the ratified schedule
   const isEntireFieldTiedFirst = preRanked.every((p) => p.rank === 1);
-  const maxRank = Math.max(...preRanked.map((p) => p.rank));
 
   const results: RankedMemberResult[] = preRanked.map((item) => {
     const rawPred = item.member.tieBreakerPrediction;
@@ -236,22 +235,20 @@ export function calculateRankingsAndPenalties(
       shots = 0;
       isSafeHaven = true;
       isDeadPlace = false;
-    } else if (item.rank === maxRank) {
-      // Shared last below first / sole last below first: Dead Place Monarch, 2.5 shots each
+    } else if (item.rank >= 2 && item.rank <= 6) {
+      shots = 1.0;
+      isSafeHaven = false;
+      isDeadPlace = false;
+    } else if (item.rank >= 7 && item.rank <= 9) {
+      // Shared rank 7-9: 2.0 shots (Finding 3 & Contract Item 5)
+      shots = 2.0;
+      isSafeHaven = false;
+      isDeadPlace = false;
+    } else if (item.rank >= 10) {
+      // Rank 10 / Dead Place: 2.5 shots (Dead Place Monarch)
       shots = 2.5;
       isSafeHaven = false;
       isDeadPlace = true;
-    } else {
-      // Shared non-bottom rank: charge for that shared rank
-      isSafeHaven = false;
-      isDeadPlace = false;
-      if (item.rank >= 2 && item.rank <= 6) {
-        shots = 1.0;
-      } else if (item.rank >= 7 && item.rank <= 9) {
-        shots = 2.0;
-      } else {
-        shots = 2.5;
-      }
     }
 
     return {

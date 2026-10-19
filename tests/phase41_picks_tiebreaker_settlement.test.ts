@@ -4,6 +4,7 @@ import http from 'http';
 import jwt from 'jsonwebtoken';
 import { picksRouter } from '../src/routes/picks';
 import { adminOpsRouter } from '../src/routes/adminOps';
+import { poolTiebreakerRouter } from '../src/routes/poolTiebreakerRoutes';
 import prisma from '../src/db/client';
 import { JWT_SECRET } from '../src/middleware/auth';
 import {
@@ -65,6 +66,7 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
     });
     app = express();
     app.use(express.json());
+    app.use('/api/pools', poolTiebreakerRouter);
     app.use('/api/picks', picksRouter);
     app.use('/api/admin/ops', adminOpsRouter);
 
@@ -150,14 +152,13 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       });
 
       const token = createAuthToken(MEMBER_1_ID);
-      const res = await fetch(`${baseUrl}/api/picks/tiebreaker`, {
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          pool_id: POOL_ID,
           week: 7,
           prediction: '48.50',
         }),
@@ -182,14 +183,13 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       const invalidValues = ['-5.00', '1000.00', '45.123', 'NaN', 'Infinity', 'abc'];
 
       for (const val of invalidValues) {
-        const res = await fetch(`${baseUrl}/api/picks/tiebreaker`, {
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            pool_id: POOL_ID,
             week: 7,
             prediction: val,
           }),
@@ -222,14 +222,13 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       vi.spyOn(prisma.game, 'findMany').mockResolvedValue(lockedGames as any);
 
       const token = createAuthToken(MEMBER_1_ID);
-      const res = await fetch(`${baseUrl}/api/picks/tiebreaker`, {
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          pool_id: POOL_ID,
           week: 7,
           prediction: 45.0,
         }),
@@ -267,14 +266,13 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       });
 
       const token = createAuthToken(MEMBER_1_ID);
-      const res = await fetch(`${baseUrl}/api/picks/tiebreaker`, {
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          pool_id: POOL_ID,
           week: 7,
           clear: true,
         }),
@@ -291,14 +289,13 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue(null); // not a member
 
       const token = createAuthToken('outsider-user');
-      const res = await fetch(`${baseUrl}/api/picks/tiebreaker`, {
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          pool_id: POOL_ID,
           week: 7,
           prediction: 45.0,
         }),
@@ -366,7 +363,7 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
 
       // Commissioner requests readiness view
       const token = createAuthToken(ADMIN_ID, 'ADMIN');
-      const res = await fetch(`${baseUrl}/api/picks/tiebreaker?pool_id=${POOL_ID}&week=7`, {
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker?week=7`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -553,8 +550,8 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
 
       const token = createAuthToken(MEMBER_1_ID);
 
-      // GET /api/picks/tiebreaker
-      const getRes = await fetch(`${baseUrl}/api/picks/tiebreaker?pool_id=${POOL_ID}&week=6&season=2026`, {
+      // GET canonical /api/pools/:pool_id/tiebreaker
+      const getRes = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker?week=6&season=2026`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       expect(getRes.status).toBe(200);
@@ -563,8 +560,8 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       expect(getData.tiebreakerOffered).toBe(false);
       expect(getData.reason).toContain('Tiebreaker unavailable — entry was not offered.');
 
-      // POST /api/picks/tiebreaker
-      const postRes = await fetch(`${baseUrl}/api/picks/tiebreaker`, {
+      // POST canonical /api/pools/:pool_id/tiebreaker
+      const postRes = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -580,6 +577,14 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       expect(postRes.status).toBe(403);
       const postData = await postRes.json();
       expect(postData.error).toContain('TIEBREAKER_UNAVAILABLE');
+
+      // Retired legacy route /api/picks/tiebreaker returns state-free HTTP 410 (Finding 7)
+      const legacyRes = await fetch(`${baseUrl}/api/picks/tiebreaker?pool_id=${POOL_ID}&week=6&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(legacyRes.status).toBe(410);
+      const legacyData = await legacyRes.json();
+      expect(legacyData.error).toContain('ENDPOINT_RETIRED');
     });
 
     it('executes Week 6 unavailable-tiebreaker wrap-up successfully without designated tiebreaker game or score', async () => {
@@ -593,13 +598,21 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
           }
           if (query.includes('FROM public.picks')) {
             return Promise.resolve([
-              // Member 1 got 2 correct picks
+              // Member 1 got 2 correct picks (tied for 1st)
               { user_id: MEMBER_1_ID, game_id: 'g1', selected_team: 'DET', status: GameStatus.FINAL, home_score: 28, away_score: 20, home_team_id: 'DET', away_team_id: 'CHI' },
               { user_id: MEMBER_1_ID, game_id: 'g2', selected_team: 'GB', status: GameStatus.FINAL, home_score: 24, away_score: 10, home_team_id: 'GB', away_team_id: 'MIN' },
               // Member 2 got 2 correct picks (tied for 1st)
               { user_id: MEMBER_2_ID, game_id: 'g1', selected_team: 'DET', status: GameStatus.FINAL, home_score: 28, away_score: 20, home_team_id: 'DET', away_team_id: 'CHI' },
               { user_id: MEMBER_2_ID, game_id: 'g2', selected_team: 'GB', status: GameStatus.FINAL, home_score: 24, away_score: 10, home_team_id: 'GB', away_team_id: 'MIN' },
-              // Member 3 got 0 correct picks (dead place)
+              // Members 3-9 get 1 correct pick (ranks 3-9)
+              { user_id: '11111111-1111-1111-1111-111111111103', game_id: 'g1', selected_team: 'DET', status: GameStatus.FINAL, home_score: 28, away_score: 20, home_team_id: 'DET', away_team_id: 'CHI' },
+              { user_id: '11111111-1111-1111-1111-111111111104', game_id: 'g1', selected_team: 'DET', status: GameStatus.FINAL, home_score: 28, away_score: 20, home_team_id: 'DET', away_team_id: 'CHI' },
+              { user_id: '11111111-1111-1111-1111-111111111105', game_id: 'g1', selected_team: 'DET', status: GameStatus.FINAL, home_score: 28, away_score: 20, home_team_id: 'DET', away_team_id: 'CHI' },
+              { user_id: '11111111-1111-1111-1111-111111111106', game_id: 'g1', selected_team: 'DET', status: GameStatus.FINAL, home_score: 28, away_score: 20, home_team_id: 'DET', away_team_id: 'CHI' },
+              { user_id: '11111111-1111-1111-1111-111111111107', game_id: 'g1', selected_team: 'DET', status: GameStatus.FINAL, home_score: 28, away_score: 20, home_team_id: 'DET', away_team_id: 'CHI' },
+              { user_id: '11111111-1111-1111-1111-111111111108', game_id: 'g1', selected_team: 'DET', status: GameStatus.FINAL, home_score: 28, away_score: 20, home_team_id: 'DET', away_team_id: 'CHI' },
+              { user_id: '11111111-1111-1111-1111-111111111109', game_id: 'g1', selected_team: 'DET', status: GameStatus.FINAL, home_score: 28, away_score: 20, home_team_id: 'DET', away_team_id: 'CHI' },
+              // Member 10 got 0 correct picks (rank 10 / dead place)
               { user_id: '11111111-1111-1111-1111-111111111113', game_id: 'g1', selected_team: 'CHI', status: GameStatus.FINAL, home_score: 28, away_score: 20, home_team_id: 'DET', away_team_id: 'CHI' },
             ]);
           }
@@ -612,6 +625,13 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
             memberships: [
               { userId: MEMBER_1_ID, status: 'ACTIVE' },
               { userId: MEMBER_2_ID, status: 'ACTIVE' },
+              { userId: '11111111-1111-1111-1111-111111111103', status: 'ACTIVE' },
+              { userId: '11111111-1111-1111-1111-111111111104', status: 'ACTIVE' },
+              { userId: '11111111-1111-1111-1111-111111111105', status: 'ACTIVE' },
+              { userId: '11111111-1111-1111-1111-111111111106', status: 'ACTIVE' },
+              { userId: '11111111-1111-1111-1111-111111111107', status: 'ACTIVE' },
+              { userId: '11111111-1111-1111-1111-111111111108', status: 'ACTIVE' },
+              { userId: '11111111-1111-1111-1111-111111111109', status: 'ACTIVE' },
               { userId: '11111111-1111-1111-1111-111111111113', status: 'ACTIVE' },
             ],
             settings: { season: 2026 },
@@ -672,18 +692,18 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       expect(result.topScorers?.[0]?.shots).toBe(0);
       expect(result.topScorers?.[1]?.rank).toBe(1);
       expect(result.topScorers?.[1]?.shots).toBe(0);
-      // Member 3 is Dead Place with rank 3 and 2.5 shots (Dead Place Monarch)
+      // Member 10 is Dead Place with rank 10 and 2.5 shots (Dead Place Monarch)
       expect(result.deadPlaceMembers).toHaveLength(1);
       expect(result.deadPlaceMembers?.[0]?.userId).toBe('11111111-1111-1111-1111-111111111113');
       expect(result.deadPlaceMembers?.[0]?.shots).toBe(2.5);
 
-      // Penalties: only 1 penalty posted for member 3
-      expect(mockCreatedPenalties).toHaveLength(1);
-      expect(mockCreatedPenalties[0].userId).toBe('11111111-1111-1111-1111-111111111113');
-      expect(mockCreatedPenalties[0].delta.toString()).toBe('2.5');
-      expect(mockCreatedPenalties[0].reason).toBe('DEAD_PLACE_MONARCH_S2026_W6');
-      expect(mockCreatedPenalties[0].weekNumber).toBe(6);
-      expect(mockCreatedPenalties[0].createdById).toBe(ADMIN_ID);
+      // Penalties: verified Dead Place Monarch penalty posted for member 10
+      const deadPlacePenalty = mockCreatedPenalties.find((p: any) => p.userId === '11111111-1111-1111-1111-111111111113');
+      expect(deadPlacePenalty).toBeDefined();
+      expect(deadPlacePenalty.delta.toString()).toBe('2.5');
+      expect(deadPlacePenalty.reason).toBe('DEAD_PLACE_MONARCH_S2026_W6');
+      expect(deadPlacePenalty.weekNumber).toBe(6);
+      expect(deadPlacePenalty.createdById).toBe(ADMIN_ID);
     });
 
     it('fails closed with CLAIM_STORE_UNAVAILABLE when weekly_wrapups table does not exist', async () => {

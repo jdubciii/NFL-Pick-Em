@@ -10,6 +10,7 @@ import {
   listOverrides,
   getPoolOpsStatus,
 } from '../services/overrideService';
+import { previewWeeklyWrapUpForPool } from '../services/wrapUpEngine';
 
 export const opsRouter = Router({ mergeParams: true });
 
@@ -375,3 +376,86 @@ opsRouter.post('/:pool_id/overrides', requireAuth, requirePoolCommissioner, asyn
     });
   }
 });
+
+/**
+ * Handler for GET /api/pools/:pool_id/wrap-up/preview (and /:pool_id/ops/wrap-up/preview)
+ * Pool-scoped settlement preview enforcing Decision #20 (no global admin bypass) and pre-kickoff privacy.
+ */
+export async function handlePoolWrapUpPreview(req: Request, res: Response): Promise<void> {
+  const actorId = req.user?.id;
+  if (!actorId) {
+    res.status(401).json({ error: 'Authentication required.' });
+    return;
+  }
+
+  const rawPoolId = req.params.pool_id || req.params.poolId || req.query.poolId || req.query.pool_id;
+  if (!rawPoolId || typeof rawPoolId !== 'string' || !UUID_REGEX.test(rawPoolId)) {
+    res.status(400).json({ error: 'Invalid pool ID format. Must be a valid UUID.' });
+    return;
+  }
+
+  const poolId = rawPoolId;
+  const pool = await prisma.pool.findUnique({
+    where: { id: poolId },
+    include: {
+      memberships: {
+        where: { userId: actorId, status: 'ACTIVE' },
+      },
+    },
+  });
+
+  if (!pool) {
+    res.status(404).json({ error: 'Pool not found.' });
+    return;
+  }
+
+  const isCommissioner = pool.adminId === actorId;
+  const isActiveMember = pool.memberships.length > 0;
+
+  // Strict tenant boundary (Decision #20, Directive Section 6):
+  // Global admin role does NOT bypass pool membership!
+  if (!isCommissioner && !isActiveMember) {
+    res.status(403).json({ error: 'FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED: Must be an ACTIVE member or commissioner of the requested pool.' });
+    return;
+  }
+
+  const weekParam = req.query.week || req.query.weekNumber;
+  const weekNumber = Number(weekParam || (pool.settings as any)?.week_number || 1);
+  const season = req.query.season ? Number(req.query.season) : undefined;
+  const seasonType = req.query.seasonType ? Number(req.query.seasonType) : undefined;
+
+  try {
+    const preview = await previewWeeklyWrapUpForPool(poolId, weekNumber, { season, seasonType });
+
+    // Pre-kickoff privacy gating (Contract & Finding 1):
+    // Missing, invalid, or pre-kickoff deadlines strictly omit other members' numeric predictions!
+    const kickoffTime = preview.designatedGame?.kickoffTime ? new Date(preview.designatedGame.kickoffTime) : null;
+    const isValidKickoff = Boolean(kickoffTime && !isNaN(kickoffTime.getTime()));
+    const hasKickoffPassed = isValidKickoff && new Date() >= kickoffTime!;
+
+    const sanitizedStandings = preview.projectedStandings?.map((entry: any) => {
+      const isSelf = entry.userId === actorId;
+      return {
+        ...entry,
+        tieBreakerPrediction: (hasKickoffPassed || isSelf) ? entry.tieBreakerPrediction : undefined,
+      };
+    });
+
+    res.status(200).json({
+      status: preview.readyToSettle ? 'READY' : 'NOT_READY',
+      preview: {
+        ...preview,
+        projectedStandings: sanitizedStandings,
+      },
+    });
+  } catch (error: any) {
+    console.error('Error generating wrap-up preview:', error);
+    res.status(500).json({
+      error: 'Failed to generate wrap-up preview',
+      details: error.message,
+    });
+  }
+}
+
+opsRouter.get('/:pool_id/wrap-up/preview', requireAuth, handlePoolWrapUpPreview);
+opsRouter.get('/:pool_id/ops/wrap-up/preview', requireAuth, handlePoolWrapUpPreview);

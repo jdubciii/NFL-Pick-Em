@@ -3,11 +3,6 @@ import prisma from '../db/client';
 import { requireAuth } from '../middleware/auth';
 import { PoolSettings } from '../types/pool';
 import { isGameLocked } from '../services/lockResolver';
-import {
-  handleGetTiebreaker,
-  handlePostTiebreaker,
-  handlePostTiebreakerOverride,
-} from './poolTiebreakerRoutes';
 import { normalizeTeamCode } from '../services/authoritativeSlateService';
 
 export const picksRouter = Router();
@@ -269,11 +264,18 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
 });
 
 /**
- * Legacy Tiebreaker Routes (/api/picks/tiebreaker)
- * Safely delegated to canonical pool-scoped handlers (Finding 4).
- * Eliminates second write paths, ensuring identical authorization, privacy,
- * kickoff locking, concurrency serialization, and explicit Week 6 2026 unavailability.
+ * Retired Legacy Tiebreaker Routes (/api/picks/tiebreaker)
+ * Enforces Invariant #20 & Directive Section 2 (Finding 7).
+ * Stateful read/write operations under /api/picks/tiebreaker are retired.
+ * Returns state-free HTTP 410 Gone; never reads or mutates pool data.
  */
-picksRouter.get('/tiebreaker', requireAuth, handleGetTiebreaker);
-picksRouter.post('/tiebreaker', requireAuth, handlePostTiebreaker);
-picksRouter.post('/tiebreaker/override', requireAuth, handlePostTiebreakerOverride);
+function handleRetiredTiebreakerRoute(_req: Request, res: Response): void {
+  res.status(410).json({
+    error: 'ENDPOINT_RETIRED: /api/picks/tiebreaker has been retired in favor of canonical pool-scoped routes under /api/pools/:pool_id/tiebreaker (Invariant #20).',
+    canonicalRoute: '/api/pools/:pool_id/tiebreaker',
+  });
+}
+
+picksRouter.get('/tiebreaker', handleRetiredTiebreakerRoute);
+picksRouter.post('/tiebreaker', handleRetiredTiebreakerRoute);
+picksRouter.post('/tiebreaker/override', handleRetiredTiebreakerRoute);

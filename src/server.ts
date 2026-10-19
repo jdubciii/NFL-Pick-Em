@@ -18,7 +18,7 @@ import { webhooksRouter } from './routes/webhooks';
 import { shotCamRouter } from './routes/shotCam';
 import streamRouter from './routes/streamRoutes';
 import { poolSocialRouter } from './routes/poolSocialRoutes';
-import { poolTiebreakerRouter } from './routes/poolTiebreakerRoutes';
+import { poolTiebreakerRouter, getGamesForWeek } from './routes/poolTiebreakerRoutes';
 import { getWeeklyDesignation } from './services/weeklyDesignationService';
 import type {
   PoolSettings,
@@ -1051,7 +1051,7 @@ app.get('/api/pools/:pool_id/penalties/:id/media', requireAuth, requirePoolMembe
  * - cells: 2D map nested by game_id -> user_id -> { pick_id, selected_team_id, is_masked, is_correct, points_awarded }
  * - summary: object map keyed by user_id -> { user_id, weekly_wins, tiebreaker_guess, cumulative_shots }
  */
-app.get('/api/pools/:pool_id/matrix', requireAuth, requirePoolMember, async (req: Request, res: Response): Promise<void> => {
+export async function handleGetPoolMatrix(req: Request, res: Response): Promise<void> {
   const poolId = String(req.params.pool_id);
   const requestedWeek = req.query.week_no || req.query.week || req.query.weekNumber;
   const isAllWeeks = String(requestedWeek).toLowerCase() === 'all';
@@ -1101,21 +1101,25 @@ app.get('/api/pools/:pool_id/matrix', requireAuth, requirePoolMember, async (req
       settings.hide_picks_until_kickoff ?? settings.hidePicksUntilKickoff ?? true
     );
 
-    // 2. Fetch all games ordered chronologically by kickoffTime
-    const allGames = await db.game.findMany({
-      orderBy: { kickoffTime: 'asc' },
-    });
-
-    let games = allGames;
+    // 2. Fetch weekly games chronologically via authoritative canonical slate helper (Finding 10)
+    let games: any[] = [];
     if (!isAllWeeks && weekNum > 0) {
-      const padded = weekNum < 10 ? `_w0${weekNum}_` : `_w${weekNum}_`;
-      const unpadded = `_w${weekNum}_`;
-      games = allGames.filter((g: any) =>
-        g.externalGameId && (
-          g.externalGameId.toLowerCase().includes(padded.toLowerCase()) ||
-          g.externalGameId.toLowerCase().includes(unpadded.toLowerCase())
-        )
-      );
+      const canonicalGames = await getGamesForWeek(weekNum, 2026, pool.id, db);
+      if (Array.isArray(canonicalGames) && canonicalGames.length > 0) {
+        games = canonicalGames;
+      } else {
+        const padded = weekNum < 10 ? `_w0${weekNum}_` : `_w${weekNum}_`;
+        const unpadded = `_w${weekNum}_`;
+        const allGames = await db.game.findMany({ orderBy: { kickoffTime: 'asc' } });
+        games = allGames.filter((g: any) =>
+          g.externalGameId && (
+            g.externalGameId.toLowerCase().includes(padded.toLowerCase()) ||
+            g.externalGameId.toLowerCase().includes(unpadded.toLowerCase())
+          )
+        );
+      }
+    } else {
+      games = await db.game.findMany({ orderBy: { kickoffTime: 'asc' } });
     }
 
     const gameIds = games.map((g: any) => g.id);
@@ -1164,7 +1168,7 @@ app.get('/api/pools/:pool_id/matrix', requireAuth, requirePoolMember, async (req
       external_game_id: g.externalGameId,
       home_team_id: g.homeTeamId,
       away_team_id: g.awayTeamId,
-      kickoff_time: g.kickoffTime.toISOString(),
+      kickoff_time: typeof g.kickoffTime === 'string' ? g.kickoffTime : new Date(g.kickoffTime).toISOString(),
       status: g.status,
       home_score: g.homeScore,
       away_score: g.awayScore,
@@ -1251,20 +1255,24 @@ app.get('/api/pools/:pool_id/matrix', requireAuth, requirePoolMember, async (req
       }
     }
 
-    // Resolve designated tiebreaker game to enforce pre-kickoff privacy (HAG-8 Directive)
-    const designation = getWeeklyDesignation(pool.settings, 2026, weekNum, games as any);
+    // Resolve designated tiebreaker game to enforce pre-kickoff privacy (HAG-8 Directive, Finding 10)
+    // Sourced strictly from approved canonical slate helper getGamesForWeek
+    const canonicalWeekGames = await getGamesForWeek(weekNum, 2026, pool.id, db);
+    const effectiveDesignationGames = canonicalWeekGames.length > 0 ? canonicalWeekGames : games;
+    const designation = getWeeklyDesignation(pool.settings, 2026, weekNum, effectiveDesignationGames as any);
     const designatedKickoff = designation.game?.kickoffTime ? new Date(designation.game.kickoffTime) : null;
-    const isTiebreakerLocked = designatedKickoff && !isNaN(designatedKickoff.getTime()) ? now.getTime() >= designatedKickoff.getTime() : false;
+    const isValidKickoff = Boolean(designatedKickoff && !isNaN(designatedKickoff.getTime()));
+    const hasDesignatedKickoffPassed = isValidKickoff && now.getTime() >= designatedKickoff!.getTime();
 
     const summary: Record<string, MatrixMemberSummary> = {};
     for (const membership of pool.memberships) {
       const userId = membership.userId;
       const weeklyWins = weeklyWinsMap.get(userId) || 0;
       const rawGuess = tiebreakerMap.has(userId) ? tiebreakerMap.get(userId)! : null;
-      // Strict pre-kickoff privacy: only the requesting user sees their own guess before kickoff.
-      // Other members' guesses remain strictly masked to null until designated game kickoff.
+      // Strict pre-kickoff privacy (Finding 10): only the requesting user sees their own guess before kickoff.
+      // Other members' guesses remain strictly masked to null until verified designated game kickoff.
       const isSelf = userId === requestingUserId;
-      const tiebreakerGuess = (isTiebreakerLocked || isSelf) ? rawGuess : null;
+      const tiebreakerGuess = (hasDesignatedKickoffPassed || isSelf) ? rawGuess : null;
       const cumulativeShots = Number(membership.stat?.totalShotsDrank ?? 0);
 
       summary[userId] = {
@@ -1293,7 +1301,9 @@ app.get('/api/pools/:pool_id/matrix', requireAuth, requirePoolMember, async (req
     console.error('Matrix calculation error:', error);
     res.status(500).json({ error: 'Failed to generate matrix.' });
   }
-});
+}
+
+app.get('/api/pools/:pool_id/matrix', requireAuth, requirePoolMember, handleGetPoolMatrix);
 
 // Start listening if run directly
 if (require.main === module) {

@@ -62,7 +62,7 @@ describe('Canonical Tiebreaker Ranking & Penalty Contract (P41-TIEBREAKER-CONTRA
 
       expect(res[1].userId).toBe('u2');
       expect(res[1].rank).toBe(2);
-      expect(res[1].shots).toBe(2.5); // 2-member field bottom
+      expect(res[1].shots).toBe(1.0); // rank 2 under tier 2-6 schedule
     });
 
     it('orders standard fully ordered 10-member field to aggregate 13.5 shots', () => {
@@ -159,17 +159,71 @@ describe('Canonical Tiebreaker Ranking & Penalty Contract (P41-TIEBREAKER-CONTRA
       const ranks = res.map((r) => r.rank);
       expect(ranks).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 9]);
 
-      // Both joint Dead Place Monarchs get 2.5 shots each
+      // Finding 3 & Contract Item 5: shared rank 9 receives 2.0 shots (tier 7-9), NOT 2.5 shots
       const m9 = res.find((r) => r.userId === 'm9')!;
       const m10 = res.find((r) => r.userId === 'm10')!;
-      expect(m9.shots).toBe(2.5);
-      expect(m9.isDeadPlace).toBe(true);
+      expect(m9.shots).toBe(2.0);
+      expect(m9.isDeadPlace).toBe(false);
+      expect(m10.shots).toBe(2.0);
+      expect(m10.isDeadPlace).toBe(false);
+
+      // Total shots = 0 + 5*1.0 + 2*2.0 + 2*2.0 = 13.0 shots
+      const totalShots = res.reduce((acc, r) => acc + r.shots, 0);
+      expect(totalShots).toBe(13.0);
+    });
+
+    it('evaluates shared rank 8 fixture with 2.0 shots per member and no Dead Place Monarch (Finding 3)', () => {
+      // 10 members: ranks 1, 2, 3, 4, 5, 6, 7, 8, 8, 8
+      const members: MemberEntry[] = [
+        { userId: 'm1', score: 10, tieBreakerPrediction: 45.0 },
+        { userId: 'm2', score: 9, tieBreakerPrediction: 45.0 },
+        { userId: 'm3', score: 8, tieBreakerPrediction: 45.0 },
+        { userId: 'm4', score: 7, tieBreakerPrediction: 45.0 },
+        { userId: 'm5', score: 6, tieBreakerPrediction: 45.0 },
+        { userId: 'm6', score: 5, tieBreakerPrediction: 45.0 },
+        { userId: 'm7', score: 4, tieBreakerPrediction: 45.0 },
+        { userId: 'm8', score: 3, tieBreakerPrediction: 30.0 }, // tied rank 8
+        { userId: 'm9', score: 3, tieBreakerPrediction: 30.0 }, // tied rank 8
+        { userId: 'm10', score: 3, tieBreakerPrediction: 30.0 }, // tied rank 8
+      ];
+
+      const res = calculateRankingsAndPenalties(members, { actualFinalTotal: ACTUAL_TOTAL });
+      const ranks = res.map((r) => r.rank);
+      expect(ranks).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 8, 8]);
+
+      for (const id of ['m8', 'm9', 'm10']) {
+        const item = res.find((r) => r.userId === id)!;
+        expect(item.rank).toBe(8);
+        expect(item.shots).toBe(2.0); // tier 7-9
+        expect(item.isDeadPlace).toBe(false);
+      }
+    });
+
+    it('applies 2.5 shots and Dead Place Monarch strictly to rank 10 (Finding 3)', () => {
+      // 10 members: ranks 1 through 10
+      const members: MemberEntry[] = [
+        { userId: 'm1', score: 10, tieBreakerPrediction: 45.0 },
+        { userId: 'm2', score: 9, tieBreakerPrediction: 45.0 },
+        { userId: 'm3', score: 8, tieBreakerPrediction: 45.0 },
+        { userId: 'm4', score: 7, tieBreakerPrediction: 45.0 },
+        { userId: 'm5', score: 6, tieBreakerPrediction: 45.0 },
+        { userId: 'm6', score: 5, tieBreakerPrediction: 45.0 },
+        { userId: 'm7', score: 4, tieBreakerPrediction: 45.0 },
+        { userId: 'm8', score: 3, tieBreakerPrediction: 45.0 },
+        { userId: 'm9', score: 2, tieBreakerPrediction: 45.0 },
+        { userId: 'm10', score: 1, tieBreakerPrediction: 30.0 }, // sole rank 10
+      ];
+
+      const res = calculateRankingsAndPenalties(members, { actualFinalTotal: ACTUAL_TOTAL });
+      const m10 = res.find((r) => r.userId === 'm10')!;
+      expect(m10.rank).toBe(10);
       expect(m10.shots).toBe(2.5);
       expect(m10.isDeadPlace).toBe(true);
 
-      // Total shots = 0 + 5*1 + 2*2 + 2*2.5 = 14.0 shots
-      const totalShots = res.reduce((acc, r) => acc + r.shots, 0);
-      expect(totalShots).toBe(14.0);
+      const m9 = res.find((r) => r.userId === 'm9')!;
+      expect(m9.rank).toBe(9);
+      expect(m9.shots).toBe(2.0);
+      expect(m9.isDeadPlace).toBe(false);
     });
 
     it('evaluates shared first place where all co-winners receive Safe Haven and 0 shots', () => {
@@ -190,10 +244,10 @@ describe('Canonical Tiebreaker Ranking & Penalty Contract (P41-TIEBREAKER-CONTRA
       expect(res[1].isSafeHaven).toBe(true);
 
       expect(res[2].rank).toBe(3);
-      expect(res[2].shots).toBe(1);
+      expect(res[2].shots).toBe(1.0);
 
       expect(res[3].rank).toBe(4);
-      expect(res[3].shots).toBe(2.5); // bottom of field
+      expect(res[3].shots).toBe(1.0);
     });
 
     it('evaluates entire eligible field tied first with 0 shots and no Dead Place Monarch', () => {
@@ -213,7 +267,7 @@ describe('Canonical Tiebreaker Ranking & Penalty Contract (P41-TIEBREAKER-CONTRA
     });
 
     it('evaluates two-member field properly', () => {
-      // Winner: rank 1 (0 shots), Loser: rank 2 (2.5 shots)
+      // Winner: rank 1 (0 shots), Loser: rank 2 (1.0 shot under tier 2-6)
       const members: MemberEntry[] = [
         { userId: 'u1', score: 8, tieBreakerPrediction: 45.0 },
         { userId: 'u2', score: 6, tieBreakerPrediction: 45.0 },
@@ -223,8 +277,8 @@ describe('Canonical Tiebreaker Ranking & Penalty Contract (P41-TIEBREAKER-CONTRA
       expect(res[0].rank).toBe(1);
       expect(res[0].shots).toBe(0);
       expect(res[1].rank).toBe(2);
-      expect(res[1].shots).toBe(2.5);
-      expect(res[1].isDeadPlace).toBe(true);
+      expect(res[1].shots).toBe(1.0);
+      expect(res[1].isDeadPlace).toBe(false);
 
       // Two members tied:
       const tiedMembers: MemberEntry[] = [
@@ -254,7 +308,7 @@ describe('Canonical Tiebreaker Ranking & Penalty Contract (P41-TIEBREAKER-CONTRA
       expect(res[1].rank).toBe(1);
       expect(res[1].shots).toBe(0);
       expect(res[2].rank).toBe(3);
-      expect(res[2].shots).toBe(2.5);
+      expect(res[2].shots).toBe(1.0);
     });
   });
 });
