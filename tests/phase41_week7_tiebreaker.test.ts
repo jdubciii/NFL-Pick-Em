@@ -264,7 +264,8 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
 
       vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
         return cb({
-          game: { findFirst: vi.fn().mockResolvedValue(mockWeek7Games[0]) },
+          $queryRawUnsafe: vi.fn().mockResolvedValue([]),
+          game: { findFirst: vi.fn().mockResolvedValue(mockWeek7Games[0]), findMany: vi.fn().mockResolvedValue(mockWeek7Games) },
           weeklySubmission: { upsert: upsertMock },
           pool: { findUnique: vi.fn().mockResolvedValue(mockPool), update: vi.fn() },
         });
@@ -345,7 +346,8 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
 
       vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
         return cb({
-          game: { findFirst: vi.fn().mockResolvedValue(mockWeek7Games[0]) },
+          $queryRawUnsafe: vi.fn().mockResolvedValue([]),
+          game: { findFirst: vi.fn().mockResolvedValue(mockWeek7Games[0]), findMany: vi.fn().mockResolvedValue(mockWeek7Games) },
           weeklySubmission: { upsert: vi.fn().mockResolvedValue({ id: 'sub-1', tieBreakerPrediction: 48.5 }) },
           pool: {
             findUnique: vi.fn().mockResolvedValue(savedSettings ? { ...mockPool, settings: savedSettings } : mockPool),
@@ -420,7 +422,8 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
 
       vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
         return cb({
-          game: { findFirst: vi.fn().mockResolvedValue(mockWeek7Games[0]) },
+          $queryRawUnsafe: vi.fn().mockResolvedValue([]),
+          game: { findFirst: vi.fn().mockResolvedValue(mockWeek7Games[0]), findMany: vi.fn().mockResolvedValue(mockWeek7Games) },
           weeklySubmission: { upsert: upsertMock },
           pool: { findUnique: vi.fn().mockResolvedValue(mockPool), update: vi.fn() },
         });
@@ -738,23 +741,68 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
     });
 
     it('serializes overlapping first prediction save versus commissioner override via row lock', async () => {
-      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
-      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
-        poolId: POOL_ID,
-        userId: MEMBER_1_ID,
-        status: 'ACTIVE',
-      } as any);
-      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(mockWeek7Games as any);
-
       let poolSettings = { ...mockPool.settings };
       const submissions: any[] = [];
-      const queryRawMock = vi.fn().mockResolvedValue([]);
 
+      vi.spyOn(prisma.pool, 'findUnique').mockImplementation(async () => ({
+        ...mockPool,
+        settings: poolSettings,
+      }) as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockImplementation(async (args: any) => ({
+        poolId: POOL_ID,
+        userId: args?.where?.poolId_userId?.userId || MEMBER_1_ID,
+        status: 'ACTIVE',
+      }) as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(mockWeek7Games as any);
+
+      let saveTxInFlight = false;
+      let saveTxReleased = false;
+      let overrideEnteredCriticalSectionDuringSave = false;
+
+      let resolveSaveLockAcquired: () => void;
+      const saveLockAcquiredPromise = new Promise<void>((r) => { resolveSaveLockAcquired = r; });
+
+      let resolveSaveHold: () => void;
+      const saveHoldPromise = new Promise<void>((r) => { resolveSaveHold = r; });
+
+      let resolveOverrideLockWait: () => void;
+      const overrideLockWaitPromise = new Promise<void>((r) => { resolveOverrideLockWait = r; });
+
+      let txIndex = 0;
       vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
-        return cb({
-          $queryRawUnsafe: queryRawMock,
+        const isSave = (txIndex === 0);
+        txIndex++;
+
+        if (isSave) {
+          saveTxInFlight = true;
+        }
+
+        const txClient = {
+          $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+            if (sql.includes('FOR UPDATE')) {
+              if (isSave) {
+                // Signal that Save has acquired the lock
+                resolveSaveLockAcquired();
+                // Hold Save's transaction open until Override attempts lock
+                await saveHoldPromise;
+              } else {
+                // Override must wait on the row lock until Save transaction releases it
+                await overrideLockWaitPromise;
+              }
+              return [];
+            }
+            if (sql.includes('to_regproc')) {
+              return [{ exists: null }];
+            }
+            return [];
+          }),
           pool: {
-            findUnique: vi.fn().mockImplementation(() => Promise.resolve({ ...mockPool, settings: poolSettings })),
+            findUnique: vi.fn().mockImplementation(() => {
+              if (!isSave && (saveTxInFlight || !saveTxReleased)) {
+                overrideEnteredCriticalSectionDuringSave = true;
+              }
+              return Promise.resolve({ ...mockPool, settings: poolSettings });
+            }),
             update: vi.fn().mockImplementation(({ data }) => {
               poolSettings = { ...poolSettings, ...data.settings };
               return Promise.resolve({ ...mockPool, settings: poolSettings });
@@ -766,16 +814,32 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
               submissions.push(sub);
               return Promise.resolve(sub);
             }),
-            findMany: vi.fn().mockImplementation(() => Promise.resolve(submissions)),
+            findMany: vi.fn().mockImplementation(() => {
+              if (!isSave && (saveTxInFlight || !saveTxReleased)) {
+                overrideEnteredCriticalSectionDuringSave = true;
+              }
+              return Promise.resolve(submissions);
+            }),
           },
           game: {
             findFirst: vi.fn().mockResolvedValue(mockWeek7Games[0]),
             findMany: vi.fn().mockResolvedValue(mockWeek7Games),
           },
-        });
+        };
+
+        try {
+          const res = await cb(txClient);
+          return res;
+        } finally {
+          if (isSave) {
+            saveTxInFlight = false;
+            saveTxReleased = true;
+            resolveOverrideLockWait();
+          }
+        }
       });
 
-      // Concurrent request 1: Member 1 saves prediction
+      // 1. Member 1 starts saving prediction
       const memberToken = createAuthToken(MEMBER_1_ID);
       const savePromise = fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
         method: 'POST',
@@ -790,7 +854,10 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
         }),
       });
 
-      // Concurrent request 2: Commissioner attempts override
+      // Wait until Save transaction has acquired the pool row lock
+      await saveLockAcquiredPromise;
+
+      // 2. While Save is holding the lock, Commissioner attempts override concurrently
       const adminToken = createAuthToken(ADMIN_ID, 'ADMIN');
       const overridePromise = fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker/override`, {
         method: 'POST',
@@ -805,18 +872,114 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
         }),
       });
 
+      // Release Save transaction after a slight tick to let Override queue up on the lock
+      await new Promise((r) => setTimeout(r, 20));
+      resolveSaveHold();
+
       const [saveRes, overrideRes] = await Promise.all([savePromise, overridePromise]);
 
-      expect(queryRawMock).toHaveBeenCalledWith(
-        expect.stringContaining('FOR UPDATE'),
-        POOL_ID
-      );
+      // Assert that Override NEVER passed critical section while Save held the lock
+      expect(overrideEnteredCriticalSectionDuringSave).toBe(false);
+      expect(saveTxReleased).toBe(true);
 
       // Save succeeds and override is blocked
       expect(saveRes.status).toBe(200);
       expect(overrideRes.status).toBe(400);
       const overrideData = await overrideRes.json();
       expect(overrideData.error).toContain('DESIGNATION_FROZEN');
+    });
+
+    it('fails closed and denies prediction submission when pool row lock acquisition fails', async () => {
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: MEMBER_1_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(mockWeek7Games as any);
+
+      const poolUpdateSpy = vi.fn();
+      const submissionUpsertSpy = vi.fn();
+
+      vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          $queryRawUnsafe: vi.fn().mockRejectedValue(new Error('LOCK_ACQUISITION_FAILED: could not obtain lock on row in relation pools')),
+          pool: {
+            findUnique: vi.fn().mockResolvedValue(mockPool),
+            update: poolUpdateSpy,
+          },
+          weeklySubmission: {
+            upsert: submissionUpsertSpy,
+            findMany: vi.fn().mockResolvedValue([]),
+          },
+          game: {
+            findMany: vi.fn().mockResolvedValue(mockWeek7Games),
+          },
+        });
+      });
+
+      const token = createAuthToken(MEMBER_1_ID);
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          week: 7,
+          season: 2026,
+          prediction: 45.0,
+        }),
+      });
+
+      expect(res.status).toBe(500);
+      expect(poolUpdateSpy).not.toHaveBeenCalled();
+      expect(submissionUpsertSpy).not.toHaveBeenCalled();
+    });
+
+    it('fails closed and denies commissioner override when pool row lock acquisition fails', async () => {
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: ADMIN_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(mockWeek7Games as any);
+
+      const poolUpdateSpy = vi.fn();
+
+      vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          $queryRawUnsafe: vi.fn().mockRejectedValue(new Error('LOCK_TIMEOUT: statement timeout on relation pools')),
+          pool: {
+            findUnique: vi.fn().mockResolvedValue(mockPool),
+            update: poolUpdateSpy,
+          },
+          weeklySubmission: {
+            findMany: vi.fn().mockResolvedValue([]),
+          },
+          game: {
+            findMany: vi.fn().mockResolvedValue(mockWeek7Games),
+          },
+        });
+      });
+
+      const token = createAuthToken(ADMIN_ID, 'ADMIN');
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker/override`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          week: 7,
+          season: 2026,
+          target_game_id: '401873011',
+        }),
+      });
+
+      expect(res.status).toBe(500);
+      expect(poolUpdateSpy).not.toHaveBeenCalled();
     });
 
     it('preserves designation freeze across clear and subsequent override attempts', async () => {
@@ -1041,6 +1204,129 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(Array.isArray(games)).toBe(true);
       // Demonstrates safe fail-closed behavior when Week 7 games are not yet imported
       expect(games.length).toBe(0);
+    });
+
+    it('resolves games via approved get_pool_canonical_games RPC DTO with numeric ESPN text IDs', async () => {
+      const mockRpcGames = [
+        {
+          id: 'g-rpc-1',
+          externalGameId: '401873010',
+          homeTeamId: 'MIN',
+          awayTeamId: 'DET',
+          kickoffTime: futureKickoff,
+          status: GameStatus.SCHEDULED,
+          homeScore: null,
+          awayScore: null,
+        },
+        {
+          id: 'g-rpc-2',
+          externalGameId: '401873011',
+          homeTeamId: 'GB',
+          awayTeamId: 'HOU',
+          kickoffTime: futureKickoff,
+          status: GameStatus.SCHEDULED,
+          homeScore: null,
+          awayScore: null,
+        },
+      ];
+
+      const queryRawMock = vi.fn().mockImplementation(async (sql: string) => {
+        if (sql.includes('to_regproc')) {
+          return [{ exists: 'public.get_pool_canonical_games' }];
+        }
+        if (sql.includes('get_pool_canonical_games')) {
+          return mockRpcGames;
+        }
+        return [];
+      });
+
+      const mockClient = {
+        $queryRawUnsafe: queryRawMock,
+      };
+
+      const games = await getGamesForWeek(7, 2026, POOL_ID, mockClient);
+      expect(games).toHaveLength(2);
+      expect(games[0].externalGameId).toBe('401873010');
+      expect(games[0].kickoffTime).toBe(futureKickoff);
+      expect(games[0].homeScore).toBeNull();
+      expect(games[1].externalGameId).toBe('401873011');
+      expect(queryRawMock).toHaveBeenCalledWith(
+        expect.stringContaining('public.get_pool_canonical_games'),
+        POOL_ID,
+        2026,
+        7
+      );
+    });
+
+    it('serves tiebreaker endpoint successfully using approved get_pool_canonical_games RPC source', async () => {
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: MEMBER_1_ID,
+        status: 'ACTIVE',
+      } as any);
+
+      const mockRpcGames = [
+        {
+          id: 'g-rpc-1',
+          externalGameId: '401873010',
+          homeTeamId: 'MIN',
+          awayTeamId: 'DET',
+          kickoffTime: futureKickoff,
+          status: GameStatus.SCHEDULED,
+          homeScore: null,
+          awayScore: null,
+        },
+        {
+          id: 'g-rpc-2',
+          externalGameId: '401873011',
+          homeTeamId: 'GB',
+          awayTeamId: 'HOU',
+          kickoffTime: futureKickoff,
+          status: GameStatus.SCHEDULED,
+          homeScore: null,
+          awayScore: null,
+        },
+      ];
+
+      vi.spyOn(prisma, '$queryRawUnsafe').mockImplementation(async (sql: string) => {
+        if (sql.includes('to_regproc')) {
+          return [{ exists: 'public.get_pool_canonical_games' }];
+        }
+        if (sql.includes('get_pool_canonical_games')) {
+          return mockRpcGames;
+        }
+        return [];
+      });
+
+      // Manifest unavailable, testing RPC primary source
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue(null);
+
+      const token = createAuthToken(MEMBER_1_ID);
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker?week=7&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.status).toBe('DEFAULT_LIONS');
+      expect(data.designatedGame.externalGameId).toBe('401873010');
+      expect(data.tiebreakerOffered).toBe(true);
+    });
+
+    it('fails closed to [] when all authoritative sources fail or return no records', async () => {
+      const mockClient = {
+        $queryRawUnsafe: vi.fn().mockRejectedValue(new Error('DATABASE_CONNECTION_LOST')),
+        game: {
+          findMany: vi.fn().mockRejectedValue(new Error('RELATION_DOES_NOT_EXIST')),
+        },
+      };
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue(null);
+
+      const games = await getGamesForWeek(7, 2026, POOL_ID, mockClient);
+      expect(Array.isArray(games)).toBe(true);
+      expect(games).toHaveLength(0);
     });
   });
 

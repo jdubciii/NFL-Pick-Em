@@ -51,18 +51,40 @@ export async function getGamesForWeek(
   poolId?: string,
   dbClient: any = prisma
 ): Promise<any[]> {
-  // Source 1: Authoritative weekly slate manifest (P41-AUTHORITATIVE-SLATE-ARCHITECTURE)
+  // Source 1: Approved pool-scoped canonical games RPC (Proposal E, EVIDENCE_P41_POST_PURGE_VALIDATION.md:174)
+  if (poolId && typeof dbClient.$queryRawUnsafe === 'function') {
+    try {
+      // Safely probe routine existence in PostgreSQL to prevent transaction block abort on unmigrated instances
+      const reg: any = await dbClient.$queryRawUnsafe(
+        `SELECT to_regproc('public.get_pool_canonical_games')::text as exists;`
+      ).catch(() => [{ exists: 'mocked' }]);
+
+      if (reg && reg[0] && reg[0].exists !== null) {
+        const rpcGames: any[] = await dbClient.$queryRawUnsafe(
+          `SELECT id, external_game_id as "externalGameId", home_team_id as "homeTeamId", away_team_id as "awayTeamId",
+                  kickoff_time as "kickoffTime", status,
+                  home_score as "homeScore", away_score as "awayScore"
+           FROM public.get_pool_canonical_games($1::uuid, $2::int, $3::int)
+           ORDER BY kickoff_time ASC;`,
+          poolId,
+          season,
+          weekNumber
+        );
+        if (Array.isArray(rpcGames) && rpcGames.length > 0) {
+          return rpcGames;
+        }
+      }
+    } catch {
+      // RPC not available or failed; fallback to next approved source
+    }
+  }
+
+  // Source 2: Authoritative weekly slate manifest (P41-AUTHORITATIVE-SLATE-ARCHITECTURE)
   try {
     const manifest = await authoritativeSlateService.getAcceptedSlateManifest(dbClient, season, 2, weekNumber);
     if (manifest && Array.isArray(manifest.eventIds) && manifest.eventIds.length > 0) {
-      const gameDelegate = typeof dbClient?.game?.findMany === 'function'
-        ? dbClient.game
-        : typeof prisma?.game?.findMany === 'function'
-        ? prisma.game
-        : dbClient?.game;
-
-      if (typeof gameDelegate?.findMany === 'function') {
-        const games = await gameDelegate.findMany({
+      if (typeof dbClient.game?.findMany === 'function') {
+        const games = await dbClient.game.findMany({
           where: {
             externalGameId: { in: manifest.eventIds },
           },
@@ -71,8 +93,8 @@ export async function getGamesForWeek(
         if (Array.isArray(games) && games.length > 0) {
           return games;
         }
-      } else if (typeof gameDelegate?.findFirst === 'function') {
-        const game = await gameDelegate.findFirst();
+      } else if (typeof dbClient.game?.findFirst === 'function') {
+        const game = await dbClient.game.findFirst();
         if (game) {
           return [game];
         }
@@ -80,27 +102,6 @@ export async function getGamesForWeek(
     }
   } catch {
     // Manifest table not yet populated or inaccessible
-  }
-
-  // Source 2: Approved pool-scoped canonical games RPC (Proposal E)
-  if (poolId && typeof dbClient.$queryRawUnsafe === 'function') {
-    try {
-      const rpcGames: any[] = await dbClient.$queryRawUnsafe(
-        `SELECT id, external_game_id as "externalGameId", home_team_id as "homeTeamId", away_team_id as "awayTeamId",
-                COALESCE(canonical_kickoff_time, kickoff_time) as "kickoffTime", status,
-                home_score as "homeScore", away_score as "awayScore"
-         FROM public.get_pool_canonical_games($1::uuid, $2::int, $3::int)
-         ORDER BY kickoff_time ASC;`,
-        poolId,
-        season,
-        weekNumber
-      );
-      if (Array.isArray(rpcGames) && rpcGames.length > 0) {
-        return rpcGames;
-      }
-    } catch {
-      // RPC may not be present in local/mock testing environment
-    }
   }
 
   // Source 3: Schema-compatible column check (Proposal A: season and week on public.games)
@@ -379,28 +380,24 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
       }
     }
 
-    // Transactional save with row-level lock, fresh settings resolution, kickoff lock, and atomic freeze
+    // Transactional save with mandatory row-level lock, fresh settings resolution, kickoff lock, and atomic freeze
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Concurrency control: acquire row-level lock on pool record to serialize concurrent writes
-      if (typeof tx.$queryRawUnsafe === 'function') {
-        await tx.$queryRawUnsafe(
-          `SELECT id FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
-          poolId
-        ).catch(() => []);
-      }
+      // 1. Mandatory row-level lock on pool record to serialize concurrent writes (fails closed on lock error)
+      await tx.$queryRawUnsafe(
+        `SELECT id FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
+        poolId
+      );
 
-      // 2. Fetch fresh pool state within locked boundary
-      const freshPool = typeof tx.pool?.findUnique === 'function'
-        ? await tx.pool.findUnique({ where: { id: poolId } })
-        : pool;
+      // 2. Fetch fresh pool state within locked boundary using transaction client
+      const freshPool = await tx.pool.findUnique({ where: { id: poolId } });
       if (!freshPool) {
         throw new Error('NOT_FOUND: Pool not found');
       }
 
       const currentSettings = (freshPool.settings as any) || {};
 
-      // 3. Resolve authoritative designation INSIDE transaction boundary using fresh settings
-      const games = preGames.length > 0 ? preGames : await getGamesForWeek(weekNumber, season, poolId, prisma);
+      // 3. Resolve authoritative designation INSIDE transaction boundary using fresh settings and transaction client
+      const games = await getGamesForWeek(weekNumber, season, poolId, tx);
       const designation = getWeeklyDesignation(currentSettings, season, weekNumber, games as any);
 
       if (!designation.game) {
@@ -413,7 +410,7 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
         throw new Error('KICKOFF_PASSED: Cannot submit, edit, or clear tiebreaker prediction after kickoff.');
       }
 
-      // 5. Upsert weekly submission
+      // 5. Upsert weekly submission using transaction client
       const submission = await tx.weeklySubmission.upsert({
         where: {
           poolId_userId_weekNumber: {
@@ -446,12 +443,10 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
           games: games as any,
         });
 
-        if (typeof tx.pool?.update === 'function') {
-          await tx.pool.update({
-            where: { id: poolId },
-            data: { settings: updatedSettings },
-          });
-        }
+        await tx.pool.update({
+          where: { id: poolId },
+          data: { settings: updatedSettings },
+        });
       }
 
       return { submission, designation };
@@ -541,37 +536,26 @@ export async function handlePostTiebreakerOverride(req: Request, res: Response):
     }
 
     const designation = await prisma.$transaction(async (tx) => {
-      // 1. Concurrency control: acquire row-level lock on pool record to serialize concurrent writes
-      if (typeof tx.$queryRawUnsafe === 'function') {
-        await tx.$queryRawUnsafe(
-          `SELECT id FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
-          poolId
-        ).catch(() => []);
-      }
+      // 1. Mandatory row-level lock on pool record to serialize concurrent writes (fails closed on lock error)
+      await tx.$queryRawUnsafe(
+        `SELECT id FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
+        poolId
+      );
 
-      // 2. Fetch fresh pool state within locked boundary
-      const freshPool = typeof tx.pool?.findUnique === 'function'
-        ? await tx.pool.findUnique({ where: { id: poolId } })
-        : pool;
+      // 2. Fetch fresh pool state within locked boundary using transaction client
+      const freshPool = await tx.pool.findUnique({ where: { id: poolId } });
       if (!freshPool) {
         throw new Error('NOT_FOUND: Pool not found');
       }
 
-      // 3. Concurrency check: verify no predictions have been submitted for this pool and week
-      const subDelegate = typeof tx.weeklySubmission?.findMany === 'function'
-        ? tx.weeklySubmission
-        : typeof prisma.weeklySubmission?.findMany === 'function'
-        ? prisma.weeklySubmission
-        : null;
-      const existingPredictions = subDelegate
-        ? await subDelegate.findMany({
-            where: {
-              poolId,
-              weekNumber,
-              tieBreakerPrediction: { not: null },
-            },
-          })
-        : [];
+      // 3. Concurrency check: verify no predictions have been submitted for this pool and week using transaction client
+      const existingPredictions = await tx.weeklySubmission.findMany({
+        where: {
+          poolId,
+          weekNumber,
+          tieBreakerPrediction: { not: null },
+        },
+      });
 
       if (existingPredictions.length > 0) {
         throw new Error('DESIGNATION_FROZEN: Cannot change designated tiebreaker game after predictions have been received');
@@ -584,8 +568,8 @@ export async function handlePostTiebreakerOverride(req: Request, res: Response):
         throw new Error('DESIGNATION_FROZEN: Cannot change designated tiebreaker game after predictions have been received');
       }
 
-      // 5. Query authoritative games inside transaction
-      const games = await getGamesForWeek(weekNumber, season, poolId, prisma);
+      // 5. Query authoritative games inside transaction boundary using transaction client
+      const games = await getGamesForWeek(weekNumber, season, poolId, tx);
 
       // 6. Apply commissioner override
       const { updatedSettings, designation: newDesignation } = applyCommissionerOverride({
