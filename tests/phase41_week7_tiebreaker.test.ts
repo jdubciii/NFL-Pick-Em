@@ -13,6 +13,7 @@ import {
   compareTiebreakerPredictions,
   calculateRankingsAndPenalties,
 } from '../src/services/tiebreakerRankingService';
+import * as authoritativeSlateService from '../src/services/authoritativeSlateService';
 
 describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', () => {
   const POOL_ID = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
@@ -47,10 +48,11 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
     },
   };
 
+  // Canonical ESPN numeric text identifiers (401873010, 401873011) matching production schema
   const mockWeek7Games = [
     {
       id: 'g-w7-det',
-      externalGameId: '2026_w07_DET_MIN',
+      externalGameId: '401873010',
       homeTeamId: 'MIN',
       awayTeamId: 'DET',
       kickoffTime: futureKickoff,
@@ -58,7 +60,7 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
     },
     {
       id: 'g-w7-gb',
-      externalGameId: '2026_w07_HOU_GB',
+      externalGameId: '401873011',
       homeTeamId: 'GB',
       awayTeamId: 'HOU',
       kickoffTime: futureKickoff,
@@ -68,6 +70,23 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
 
   beforeEach(async () => {
     vi.restoreAllMocks();
+
+    vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockImplementation(async (_db, s, _st, w) => {
+      if (s === 2026 && w === 7) {
+        return {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 7,
+          revision: 1,
+          eventIds: ['401873010', '401873011'],
+          acceptedAt: new Date().toISOString(),
+          acceptedBy: ADMIN_ID,
+          manifestFingerprint: 'mock-fp-w7',
+          observationTime: new Date().toISOString(),
+        };
+      }
+      return null;
+    });
 
     const getUserMock = vi.fn().mockImplementation(async (token: string) => {
       const parts = token.split('.');
@@ -138,7 +157,7 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       const data = await res.json();
       expect(data.status).toBe('DEFAULT_LIONS');
       expect(data.tiebreakerOffered).toBe(true);
-      expect(data.designatedGame.externalGameId).toBe('2026_w07_DET_MIN');
+      expect(data.designatedGame.externalGameId).toBe('401873010');
       expect(data.isLocked).toBe(false);
       expect(data.userPrediction).toBeNull();
     });
@@ -432,7 +451,7 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       const pastGame = [
         {
           id: 'g-w7-past',
-          externalGameId: '2026_w07_DET_MIN',
+          externalGameId: '401873010',
           homeTeamId: 'MIN',
           awayTeamId: 'DET',
           kickoffTime: pastKickoff,
@@ -468,7 +487,7 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
     });
   });
 
-  describe('5. Pre-Kickoff Privacy Invariants Across All Surfaces', () => {
+  describe('5. Pre-Kickoff Privacy Invariants Across All Surfaces (Finding 2)', () => {
     it('masks all other members numeric predictions before kickoff in commissioner readiness view', async () => {
       vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
       vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
@@ -508,9 +527,128 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(m1.prediction).toBeUndefined();
       expect(m2.prediction).toBeUndefined();
     });
+
+    it('strictly preserves privacy when kickoff time is missing (unknown time must not leak guesses)', async () => {
+      const missingKickoffGames = [
+        {
+          id: 'g-w7-nokickoff',
+          externalGameId: '401873010',
+          homeTeamId: 'MIN',
+          awayTeamId: 'DET',
+          kickoffTime: null as any,
+          status: GameStatus.SCHEDULED,
+        },
+      ];
+
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: ADMIN_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(missingKickoffGames as any);
+      vi.spyOn(prisma.weeklySubmission, 'findUnique').mockResolvedValue(null);
+
+      vi.spyOn(prisma.poolMembership, 'findMany').mockResolvedValue([
+        { poolId: POOL_ID, userId: MEMBER_1_ID, status: 'ACTIVE', user: { id: MEMBER_1_ID, email: 'm1@example.com' } },
+      ] as any);
+      vi.spyOn(prisma.weeklySubmission, 'findMany').mockResolvedValue([
+        { poolId: POOL_ID, userId: MEMBER_1_ID, weekNumber: 7, tieBreakerPrediction: 45.5 },
+      ] as any);
+
+      const token = createAuthToken(ADMIN_ID, 'ADMIN');
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker?week=7&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      // Fail closed: write is locked
+      expect(data.isLocked).toBe(true);
+      expect(data.kickoffTime).toBeNull();
+      // CRITICAL (Finding 2): Unknown time MUST preserve privacy!
+      const m1 = data.readiness.find((r: any) => r.userId === MEMBER_1_ID);
+      expect(m1.hasSubmitted).toBe(true);
+      expect(m1.prediction).toBeUndefined();
+    });
+
+    it('strictly preserves privacy when kickoff time is an invalid string', async () => {
+      const invalidKickoffGames = [
+        {
+          id: 'g-w7-badkickoff',
+          externalGameId: '401873010',
+          homeTeamId: 'MIN',
+          awayTeamId: 'DET',
+          kickoffTime: 'not-a-valid-date' as any,
+          status: GameStatus.SCHEDULED,
+        },
+      ];
+
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: ADMIN_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(invalidKickoffGames as any);
+      vi.spyOn(prisma.weeklySubmission, 'findUnique').mockResolvedValue(null);
+
+      vi.spyOn(prisma.poolMembership, 'findMany').mockResolvedValue([
+        { poolId: POOL_ID, userId: MEMBER_1_ID, status: 'ACTIVE', user: { id: MEMBER_1_ID, email: 'm1@example.com' } },
+      ] as any);
+      vi.spyOn(prisma.weeklySubmission, 'findMany').mockResolvedValue([
+        { poolId: POOL_ID, userId: MEMBER_1_ID, weekNumber: 7, tieBreakerPrediction: 45.5 },
+      ] as any);
+
+      const token = createAuthToken(ADMIN_ID, 'ADMIN');
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker?week=7&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.isLocked).toBe(true);
+      expect(data.kickoffTime).toBeNull();
+      const m1 = data.readiness.find((r: any) => r.userId === MEMBER_1_ID);
+      expect(m1.hasSubmitted).toBe(true);
+      expect(m1.prediction).toBeUndefined();
+    });
+
+    it('strictly preserves privacy when designation is UNRESOLVED', async () => {
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: ADMIN_ID,
+        status: 'ACTIVE',
+      } as any);
+      // Zero games returned
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue([] as any);
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue(null);
+      vi.spyOn(prisma.weeklySubmission, 'findUnique').mockResolvedValue(null);
+
+      vi.spyOn(prisma.poolMembership, 'findMany').mockResolvedValue([
+        { poolId: POOL_ID, userId: MEMBER_1_ID, status: 'ACTIVE', user: { id: MEMBER_1_ID, email: 'm1@example.com' } },
+      ] as any);
+      vi.spyOn(prisma.weeklySubmission, 'findMany').mockResolvedValue([
+        { poolId: POOL_ID, userId: MEMBER_1_ID, weekNumber: 7, tieBreakerPrediction: 45.5 },
+      ] as any);
+
+      const token = createAuthToken(ADMIN_ID, 'ADMIN');
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker?week=7&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.status).toBe('UNRESOLVED');
+      expect(data.isLocked).toBe(true);
+      const m1 = data.readiness.find((r: any) => r.userId === MEMBER_1_ID);
+      expect(m1.hasSubmitted).toBe(true);
+      expect(m1.prediction).toBeUndefined();
+    });
   });
 
-  describe('6. Commissioner Designation Override Rules', () => {
+  describe('6. Commissioner Designation Override & Concurrency Rules (Finding 3)', () => {
     it('allows pool commissioner with active membership to override before predictions are received', async () => {
       vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
       vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
@@ -523,6 +661,7 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       let savedSettings: any = null;
       vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
         return cb({
+          $queryRawUnsafe: vi.fn().mockResolvedValue([]),
           pool: {
             findUnique: vi.fn().mockResolvedValue(mockPool),
             update: vi.fn().mockImplementation(({ data }) => {
@@ -533,6 +672,7 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
           weeklySubmission: {
             findMany: vi.fn().mockResolvedValue([]), // No predictions yet
           },
+          game: { findMany: vi.fn().mockResolvedValue(mockWeek7Games) },
         });
       });
 
@@ -546,15 +686,15 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
         body: JSON.stringify({
           week: 7,
           season: 2026,
-          target_game_id: '2026_w07_HOU_GB',
+          target_game_id: '401873011',
         }),
       });
 
       expect(res.status).toBe(200);
       const data = await res.json();
-      expect(data.designation.eventId).toBe('2026_w07_HOU_GB');
+      expect(data.designation.eventId).toBe('401873011');
       expect(data.designation.provenance).toBe('COMMISSIONER_OVERRIDE');
-      expect(savedSettings?.tiebreaker_designations?.['2026']?.['7']?.eventId).toBe('2026_w07_HOU_GB');
+      expect(savedSettings?.tiebreaker_designations?.['2026']?.['7']?.eventId).toBe('401873011');
     });
 
     it('rejects override if predictions have already been acknowledged (designation frozen)', async () => {
@@ -568,11 +708,13 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
 
       vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
         return cb({
+          $queryRawUnsafe: vi.fn().mockResolvedValue([]),
           pool: { findUnique: vi.fn().mockResolvedValue(mockPool) },
           weeklySubmission: {
             // Existing prediction present!
             findMany: vi.fn().mockResolvedValue([{ userId: MEMBER_1_ID, tieBreakerPrediction: 48.0 }]),
           },
+          game: { findMany: vi.fn().mockResolvedValue(mockWeek7Games) },
         });
       });
 
@@ -586,7 +728,7 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
         body: JSON.stringify({
           week: 7,
           season: 2026,
-          target_game_id: '2026_w07_HOU_GB',
+          target_game_id: '401873011',
         }),
       });
 
@@ -594,11 +736,170 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       const data = await res.json();
       expect(data.error).toContain('DESIGNATION_FROZEN');
     });
+
+    it('serializes overlapping first prediction save versus commissioner override via row lock', async () => {
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: MEMBER_1_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(mockWeek7Games as any);
+
+      let poolSettings = { ...mockPool.settings };
+      const submissions: any[] = [];
+      const queryRawMock = vi.fn().mockResolvedValue([]);
+
+      vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          $queryRawUnsafe: queryRawMock,
+          pool: {
+            findUnique: vi.fn().mockImplementation(() => Promise.resolve({ ...mockPool, settings: poolSettings })),
+            update: vi.fn().mockImplementation(({ data }) => {
+              poolSettings = { ...poolSettings, ...data.settings };
+              return Promise.resolve({ ...mockPool, settings: poolSettings });
+            }),
+          },
+          weeklySubmission: {
+            upsert: vi.fn().mockImplementation(({ create, update }) => {
+              const sub = { id: 'sub-overlap', ...update, ...create };
+              submissions.push(sub);
+              return Promise.resolve(sub);
+            }),
+            findMany: vi.fn().mockImplementation(() => Promise.resolve(submissions)),
+          },
+          game: {
+            findFirst: vi.fn().mockResolvedValue(mockWeek7Games[0]),
+            findMany: vi.fn().mockResolvedValue(mockWeek7Games),
+          },
+        });
+      });
+
+      // Concurrent request 1: Member 1 saves prediction
+      const memberToken = createAuthToken(MEMBER_1_ID);
+      const savePromise = fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${memberToken}`,
+        },
+        body: JSON.stringify({
+          week: 7,
+          season: 2026,
+          prediction: 47.5,
+        }),
+      });
+
+      // Concurrent request 2: Commissioner attempts override
+      const adminToken = createAuthToken(ADMIN_ID, 'ADMIN');
+      const overridePromise = fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker/override`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({
+          week: 7,
+          season: 2026,
+          target_game_id: '401873011',
+        }),
+      });
+
+      const [saveRes, overrideRes] = await Promise.all([savePromise, overridePromise]);
+
+      expect(queryRawMock).toHaveBeenCalledWith(
+        expect.stringContaining('FOR UPDATE'),
+        POOL_ID
+      );
+
+      // Save succeeds and override is blocked
+      expect(saveRes.status).toBe(200);
+      expect(overrideRes.status).toBe(400);
+      const overrideData = await overrideRes.json();
+      expect(overrideData.error).toContain('DESIGNATION_FROZEN');
+    });
+
+    it('preserves designation freeze across clear and subsequent override attempts', async () => {
+      let poolSettings: any = { ...mockPool.settings };
+      let storedSubmission: any = null;
+
+      vi.spyOn(prisma.pool, 'findUnique').mockImplementation(() => Promise.resolve({ ...mockPool, settings: poolSettings }) as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: MEMBER_1_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(mockWeek7Games as any);
+
+      vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          $queryRawUnsafe: vi.fn().mockResolvedValue([]),
+          pool: {
+            findUnique: vi.fn().mockImplementation(() => Promise.resolve({ ...mockPool, settings: poolSettings })),
+            update: vi.fn().mockImplementation(({ data }) => {
+              poolSettings = { ...poolSettings, ...data.settings };
+              return Promise.resolve({ ...mockPool, settings: poolSettings });
+            }),
+          },
+          weeklySubmission: {
+            upsert: vi.fn().mockImplementation(({ update, create }) => {
+              storedSubmission = { ...storedSubmission, ...update, ...create };
+              return Promise.resolve(storedSubmission);
+            }),
+            findMany: vi.fn().mockImplementation(() => Promise.resolve(storedSubmission?.tieBreakerPrediction !== null && storedSubmission?.tieBreakerPrediction !== undefined ? [storedSubmission] : [])),
+          },
+          game: {
+            findFirst: vi.fn().mockResolvedValue(mockWeek7Games[0]),
+            findMany: vi.fn().mockResolvedValue(mockWeek7Games),
+          },
+        });
+      });
+
+      const memberToken = createAuthToken(MEMBER_1_ID);
+      const adminToken = createAuthToken(ADMIN_ID, 'ADMIN');
+
+      // 1. Member saves prediction -> freezes designation
+      const saveRes = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${memberToken}` },
+        body: JSON.stringify({ week: 7, season: 2026, prediction: 51.5 }),
+      });
+      expect(saveRes.status).toBe(200);
+      expect(poolSettings.tiebreaker_designations?.['2026']?.['7']?.isFrozen).toBe(true);
+
+      // 2. Member explicitly clears prediction
+      const clearRes = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${memberToken}` },
+        body: JSON.stringify({ week: 7, season: 2026, clear: true }),
+      });
+      expect(clearRes.status).toBe(200);
+      // isFrozen setting MUST remain true even when submission is cleared!
+      expect(poolSettings.tiebreaker_designations?.['2026']?.['7']?.isFrozen).toBe(true);
+
+      // 3. Commissioner attempts override on cleared week -> MUST BE REJECTED
+      const overrideRes = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ week: 7, season: 2026, target_game_id: '401873011' }),
+      });
+      expect(overrideRes.status).toBe(400);
+      const overrideData = await overrideRes.json();
+      expect(overrideData.error).toContain('DESIGNATION_FROZEN');
+    });
   });
 
-  describe('7. Week 6 2026 Exclusion Safeguard', () => {
-    it('returns UNAVAILABLE and blocks predictions for Week 6', async () => {
-      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
+  describe('7. Week 6 2026 Exclusion Safeguard Across Surfaces (Finding 4)', () => {
+    it('returns UNAVAILABLE and blocks predictions for Week 6 on both new and legacy paths without settings flag', async () => {
+      // Pool with ZERO tiebreaker_unavailable_weeks in settings
+      const unflaggedPool = {
+        id: POOL_ID,
+        name: 'Test Pool 41',
+        adminId: ADMIN_ID,
+        settings: { season: 2026 },
+      };
+
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(unflaggedPool as any);
       vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
         poolId: POOL_ID,
         userId: MEMBER_1_ID,
@@ -607,33 +908,54 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
 
       const token = createAuthToken(MEMBER_1_ID);
 
-      // GET Week 6
-      const getRes = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker?week=6&season=2026`, {
+      // Path A: Canonical pool-scoped route GET
+      const getResCanonical = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker?week=6&season=2026`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      expect(getRes.status).toBe(200);
-      const getData = await getRes.json();
-      expect(getData.status).toBe('UNAVAILABLE');
-      expect(getData.tiebreakerOffered).toBe(false);
-      expect(getData.isLocked).toBe(true);
-      expect(getData.reason).toContain('Tiebreaker unavailable — entry was not offered');
+      expect(getResCanonical.status).toBe(200);
+      const getDataCanonical = await getResCanonical.json();
+      expect(getDataCanonical.status).toBe('UNAVAILABLE');
+      expect(getDataCanonical.tiebreakerOffered).toBe(false);
+      expect(getDataCanonical.isLocked).toBe(true);
+      expect(getDataCanonical.reason).toContain('Tiebreaker unavailable — entry was not offered');
 
-      // POST Week 6
-      const postRes = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          week: 6,
-          season: 2026,
-          prediction: 45.0,
-        }),
+      // Path B: Legacy route GET
+      const getResLegacy = await fetch(`${baseUrl}/api/picks/tiebreaker?pool_id=${POOL_ID}&week=6&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
-      expect(postRes.status).toBe(403);
-      const postData = await postRes.json();
-      expect(postData.error).toContain('TIEBREAKER_UNAVAILABLE');
+      expect(getResLegacy.status).toBe(200);
+      const getDataLegacy = await getResLegacy.json();
+      expect(getDataLegacy.status).toBe('UNAVAILABLE');
+      expect(getDataLegacy.tiebreakerOffered).toBe(false);
+      expect(getDataLegacy.isLocked).toBe(true);
+
+      // Path A: Canonical pool-scoped route POST
+      const postResCanonical = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ week: 6, season: 2026, prediction: 45.0 }),
+      });
+      expect(postResCanonical.status).toBe(403);
+      const postDataCanonical = await postResCanonical.json();
+      expect(postDataCanonical.error).toContain('TIEBREAKER_UNAVAILABLE');
+
+      // Path B: Legacy route POST
+      const postResLegacy = await fetch(`${baseUrl}/api/picks/tiebreaker`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ pool_id: POOL_ID, week: 6, season: 2026, prediction: 45.0 }),
+      });
+      expect(postResLegacy.status).toBe(403);
+      const postDataLegacy = await postResLegacy.json();
+      expect(postDataLegacy.error).toContain('TIEBREAKER_UNAVAILABLE');
+
+      // Path B: Legacy override POST
+      const overrideResLegacy = await fetch(`${baseUrl}/api/picks/tiebreaker/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ pool_id: POOL_ID, week: 6, season: 2026, target_game_id: '401873011' }),
+      });
+      expect(overrideResLegacy.status).toBe(403);
     });
   });
 
@@ -719,6 +1041,75 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(Array.isArray(games)).toBe(true);
       // Demonstrates safe fail-closed behavior when Week 7 games are not yet imported
       expect(games.length).toBe(0);
+    });
+  });
+
+  describe('10. Legacy Route Safe Delegation Verification (Finding 4)', () => {
+    it('safely delegates legacy /api/picks/tiebreaker routes to canonical handlers with identical authorization and semantics', async () => {
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: MEMBER_1_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(mockWeek7Games as any);
+
+      const upsertMock = vi.fn().mockResolvedValue({
+        id: 'sub-legacy',
+        poolId: POOL_ID,
+        userId: MEMBER_1_ID,
+        weekNumber: 7,
+        tieBreakerPrediction: 49.5,
+      });
+
+      vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          $queryRawUnsafe: vi.fn().mockResolvedValue([]),
+          game: { findFirst: vi.fn().mockResolvedValue(mockWeek7Games[0]), findMany: vi.fn().mockResolvedValue(mockWeek7Games) },
+          weeklySubmission: { upsert: upsertMock, findMany: vi.fn().mockResolvedValue([]) },
+          pool: { findUnique: vi.fn().mockResolvedValue(mockPool), update: vi.fn() },
+        });
+      });
+
+      const token = createAuthToken(MEMBER_1_ID);
+
+      // 1. GET legacy
+      const getRes = await fetch(`${baseUrl}/api/picks/tiebreaker?pool_id=${POOL_ID}&week=7&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(getRes.status).toBe(200);
+      const getData = await getRes.json();
+      expect(getData.status).toBe('DEFAULT_LIONS');
+      expect(getData.tiebreakerOffered).toBe(true);
+      expect(getData.designatedGame.externalGameId).toBe('401873010');
+
+      // 2. POST legacy
+      const postRes = await fetch(`${baseUrl}/api/picks/tiebreaker`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ pool_id: POOL_ID, week: 7, season: 2026, prediction: '49.50' }),
+      });
+      expect(postRes.status).toBe(200);
+      const postData = await postRes.json();
+      expect(postData.prediction).toBe(49.5);
+      expect(postData.designatedGameId).toBe('401873010');
+
+      // 3. POST legacy override
+      const adminToken = createAuthToken(ADMIN_ID, 'ADMIN');
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: ADMIN_ID,
+        status: 'ACTIVE',
+      } as any);
+
+      const overrideRes = await fetch(`${baseUrl}/api/picks/tiebreaker/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ pool_id: POOL_ID, week: 7, season: 2026, target_game_id: '401873011' }),
+      });
+      expect(overrideRes.status).toBe(200);
+      const overrideData = await overrideRes.json();
+      expect(overrideData.designation.eventId).toBe('401873011');
     });
   });
 });

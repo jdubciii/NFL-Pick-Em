@@ -14,6 +14,7 @@ import {
   executeWeeklyWrapUpForPool,
   previewWeeklyWrapUpForPool,
 } from '../src/services/wrapUpEngine';
+import * as authoritativeSlateService from '../src/services/authoritativeSlateService';
 import { GameStatus } from '@prisma/client';
 
 describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
@@ -62,7 +63,6 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
         createdAt: new Date(),
       };
     });
-
     app = express();
     app.use(express.json());
     app.use('/api/picks', picksRouter);
@@ -103,6 +103,25 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       },
     ];
 
+    beforeEach(() => {
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockImplementation(async (_db, s, _st, w) => {
+        if (s === 2026 && w === 7) {
+          return {
+            season: 2026,
+            seasonType: 2,
+            weekNumber: 7,
+            revision: 1,
+            eventIds: ['401872999'],
+            acceptedAt: new Date().toISOString(),
+            acceptedBy: ADMIN_ID,
+            manifestFingerprint: 'mock-fp-w7',
+            observationTime: new Date().toISOString(),
+          };
+        }
+        return null;
+      });
+    });
+
     it('accepts valid predictions from 0.00 to 999.99 with up to 2 decimal places', async () => {
       vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
       vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
@@ -117,15 +136,16 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
         id: 'sub-1',
         poolId: POOL_ID,
         userId: MEMBER_1_ID,
-        weekNumber: 6,
+        weekNumber: 7,
         tieBreakerPrediction: 48.5,
       });
 
       vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
         return cb({
-          game: { findFirst: vi.fn().mockResolvedValue(mockGames[0]) },
+          game: { findFirst: vi.fn().mockResolvedValue(mockGames[0]), findMany: vi.fn().mockResolvedValue(mockGames) },
           weeklySubmission: { upsert: upsertMock },
-          pool: { update: vi.fn() },
+          pool: { findUnique: vi.fn().mockResolvedValue(mockPool), update: vi.fn() },
+          $queryRawUnsafe: vi.fn().mockResolvedValue([]),
         });
       });
 
@@ -138,7 +158,7 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
         },
         body: JSON.stringify({
           pool_id: POOL_ID,
-          week: 6,
+          week: 7,
           prediction: '48.50',
         }),
       });
@@ -170,7 +190,7 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
           },
           body: JSON.stringify({
             pool_id: POOL_ID,
-            week: 6,
+            week: 7,
             prediction: val,
           }),
         });
@@ -210,7 +230,7 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
         },
         body: JSON.stringify({
           pool_id: POOL_ID,
-          week: 6,
+          week: 7,
           prediction: 45.0,
         }),
       });
@@ -233,15 +253,16 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
         id: 'sub-1',
         poolId: POOL_ID,
         userId: MEMBER_1_ID,
-        weekNumber: 6,
+        weekNumber: 7,
         tieBreakerPrediction: null,
       });
 
       vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
         return cb({
-          game: { findFirst: vi.fn().mockResolvedValue(mockGames[0]) },
+          game: { findFirst: vi.fn().mockResolvedValue(mockGames[0]), findMany: vi.fn().mockResolvedValue(mockGames) },
           weeklySubmission: { upsert: upsertMock },
-          pool: { update: vi.fn() },
+          pool: { findUnique: vi.fn().mockResolvedValue(mockPool), update: vi.fn() },
+          $queryRawUnsafe: vi.fn().mockResolvedValue([]),
         });
       });
 
@@ -254,7 +275,7 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
         },
         body: JSON.stringify({
           pool_id: POOL_ID,
-          week: 6,
+          week: 7,
           clear: true,
         }),
       });
@@ -278,7 +299,7 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
         },
         body: JSON.stringify({
           pool_id: POOL_ID,
-          week: 6,
+          week: 7,
           prediction: 45.0,
         }),
       });
@@ -305,6 +326,25 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       },
     ];
 
+    beforeEach(() => {
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockImplementation(async (_db, s, _st, w) => {
+        if (s === 2026 && w === 7) {
+          return {
+            season: 2026,
+            seasonType: 2,
+            weekNumber: 7,
+            revision: 1,
+            eventIds: ['401872999'],
+            acceptedAt: new Date().toISOString(),
+            acceptedBy: ADMIN_ID,
+            manifestFingerprint: 'mock-fp-w7',
+            observationTime: new Date().toISOString(),
+          };
+        }
+        return null;
+      });
+    });
+
     it('never exposes numeric predictions of other members to commissioner before kickoff', async () => {
       vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
       vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
@@ -321,12 +361,12 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       ] as any);
 
       vi.spyOn(prisma.weeklySubmission, 'findMany').mockResolvedValue([
-        { poolId: POOL_ID, userId: MEMBER_1_ID, weekNumber: 6, tieBreakerPrediction: 45.5 },
+        { poolId: POOL_ID, userId: MEMBER_1_ID, weekNumber: 7, tieBreakerPrediction: 45.5 },
       ] as any);
 
       // Commissioner requests readiness view
       const token = createAuthToken(ADMIN_ID, 'ADMIN');
-      const res = await fetch(`${baseUrl}/api/picks/tiebreaker?pool_id=${POOL_ID}&week=6`, {
+      const res = await fetch(`${baseUrl}/api/picks/tiebreaker?pool_id=${POOL_ID}&week=7`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -497,6 +537,49 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       expect(preview.projectedStandings[0].shots).toBe(0);
       expect(preview.projectedStandings[1].rank).toBe(1);
       expect(preview.projectedStandings[1].shots).toBe(0);
+    });
+
+    it('enforces binding contract: Week 6 2026 is UNAVAILABLE on /api/picks/tiebreaker without settings flag', async () => {
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue({
+        id: POOL_ID,
+        adminId: ADMIN_ID,
+        settings: { season: 2026 }, // NO tiebreaker_unavailable_weeks flag!
+      } as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: MEMBER_1_ID,
+        status: 'ACTIVE',
+      } as any);
+
+      const token = createAuthToken(MEMBER_1_ID);
+
+      // GET /api/picks/tiebreaker
+      const getRes = await fetch(`${baseUrl}/api/picks/tiebreaker?pool_id=${POOL_ID}&week=6&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(getRes.status).toBe(200);
+      const getData = await getRes.json();
+      expect(getData.status).toBe('UNAVAILABLE');
+      expect(getData.tiebreakerOffered).toBe(false);
+      expect(getData.reason).toContain('Tiebreaker unavailable — entry was not offered.');
+
+      // POST /api/picks/tiebreaker
+      const postRes = await fetch(`${baseUrl}/api/picks/tiebreaker`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          pool_id: POOL_ID,
+          week: 6,
+          season: 2026,
+          prediction: 45.0,
+        }),
+      });
+      expect(postRes.status).toBe(403);
+      const postData = await postRes.json();
+      expect(postData.error).toContain('TIEBREAKER_UNAVAILABLE');
     });
 
     it('executes Week 6 unavailable-tiebreaker wrap-up successfully without designated tiebreaker game or score', async () => {
