@@ -18,7 +18,12 @@ import { webhooksRouter } from './routes/webhooks';
 import { shotCamRouter } from './routes/shotCam';
 import streamRouter from './routes/streamRoutes';
 import { poolSocialRouter } from './routes/poolSocialRoutes';
-import { poolTiebreakerRouter, getGamesForWeek } from './routes/poolTiebreakerRoutes';
+import {
+  poolTiebreakerRouter,
+  getGamesForWeek,
+  getCallerSupabaseClient,
+  extractBearerToken,
+} from './routes/poolTiebreakerRoutes';
 import { getWeeklyDesignation } from './services/weeklyDesignationService';
 import type {
   PoolSettings,
@@ -1101,22 +1106,21 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
       settings.hide_picks_until_kickoff ?? settings.hidePicksUntilKickoff ?? true
     );
 
-    // 2. Fetch weekly games chronologically via authoritative canonical slate helper (Finding 10)
+    const callerClient = getCallerSupabaseClient(req);
+    const authToken = extractBearerToken(req);
+
+    // 2. Fetch weekly games chronologically via authoritative canonical slate helper (Finding 10 / HAG-15 Item 2)
     let games: any[] = [];
     if (!isAllWeeks && weekNum > 0) {
-      const canonicalGames = await getGamesForWeek(weekNum, 2026, pool.id, db);
+      const canonicalGames = await getGamesForWeek(weekNum, 2026, pool.id, db, {
+        supabaseClient: callerClient,
+        authToken,
+      });
       if (Array.isArray(canonicalGames) && canonicalGames.length > 0) {
         games = canonicalGames;
       } else {
-        const padded = weekNum < 10 ? `_w0${weekNum}_` : `_w${weekNum}_`;
-        const unpadded = `_w${weekNum}_`;
-        const allGames = await db.game.findMany({ orderBy: { kickoffTime: 'asc' } });
-        games = allGames.filter((g: any) =>
-          g.externalGameId && (
-            g.externalGameId.toLowerCase().includes(padded.toLowerCase()) ||
-            g.externalGameId.toLowerCase().includes(unpadded.toLowerCase())
-          )
-        );
+        // Zero synthetic pattern inference and ZERO all-games fallback (HAG-15 Item 2)
+        games = [];
       }
     } else {
       games = await db.game.findMany({ orderBy: { kickoffTime: 'asc' } });
@@ -1255,10 +1259,13 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
       }
     }
 
-    // Resolve designated tiebreaker game to enforce pre-kickoff privacy (HAG-8 Directive, Finding 10)
-    // Sourced strictly from approved canonical slate helper getGamesForWeek
-    const canonicalWeekGames = await getGamesForWeek(weekNum, 2026, pool.id, db);
-    const effectiveDesignationGames = canonicalWeekGames.length > 0 ? canonicalWeekGames : games;
+    // Resolve designated tiebreaker game to enforce pre-kickoff privacy (HAG-8 Directive, Finding 10, HAG-15 Item 2)
+    // Sourced strictly from approved canonical slate helper getGamesForWeek. Never falls back to synthetic or unapproved games.
+    const canonicalWeekGames = await getGamesForWeek(weekNum, 2026, pool.id, db, {
+      supabaseClient: callerClient,
+      authToken,
+    });
+    const effectiveDesignationGames = canonicalWeekGames;
     const designation = getWeeklyDesignation(pool.settings, 2026, weekNum, effectiveDesignationGames as any);
     const designatedKickoff = designation.game?.kickoffTime ? new Date(designation.game.kickoffTime) : null;
     const isValidKickoff = Boolean(designatedKickoff && !isNaN(designatedKickoff.getTime()));

@@ -388,9 +388,9 @@ export async function handlePoolWrapUpPreview(req: Request, res: Response): Prom
     return;
   }
 
-  const rawPoolId = req.params.pool_id || req.params.poolId || req.query.poolId || req.query.pool_id;
+  const rawPoolId = req.params.pool_id || req.params.poolId;
   if (!rawPoolId || typeof rawPoolId !== 'string' || !UUID_REGEX.test(rawPoolId)) {
-    res.status(400).json({ error: 'Invalid pool ID format. Must be a valid UUID.' });
+    res.status(400).json({ error: 'Invalid pool ID format. Must be a valid UUID in route path.' });
     return;
   }
 

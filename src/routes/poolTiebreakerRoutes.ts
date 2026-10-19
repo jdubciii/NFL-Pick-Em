@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
+import { createClient } from '@supabase/supabase-js';
 import prisma from '../db/client';
-import { requireAuth, UUID_REGEX } from '../middleware/auth';
+import { requireAuth, UUID_REGEX, FIXED_SUPABASE_URL, DEFAULT_SUPABASE_ANON_KEY } from '../middleware/auth';
 import {
   getWeeklyDesignation,
   applyCommissionerOverride,
@@ -33,6 +34,57 @@ export function isTiebreakerUnavailableWeek(season: number, weekNumber: number, 
   return false;
 }
 
+let testCallerSupabaseClient: any | null = null;
+export function setCallerBoundSupabaseClientForTesting(client: any | null): void {
+  testCallerSupabaseClient = client;
+}
+
+/**
+ * Creates a caller-bound Supabase client initialized with the caller's JWT bearer token.
+ * Passes auth.uid() caller identity through to PostgreSQL RPC functions.
+ * Strictly never substitutes service-role keys or trusts unverified user claims.
+ */
+export function createCallerBoundSupabaseClient(authToken?: string): any | null {
+  if (!authToken || !authToken.trim()) {
+    return null;
+  }
+  if (testCallerSupabaseClient) {
+    return testCallerSupabaseClient;
+  }
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || FIXED_SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY;
+  return createClient(url, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${authToken.trim()}`,
+      },
+    },
+  });
+}
+
+export function extractBearerToken(req: Request): string | undefined {
+  const authHeader = req.headers?.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7).trim();
+    if (token) return token;
+  }
+  return (req as any).authToken || (req as any).token;
+}
+
+export function getCallerSupabaseClient(req: Request): any | null {
+  if ((req as any).supabaseClient) {
+    return (req as any).supabaseClient;
+  }
+  const token = extractBearerToken(req);
+  if (!token) return null;
+  return createCallerBoundSupabaseClient(token);
+}
+
 /**
  * Authoritative schema-compatible slate query helper for a given season and week.
  * Authority: P41-TIEBREAKER-CONTRACT-2026-10-17-01, P41-AUTHORITATIVE-SLATE-ARCHITECTURE-2026-10-17-01
@@ -57,11 +109,16 @@ export async function getGamesForWeek(
   dbClient: any = prisma,
   options?: GetGamesOptions
 ): Promise<any[]> {
-  // Source 1: Caller-bound Supabase RPC (Finding 6: requires auth.uid() caller identity)
+  let supabaseClient = options?.supabaseClient;
+  if (!supabaseClient && options?.authToken) {
+    supabaseClient = createCallerBoundSupabaseClient(options.authToken);
+  }
+
+  // Source 1: Caller-bound Supabase RPC (Finding 6 / Finding 1: requires auth.uid() caller identity)
   // Invoked strictly via caller-bound client; plain unauthenticated Prisma SQL lacks auth.uid() session context.
-  if (poolId && options?.supabaseClient && typeof options.supabaseClient.rpc === 'function') {
+  if (poolId && supabaseClient && typeof supabaseClient.rpc === 'function') {
     try {
-      const { data, error } = await options.supabaseClient.rpc('get_pool_canonical_games', {
+      const { data, error } = await supabaseClient.rpc('get_pool_canonical_games', {
         p_pool_id: poolId,
         p_season: season,
         p_week: weekNumber,
@@ -198,8 +255,14 @@ export async function handleGetTiebreaker(req: Request, res: Response): Promise<
       return;
     }
 
+    const callerClient = getCallerSupabaseClient(req);
+    const authToken = extractBearerToken(req);
+
     // Fetch games via authoritative schema-compatible accessor
-    const games = await getGamesForWeek(weekNumber, season, poolId, prisma);
+    const games = await getGamesForWeek(weekNumber, season, poolId, prisma, {
+      supabaseClient: callerClient,
+      authToken,
+    });
     const designation = getWeeklyDesignation(pool.settings, season, weekNumber, games as any);
 
     const userSubmission = await prisma.weeklySubmission.findUnique({
@@ -332,8 +395,14 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
       return;
     }
 
+    const callerClient = getCallerSupabaseClient(req);
+    const authToken = extractBearerToken(req);
+
     // Pre-flight check: query authoritative games and verify kickoff lock before transaction
-    const preGames = await getGamesForWeek(weekNumber, season, poolId, prisma);
+    const preGames = await getGamesForWeek(weekNumber, season, poolId, prisma, {
+      supabaseClient: callerClient,
+      authToken,
+    });
     const preDesignation = getWeeklyDesignation(settings, season, weekNumber, preGames as any);
 
     if (!preDesignation.game) {
@@ -388,7 +457,10 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
       const currentSettings = (freshPool.settings as any) || {};
 
       // 3. Resolve authoritative designation INSIDE transaction boundary using fresh settings and transaction client
-      const games = await getGamesForWeek(weekNumber, season, poolId, tx);
+      const games = await getGamesForWeek(weekNumber, season, poolId, tx, {
+        supabaseClient: callerClient,
+        authToken,
+      });
       const designation = getWeeklyDesignation(currentSettings, season, weekNumber, games as any);
 
       if (!designation.game) {
@@ -406,14 +478,14 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
       const shouldUpdatePrediction = !isOmitted;
 
       if (isOmitted) {
-        // Resolve preserved value strictly INSIDE transaction under row lock
-        const existingSubmission = typeof tx.weeklySubmission?.findUnique === 'function'
-          ? await tx.weeklySubmission.findUnique({
-              where: { poolId_userId_weekNumber: { poolId, userId, weekNumber } },
-            })
-          : await prisma.weeklySubmission.findUnique({
-              where: { poolId_userId_weekNumber: { poolId, userId, weekNumber } },
-            });
+        // Resolve preserved value strictly INSIDE transaction under row lock (Finding 5)
+        // Incomplete transaction clients must fail closed; never fall back to global prisma.
+        if (typeof tx.weeklySubmission?.findUnique !== 'function') {
+          throw new Error('TRANSACTION_CAPABILITY_MISSING: Transaction client lacks weeklySubmission capability.');
+        }
+        const existingSubmission = await tx.weeklySubmission.findUnique({
+          where: { poolId_userId_weekNumber: { poolId, userId, weekNumber } },
+        });
         resolvedPrediction = existingSubmission?.tieBreakerPrediction !== null && existingSubmission?.tieBreakerPrediction !== undefined
           ? Number(existingSubmission.tieBreakerPrediction)
           : null;
@@ -485,7 +557,7 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
       res.status(400).json({ error: error.message });
       return;
     }
-    res.status(500).json({ error: 'Failed to save tiebreaker prediction.' });
+    res.status(500).json({ error: error.message || 'Failed to save tiebreaker prediction.' });
   }
 }
 
@@ -585,7 +657,12 @@ export async function handlePostTiebreakerOverride(req: Request, res: Response):
       }
 
       // 5. Query authoritative games inside transaction boundary using transaction client
-      const games = await getGamesForWeek(weekNumber, season, poolId, tx);
+      const callerClient = getCallerSupabaseClient(req);
+      const authToken = extractBearerToken(req);
+      const games = await getGamesForWeek(weekNumber, season, poolId, tx, {
+        supabaseClient: callerClient,
+        authToken,
+      });
 
       // 6. Apply commissioner override
       const { updatedSettings, designation: newDesignation } = applyCommissionerOverride({

@@ -11,6 +11,38 @@ interface WeeklyTiebreakerCardProps {
   hasPicksWithoutTiebreaker?: boolean;
 }
 
+/**
+ * Pure evaluator for card lock state.
+ * Authority: P41-TIEBREAKER-CONTRACT-2026-10-17-01 & HAG-15 Gatekeeper Finding 4.
+ *
+ * Rules:
+ * - Requires explicit isLocked === false.
+ * - Requires resolved designation (DEFAULT_LIONS or COMMISSIONER_OVERRIDE).
+ * - Requires an actual designated game object.
+ * - Requires a valid kickoff time that is strictly in the future (kickoffDate > nowMs).
+ * - Missing, malformed, past, or exact deadline fails closed to locked (returns true).
+ */
+export function evaluateCardLockState(
+  data: {
+    isLocked?: boolean;
+    status?: string;
+    designatedGame?: any;
+    kickoffTime?: string | null;
+  },
+  nowMs: number = Date.now()
+): boolean {
+  if (data.isLocked !== false) return true;
+  const hasResolvedDesignation =
+    data.status === 'DEFAULT_LIONS' || data.status === 'COMMISSIONER_OVERRIDE';
+  if (!hasResolvedDesignation) return true;
+  if (!data.designatedGame) return true;
+  if (!data.kickoffTime) return true;
+  const kickoffDate = new Date(data.kickoffTime);
+  if (isNaN(kickoffDate.getTime())) return true;
+  if (kickoffDate.getTime() <= nowMs) return true;
+  return false;
+}
+
 export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
   week,
   poolId,
@@ -64,15 +96,11 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
         setDesignatedGame(data.designatedGame);
         setKickoffTime(data.kickoffTime);
 
-        // Strict Fail-Closed Lock Check (Finding 8):
-        // Require explicit isLocked === false, valid kickoff time, and resolved typed designation.
-        // All missing/unknown fields remain locked.
-        const hasValidKickoff = Boolean(data.kickoffTime && !isNaN(new Date(data.kickoffTime).getTime()));
-        const hasResolvedDesignation = Boolean(
-          data.status === 'DEFAULT_LIONS' || data.status === 'COMMISSIONER_OVERRIDE'
-        );
-        const isExplicitlyUnlocked = data.isLocked === false && hasResolvedDesignation && hasValidKickoff;
-        setIsLocked(!isExplicitlyUnlocked);
+        // Strict Fail-Closed Lock Check (Finding 8 & HAG-15 Finding 4):
+        // Require explicit isLocked === false, valid future kickoff time, actual designated game,
+        // and resolved typed designation. All past/missing/unknown fields remain locked.
+        const isCardLocked = evaluateCardLockState(data, Date.now());
+        setIsLocked(isCardLocked);
 
         setUserPrediction(data.userPrediction ?? null);
         setInputValue(data.userPrediction !== null && data.userPrediction !== undefined ? String(data.userPrediction) : '');
@@ -135,6 +163,25 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
       window.removeEventListener('focus', handleResume);
     };
   }, [fetchTiebreakerInfo]);
+
+  // Auto-lock controls at kickoff deadline without requiring window focus / resume (HAG-15 Finding 4)
+  useEffect(() => {
+    if (isLocked || !kickoffTime) return;
+    const deadline = new Date(kickoffTime).getTime();
+    if (isNaN(deadline)) {
+      setIsLocked(true);
+      return;
+    }
+    const msRemaining = deadline - Date.now();
+    if (msRemaining <= 0) {
+      setIsLocked(true);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setIsLocked(true);
+    }, msRemaining);
+    return () => clearTimeout(timer);
+  }, [kickoffTime, isLocked]);
 
   const handleSave = async (valueToSave?: string | null) => {
     if (isLocked || !tiebreakerOffered || !poolId) return;

@@ -7,7 +7,6 @@ import { sealSeason, getSeasonSealStatus } from '../services/seasonSeal';
 import { processTransportsBatch, getTransportsQueueStatus } from '../services/transports';
 import { runRetentionPruning, getRetentionStatus } from '../services/retentionService';
 import { refreshWeeklySlateInDb } from '../services/authoritativeSlateService';
-import { handlePoolWrapUpPreview } from './ops';
 
 export const adminOpsRouter = Router();
 
@@ -134,11 +133,16 @@ adminOpsRouter.get('/wrap-up/status', requireAuth, requireAdmin, async (_req: Re
 
 /**
  * GET /api/admin/ops/wrap-up/preview
- * Read-only settlement preview for commissioners and admins.
- * Evaluates slate completeness, designated game status, and projected rankings/penalties.
- * Strictly adheres to Decision #54 (NO WRITES ON GET).
+ * RETIRED: Legacy stateful route. Returns state-free HTTP 410 Gone with 0 database reads.
+ * Authority: Architect Directive HAG-12 & HAG-15 Gatekeeper Item 3.
+ * Canonical pool-scoped route: GET /api/pools/:pool_id/wrap-up/preview
  */
-adminOpsRouter.get('/wrap-up/preview', requireAuth, handlePoolWrapUpPreview);
+adminOpsRouter.get('/wrap-up/preview', (_req: Request, res: Response): void => {
+  res.status(410).json({
+    error: 'ENDPOINT_RETIRED: Legacy admin wrap-up preview endpoint has been retired. Use canonical pool-scoped route GET /api/pools/:pool_id/wrap-up/preview instead.',
+    retired: true,
+  });
+});
 
 /**
  * POST /api/admin/ops/slate/refresh
