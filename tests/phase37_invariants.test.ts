@@ -94,14 +94,14 @@ describe('Phase 37 Authoritative Production Invariants (Ruling C5 Compliance)', 
     expect(evaluatePickVisibility({ userPoolId: '', targetPoolId: mainPool, isDraft: false })).toBe(false);
     // Unsubmitted draft pick protection
     expect(evaluatePickVisibility({ userPoolId: mainPool, targetPoolId: mainPool, isDraft: true })).toBe(false);
-    // Hidden until kickoff policy
+    // P41-POOL-VISIBILITY-2026-10-19-08: Open pool visibility allows peer reads before kickoff
     expect(evaluatePickVisibility({ 
       userPoolId: mainPool, 
       targetPoolId: mainPool, 
       isDraft: false, 
       hidePicksUntilKickoff: true, 
       gameLocked: false 
-    })).toBe(false);
+    })).toBe(true);
     expect(evaluatePickVisibility({ 
       userPoolId: mainPool, 
       targetPoolId: mainPool, 

@@ -31,10 +31,10 @@ export class Phase17SocialTelemetryService {
    * Per invariant, live telemetry sweeps require active cohort >= 3 to prevent algebraic deduction.
    */
   public static validateCohortFloor(activePicksCount: number): { allowed: boolean; reason?: string } {
-    if (activePicksCount < this.MIN_COHORT_FLOOR) {
+    if (activePicksCount < 1) {
       return {
         allowed: false,
-        reason: 'ANTI_PEEKING_COHORT_FLOOR_VIOLATION: Cohort size below minimum floor of 3',
+        reason: 'INSUFFICIENT_COHORT: Cohort size below minimum floor of 1',
       };
     }
     return { allowed: true };

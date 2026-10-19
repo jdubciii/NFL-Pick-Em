@@ -24,7 +24,6 @@ import {
   getCallerSupabaseClient,
   extractBearerToken,
 } from './routes/poolTiebreakerRoutes';
-import { getWeeklyDesignation } from './services/weeklyDesignationService';
 import type {
   PoolSettings,
   MatrixResponsePayload,
@@ -1102,9 +1101,9 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
       ? (isAllWeeks ? 0 : parseInt(String(requestedWeek), 10) || defaultWeek)
       : defaultWeek;
     const pickingMode: PickingMode = settings.picking_mode ?? settings.pickingMode ?? 'STRAIGHT_UP';
-    const hidePicksUntilKickoff = Boolean(
-      settings.hide_picks_until_kickoff ?? settings.hidePicksUntilKickoff ?? true
-    );
+    // P41-POOL-VISIBILITY-2026-10-19-08: All saved picks/predictions are visible immediately to active pool members.
+    // Legacy hide settings are no longer honored as secrecy controls; compatibility metadata stays false.
+    const hidePicksUntilKickoff = false;
 
     const callerClient = getCallerSupabaseClient(req);
     const authToken = extractBearerToken(req);
@@ -1212,46 +1211,9 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
       }
     }
 
-    // 8. Dual-Mode Visibility & Anti-Peeking Security Layer
-    // Mode A: hide_picks_until_kickoff === true -> redact unstarted games for other users
-    // Mode B: hide_picks_until_kickoff === false -> redact unstarted games ONLY if opponent's WeeklySubmission.is_finalized is false
-    const now = new Date();
-    const requestingUserId = req.user?.id;
-    const isUserAdmin = req.user?.role === 'ADMIN';
-
-    for (const game of games) {
-      const isGameNotStarted = now.getTime() < new Date(game.kickoffTime).getTime();
-
-      for (const membership of pool.memberships) {
-        const userId = membership.userId;
-        const cell = cells[game.id]?.[userId];
-
-        if (cell) {
-          const isOtherMember = userId !== requestingUserId;
-
-          if (isGameNotStarted && isOtherMember && !isUserAdmin) {
-            if (hidePicksUntilKickoff) {
-              // Mode A (Strict/Hidden): Mask all competitor picks prior to kickoff
-              cell.selected_team_id = null;
-              cell.is_masked = true;
-            } else {
-              // Mode B (Open Slate): Expose picks only if opponent has finalized their weekly submission
-              const isOpponentFinalized = finalizedMap.get(userId) === true;
-              if (!isOpponentFinalized) {
-                cell.selected_team_id = null;
-                cell.is_masked = true;
-              } else {
-                cell.is_masked = false;
-              }
-            }
-          } else {
-            cell.is_masked = false;
-          }
-        }
-      }
-    }
-
-    // 9. Build summary: user_id -> MatrixMemberSummary
+    // 8. Build summary: user_id -> MatrixMemberSummary
+    // Under P41-POOL-VISIBILITY-2026-10-19-08: All saved tiebreaker predictions are immediately visible
+    // to active members of the same pool. Null means no saved pick, not concealed pick.
     const weeklyWinsMap = new Map<string, number>();
     for (const pick of picks) {
       if (pick.result?.isCorrect) {
@@ -1259,33 +1221,17 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
       }
     }
 
-    // Resolve designated tiebreaker game to enforce pre-kickoff privacy (HAG-8 Directive, Finding 10, HAG-15 Item 2)
-    // Sourced strictly from approved canonical slate helper getGamesForWeek. Never falls back to synthetic or unapproved games.
-    const canonicalWeekGames = await getGamesForWeek(weekNum, 2026, pool.id, db, {
-      supabaseClient: callerClient,
-      authToken,
-    });
-    const effectiveDesignationGames = canonicalWeekGames;
-    const designation = getWeeklyDesignation(pool.settings, 2026, weekNum, effectiveDesignationGames as any);
-    const designatedKickoff = designation.game?.kickoffTime ? new Date(designation.game.kickoffTime) : null;
-    const isValidKickoff = Boolean(designatedKickoff && !isNaN(designatedKickoff.getTime()));
-    const hasDesignatedKickoffPassed = isValidKickoff && now.getTime() >= designatedKickoff!.getTime();
-
     const summary: Record<string, MatrixMemberSummary> = {};
     for (const membership of pool.memberships) {
       const userId = membership.userId;
       const weeklyWins = weeklyWinsMap.get(userId) || 0;
       const rawGuess = tiebreakerMap.has(userId) ? tiebreakerMap.get(userId)! : null;
-      // Strict pre-kickoff privacy (Finding 10): only the requesting user sees their own guess before kickoff.
-      // Other members' guesses remain strictly masked to null until verified designated game kickoff.
-      const isSelf = userId === requestingUserId;
-      const tiebreakerGuess = (hasDesignatedKickoffPassed || isSelf) ? rawGuess : null;
       const cumulativeShots = Number(membership.stat?.totalShotsDrank ?? 0);
 
       summary[userId] = {
         user_id: userId,
         weekly_wins: weeklyWins,
-        tiebreaker_guess: tiebreakerGuess,
+        tiebreaker_guess: rawGuess,
         cumulative_shots: cumulativeShots,
       };
     }

@@ -25,7 +25,7 @@ describe('Phase 17 Milestone 17.3: Live Activity Feed & Cohort Floor Invariants'
     expect(res.error).toContain('CIRCUIT_BREAKER_DISABLED');
   });
 
-  it('enforces Decision #66: Consensus shift event redacted pre-kickoff even if cohort >= 3', () => {
+  it('exposes consensus shift event pre-kickoff without secrecy redaction (P41-POOL-VISIBILITY-2026-10-19-08)', () => {
     const eventWithValidCohort: FeedEventPayload = {
       ...baseEvent,
       cohortSize: 5,
@@ -38,12 +38,11 @@ describe('Phase 17 Milestone 17.3: Live Activity Feed & Cohort Floor Invariants'
     });
 
     expect(res.success).toBe(true);
-    expect(res.stream?.[0].isRedacted).toBe(true);
-    expect(res.stream?.[0].message).toBe('[REDACTED: PRE-KICKOFF CONTENT]');
-    expect(res.stream?.[0].redactionReason).toContain('PRE_KICKOFF_MASK');
+    expect(res.stream?.[0].isRedacted).toBe(false);
+    expect(res.stream?.[0].message).toBe('Shift toward HOME team observed');
   });
 
-  it('enforces Anti-Peeking Cohort Floor invariant (N >= 3) on locked games', () => {
+  it('exposes live feed events immediately for small cohorts (1-2) without secrecy redaction', () => {
     const res = Phase17LiveFeedService.getFeedStream([baseEvent], { game_456: true }, {
       poolId: 'pool_123',
       flagStoreValue: true,
@@ -51,9 +50,8 @@ describe('Phase 17 Milestone 17.3: Live Activity Feed & Cohort Floor Invariants'
     });
 
     expect(res.success).toBe(true);
-    expect(res.stream?.[0].isRedacted).toBe(true);
-    expect(res.stream?.[0].message).toBe('[REDACTED: INSUFFICIENT COHORT]');
-    expect(res.stream?.[0].redactionReason).toContain('ANTI_PEEKING_COHORT_FLOOR_VIOLATION');
+    expect(res.stream?.[0].isRedacted).toBe(false);
+    expect(res.stream?.[0].message).toBe('Shift toward HOME team observed');
   });
 
   it('unmasks event telemetry with exact Prisma.Decimal delta when game is locked and N >= 3', () => {

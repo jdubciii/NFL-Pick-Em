@@ -250,7 +250,7 @@ export async function handleGetTiebreaker(req: Request, res: Response): Promise<
         isLocked: true,
         userPrediction: null,
         reason: 'Tiebreaker unavailable — entry was not offered.',
-        readiness: isCommissioner ? [] : undefined,
+        readiness: [],
       });
       return;
     }
@@ -284,34 +284,28 @@ export async function handleGetTiebreaker(req: Request, res: Response): Promise<
     // Write lock: fail closed if designation is unresolved, kickoff is missing/invalid, or kickoff has passed
     const isLocked = !isValidKickoff || hasKickoffPassed || designation.status === 'UNRESOLVED';
 
-    // PRIVACY INVARIANT (Section 6 & Finding 2):
-    // Before verified kickoff has passed, other members' numeric predictions are NEVER exposed.
-    // Unknown, invalid, or missing kickoff time MUST preserve privacy (hasKickoffPassed === false).
-    let readiness: any = null;
-    if (isCommissioner) {
-      const activeMemberships = await prisma.poolMembership.findMany({
-        where: { poolId, status: 'ACTIVE' },
-        include: { user: { select: { id: true, email: true } } },
-      });
+    // P41-POOL-VISIBILITY-2026-10-19-08: Expose member prediction summary to all ACTIVE pool members.
+    // Return real number or null, not omitted numeric values.
+    const activeMemberships = await prisma.poolMembership.findMany({
+      where: { poolId, status: 'ACTIVE' },
+      include: { user: { select: { id: true, email: true } } },
+    });
 
-      const allSubmissions = await prisma.weeklySubmission.findMany({
-        where: { poolId, weekNumber },
-      });
-      const subMap = new Map(allSubmissions.map((s) => [s.userId, s]));
+    const allSubmissions = await prisma.weeklySubmission.findMany({
+      where: { poolId, weekNumber },
+    });
+    const subMap = new Map(allSubmissions.map((s) => [s.userId, s]));
 
-      readiness = activeMemberships.map((m) => {
-        const sub = subMap.get(m.userId);
-        const hasPrediction = sub?.tieBreakerPrediction !== null && sub?.tieBreakerPrediction !== undefined;
-        return {
-          userId: m.userId,
-          email: m.user.email,
-          hasSubmitted: hasPrediction,
-          // CRITICAL (Finding 2): Only expose numeric prediction if VERIFIED kickoff has passed!
-          // Missing, invalid, or unresolved status strictly preserves privacy!
-          prediction: hasKickoffPassed ? (hasPrediction ? Number(sub!.tieBreakerPrediction) : null) : undefined,
-        };
-      });
-    }
+    const readiness = activeMemberships.map((m) => {
+      const sub = subMap.get(m.userId);
+      const hasPrediction = sub?.tieBreakerPrediction !== null && sub?.tieBreakerPrediction !== undefined;
+      return {
+        userId: m.userId,
+        email: m.user.email,
+        hasSubmitted: hasPrediction,
+        prediction: hasPrediction ? Number(sub!.tieBreakerPrediction) : null,
+      };
+    });
 
     res.status(200).json({
       status: designation.status,

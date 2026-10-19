@@ -25,14 +25,12 @@ describe('Sprint 3 UX Enhancements & Invariants', () => {
     expect(getSimulationContainerStyles(false)).toContain('border-slate-700');
   });
 
-  it('guarantees compact lock indicator preserves anti-peeking tooltip copy', () => {
-    const formatInlineLockNotice = (hiddenCount: number) => {
-      return hiddenCount > 0
-        ? `Anti-Peeking Active (${hiddenCount} games locked until kickoff)`
-        : 'All picks revealed';
+  it('guarantees open pool visibility formatting (P41-POOL-VISIBILITY-2026-10-19-08)', () => {
+    const formatInlineLockNotice = (_hiddenCount: number) => {
+      return 'All picks revealed';
     };
 
-    expect(formatInlineLockNotice(8)).toBe('Anti-Peeking Active (8 games locked until kickoff)');
+    expect(formatInlineLockNotice(8)).toBe('All picks revealed');
     expect(formatInlineLockNotice(0)).toBe('All picks revealed');
   });
 });

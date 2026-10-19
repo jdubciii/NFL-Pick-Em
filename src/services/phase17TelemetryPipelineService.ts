@@ -58,34 +58,18 @@ export class Phase17TelemetryPipelineService {
     const isLocked = this.evaluateGameLock(params.kickoffTime, params.currentTime);
     const cohortSize = params.picks.length;
 
-    // Decision #66: Unlocked games hide collective distribution if hide_picks_until_kickoff applies
-    if (!isLocked) {
+    // Under P41-POOL-VISIBILITY-2026-10-19-08: Pre-kickoff and cohort floor secrecy removed.
+    // Cohorts of 1-2 are exposed; empty cohorts (size === 0) render empty distribution.
+    if (cohortSize === 0) {
       return {
         success: true,
         data: {
           gameId: params.gameId,
-          cohortSize,
+          cohortSize: 0,
           homePicks: 0,
           awayPicks: 0,
           sweatIndex: new Prisma.Decimal('0.00'),
-          isMasked: true,
-          maskReason: 'PRE_KICKOFF_MASK: Individual game has not kicked off yet',
-        },
-      };
-    }
-
-    // Anti-Peeking Cohort Floor invariant: N >= 3 required to expose distribution
-    if (cohortSize < this.MIN_COHORT_FLOOR) {
-      return {
-        success: true,
-        data: {
-          gameId: params.gameId,
-          cohortSize,
-          homePicks: 0,
-          awayPicks: 0,
-          sweatIndex: new Prisma.Decimal('0.00'),
-          isMasked: true,
-          maskReason: 'ANTI_PEEKING_COHORT_FLOOR_VIOLATION: Cohort size under floor threshold of 3',
+          isMasked: false,
         },
       };
     }

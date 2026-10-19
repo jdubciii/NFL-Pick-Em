@@ -427,26 +427,11 @@ export async function handlePoolWrapUpPreview(req: Request, res: Response): Prom
   try {
     const preview = await wrapUpEngine.previewWeeklyWrapUpForPool(poolId, weekNumber, { season, seasonType });
 
-    // Pre-kickoff privacy gating (Contract & Finding 1):
-    // Missing, invalid, or pre-kickoff deadlines strictly omit other members' numeric predictions!
-    const kickoffTime = preview.designatedGame?.kickoffTime ? new Date(preview.designatedGame.kickoffTime) : null;
-    const isValidKickoff = Boolean(kickoffTime && !isNaN(kickoffTime.getTime()));
-    const hasKickoffPassed = isValidKickoff && new Date() >= kickoffTime!;
-
-    const sanitizedStandings = preview.projectedStandings?.map((entry: any) => {
-      const isSelf = entry.userId === actorId;
-      return {
-        ...entry,
-        tieBreakerPrediction: (hasKickoffPassed || isSelf) ? entry.tieBreakerPrediction : undefined,
-      };
-    });
-
+    // Under P41-POOL-VISIBILITY-2026-10-19-08: All saved picks/predictions are immediately visible
+    // to active members of the same pool. No kickoff/self sanitization.
     res.status(200).json({
       status: preview.readyToSettle ? 'READY' : 'NOT_READY',
-      preview: {
-        ...preview,
-        projectedStandings: sanitizedStandings,
-      },
+      preview,
     });
   } catch (error: any) {
     console.error('Error generating wrap-up preview:', error);

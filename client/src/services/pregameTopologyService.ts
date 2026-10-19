@@ -71,7 +71,7 @@ export function computeSlateTopology(
   weekNumber: number,
   userPicks: UserSubmittedPick[],
   games: RawGameDefinition[],
-  cohortFloor: number = 3
+  cohortFloor: number = 1
 ): SlateTopologyResult {
   const distinctUsers = new Set(userPicks.map((p) => p.userId));
   const lockedCount = distinctUsers.size;

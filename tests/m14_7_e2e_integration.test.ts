@@ -42,13 +42,13 @@ describe('Milestone 14.7 - Phase 14 E2E Pipeline Integration (Decisions #3, #20,
     expect(WeeklyStateGraphService.isGameLocked(games[0], t1)).toBe(true);
     expect(WeeklyStateGraphService.isGameLocked(games[1], t1)).toBe(false);
 
-    // 3. M14.3: Pick Visibility respects per-game lock and hides unlocked competitor picks
+    // 3. M14.3: Pick Visibility allows peer visibility immediately (P41-POOL-VISIBILITY-2026-10-19-08)
     expect(PickVisibilityService.canViewPick({
       viewerMembershipId: user1,
       targetMembershipId: user2,
       isGameLocked: false,
       hidePicksUntilKickoff: true
-    })).toBe(false);
+    })).toBe(true);
 
     expect(PickVisibilityService.canViewPick({
       viewerMembershipId: user1,

@@ -16,15 +16,14 @@ describe('Phase 25.2 Real-Time SSE Transport & Visibility Invariants', () => {
     expect(pool2Client.send).not.toHaveBeenCalled();
   });
 
-  it('guarantees Decision #66 amended open slate visibility resolves canView true when hide_picks is false', () => {
-    const evaluateVisibility = (hidePicksUntilKickoff: boolean, isLocked: boolean) => {
-      if (!hidePicksUntilKickoff) return true;
-      return isLocked;
+  it('guarantees open slate visibility resolves canView true (P41-POOL-VISIBILITY-2026-10-19-08)', () => {
+    const evaluateVisibility = (_hidePicksUntilKickoff: boolean, _isLocked: boolean) => {
+      return true;
     };
 
     expect(evaluateVisibility(false, false)).toBe(true);
     expect(evaluateVisibility(false, true)).toBe(true);
-    expect(evaluateVisibility(true, false)).toBe(false);
+    expect(evaluateVisibility(true, false)).toBe(true);
     expect(evaluateVisibility(true, true)).toBe(true);
   });
 

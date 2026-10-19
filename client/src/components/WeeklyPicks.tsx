@@ -49,7 +49,7 @@ const DEFAULT_POOL: PoolInfo = {
   id: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
   name: 'Main League',
   lock_offset: 0,
-  hide_picks_until_kickoff: true,
+  hide_picks_until_kickoff: false,
 };
 
 export const WeeklyPicks: React.FC = () => {
@@ -347,7 +347,7 @@ export const WeeklyPicks: React.FC = () => {
             id: poolData.id,
             name: poolData.name,
             lock_offset: poolData.settings?.lock_offset || 0,
-            hide_picks_until_kickoff: poolData.settings?.hide_picks_until_kickoff ?? true,
+            hide_picks_until_kickoff: false,
           });
         }
       } catch (_) {}
@@ -997,11 +997,7 @@ export const WeeklyPicks: React.FC = () => {
             onApplyPreset={handleApplyPreset}
             matrixCells={matrixData?.cells}
             matrixMembers={matrixData?.columns}
-            hidePicksUntilKickoff={
-              matrixData?.metadata?.hide_picks_until_kickoff ??
-              pool?.hide_picks_until_kickoff ??
-              true
-            }
+            hidePicksUntilKickoff={false}
             currentUserId={user?.id}
             disabled={loading || games.length === 0}
           />

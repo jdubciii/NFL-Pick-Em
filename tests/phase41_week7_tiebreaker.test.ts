@@ -757,8 +757,8 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
     });
   });
 
-  describe('5. Pre-Kickoff Privacy Invariants Across All Surfaces (Finding 2)', () => {
-    it('masks all other members numeric predictions before kickoff in commissioner readiness view', async () => {
+  describe('5. Member Readiness Summary Under Immediate Pool Visibility (P41-POOL-VISIBILITY-2026-10-19-08)', () => {
+    it('exposes real numeric predictions in member readiness view before kickoff', async () => {
       vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
       vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
         poolId: POOL_ID,
@@ -793,12 +793,12 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(m1.hasSubmitted).toBe(true);
       expect(m2.hasSubmitted).toBe(false);
 
-      // PRIVACY: prediction property must be undefined prior to kickoff!
-      expect(m1.prediction).toBeUndefined();
-      expect(m2.prediction).toBeUndefined();
+      // IMMEDIATE VISIBILITY: real numeric prediction exposed, missing is null
+      expect(m1.prediction).toBe(45.5);
+      expect(m2.prediction).toBeNull();
     });
 
-    it('strictly preserves privacy when kickoff time is missing (unknown time must not leak guesses)', async () => {
+    it('exposes stored predictions while denying writes (isLocked: true) when kickoff time is missing', async () => {
       const missingKickoffGames = [
         {
           id: 'g-w7-nokickoff',
@@ -836,13 +836,13 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       // Fail closed: write is locked
       expect(data.isLocked).toBe(true);
       expect(data.kickoffTime).toBeNull();
-      // CRITICAL (Finding 2): Unknown time MUST preserve privacy!
+      // Stored value remains readable under immediate visibility
       const m1 = data.readiness.find((r: any) => r.userId === MEMBER_1_ID);
       expect(m1.hasSubmitted).toBe(true);
-      expect(m1.prediction).toBeUndefined();
+      expect(m1.prediction).toBe(45.5);
     });
 
-    it('strictly preserves privacy when kickoff time is an invalid string', async () => {
+    it('exposes stored predictions while denying writes (isLocked: true) when kickoff time is an invalid string', async () => {
       const invalidKickoffGames = [
         {
           id: 'g-w7-badkickoff',
@@ -881,10 +881,10 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(data.kickoffTime).toBeNull();
       const m1 = data.readiness.find((r: any) => r.userId === MEMBER_1_ID);
       expect(m1.hasSubmitted).toBe(true);
-      expect(m1.prediction).toBeUndefined();
+      expect(m1.prediction).toBe(45.5);
     });
 
-    it('strictly preserves privacy when designation is UNRESOLVED', async () => {
+    it('exposes stored predictions while denying writes (isLocked: true) when designation is UNRESOLVED', async () => {
       vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
       vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
         poolId: POOL_ID,
@@ -914,7 +914,7 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(data.isLocked).toBe(true);
       const m1 = data.readiness.find((r: any) => r.userId === MEMBER_1_ID);
       expect(m1.hasSubmitted).toBe(true);
-      expect(m1.prediction).toBeUndefined();
+      expect(m1.prediction).toBe(45.5);
     });
   });
 
@@ -2232,7 +2232,7 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(data.rows).toHaveLength(1);
       expect(data.rows[0].external_game_id).toBe('401873010');
       expect(data.summary[MEMBER_1_ID].tiebreaker_guess).toBe(45);
-      expect(data.summary[MEMBER_2_ID].tiebreaker_guess).toBeNull(); // competitor masked
+      expect(data.summary[MEMBER_2_ID].tiebreaker_guess).toBe(52); // competitor visible under immediate visibility
       // Empirically verifies caller JWT propagation into createClient global config without prebuilt client injection
       expect(mockSupabaseCreateClient).toHaveBeenCalledWith(
         expect.any(String),
@@ -2764,7 +2764,7 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
   });
 
   describe('13. Wrap-up Preview Pre-Kickoff Privacy & Strict Tenant Boundary (Findings 1 & 2)', () => {
-    it('allows active pool member to fetch wrap-up preview, strictly omitting other members predictions before kickoff', async () => {
+    it('allows active pool member to fetch wrap-up preview, revealing other members predictions immediately before kickoff (P41-POOL-VISIBILITY-2026-10-19-08)', async () => {
       const mockPoolWithMembers = {
         ...mockPool,
         memberships: [
@@ -2799,8 +2799,8 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(m2).toBeDefined();
       // Caller can see their own prediction:
       expect(m1.tieBreakerPrediction).toBe(45);
-      // Other member's prediction is omitted (undefined / not in JSON object):
-      expect(m2.tieBreakerPrediction).toBeUndefined();
+      // Other member's prediction is immediately visible under P41-POOL-VISIBILITY-2026-10-19-08:
+      expect(m2.tieBreakerPrediction).toBe(52);
     });
 
     it('reveals other members predictions in wrap-up preview once kickoff has passed', async () => {
@@ -3020,7 +3020,7 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(previewSpy).not.toHaveBeenCalled();
     });
 
-    it('strictly masks other members predictions in wrap-up preview when designated kickoffTime is missing or invalid (Finding 1)', async () => {
+    it('exposes other members predictions in wrap-up preview even when designated kickoffTime is missing or invalid (P41-POOL-VISIBILITY-2026-10-19-08)', async () => {
       const mockPoolWithMembers = {
         ...mockPool,
         memberships: [
@@ -3060,7 +3060,7 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       const m1Missing = dataMissing.preview.projectedStandings.find((s: any) => s.userId === MEMBER_1_ID);
       const m2Missing = dataMissing.preview.projectedStandings.find((s: any) => s.userId === MEMBER_2_ID);
       expect(m1Missing.tieBreakerPrediction).toBe(45);
-      expect(m2Missing.tieBreakerPrediction).toBeUndefined(); // Masked!
+      expect(m2Missing.tieBreakerPrediction).toBe(52); // Immediately visible!
 
       // Case B: Invalid kickoffTime string
       vi.spyOn(wrapUpEngine, 'previewWeeklyWrapUpForPool').mockResolvedValueOnce({
@@ -3091,7 +3091,7 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       const m1Invalid = dataInvalid.preview.projectedStandings.find((s: any) => s.userId === MEMBER_1_ID);
       const m2Invalid = dataInvalid.preview.projectedStandings.find((s: any) => s.userId === MEMBER_2_ID);
       expect(m1Invalid.tieBreakerPrediction).toBe(45);
-      expect(m2Invalid.tieBreakerPrediction).toBeUndefined(); // Masked!
+      expect(m2Invalid.tieBreakerPrediction).toBe(52); // Immediately visible!
     });
 
     it('enforces non-overrideable Week 6 2026 tiebreaker exclusion in preview and mock execution with conflicting predictions proving zero ranking or penalty effects (Finding 2)', async () => {
@@ -3652,7 +3652,7 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
   });
 
   describe('16. Matrix Privacy Clock via Authoritative Canonical Slate Helper (Finding 10)', () => {
-    it('uses canonical slate helper to resolve games and masks competitor tiebreaker predictions prior to kickoff', async () => {
+    it('uses canonical slate helper to resolve games and reveals competitor tiebreaker predictions immediately to active pool members prior to kickoff (P41-POOL-VISIBILITY-2026-10-19-08)', async () => {
       const mockPoolWithMembers = {
         ...mockPool,
         memberships: [
@@ -3697,11 +3697,11 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(data.rows).toHaveLength(2);
       expect(data.rows[0].external_game_id).toBe('401873010');
 
-      // Pre-kickoff privacy verification:
+      // Pre-kickoff immediate pool visibility:
       // Requesting user (MEMBER_1_ID) sees their own guess:
       expect(data.summary[MEMBER_1_ID].tiebreaker_guess).toBe(45);
-      // Other member (MEMBER_2_ID) guess is strictly masked to null:
-      expect(data.summary[MEMBER_2_ID].tiebreaker_guess).toBeNull();
+      // Other member (MEMBER_2_ID) guess is immediately visible:
+      expect(data.summary[MEMBER_2_ID].tiebreaker_guess).toBe(52);
     });
 
     it('reveals competitor tiebreaker predictions in matrix once designated game kickoff has passed', async () => {
@@ -3772,7 +3772,7 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(data.summary[MEMBER_2_ID].tiebreaker_guess).toBe(52);
     });
 
-    it('strictly purges synthetic fallback in matrix and masks competitor guesses when canonical source fails despite old synthetic matching game in database (Finding 2)', async () => {
+    it('strictly purges synthetic fallback in matrix while returning correctly scoped stored predictions independently of reveal timing (Finding 2)', async () => {
       // 1. Force canonical sources to fail
       vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue(null);
       setCallerBoundSupabaseClientForTesting(null);
@@ -3834,9 +3834,9 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       // Zero synthetic fallback: matrix rows must be empty when canonical lookup fails
       expect(data.rows).toEqual([]);
 
-      // Competitor prediction MUST remain masked to null (never released by unapproved synthetic kickoff data)
+      // Stored member predictions are returned independently of reveal timing under immediate visibility
       expect(data.summary[MEMBER_1_ID].tiebreaker_guess).toBe(45);
-      expect(data.summary[MEMBER_2_ID].tiebreaker_guess).toBeNull();
+      expect(data.summary[MEMBER_2_ID].tiebreaker_guess).toBe(52);
     });
 
     it('reveals competitor tiebreaker predictions in matrix at the EXACT kickoff timestamp (now.getTime() === designatedKickoff.getTime()) (Finding 10)', async () => {
@@ -3916,6 +3916,224 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe('17. Route-Level Immediate Visibility Invariants Across Settings & Tenancy (P41-POOL-VISIBILITY-2026-10-19-08)', () => {
+    const OTHER_POOL_ID = 'e9999999-9999-4999-a999-999999999999';
+    const OUTSIDER_USER_ID = 'f8888888-8888-4888-a888-888888888888';
+
+    it.each([
+      { settingLabel: 'legacy hide setting true', hideSetting: true },
+      { settingLabel: 'legacy hide setting false', hideSetting: false },
+      { settingLabel: 'legacy hide setting absent', hideSetting: undefined },
+    ])('allows ordinary ACTIVE member to view another member saved unfinalized pick and tiebreaker guess in Matrix under $settingLabel', async ({ hideSetting }) => {
+      const mockPoolWithMembers = {
+        ...mockPool,
+        ...(hideSetting !== undefined ? { hidePicksUntilKickoff: hideSetting } : {}),
+        memberships: [
+          {
+            userId: MEMBER_1_ID,
+            status: 'ACTIVE',
+            user: { id: MEMBER_1_ID, email: 'member1@example.com' },
+            stat: { totalShotsDrank: 4 },
+          },
+          {
+            userId: MEMBER_2_ID,
+            status: 'ACTIVE',
+            user: { id: MEMBER_2_ID, email: 'member2@example.com' },
+            stat: { totalShotsDrank: 2 },
+          },
+        ],
+      };
+
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPoolWithMembers as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: MEMBER_1_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(mockWeek7Games as any);
+      // MEMBER_2 has saved pick for Game 1, unfinalized
+      vi.spyOn(prisma.pick, 'findMany').mockResolvedValue([
+        {
+          id: 'p-1',
+          userId: MEMBER_2_ID,
+          poolId: POOL_ID,
+          gameId: 'g-w7-det',
+          selectedTeamId: 'DET',
+        },
+        // Cross-pool pick should NEVER leak
+        {
+          id: 'p-cross',
+          userId: OUTSIDER_USER_ID,
+          poolId: OTHER_POOL_ID,
+          gameId: 'g-w7-det',
+          selectedTeamId: 'MIN',
+        },
+      ] as any);
+      // MEMBER_2 has tiebreaker prediction 0 (zero remains zero, not null)
+      // MEMBER_1 has missing tiebreaker prediction (missing remains null)
+      vi.spyOn(prisma.weeklySubmission, 'findMany').mockResolvedValue([
+        { userId: MEMBER_2_ID, weekNumber: 7, tieBreakerPrediction: 0.0, isFinalized: false },
+      ] as any);
+
+      const token = createAuthToken(MEMBER_1_ID);
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/matrix?week=7`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+
+      // Compatibility metadata reflects open pool visibility
+      expect(data.metadata.hide_picks_until_kickoff).toBe(false);
+
+      // Verify cells: MEMBER_2 saved pick is visible immediately, is_masked is false
+      const game1Cells = data.cells['g-w7-det'];
+      expect(game1Cells).toBeDefined();
+      expect(game1Cells[MEMBER_2_ID]).toBeDefined();
+      expect(game1Cells[MEMBER_2_ID].selected_team_id).toBe('DET');
+      expect(game1Cells[MEMBER_2_ID].is_masked).toBe(false);
+
+      // No cross-pool leak: OUTSIDER_USER_ID is not present in columns or cells
+      expect(data.columns.some((c: any) => c.user_id === OUTSIDER_USER_ID)).toBe(false);
+      expect(game1Cells[OUTSIDER_USER_ID]).toBeUndefined();
+
+      // Zero remains zero: MEMBER_2 guess of 0 is numeric 0
+      expect(data.summary[MEMBER_2_ID].tiebreaker_guess).toBe(0);
+      // Missing remains null: MEMBER_1 has no submission, guess is null
+      expect(data.summary[MEMBER_1_ID].tiebreaker_guess).toBeNull();
+    });
+
+    it('exposes member prediction readiness summary to ordinary ACTIVE members on GET /api/pools/:pool_id/tiebreaker', async () => {
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
+      // Ordinary active member (NOT admin)
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: MEMBER_1_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(mockWeek7Games as any);
+      vi.spyOn(prisma.weeklySubmission, 'findUnique').mockResolvedValue(null);
+
+      vi.spyOn(prisma.poolMembership, 'findMany').mockResolvedValue([
+        { poolId: POOL_ID, userId: MEMBER_1_ID, status: 'ACTIVE', user: { id: MEMBER_1_ID, email: 'm1@example.com' } },
+        { poolId: POOL_ID, userId: MEMBER_2_ID, status: 'ACTIVE', user: { id: MEMBER_2_ID, email: 'm2@example.com' } },
+      ] as any);
+
+      vi.spyOn(prisma.weeklySubmission, 'findMany').mockResolvedValue([
+        { poolId: POOL_ID, userId: MEMBER_1_ID, weekNumber: 7, tieBreakerPrediction: 0.0 },
+        { poolId: POOL_ID, userId: MEMBER_2_ID, weekNumber: 7, tieBreakerPrediction: 52.0 },
+      ] as any);
+
+      const token = createAuthToken(MEMBER_1_ID); // Ordinary member token
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker?week=7&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.readiness).toBeDefined();
+      expect(data.readiness).toHaveLength(2);
+
+      const m1 = data.readiness.find((r: any) => r.userId === MEMBER_1_ID);
+      const m2 = data.readiness.find((r: any) => r.userId === MEMBER_2_ID);
+
+      // Ordinary active member sees peer predictions: 0 remains 0, 52 is 52
+      expect(m1.prediction).toBe(0);
+      expect(m1.hasSubmitted).toBe(true);
+      expect(m2.prediction).toBe(52);
+      expect(m2.hasSubmitted).toBe(true);
+    });
+
+    it('exposes predictions to ordinary ACTIVE member on both canonical preview aliases', async () => {
+      const mockPoolWithMembers = {
+        ...mockPool,
+        memberships: [
+          { userId: MEMBER_1_ID, status: 'ACTIVE' },
+          { userId: MEMBER_2_ID, status: 'ACTIVE' },
+        ],
+      };
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPoolWithMembers as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: MEMBER_1_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(mockWeek7Games as any);
+      vi.spyOn(prisma.pick, 'findMany').mockResolvedValue([]);
+      vi.spyOn(prisma.weeklySubmission, 'findMany').mockResolvedValue([
+        { userId: MEMBER_1_ID, weekNumber: 7, tieBreakerPrediction: 45.0, isFinalized: false },
+        { userId: MEMBER_2_ID, weekNumber: 7, tieBreakerPrediction: 52.0, isFinalized: false },
+      ] as any);
+      (vi.spyOn(prisma, '$queryRaw') as any).mockResolvedValue([{ to_regclass: 'public.weekly_wrapups' }]);
+      (vi.spyOn(prisma, '$queryRawUnsafe') as any).mockResolvedValue([]);
+
+      const token = createAuthToken(MEMBER_1_ID);
+
+      // Alias 1: /api/pools/:pool_id/wrap-up/preview
+      const res1 = await fetch(`${baseUrl}/api/pools/${POOL_ID}/wrap-up/preview?week=7&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(res1.status).toBe(200);
+      const data1 = await res1.json();
+      expect(data1.preview.projectedStandings.find((s: any) => s.userId === MEMBER_1_ID).tieBreakerPrediction).toBe(45);
+      expect(data1.preview.projectedStandings.find((s: any) => s.userId === MEMBER_2_ID).tieBreakerPrediction).toBe(52);
+
+      // Alias 2: /api/pools/:pool_id/ops/wrap-up/preview
+      const res2 = await fetch(`${baseUrl}/api/pools/${POOL_ID}/ops/wrap-up/preview?week=7&season=2026`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(res2.status).toBe(200);
+      const data2 = await res2.json();
+      expect(data2.preview.projectedStandings.find((s: any) => s.userId === MEMBER_1_ID).tieBreakerPrediction).toBe(45);
+      expect(data2.preview.projectedStandings.find((s: any) => s.userId === MEMBER_2_ID).tieBreakerPrediction).toBe(52);
+    });
+
+    it('preserves read-only GET invariant: GET requests do not mutate database records', async () => {
+      const mockPoolWithMembers = {
+        ...mockPool,
+        memberships: [
+          {
+            userId: MEMBER_1_ID,
+            status: 'ACTIVE',
+            user: { id: MEMBER_1_ID, email: 'member1@example.com' },
+            stat: { totalShotsDrank: 4 },
+          },
+          {
+            userId: MEMBER_2_ID,
+            status: 'ACTIVE',
+            user: { id: MEMBER_2_ID, email: 'member2@example.com' },
+            stat: { totalShotsDrank: 2 },
+          },
+        ],
+      };
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPoolWithMembers as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: MEMBER_1_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(mockWeek7Games as any);
+      vi.spyOn(prisma.pick, 'findMany').mockResolvedValue([]);
+      vi.spyOn(prisma.weeklySubmission, 'findMany').mockResolvedValue([
+        { userId: MEMBER_1_ID, weekNumber: 7, tieBreakerPrediction: 45.0, isFinalized: false },
+      ] as any);
+
+      const updateSpy = vi.spyOn(prisma.pool, 'update');
+      const createSpy = vi.spyOn(prisma.pick, 'create');
+      const updateSubSpy = vi.spyOn(prisma.weeklySubmission, 'update');
+
+      const token = createAuthToken(MEMBER_1_ID);
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/matrix?week=7`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(res.status).toBe(200);
+
+      expect(updateSpy).not.toHaveBeenCalled();
+      expect(createSpy).not.toHaveBeenCalled();
+      expect(updateSubSpy).not.toHaveBeenCalled();
     });
   });
 });

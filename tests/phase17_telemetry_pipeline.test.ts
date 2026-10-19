@@ -17,7 +17,7 @@ describe('Phase 17 Milestone 17.2: Telemetry UI & Sweat Radar Invariants', () =>
     expect(res.error).toContain('CIRCUIT_BREAKER_DISABLED');
   });
 
-  it('enforces Decision #66: Pre-kickoff game masks distribution regardless of slate state', () => {
+  it('calculates unmasked distribution pre-kickoff under open pool visibility (P41-POOL-VISIBILITY-2026-10-19-08)', () => {
     const picks: PickTelemetryInput[] = [
       { membershipId: 'm1', gameId: 'g1', selectedTeam: 'HOME', submittedAt: new Date() },
       { membershipId: 'm2', gameId: 'g1', selectedTeam: 'HOME', submittedAt: new Date() },
@@ -35,12 +35,12 @@ describe('Phase 17 Milestone 17.2: Telemetry UI & Sweat Radar Invariants', () =>
     });
 
     expect(res.success).toBe(true);
-    expect(res.data?.isMasked).toBe(true);
-    expect(res.data?.maskReason).toContain('PRE_KICKOFF_MASK');
-    expect(res.data?.sweatIndex.toFixed(2)).toBe('0.00');
+    expect(res.data?.isMasked).toBe(false);
+    expect(res.data?.cohortSize).toBe(4);
+    expect(res.data?.sweatIndex.toFixed(2)).toBe('1.00');
   });
 
-  it('enforces Anti-Peeking Cohort Floor invariant (N >= 3) on post-kickoff games', () => {
+  it('calculates unmasked distribution for small cohorts (1-2) under open pool visibility', () => {
     const subFloorPicks: PickTelemetryInput[] = [
       { membershipId: 'm1', gameId: 'g1', selectedTeam: 'HOME', submittedAt: new Date() },
       { membershipId: 'm2', gameId: 'g1', selectedTeam: 'AWAY', submittedAt: new Date() },
@@ -56,8 +56,7 @@ describe('Phase 17 Milestone 17.2: Telemetry UI & Sweat Radar Invariants', () =>
     });
 
     expect(res.success).toBe(true);
-    expect(res.data?.isMasked).toBe(true);
-    expect(res.data?.maskReason).toContain('ANTI_PEEKING_COHORT_FLOOR_VIOLATION');
+    expect(res.data?.isMasked).toBe(false);
     expect(res.data?.cohortSize).toBe(2);
   });
 

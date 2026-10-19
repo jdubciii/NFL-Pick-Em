@@ -37,32 +37,8 @@ export class Phase17LiveFeedService {
     event: FeedEventPayload,
     isGameLocked: boolean
   ): FeedEventPayload {
-    // If event pertains to a game and game is not locked, redact pick/consensus telemetry
-    if (event.gameId && !isGameLocked && event.type === 'CONSENSUS_SHIFT') {
-      return {
-        ...event,
-        message: '[REDACTED: PRE-KICKOFF CONTENT]',
-        metricDelta: undefined,
-        isRedacted: true,
-        redactionReason: 'PRE_KICKOFF_MASK: Event hidden until kickoff per Decision #66',
-      };
-    }
-
-    // If consensus or cohort event has cohort under minimum threshold, redact
-    if (
-      event.type === 'CONSENSUS_SHIFT' &&
-      event.cohortSize !== undefined &&
-      event.cohortSize < this.MIN_COHORT_FLOOR
-    ) {
-      return {
-        ...event,
-        message: '[REDACTED: INSUFFICIENT COHORT]',
-        metricDelta: undefined,
-        isRedacted: true,
-        redactionReason: 'ANTI_PEEKING_COHORT_FLOOR_VIOLATION: Event hidden to prevent algebraic pick deduction',
-      };
-    }
-
+    // Under P41-POOL-VISIBILITY-2026-10-19-08: All saved same-pool telemetry/consensus visible immediately.
+    // Kickoff secrecy masks and cohort suppression removed.
     return {
       ...event,
       isRedacted: false,

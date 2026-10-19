@@ -342,7 +342,7 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       });
     });
 
-    it('never exposes numeric predictions of other members to commissioner before kickoff', async () => {
+    it('exposes numeric predictions of members in readiness summary before kickoff under immediate pool visibility (P41-POOL-VISIBILITY-2026-10-19-08)', async () => {
       vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
       vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
         poolId: POOL_ID,
@@ -378,9 +378,9 @@ describe('Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract', () => {
       expect(m1.hasSubmitted).toBe(true);
       expect(m2.hasSubmitted).toBe(false);
 
-      // PRIVACY INVARIANT: prediction value must be undefined/unrevealed before kickoff!
-      expect(m1.prediction).toBeUndefined();
-      expect(m2.prediction).toBeUndefined();
+      // IMMEDIATE POOL VISIBILITY: prediction value is exposed (45.5), missing is null
+      expect(m1.prediction).toBe(45.5);
+      expect(m2.prediction).toBeNull();
     });
   });
 

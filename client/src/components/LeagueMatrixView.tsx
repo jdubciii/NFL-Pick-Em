@@ -153,7 +153,6 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
     if (!matrixData) return [];
     return matrixData.rows.map((game) => {
       const isLocked =
-        !matrixData.metadata.hide_picks_until_kickoff ||
         game.status !== 'SCHEDULED' ||
         new Date(game.kickoff_time) <= new Date();
 
@@ -419,9 +418,6 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
 
       const cellVals = matrixData.columns.map((col) => {
         const cell = matrixData.cells[game.game_id]?.[col.user_id];
-        if (cell?.is_masked) {
-          return '[LOCKED]'.padEnd(12);
-        }
         if (!cell?.selected_team_id) {
           return '—'.padEnd(12);
         }
@@ -500,7 +496,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
               </p>
             </div>
             <div className="text-right text-xs text-gray-700">
-              <span>Anti-Peeking: {matrixData.metadata.hide_picks_until_kickoff ? 'Active' : 'Open Slate'}</span>
+              <span>Visibility: Open Pool</span>
             </div>
           </div>
         </div>
@@ -522,7 +518,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
                   </span>
                 </h1>
                 <p className="text-xs text-slate-400">
-                  Full league spreadsheet with live anti-peeking masking & precision scoring
+                  Full league spreadsheet with live open pool visibility & precision scoring
                 </p>
               </div>
             </div>
@@ -897,7 +893,6 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
                       {/* Pick Cells */}
                       {matrixData.columns.map((col) => {
                         const cell = matrixData.cells[game.game_id]?.[col.user_id];
-                        const isMasked = cell?.is_masked;
                         const pick = cell?.selected_team_id;
                         const isCorrect = cell?.is_correct;
                         const isSelf = col.user_id === currentUser?.id;
@@ -906,9 +901,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
                         let cellBackground = 'bg-transparent';
                         let textColor = 'text-slate-200';
 
-                        if (isMasked) {
-                          cellBackground = 'bg-slate-950/60 print:bg-gray-100 print:text-gray-600';
-                        } else if (isFinal) {
+                        if (isFinal) {
                           if (isCorrect === true) {
                             cellBackground = 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 print:bg-green-100 print:text-green-900';
                             textColor = 'text-emerald-300 font-black print:text-green-900';
@@ -927,17 +920,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
                             key={col.user_id}
                             className={`px-3 py-3 text-center border-r border-slate-800/60 transition-all print:border-black print:text-black ${cellBackground}`}
                           >
-                            {isMasked ? (
-                              <div
-                                className="flex items-center justify-center space-x-1 py-1 px-2 rounded-lg bg-slate-800/80 border border-slate-700/80 text-slate-400 print:border-none print:bg-transparent print:text-gray-600"
-                                title="Pick hidden until kickoff (Anti-Peeking)"
-                              >
-                                <Lock className="w-3.5 h-3.5 text-amber-400 print:hidden" />
-                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 print:text-gray-600">
-                                  Lock
-                                </span>
-                              </div>
-                            ) : pick ? (
+                            {pick ? (
                               <div className="flex items-center justify-center space-x-1.5">
                                 <span className={`text-xs font-black tracking-wide ${textColor}`}>
                                   {pick}

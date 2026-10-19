@@ -1,29 +1,28 @@
 export interface PickVisibilityContext {
   viewerMembershipId: string;
   targetMembershipId: string;
-  isGameLocked: boolean;
-  hidePicksUntilKickoff: boolean;
+  isGameLocked?: boolean;
+  hidePicksUntilKickoff?: boolean;
 }
 
 export class PickVisibilityService {
-  // Decision #66: Visibility strictly governed by per-game lock and pool policy
+  // Decision #20 tenant boundary & P41-POOL-VISIBILITY-2026-10-19-08 immediate pool visibility
   static canViewPick(ctx: PickVisibilityContext): boolean {
+    if (!ctx.viewerMembershipId || !ctx.targetMembershipId) {
+      return false;
+    }
+
     // 1. A member can always view their own pick
     if (ctx.viewerMembershipId === ctx.targetMembershipId) {
       return true;
     }
 
-    // 2. If the pool does not hide picks until kickoff, competitors are visible
-    if (!ctx.hidePicksUntilKickoff) {
-      return true;
-    }
-
-    // 3. Under hide_picks_until_kickoff, competitor picks are visible ONLY if game is locked
-    return ctx.isGameLocked;
+    // 2. Under P41-POOL-VISIBILITY-2026-10-19-08: All saved picks are immediately visible to fellow pool members
+    return true;
   }
 
-  // Anti-peeking cohort floor protection (Decision #66 / Finding 5.6)
-  static canExposeAggregate(cohortSize: number, minCohortFloor: number = 3): boolean {
+  // Active cohort exposure floor (cohort >= 1 permitted; 0 represents empty state)
+  static canExposeAggregate(cohortSize: number, minCohortFloor: number = 1): boolean {
     return cohortSize >= minCohortFloor;
   }
 

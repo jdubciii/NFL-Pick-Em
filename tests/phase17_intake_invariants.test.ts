@@ -10,10 +10,16 @@ describe('Phase 17 Invariant & Pre-Flight Suite', () => {
     expect(Phase17SocialTelemetryService.isFeatureEnabled(true)).toBe(true);
   });
 
-  it('enforces Anti-Peeking Cohort Floor invariant (N >= 3)', () => {
-    const subFloorResult = Phase17SocialTelemetryService.validateCohortFloor(2);
-    expect(subFloorResult.allowed).toBe(false);
-    expect(subFloorResult.reason).toContain('ANTI_PEEKING_COHORT_FLOOR_VIOLATION');
+  it('allows active cohort exposure floor (cohorts >= 1)', () => {
+    const emptyResult = Phase17SocialTelemetryService.validateCohortFloor(0);
+    expect(emptyResult.allowed).toBe(false);
+    expect(emptyResult.reason).toContain('INSUFFICIENT_COHORT');
+
+    const singleResult = Phase17SocialTelemetryService.validateCohortFloor(1);
+    expect(singleResult.allowed).toBe(true);
+
+    const smallCohortResult = Phase17SocialTelemetryService.validateCohortFloor(2);
+    expect(smallCohortResult.allowed).toBe(true);
 
     const exactFloorResult = Phase17SocialTelemetryService.validateCohortFloor(3);
     expect(exactFloorResult.allowed).toBe(true);

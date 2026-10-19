@@ -31,7 +31,7 @@ describe('Milestone 22.4: Multi-Tenant Leaderboard & Live Sweat Radar UI Contrac
     expect(anon).toMatch(/^AnonUser-[0-9a-f]{8}$/);
   });
 
-  it('enforces Decision #66 Anti-Peeking Cohort Floor (suppression when cohort < 3)', () => {
+  it('exposes distributions for small cohorts (cohort >= 1) under open pool visibility (P41-POOL-VISIBILITY-2026-10-19-08)', () => {
     const pastKickoff = new Date(Date.now() - 3600000).toISOString();
     const smallCohortMatchup: SweatRadarMatchup = {
       gameId: 'gm_small_cohort',
@@ -44,7 +44,7 @@ describe('Milestone 22.4: Multi-Tenant Leaderboard & Live Sweat Radar UI Contrac
       cohortSize: 2,
     };
 
-    expect(isDistributionHidden(smallCohortMatchup, Date.now())).toBe(true);
+    expect(isDistributionHidden(smallCohortMatchup, Date.now())).toBe(false);
 
     const validCohortMatchup: SweatRadarMatchup = {
       ...smallCohortMatchup,
@@ -53,7 +53,7 @@ describe('Milestone 22.4: Multi-Tenant Leaderboard & Live Sweat Radar UI Contrac
     expect(isDistributionHidden(validCohortMatchup, Date.now())).toBe(false);
   });
 
-  it('enforces pre-kickoff pick suppression regardless of cohort size', () => {
+  it('exposes pre-kickoff pick distributions under open pool visibility', () => {
     const futureKickoff = new Date(Date.now() + 7200000).toISOString();
     const preKickoffMatchup: SweatRadarMatchup = {
       gameId: 'gm_future',
@@ -66,7 +66,7 @@ describe('Milestone 22.4: Multi-Tenant Leaderboard & Live Sweat Radar UI Contrac
       cohortSize: 20,
     };
 
-    expect(isDistributionHidden(preKickoffMatchup, Date.now())).toBe(true);
+    expect(isDistributionHidden(preKickoffMatchup, Date.now())).toBe(false);
   });
 
   it('enforces Decision #62 fail-closed circuit breaker invariant (PRD_PHASE_22_UI_WIRING)', () => {

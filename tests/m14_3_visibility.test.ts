@@ -22,16 +22,16 @@ describe('Milestone 14.3 - Central Pick Visibility Service (Decisions #20, #66)'
       })).toBe(true);
     });
 
-    it('Competitor pick is hidden when policy is active and game is unlocked', () => {
+    it('Competitor pick is visible immediately to pool members before kickoff regardless of legacy hide policy (P41-POOL-VISIBILITY-2026-10-19-08)', () => {
       expect(PickVisibilityService.canViewPick({
         viewerMembershipId: viewer,
         targetMembershipId: competitor,
         isGameLocked: false,
         hidePicksUntilKickoff: true
-      })).toBe(false);
+      })).toBe(true);
     });
 
-    it('Competitor pick is visible when policy is active and game is locked', () => {
+    it('Competitor pick is visible when game is locked', () => {
       expect(PickVisibilityService.canViewPick({
         viewerMembershipId: viewer,
         targetMembershipId: competitor,
@@ -48,16 +48,25 @@ describe('Milestone 14.3 - Central Pick Visibility Service (Decisions #20, #66)'
         hidePicksUntilKickoff: false
       })).toBe(true);
     });
+
+    it('Fails closed if viewer or target membership is empty', () => {
+      expect(PickVisibilityService.canViewPick({
+        viewerMembershipId: '',
+        targetMembershipId: competitor,
+        isGameLocked: false,
+        hidePicksUntilKickoff: false
+      })).toBe(false);
+    });
   });
 
-  describe('Finding 5.6: Anti-Peeking Cohort Floor (N >= 3)', () => {
-    it('Suppresses aggregate exposure if cohort size is below 3', () => {
+  describe('Cohort Exposure (P41-POOL-VISIBILITY-2026-10-19-08)', () => {
+    it('Suppresses aggregate exposure if cohort size is 0 (empty state)', () => {
       expect(PickVisibilityService.canExposeAggregate(0)).toBe(false);
-      expect(PickVisibilityService.canExposeAggregate(1)).toBe(false);
-      expect(PickVisibilityService.canExposeAggregate(2)).toBe(false);
     });
 
-    it('Permits aggregate exposure if cohort size is 3 or greater', () => {
+    it('Permits aggregate exposure for active cohorts including 1-2', () => {
+      expect(PickVisibilityService.canExposeAggregate(1)).toBe(true);
+      expect(PickVisibilityService.canExposeAggregate(2)).toBe(true);
       expect(PickVisibilityService.canExposeAggregate(3)).toBe(true);
       expect(PickVisibilityService.canExposeAggregate(10)).toBe(true);
     });

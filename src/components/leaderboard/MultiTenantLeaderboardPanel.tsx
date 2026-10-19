@@ -64,15 +64,12 @@ export function kickoffLabel(value: string | undefined): string {
   }).format(timestamp);
 }
 
-export function isDistributionHidden(matchup: SweatRadarMatchup, now: number): boolean {
-  const kickoff = matchup.kickoffAt ? Date.parse(matchup.kickoffAt) : NaN;
+export function isDistributionHidden(matchup: SweatRadarMatchup, _now: number): boolean {
   return (
     matchup.isSuppressed ||
-    !Number.isFinite(kickoff) ||
-    now < kickoff ||
     matchup.cohortSize === undefined ||
     !Number.isFinite(matchup.cohortSize) ||
-    matchup.cohortSize < 3 ||
+    matchup.cohortSize < 1 ||
     !Number.isFinite(matchup.homePickPct) ||
     !Number.isFinite(matchup.awayPickPct) ||
     matchup.homePickPct < 0 ||

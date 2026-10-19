@@ -13,16 +13,22 @@ describe('M30.1 Pre-Game Topology, Consensus Dimming & Rival Crosshairs', () => 
     { gameId: 'g3', homeTeam: 'PHI', awayTeam: 'DAL', spread: -4.5 }
   ];
 
-  it('enforces Finding 5.6 Anti-Peeking Cohort Floor: returns AWAITING_COHORT when N < 3', () => {
+  it('allows immediate cohort visibility (including cohorts of 1-2) while preserving empty state', () => {
+    const emptyPicks: UserSubmittedPick[] = [];
+    const emptyTopology = computeSlateTopology('pool_alpha', 5, emptyPicks, games);
+    expect(emptyTopology.status).toBe('AWAITING_COHORT');
+    expect(emptyTopology.lockedCount).toBe(0);
+    expect(emptyTopology.games).toHaveLength(0);
+
     const fewPicks: UserSubmittedPick[] = [
       { userId: 'u1', userName: 'Jack', gameId: 'g1', selectedTeam: 'DET' },
       { userId: 'u2', userName: 'Dave', gameId: 'g1', selectedTeam: 'GB' }
     ];
 
-    const topology = computeSlateTopology('pool_alpha', 5, fewPicks, games, 3);
-    expect(topology.status).toBe('AWAITING_COHORT');
+    const topology = computeSlateTopology('pool_alpha', 5, fewPicks, games);
+    expect(topology.status).toBe('READY');
     expect(topology.lockedCount).toBe(2);
-    expect(topology.games).toHaveLength(0);
+    expect(topology.games).toHaveLength(3);
   });
 
   it('unlocks READY state and computes distributions when cohort floor N >= 3 is met', () => {
