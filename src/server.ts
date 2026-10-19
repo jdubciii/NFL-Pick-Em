@@ -18,6 +18,8 @@ import { webhooksRouter } from './routes/webhooks';
 import { shotCamRouter } from './routes/shotCam';
 import streamRouter from './routes/streamRoutes';
 import { poolSocialRouter } from './routes/poolSocialRoutes';
+import { poolTiebreakerRouter } from './routes/poolTiebreakerRoutes';
+import { getWeeklyDesignation } from './services/weeklyDesignationService';
 import type {
   PoolSettings,
   MatrixResponsePayload,
@@ -48,6 +50,7 @@ app.use('/api/notifications', notificationsRouter);
 app.use('/api/webhooks', webhooksRouter);
 app.use('/api/pools', opsRouter);
 app.use('/api/pools', poolSocialRouter);
+app.use('/api/pools', poolTiebreakerRouter);
 app.use('/api/pools/:pool_id/shot-cam', shotCamRouter);
 app.use('/api/shot-cam', shotCamRouter);
 app.use('/api/pools/:pool_id/shame', shotCamRouter);
@@ -1248,11 +1251,20 @@ app.get('/api/pools/:pool_id/matrix', requireAuth, requirePoolMember, async (req
       }
     }
 
+    // Resolve designated tiebreaker game to enforce pre-kickoff privacy (HAG-8 Directive)
+    const designation = getWeeklyDesignation(pool.settings, 2026, weekNum, games as any);
+    const designatedKickoff = designation.game?.kickoffTime ? new Date(designation.game.kickoffTime) : null;
+    const isTiebreakerLocked = designatedKickoff && !isNaN(designatedKickoff.getTime()) ? now.getTime() >= designatedKickoff.getTime() : false;
+
     const summary: Record<string, MatrixMemberSummary> = {};
     for (const membership of pool.memberships) {
       const userId = membership.userId;
       const weeklyWins = weeklyWinsMap.get(userId) || 0;
-      const tiebreakerGuess = tiebreakerMap.has(userId) ? tiebreakerMap.get(userId)! : null;
+      const rawGuess = tiebreakerMap.has(userId) ? tiebreakerMap.get(userId)! : null;
+      // Strict pre-kickoff privacy: only the requesting user sees their own guess before kickoff.
+      // Other members' guesses remain strictly masked to null until designated game kickoff.
+      const isSelf = userId === requestingUserId;
+      const tiebreakerGuess = (isTiebreakerLocked || isSelf) ? rawGuess : null;
       const cumulativeShots = Number(membership.stat?.totalShotsDrank ?? 0);
 
       summary[userId] = {

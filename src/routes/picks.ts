@@ -8,6 +8,7 @@ import {
   applyCommissionerOverride,
   freezeDesignation,
 } from '../services/weeklyDesignationService';
+import { getGamesForWeek } from './poolTiebreakerRoutes';
 import { normalizeTeamCode } from '../services/authoritativeSlateService';
 
 export const picksRouter = Router();
@@ -328,13 +329,7 @@ picksRouter.get('/tiebreaker', requireAuth, async (req: Request, res: Response):
       return;
     }
 
-    const games = await prisma.game.findMany({
-      where: {
-        season,
-        week: weekNumber,
-      },
-      orderBy: { kickoffTime: 'asc' },
-    });
+    const games = await getGamesForWeek(weekNumber, season);
     const designation = getWeeklyDesignation(pool.settings, season, weekNumber, games as any);
 
     const userSubmission = await prisma.weeklySubmission.findUnique({
@@ -450,13 +445,7 @@ picksRouter.post('/tiebreaker', requireAuth, async (req: Request, res: Response)
     }
 
     // 2. Fetch games and resolve designated tiebreaker game
-    const games = await prisma.game.findMany({
-      where: {
-        season,
-        week: weekNumber,
-      },
-      orderBy: { kickoffTime: 'asc' },
-    });
+    const games = await getGamesForWeek(weekNumber, season);
     const designation = getWeeklyDesignation(pool.settings, season, weekNumber, games as any);
 
     if (!designation.game) {
@@ -610,7 +599,7 @@ picksRouter.post('/tiebreaker/override', requireAuth, async (req: Request, res: 
       prisma.poolMembership.findUnique({
         where: { poolId_userId: { poolId, userId } },
       }),
-      prisma.game.findMany(),
+      getGamesForWeek(weekNumber, season),
     ]);
 
     if (!pool) {
