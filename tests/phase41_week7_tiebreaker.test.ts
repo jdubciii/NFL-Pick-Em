@@ -3924,13 +3924,27 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
     const OUTSIDER_USER_ID = 'f8888888-8888-4888-a888-888888888888';
 
     it.each([
-      { settingLabel: 'legacy hide setting true', hideSetting: true },
-      { settingLabel: 'legacy hide setting false', hideSetting: false },
-      { settingLabel: 'legacy hide setting absent', hideSetting: undefined },
-    ])('allows ordinary ACTIVE member to view another member saved unfinalized pick and tiebreaker guess in Matrix under $settingLabel', async ({ hideSetting }) => {
+      { settingLabel: 'legacy hide setting true (snake_case)', settingsOverride: { hide_picks_until_kickoff: true } },
+      { settingLabel: 'legacy hide setting true (camelCase)', settingsOverride: { hidePicksUntilKickoff: true } },
+      { settingLabel: 'legacy hide setting false (snake_case)', settingsOverride: { hide_picks_until_kickoff: false } },
+      { settingLabel: 'legacy hide setting false (camelCase)', settingsOverride: { hidePicksUntilKickoff: false } },
+      { settingLabel: 'legacy hide setting absent', settingsOverride: {} },
+    ])('allows ordinary ACTIVE member to view another member saved unfinalized pick and tiebreaker guess in Matrix under $settingLabel', async ({ settingsOverride }) => {
+      // 1. Put variants in mockPool.settings, explicitly remove keys for absent
+      const poolSettings: Record<string, any> = {
+        ...mockPool.settings,
+        ...settingsOverride,
+      };
+      if (settingsOverride.hide_picks_until_kickoff === undefined) {
+        delete poolSettings.hide_picks_until_kickoff;
+      }
+      if (settingsOverride.hidePicksUntilKickoff === undefined) {
+        delete poolSettings.hidePicksUntilKickoff;
+      }
+
       const mockPoolWithMembers = {
         ...mockPool,
-        ...(hideSetting !== undefined ? { hidePicksUntilKickoff: hideSetting } : {}),
+        settings: poolSettings,
         memberships: [
           {
             userId: MEMBER_1_ID,
@@ -3947,15 +3961,17 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
         ],
       };
 
-      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPoolWithMembers as any);
+      const poolFindUniqueSpy = vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPoolWithMembers as any);
       vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
         poolId: POOL_ID,
         userId: MEMBER_1_ID,
         status: 'ACTIVE',
       } as any);
       vi.spyOn(prisma.game, 'findMany').mockResolvedValue(mockWeek7Games as any);
-      // MEMBER_2 has saved pick for Game 1, unfinalized
-      vi.spyOn(prisma.pick, 'findMany').mockResolvedValue([
+
+      // 2. Comprehensive multi-pool, multi-week dataset to rigorously prove pool and week isolation
+      const allPicksDataset = [
+        // Target pick: MEMBER_2 in POOL_ID for week 7 game (unfinalized, saved)
         {
           id: 'p-1',
           userId: MEMBER_2_ID,
@@ -3963,20 +3979,104 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
           gameId: 'g-w7-det',
           selectedTeamId: 'DET',
         },
-        // Cross-pool pick should NEVER leak
+        // Same member (MEMBER_2), DIFFERENT pool (OTHER_POOL_ID) for same game: MUST NEVER leak
         {
-          id: 'p-cross',
+          id: 'p-same-user-other-pool',
+          userId: MEMBER_2_ID,
+          poolId: OTHER_POOL_ID,
+          gameId: 'g-w7-det',
+          selectedTeamId: 'KC',
+        },
+        // Requesting member (MEMBER_1), DIFFERENT pool (OTHER_POOL_ID) for same game: MUST NEVER leak
+        {
+          id: 'p-member1-other-pool',
+          userId: MEMBER_1_ID,
+          poolId: OTHER_POOL_ID,
+          gameId: 'g-w7-det',
+          selectedTeamId: 'MIA',
+        },
+        // Outsider user pick in OTHER_POOL_ID: MUST NEVER leak
+        {
+          id: 'p-outsider-other-pool',
           userId: OUTSIDER_USER_ID,
           poolId: OTHER_POOL_ID,
           gameId: 'g-w7-det',
           selectedTeamId: 'MIN',
         },
-      ] as any);
-      // MEMBER_2 has tiebreaker prediction 0 (zero remains zero, not null)
-      // MEMBER_1 has missing tiebreaker prediction (missing remains null)
-      vi.spyOn(prisma.weeklySubmission, 'findMany').mockResolvedValue([
-        { userId: MEMBER_2_ID, weekNumber: 7, tieBreakerPrediction: 0.0, isFinalized: false },
-      ] as any);
+        // Same member in POOL_ID, but DIFFERENT game from week 8: MUST NEVER leak into week 7
+        {
+          id: 'p-other-game',
+          userId: MEMBER_2_ID,
+          poolId: POOL_ID,
+          gameId: 'g-w8-other',
+          selectedTeamId: 'BAL',
+        },
+      ];
+
+      const allSubmissionsDataset = [
+        // Target submission: MEMBER_2 in POOL_ID for week 7 -> tiebreaker prediction 0.0 (zero remains zero)
+        {
+          id: 's-1',
+          userId: MEMBER_2_ID,
+          poolId: POOL_ID,
+          weekNumber: 7,
+          tieBreakerPrediction: 0.0,
+          isFinalized: false,
+        },
+        // Same member (MEMBER_2), DIFFERENT pool (OTHER_POOL_ID) for week 7 -> 99.0: MUST NEVER leak
+        {
+          id: 's-same-user-other-pool',
+          userId: MEMBER_2_ID,
+          poolId: OTHER_POOL_ID,
+          weekNumber: 7,
+          tieBreakerPrediction: 99.0,
+          isFinalized: false,
+        },
+        // Requesting member (MEMBER_1), DIFFERENT pool (OTHER_POOL_ID) for week 7 -> 42.0: MUST NEVER leak
+        // (In POOL_ID, MEMBER_1 has missing submission; guess must remain null)
+        {
+          id: 's-member1-other-pool',
+          userId: MEMBER_1_ID,
+          poolId: OTHER_POOL_ID,
+          weekNumber: 7,
+          tieBreakerPrediction: 42.0,
+          isFinalized: false,
+        },
+        // Same member (MEMBER_2), POOL_ID, DIFFERENT week (week 8) -> 88.0: MUST NEVER leak into week 7
+        {
+          id: 's-same-user-other-week',
+          userId: MEMBER_2_ID,
+          poolId: POOL_ID,
+          weekNumber: 8,
+          tieBreakerPrediction: 88.0,
+          isFinalized: false,
+        },
+        // Outsider user submission in OTHER_POOL_ID for week 7: MUST NEVER leak
+        {
+          id: 's-outsider-other-pool',
+          userId: OUTSIDER_USER_ID,
+          poolId: OTHER_POOL_ID,
+          weekNumber: 7,
+          tieBreakerPrediction: 77.0,
+          isFinalized: false,
+        },
+      ];
+
+      const pickFindManySpy = vi.spyOn(prisma.pick, 'findMany').mockImplementation(async (args: any) => {
+        return allPicksDataset.filter((p) => {
+          if (args?.where?.poolId && p.poolId !== args.where.poolId) return false;
+          if (args?.where?.gameId?.in && !args.where.gameId.in.includes(p.gameId)) return false;
+          return true;
+        }) as any;
+      });
+
+      const submissionFindManySpy = vi.spyOn(prisma.weeklySubmission, 'findMany').mockImplementation(async (args: any) => {
+        return allSubmissionsDataset.filter((s) => {
+          if (args?.where?.poolId && s.poolId !== args.where.poolId) return false;
+          if (args?.where?.weekNumber !== undefined && s.weekNumber !== args.where.weekNumber) return false;
+          return true;
+        }) as any;
+      });
 
       const token = createAuthToken(MEMBER_1_ID);
       const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/matrix?week=7`, {
@@ -3985,6 +4085,41 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
 
       expect(res.status).toBe(200);
       const data = await res.json();
+
+      // Assert observed pool and settings fixtures are exactly those intended
+      expect(poolFindUniqueSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: POOL_ID },
+        })
+      );
+      const observedPool = await poolFindUniqueSpy.mock.results[0].value;
+      expect(observedPool.settings).toEqual(poolSettings);
+      if (settingsOverride.hide_picks_until_kickoff !== undefined) {
+        expect(observedPool.settings.hide_picks_until_kickoff).toBe(settingsOverride.hide_picks_until_kickoff);
+      } else if (settingsOverride.hidePicksUntilKickoff !== undefined) {
+        expect(observedPool.settings.hidePicksUntilKickoff).toBe(settingsOverride.hidePicksUntilKickoff);
+      } else {
+        expect(observedPool.settings.hide_picks_until_kickoff).toBeUndefined();
+        expect(observedPool.settings.hidePicksUntilKickoff).toBeUndefined();
+      }
+
+      // Assert query pool and week filters are strictly passed and honored
+      expect(pickFindManySpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            poolId: POOL_ID,
+            gameId: { in: expect.arrayContaining(['g-w7-det']) },
+          }),
+        })
+      );
+      expect(submissionFindManySpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            poolId: POOL_ID,
+            weekNumber: 7,
+          }),
+        })
+      );
 
       // Compatibility metadata reflects open pool visibility
       expect(data.metadata.hide_picks_until_kickoff).toBe(false);
@@ -3996,13 +4131,21 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(game1Cells[MEMBER_2_ID].selected_team_id).toBe('DET');
       expect(game1Cells[MEMBER_2_ID].is_masked).toBe(false);
 
+      // Verify pool isolation: MEMBER_2's pick in OTHER_POOL_ID ('KC') did NOT overwrite or leak into POOL_ID
+      expect(game1Cells[MEMBER_2_ID].selected_team_id).not.toBe('KC');
+
+      // Verify pool isolation: MEMBER_1 has no pick in POOL_ID; OTHER_POOL_ID pick ('MIA') did NOT leak
+      expect(game1Cells[MEMBER_1_ID]).toBeDefined();
+      expect(game1Cells[MEMBER_1_ID].selected_team_id).toBeNull();
+
       // No cross-pool leak: OUTSIDER_USER_ID is not present in columns or cells
       expect(data.columns.some((c: any) => c.user_id === OUTSIDER_USER_ID)).toBe(false);
       expect(game1Cells[OUTSIDER_USER_ID]).toBeUndefined();
 
-      // Zero remains zero: MEMBER_2 guess of 0 is numeric 0
+      // Zero remains zero: MEMBER_2 guess of 0 in POOL_ID is numeric 0 (NOT 99 from OTHER_POOL_ID, NOT 88 from week 8)
       expect(data.summary[MEMBER_2_ID].tiebreaker_guess).toBe(0);
-      // Missing remains null: MEMBER_1 has no submission, guess is null
+
+      // Missing remains null: MEMBER_1 has no submission in POOL_ID for week 7, guess is null (NOT 42 from OTHER_POOL_ID)
       expect(data.summary[MEMBER_1_ID].tiebreaker_guess).toBeNull();
     });
 

@@ -46,6 +46,10 @@ describe('Milestone 14.7 - Phase 14 E2E Pipeline Integration (Decisions #3, #20,
     expect(PickVisibilityService.canViewPick({
       viewerMembershipId: user1,
       targetMembershipId: user2,
+      viewerPoolId: poolId,
+      targetPoolId: poolId,
+      viewerMembershipStatus: 'ACTIVE',
+      isSamePoolActiveMember: true,
       isGameLocked: false,
       hidePicksUntilKickoff: true
     })).toBe(true);
@@ -53,6 +57,10 @@ describe('Milestone 14.7 - Phase 14 E2E Pipeline Integration (Decisions #3, #20,
     expect(PickVisibilityService.canViewPick({
       viewerMembershipId: user1,
       targetMembershipId: user2,
+      viewerPoolId: poolId,
+      targetPoolId: poolId,
+      viewerMembershipStatus: 'ACTIVE',
+      isSamePoolActiveMember: true,
       isGameLocked: true,
       hidePicksUntilKickoff: true
     })).toBe(true);
