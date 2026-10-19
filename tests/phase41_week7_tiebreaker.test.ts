@@ -5,10 +5,194 @@ import {
   poolTiebreakerRouter,
   getGamesForWeek,
   setCallerBoundSupabaseClientForTesting,
+  createCallerBoundSupabaseClient,
 } from '../src/routes/poolTiebreakerRoutes';
 import { picksRouter } from '../src/routes/picks';
-import { evaluateCardLockState } from '../client/src/components/picks/WeeklyTiebreakerCard';
+import { WeeklyTiebreakerCard, evaluateCardLockState } from '../client/src/components/picks/WeeklyTiebreakerCard';
+import * as apiClient from '../client/src/lib/apiClient';
+import * as supabaseJs from '@supabase/supabase-js';
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import prisma from '../src/db/client';
+
+const { mockSupabaseCreateClient } = vi.hoisted(() => ({
+  mockSupabaseCreateClient: vi.fn(),
+}));
+
+vi.mock('@supabase/supabase-js', async (importOriginal) => {
+  const actual: any = await importOriginal();
+  return {
+    ...actual,
+    createClient: (...args: any[]) => mockSupabaseCreateClient(...args),
+  };
+});
+
+function setupMockDom() {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+  const windowListeners: Record<string, Function[]> = {};
+  (globalThis as any).addEventListener = (evt: string, fn: Function) => {
+    windowListeners[evt] = windowListeners[evt] || [];
+    windowListeners[evt].push(fn);
+  };
+  (globalThis as any).removeEventListener = (evt: string, fn: Function) => {
+    if (windowListeners[evt]) {
+      windowListeners[evt] = windowListeners[evt].filter(f => f !== fn);
+    }
+  };
+
+  class MockNode {
+    nodeType: number = 1;
+    parentNode: any = null;
+    ownerDocument: any = null;
+    children: any[] = [];
+    childNodes: any[] = [];
+    get textContent(): string {
+      return this.childNodes.map((c: any) => c.textContent || c.nodeValue || '').join('');
+    }
+    set textContent(val: string) {
+      this.childNodes = [new MockTextNode(val, this.ownerDocument)];
+      this.children = [];
+    }
+    contains(child: any): boolean {
+      if (child === this) return true;
+      for (const c of this.childNodes) {
+        if (c === child || (c.contains && c.contains(child))) return true;
+      }
+      return false;
+    }
+  }
+
+  class MockTextNode extends MockNode {
+    override nodeType = 3;
+    nodeValue: string;
+    constructor(text: string, doc: any) {
+      super();
+      this.nodeValue = text;
+      this.ownerDocument = doc;
+    }
+    override get textContent() { return this.nodeValue; }
+    override set textContent(v: string) { this.nodeValue = v; }
+  }
+
+  class MockCommentNode extends MockNode {
+    override nodeType = 8;
+    nodeValue: string;
+    constructor(text: string, doc: any) {
+      super();
+      this.nodeValue = text;
+      this.ownerDocument = doc;
+    }
+  }
+
+  class MockElement extends MockNode {
+    tagName: string;
+    attributes: Record<string, string> = {};
+    style: Record<string, string> = {};
+    listeners: Record<string, Function[]> = {};
+    disabled: boolean = false;
+    value: string = '';
+    className: string = '';
+
+    constructor(tagName: string, doc: any) {
+      super();
+      this.tagName = tagName.toUpperCase();
+      this.ownerDocument = doc;
+    }
+
+    setAttribute(k: string, v: string) {
+      this.attributes[k] = String(v);
+      if (k === 'disabled') this.disabled = true;
+      if (k === 'value') this.value = String(v);
+      if (k === 'class') this.className = String(v);
+    }
+    getAttribute(k: string) {
+      if (k === 'disabled') return this.disabled ? '' : null;
+      if (k === 'value') return this.value;
+      if (k === 'class') return this.className;
+      return this.attributes[k] ?? null;
+    }
+    removeAttribute(k: string) {
+      delete this.attributes[k];
+      if (k === 'disabled') this.disabled = false;
+    }
+    addEventListener(evt: string, fn: Function) {
+      this.listeners[evt] = this.listeners[evt] || [];
+      this.listeners[evt].push(fn);
+    }
+    removeEventListener(evt: string, fn: Function) {
+      if (this.listeners[evt]) {
+        this.listeners[evt] = this.listeners[evt].filter(f => f !== fn);
+      }
+    }
+    appendChild(child: any) {
+      child.parentNode = this;
+      this.childNodes.push(child);
+      if (child.nodeType === 1) this.children.push(child);
+      return child;
+    }
+    removeChild(child: any) {
+      const idxNode = this.childNodes.indexOf(child);
+      if (idxNode >= 0) this.childNodes.splice(idxNode, 1);
+      const idxEl = this.children.indexOf(child);
+      if (idxEl >= 0) this.children.splice(idxEl, 1);
+      child.parentNode = null;
+      return child;
+    }
+    insertBefore(newChild: any, refChild: any) {
+      newChild.parentNode = this;
+      const idxNode = this.childNodes.indexOf(refChild);
+      if (idxNode >= 0) this.childNodes.splice(idxNode, 0, newChild);
+      else this.childNodes.push(newChild);
+      if (newChild.nodeType === 1) {
+        const idxEl = this.children.indexOf(refChild);
+        if (idxEl >= 0) this.children.splice(idxEl, 0, newChild);
+        else this.children.push(newChild);
+      }
+      return newChild;
+    }
+  }
+
+  class MockHTMLIFrameElement extends MockElement {}
+
+  const listeners: Record<string, Function[]> = {};
+
+  const mockDoc: any = {
+    nodeType: 9,
+    visibilityState: 'visible',
+    activeElement: null,
+    createElement: (tag: string) => new MockElement(tag, mockDoc),
+    createElementNS: (_ns: string, tag: string) => new MockElement(tag, mockDoc),
+    createTextNode: (text: string) => new MockTextNode(text, mockDoc),
+    createComment: (text: string) => new MockCommentNode(text, mockDoc),
+    addEventListener: (evt: string, fn: Function) => {
+      listeners[evt] = listeners[evt] || [];
+      listeners[evt].push(fn);
+    },
+    removeEventListener: (evt: string, fn: Function) => {
+      if (listeners[evt]) {
+        listeners[evt] = listeners[evt].filter(f => f !== fn);
+      }
+    },
+  };
+
+  (globalThis as any).Node = MockNode;
+  (globalThis as any).Element = MockElement;
+  (globalThis as any).HTMLElement = MockElement;
+  (globalThis as any).HTMLIFrameElement = MockHTMLIFrameElement;
+  (globalThis as any).document = mockDoc;
+  (globalThis as any).window = globalThis;
+  mockDoc.defaultView = globalThis;
+
+  return { mockDoc, MockElement };
+}
+
+vi.mock('../client/src/context/AuthContext', () => ({
+  useAuth: () => ({
+    token: 'synthetic-jwt-member-1',
+    user: { id: 'b2222222-2222-2222-2222-222222222222', role: 'USER' },
+  }),
+}));
 import {
   setSupabaseAuthClientForTesting,
   createSyntheticSupabaseToken,
@@ -133,6 +317,17 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       };
     });
 
+    mockSupabaseCreateClient.mockReset();
+    mockSupabaseCreateClient.mockImplementation((_url: string, _key: string, options: any) => {
+      return {
+        auth: {
+          getUser: getUserMock,
+        },
+        rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
+        _options: options,
+      };
+    });
+
     app = express();
     app.use(express.json());
     app.use('/api/pools', opsRouter);
@@ -151,7 +346,9 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     setSupabaseAuthClientForTesting(null);
+    setCallerBoundSupabaseClientForTesting(null);
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
@@ -1250,6 +1447,106 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(data.error).toContain('UNVERIFIED_KICKOFF');
       expect(poolUpdateSpy).not.toHaveBeenCalled();
     });
+
+    it('fails closed and denies override when target proposed game has missing kickoffTime (Finding 4)', async () => {
+      const targetMissingKickoffGames = [
+        mockWeek7Games[0], // Lions default with valid future kickoff
+        {
+          ...mockWeek7Games[1], // Target game 401873011
+          kickoffTime: null,
+        },
+      ];
+
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: ADMIN_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(targetMissingKickoffGames as any);
+
+      const poolUpdateSpy = vi.fn();
+      vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+            if (sql.includes('to_regproc')) return [{ exists: null }];
+            return [];
+          }),
+          pool: {
+            findUnique: vi.fn().mockResolvedValue(mockPool),
+            update: poolUpdateSpy,
+          },
+          weeklySubmission: {
+            findMany: vi.fn().mockResolvedValue([]),
+          },
+          game: {
+            findMany: vi.fn().mockResolvedValue(targetMissingKickoffGames),
+          },
+        });
+      });
+
+      const adminToken = createAuthToken(ADMIN_ID, 'ADMIN');
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ week: 7, season: 2026, target_game_id: '401873011' }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('UNVERIFIED_KICKOFF');
+      expect(poolUpdateSpy).not.toHaveBeenCalled();
+    });
+
+    it('fails closed and denies override when target proposed game has invalid kickoffTime string (Finding 4)', async () => {
+      const targetInvalidKickoffGames = [
+        mockWeek7Games[0], // Lions default with valid future kickoff
+        {
+          ...mockWeek7Games[1], // Target game 401873011
+          kickoffTime: 'invalid-kickoff-timestamp',
+        },
+      ];
+
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: ADMIN_ID,
+        status: 'ACTIVE',
+      } as any);
+      vi.spyOn(prisma.game, 'findMany').mockResolvedValue(targetInvalidKickoffGames as any);
+
+      const poolUpdateSpy = vi.fn();
+      vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+            if (sql.includes('to_regproc')) return [{ exists: null }];
+            return [];
+          }),
+          pool: {
+            findUnique: vi.fn().mockResolvedValue(mockPool),
+            update: poolUpdateSpy,
+          },
+          weeklySubmission: {
+            findMany: vi.fn().mockResolvedValue([]),
+          },
+          game: {
+            findMany: vi.fn().mockResolvedValue(targetInvalidKickoffGames),
+          },
+        });
+      });
+
+      const adminToken = createAuthToken(ADMIN_ID, 'ADMIN');
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ week: 7, season: 2026, target_game_id: '401873011' }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('UNVERIFIED_KICKOFF');
+      expect(poolUpdateSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('7. Week 6 2026 Exclusion Safeguard Across Surfaces (Finding 4)', () => {
@@ -1448,6 +1745,88 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       });
     });
 
+    it('verifies real createCallerBoundSupabaseClient passes exact request bearer token into createClient global Authorization config without injecting prebuilt client (Finding 6)', () => {
+      setCallerBoundSupabaseClientForTesting(null);
+      const testToken = 'exact-jwt-token-xyz-12345';
+      mockSupabaseCreateClient.mockClear();
+      mockSupabaseCreateClient.mockReturnValue({
+        auth: {},
+        rpc: vi.fn(),
+      } as any);
+
+      const client = createCallerBoundSupabaseClient(testToken);
+      expect(client).toBeDefined();
+      expect(mockSupabaseCreateClient).toHaveBeenCalledTimes(1);
+      // Empirically verifies exact bearer token propagated into createClient global header configuration
+      expect(mockSupabaseCreateClient).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.objectContaining({
+          auth: expect.objectContaining({
+            persistSession: false,
+            autoRefreshToken: false,
+            detectSessionInUrl: false,
+          }),
+          global: expect.objectContaining({
+            headers: expect.objectContaining({
+              Authorization: `Bearer ${testToken}`,
+            }),
+          }),
+        })
+      );
+
+      // Verify null/empty token returns null without calling createClient
+      mockSupabaseCreateClient.mockClear();
+      expect(createCallerBoundSupabaseClient(undefined)).toBeNull();
+      expect(createCallerBoundSupabaseClient('')).toBeNull();
+      expect(createCallerBoundSupabaseClient('   ')).toBeNull();
+      expect(mockSupabaseCreateClient).not.toHaveBeenCalled();
+    });
+
+    it('resolves games via getGamesForWeek using authToken options by constructing real caller-bound client and executing RPC', async () => {
+      setCallerBoundSupabaseClientForTesting(null);
+      const testToken = 'exact-jwt-token-w7-canonical';
+      const mockRpcGames = [
+        {
+          id: 'g-rpc-1',
+          externalGameId: '401873010',
+          homeTeamId: 'MIN',
+          awayTeamId: 'DET',
+          kickoffTime: futureKickoff,
+          status: GameStatus.SCHEDULED,
+          homeScore: null,
+          awayScore: null,
+        },
+      ];
+      const rpcMock = vi.fn().mockResolvedValue({ data: mockRpcGames, error: null });
+      mockSupabaseCreateClient.mockClear();
+      mockSupabaseCreateClient.mockReturnValue({
+        rpc: rpcMock,
+      } as any);
+
+      const games = await getGamesForWeek(7, 2026, POOL_ID, prisma, { authToken: testToken });
+      expect(games).toHaveLength(1);
+      expect(games[0].externalGameId).toBe('401873010');
+      // Verifies caller token was passed into createClient configuration
+      expect(mockSupabaseCreateClient).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.objectContaining({
+          global: expect.objectContaining({
+            headers: {
+              Authorization: `Bearer ${testToken}`,
+            },
+          }),
+        })
+      );
+      // Verifies downstream RPC was executed on the caller-bound client instance
+      expect(rpcMock).toHaveBeenCalledWith('get_pool_canonical_games', {
+        p_pool_id: POOL_ID,
+        p_season: 2026,
+        p_week: 7,
+      });
+    });
+
     it('enforces manifest resolves strictly via exact event IDs via findMany and never calls unfiltered findFirst (Finding 5)', async () => {
       const findFirstSpy = vi.fn().mockResolvedValue({ id: 'unrelated-game', externalGameId: 'unrelated-999' });
       const findManySpy = vi.fn().mockResolvedValue([
@@ -1520,7 +1899,7 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       } as any);
       vi.spyOn(prisma.weeklySubmission, 'findUnique').mockResolvedValue(null);
 
-      // 2. Supply caller-bound RPC client mock
+      // 2. Supply caller-bound RPC client mock via real createClient mock (no test client injection)
       const rpcMock = vi.fn().mockResolvedValue({
         data: [
           {
@@ -1536,7 +1915,11 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
         ],
         error: null,
       });
-      setCallerBoundSupabaseClientForTesting({ rpc: rpcMock });
+      setCallerBoundSupabaseClientForTesting(null);
+      mockSupabaseCreateClient.mockClear();
+      mockSupabaseCreateClient.mockReturnValue({
+        rpc: rpcMock,
+      } as any);
 
       const memberToken = createAuthToken(MEMBER_1_ID);
       const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker?week=7&season=2026`, {
@@ -1549,6 +1932,20 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(data.designatedGame.externalGameId).toBe('401873010');
       expect(data.designatedGame.awayTeamId).toBe('DET');
       expect(data.isLocked).toBe(false);
+
+      // Empirically verifies caller JWT propagation into createClient global Authorization headers without prebuilt injection
+      // Note: Verifies client header construction; live PostgreSQL auth.uid() execution requires hosted Supabase
+      expect(mockSupabaseCreateClient).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.objectContaining({
+          global: expect.objectContaining({
+            headers: {
+              Authorization: `Bearer ${memberToken}`,
+            },
+          }),
+        })
+      );
       expect(rpcMock).toHaveBeenCalledWith('get_pool_canonical_games', {
         p_pool_id: POOL_ID,
         p_season: 2026,
@@ -1582,7 +1979,11 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
         ],
         error: null,
       });
-      setCallerBoundSupabaseClientForTesting({ rpc: rpcMock });
+      setCallerBoundSupabaseClientForTesting(null);
+      mockSupabaseCreateClient.mockClear();
+      mockSupabaseCreateClient.mockReturnValue({
+        rpc: rpcMock,
+      } as any);
 
       vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
         const txClient = {
@@ -1617,6 +2018,18 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.prediction).toBe(47.5);
+      // Empirically verifies caller JWT propagation into createClient global config without prebuilt client injection
+      expect(mockSupabaseCreateClient).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.objectContaining({
+          global: expect.objectContaining({
+            headers: {
+              Authorization: `Bearer ${memberToken}`,
+            },
+          }),
+        })
+      );
       expect(rpcMock).toHaveBeenCalled();
     });
 
@@ -1656,7 +2069,11 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
         ],
         error: null,
       });
-      setCallerBoundSupabaseClientForTesting({ rpc: rpcMock });
+      setCallerBoundSupabaseClientForTesting(null);
+      mockSupabaseCreateClient.mockClear();
+      mockSupabaseCreateClient.mockReturnValue({
+        rpc: rpcMock,
+      } as any);
 
       vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
         const txClient = {
@@ -1685,6 +2102,18 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.designation.eventId).toBe('401873011');
+      // Empirically verifies caller JWT propagation into createClient global config without prebuilt client injection
+      expect(mockSupabaseCreateClient).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.objectContaining({
+          global: expect.objectContaining({
+            headers: {
+              Authorization: `Bearer ${adminToken}`,
+            },
+          }),
+        })
+      );
       expect(rpcMock).toHaveBeenCalled();
     });
 
@@ -1738,7 +2167,11 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
         ],
         error: null,
       });
-      setCallerBoundSupabaseClientForTesting({ rpc: rpcMock });
+      setCallerBoundSupabaseClientForTesting(null);
+      mockSupabaseCreateClient.mockClear();
+      mockSupabaseCreateClient.mockReturnValue({
+        rpc: rpcMock,
+      } as any);
 
       const memberToken = createAuthToken(MEMBER_1_ID);
       const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/matrix?week=7`, {
@@ -1751,6 +2184,18 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       expect(data.rows[0].external_game_id).toBe('401873010');
       expect(data.summary[MEMBER_1_ID].tiebreaker_guess).toBe(45);
       expect(data.summary[MEMBER_2_ID].tiebreaker_guess).toBeNull(); // competitor masked
+      // Empirically verifies caller JWT propagation into createClient global config without prebuilt client injection
+      expect(mockSupabaseCreateClient).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.objectContaining({
+          global: expect.objectContaining({
+            headers: {
+              Authorization: `Bearer ${memberToken}`,
+            },
+          }),
+        })
+      );
       expect(rpcMock).toHaveBeenCalled();
     });
 
@@ -2607,38 +3052,100 @@ describe('Phase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)', (
       }, nowMs)).toBe(false);
     });
 
-    it('locks controls at kickoff deadline without requiring window focus refresh when clock crosses deadline (Finding 4)', async () => {
-      // Test deadline timer behavior: initially unlocked before kickoff; auto-locks at deadline without focus refresh
-      const now = Date.now();
-      const deadlineMs = now + 40;
-      const kickoffStr = new Date(deadlineMs).toISOString();
+    it('evaluates lock state transitions from unlocked to locked at the kickoff deadline timestamp (Finding 4)', () => {
+      const nowMs = 1792380000000;
+      const futureTime = new Date(nowMs + 60000).toISOString();
+      const exactTime = new Date(nowMs).toISOString();
 
       const cardData = {
         isLocked: false,
         status: 'DEFAULT_LIONS',
-        designatedGame: { id: 'g-1', kickoffTime: kickoffStr },
-        kickoffTime: kickoffStr,
+        designatedGame: { id: 'g-1', kickoffTime: futureTime },
+        kickoffTime: futureTime,
       };
 
-      // 1. Before deadline: card is unlocked
-      let currentCardLock = evaluateCardLockState(cardData, Date.now());
-      expect(currentCardLock).toBe(false);
+      // Unlocked before kickoff
+      expect(evaluateCardLockState(cardData, nowMs)).toBe(false);
+      // Fails closed to locked at/after kickoff
+      expect(evaluateCardLockState({ ...cardData, kickoffTime: exactTime, designatedGame: { id: 'g-1', kickoffTime: exactTime } }, nowMs)).toBe(true);
+    });
 
-      // 2. Set timer matching WeeklyTiebreakerCard's useEffect implementation
-      let timerFired = false;
-      const msRemaining = deadlineMs - Date.now();
-      const timer = setTimeout(() => {
-        timerFired = true;
-        currentCardLock = evaluateCardLockState(cardData, Date.now());
-      }, msRemaining);
+    it('mounts actual WeeklyTiebreakerCard with a fake clock and asserts real controls lock at kickoff without focus (Finding 4)', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container);
 
-      // 3. Wait for timer to cross deadline without user focus / refresh
-      await new Promise((resolve) => setTimeout(resolve, 60));
-      clearTimeout(timer);
+      const baseNow = 1792380000000;
+      vi.useFakeTimers();
+      vi.setSystemTime(baseNow);
 
-      expect(timerFired).toBe(true);
-      // Controls auto-locked at kickoff deadline!
-      expect(currentCardLock).toBe(true);
+      const deadlineMs = baseNow + 5000; // 5 seconds ahead
+      const kickoffIso = new Date(deadlineMs).toISOString();
+
+      const mockData = {
+        status: 'DEFAULT_LIONS',
+        tiebreakerOffered: true,
+        designatedGame: {
+          id: 'g-w7-det',
+          externalGameId: '401873010',
+          homeTeamId: 'MIN',
+          awayTeamId: 'DET',
+          kickoffTime: kickoffIso,
+          status: 'SCHEDULED',
+        },
+        kickoffTime: kickoffIso,
+        isLocked: false,
+        userPrediction: null,
+      };
+
+      vi.spyOn(apiClient, 'scopedExpressFetch').mockResolvedValue({
+        ok: true,
+        json: async () => mockData,
+      } as any);
+
+      // Helper to find all elements by tagName recursively
+      function findElementsByTag(el: any, tag: string): any[] {
+        const res: any[] = [];
+        if (el.tagName === tag.toUpperCase()) res.push(el);
+        for (const child of el.children || []) {
+          res.push(...findElementsByTag(child, tag));
+        }
+        return res;
+      }
+
+      try {
+        // 1. Mount actual component inside act()
+        await act(async () => {
+          root.render(React.createElement(WeeklyTiebreakerCard, { week: 7, poolId: POOL_ID }));
+        });
+
+        // 2. Before kickoff deadline: input control is enabled and action button (Save) is rendered
+        const inputsBefore = findElementsByTag(container, 'input');
+        const buttonsBefore = findElementsByTag(container, 'button');
+        expect(inputsBefore).toHaveLength(1);
+        expect(inputsBefore[0].disabled).toBe(false);
+        expect(buttonsBefore.some((b: any) => b.textContent?.includes('Save'))).toBe(true);
+        expect(container.textContent).toContain('Lock:');
+        expect(container.textContent).not.toContain('Locked');
+
+        // 3. Advance fake clock past kickoff deadline without window focus or visibility change
+        await act(async () => {
+          vi.advanceTimersByTime(5050);
+        });
+
+        // 4. At and past kickoff deadline: input control auto-locks (disabled=true), Save button unmounts, Lock badge displays
+        const inputsAfter = findElementsByTag(container, 'input');
+        const buttonsAfter = findElementsByTag(container, 'button');
+        expect(inputsAfter).toHaveLength(1);
+        expect(inputsAfter[0].disabled).toBe(true);
+        expect(buttonsAfter.some((b: any) => b.textContent?.includes('Save'))).toBe(false);
+        expect(container.textContent).toContain('Locked');
+      } finally {
+        await act(async () => {
+          root.unmount();
+        });
+        vi.useRealTimers();
+      }
     });
   });
 

@@ -367,5 +367,69 @@ describe('Weekly Game Designation & Freeze Contract (Section 5)', () => {
       expect(initial.designation.eventId).toBe('401873000');
       expect(initial.designation.provenance).toBe('COMMISSIONER_OVERRIDE');
     });
+
+    it('rejects override with UNVERIFIED_KICKOFF when target proposed game has missing kickoffTime', () => {
+      const targetMissingKickoffGames: GameSlateItem[] = [
+        {
+          id: 'g1',
+          externalGameId: '401872999',
+          homeTeamId: 'DET',
+          awayTeamId: 'CHI',
+          kickoffTime: futureKickoff,
+        },
+        {
+          id: 'g2',
+          externalGameId: '401873000',
+          homeTeamId: 'GB',
+          awayTeamId: 'MIN',
+          kickoffTime: null as any,
+        },
+      ];
+
+      expect(() => {
+        applyCommissionerOverride({
+          currentSettings: poolSettings,
+          season: 2026,
+          week: 7,
+          targetGameId: '401873000',
+          games: targetMissingKickoffGames,
+          requestingUserId: adminId,
+          poolAdminId: adminId,
+          isUserActiveMember: true,
+        });
+      }).toThrow('UNVERIFIED_KICKOFF');
+    });
+
+    it('rejects override with UNVERIFIED_KICKOFF when target proposed game has invalid kickoffTime string', () => {
+      const targetInvalidKickoffGames: GameSlateItem[] = [
+        {
+          id: 'g1',
+          externalGameId: '401872999',
+          homeTeamId: 'DET',
+          awayTeamId: 'CHI',
+          kickoffTime: futureKickoff,
+        },
+        {
+          id: 'g2',
+          externalGameId: '401873000',
+          homeTeamId: 'GB',
+          awayTeamId: 'MIN',
+          kickoffTime: 'invalid-kickoff-timestamp' as any,
+        },
+      ];
+
+      expect(() => {
+        applyCommissionerOverride({
+          currentSettings: poolSettings,
+          season: 2026,
+          week: 7,
+          targetGameId: '401873000',
+          games: targetInvalidKickoffGames,
+          requestingUserId: adminId,
+          poolAdminId: adminId,
+          isUserActiveMember: true,
+        });
+      }).toThrow('UNVERIFIED_KICKOFF');
+    });
   });
 });
