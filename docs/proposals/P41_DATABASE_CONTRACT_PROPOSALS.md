@@ -17,44 +17,45 @@
 >    - The earlier pre-kickoff secrecy clause in Proposal E ("private until kickoff") is **SUPERSEDED** for pool members.
 >    - All picks and tiebreaker predictions are immediately visible to authenticated active members of the same pool at all times.
 >    - Server-side kickoff write locks (immutable picks after kickoff) and strict tenant membership isolation (HTTP 403 / fail-closed for non-members) remain strictly enforced as anti-tampering guards.
-> 4. **Retained Production Games Preservation**:
->    - The 16 historical games records in production (`401872964` through `401872979`) are preserved 100% untouched.
->    - The earlier draft statement referencing synthetic `2026_w05_*` identifiers is **RETRACTED**.
->    - All 80 existing Week 6 test picks across 9 events are preserved.
+> 4. **Retained Production Games Preservation & Historical Provenance (2026-10-18 Inspection; Current Live Audit Unverified)**:
+>    - *Historical Baseline Provenance*: The documented 16 historical games records (`401872964` through `401872979`) and 80 existing Week 6 test picks across 9 events derive from the static baseline inspection conducted on 2026-10-18 (`docs/evidence/P41_POST_PURGE_VALIDATION/`).
+>    - *Current-Unverified Qualification*: No live database queries or production catalog inspections were performed during this task (strictly adhering to zero-production-mutation boundaries). Current live catalog counts and state remain unverified pending a formally authorized live database audit.
+>    - *Historical Correction Preserved*: The earlier draft statement referencing synthetic `2026_w05_*` identifiers is **EXPLICITLY RETRACTED**. The proposed DDL preserves historical records with unassigned (NULL) season/week metadata rather than altering or classifying them by date.
 
 ---
 
 ## 1. Catalog Discrepancy & Reconciliation Matrix
+*Note: Catalog object definitions reflect the inherited historical baseline from the 2026-10-18 staging inspection. No live queries were run in this task; current production state remains unverified pending audit.*
 
-| Object / Relation | Live Production Catalog | Legacy / Flawed Proposal | Reconciled Contract Proposal |
+| Object / Relation | Inherited Historical Catalog (2026-10-18 Inspection; Current Live State Unverified) | Legacy / Flawed Proposal | Reconciled Contract Proposal |
 | :--- | :--- | :--- | :--- |
 | `games.id` | `uuid PRIMARY KEY` | `uuid PRIMARY KEY` | Preserved unchanged (`uuid`) |
 | `games.external_game_id` | `text UNIQUE` | Proposed redundant `event_id` | **No duplicate column**. Uses canonical `external_game_id` directly for ESPN event text IDs (`401872995`..`401873008`). |
 | `games.home_score`, `away_score` | `integer NULL` | Proposed adding duplicate scores | **No duplicate score columns**. Reuses existing `home_score` and `away_score`. |
 | `games.status` | `enum GameStatus` (`SCHEDULED`, `IN_PROGRESS`, `FINAL`, `POSTPONED`, `CANCELED`) | Proposed `source_status text` | **No duplicate status column**. Reuses existing `GameStatus` enum with normalized mappings. |
-| `games` additive columns | None | Ad-hoc definitions | `season int NULL`, `season_type int DEFAULT 2 NULL`, `week int NULL`, `observation_time timestamptz NULL`, `manifest_revision int NULL`. Avoids unconditional defaults that silently certify legacy records. |
-| Existing 16 `games` rows | 16 rows (`401872964`..`401872979`) with kickoff dates Oct 4–5, 2026 | Incorrect synthetic `2026_w05_*` predicate | **Preserved 100% untouched**. Retracts synthetic `2026_w05_*` predicate. UUIDs, numeric ESPN text IDs, scores, statuses, and notes intact. Unverified season/week remains strictly `NULL` / unassigned until separately reviewed with source-backed provider evidence. |
+| `games` additive columns | None (in 2026-10-18 baseline) | Ad-hoc definitions | `season int NULL`, `season_type int DEFAULT 2 NULL`, `week int NULL`, `observation_time timestamptz NULL`, `manifest_revision int NULL`. Avoids unconditional defaults that silently certify legacy records. |
+| Existing 16 `games` rows | 16 rows (`401872964`..`401872979`) with kickoff dates Oct 4–5, 2026 (per 2026-10-18 baseline; current live count unverified) | Incorrect synthetic `2026_w05_*` predicate | **Preserved 100% untouched in specification**. Retracts synthetic `2026_w05_*` predicate. UUIDs, numeric ESPN text IDs, scores, statuses, and notes intact. Unverified season/week remains strictly `NULL` / unassigned until separately reviewed with source-backed provider evidence. |
 | `pools.id` | `uuid PRIMARY KEY` | Guessed `TEXT` in summary | Strictly typed `uuid REFERENCES public.pools(id)`. |
-| `weekly_submissions` unique key | `weekly_submissions_pool_id_user_id_week_number_key` on `(pool_id, user_id, week_number)` | Guessed `weekly_submissions_pool_id_week_number_user_id_key` | Exact verified name dropped concurrently; replaced with season-aware unique index on `(pool_id, season, season_type, week_number, user_id)`. |
+| `weekly_submissions` unique key | `weekly_submissions_pool_id_user_id_week_number_key` on `(pool_id, user_id, week_number)` (per 2026-10-18 baseline) | Guessed `weekly_submissions_pool_id_week_number_user_id_key` | Dropped concurrently in specification; replaced with season-aware unique index on `(pool_id, season, season_type, week_number, user_id)`. |
 | Pool settings location | `public.pools.settings` (`jsonb`) | Guessed `public.pool_settings` table | **`public.pool_settings` does NOT exist**. Stored strictly within `pools.settings` JSONB under `season_tiebreaker_config`. |
-| `weekly_wrapups` primary key | Table does not exist in production | Assumed synthetic `id uuid` or `RETURNING id` | **Composite primary key strictly `(pool_id, season, week_number)`**. Zero synthetic `id` column. |
-| `penalty_ledger` columns | `id uuid`, `pool_id uuid`, `user_id uuid`, `week_number int`, `delta numeric(5,2)`, `reason text`, `created_by uuid`, `created_at timestamptz` | Assumed existing `season`, `week`, `type` | Additive `season int NOT NULL DEFAULT 2026`, `settlement_attribution text NULL`. Unique partial index for weekly settlement deduplication. |
-| `picks.week` | `integer NOT NULL` named `week` | Mistakenly referenced as `week_number` | Verified column is `week`. Trigger and queries reference `NEW.week`. |
-| Live `picks` RLS policies | `Allow authenticated read picks` (`FOR SELECT USING (true)`), `Allow user upsert own picks` | Guessed legacy policy names | Replaces exact live policy names with granular, kickoff-enforced `SELECT`, `INSERT`, `UPDATE`, `DELETE` policies and trigger guard. |
+| `weekly_wrapups` primary key | Table absent in 2026-10-18 baseline (current live state unverified) | Assumed synthetic `id uuid` or `RETURNING id` | **Composite primary key strictly `(pool_id, season, week_number)`**. Zero synthetic `id` column. |
+| `penalty_ledger` columns | `id uuid`, `pool_id uuid`, `user_id uuid`, `week_number int`, `delta numeric(5,2)`, `reason text`, `created_by uuid`, `created_at timestamptz` (per 2026-10-18 baseline) | Assumed existing `season`, `week`, `type` | Additive `season int NOT NULL DEFAULT 2026`, `settlement_attribution text NULL`. Unique partial index for weekly settlement deduplication. |
+| `picks.week` | `integer NOT NULL` named `week` (per 2026-10-18 baseline) | Mistakenly referenced as `week_number` | Verified column is `week`. Trigger and queries reference `NEW.week`. |
+| Live `picks` RLS policies | `Allow authenticated read picks` (`FOR SELECT USING (true)`), `Allow user upsert own picks` (per 2026-10-18 baseline) | Guessed legacy policy names | Replaces historical policy names with granular, kickoff-enforced `SELECT`, `INSERT`, `UPDATE`, `DELETE` policies and trigger guard (subject to `P41-POOL-VISIBILITY-2026-10-19-08`). |
 
 ---
 
 ## Proposal A — Canonical Games & Weekly Slate Manifests DDL
 
 ### 1. Objective
-Add season, season type, week number, and observation provenance to `public.games` without duplicating existing score/status columns or silently certifying unverified legacy records. Establish `public.weekly_slate_manifests` for compact durable slate versioning. Preserve internal UUIDs and all 16 existing production games records (`401872964` through `401872979`).
+Add season, season type, week number, and observation provenance to `public.games` without duplicating existing score/status columns or silently certifying unverified legacy records. Establish `public.weekly_slate_manifests` for compact durable slate versioning. Preserve internal UUIDs and the 16 inherited production games records (`401872964` through `401872979`) documented in the 2026-10-18 baseline.
 
 > [!IMPORTANT]
-> **PRODUCTION GAMES PRESERVATION & RETRACTION NOTICE (2026-10-18)**
+> **HISTORICAL PRODUCTION GAMES PRESERVATION & RETRACTION NOTICE (2026-10-18 Provenance; Current Live State Unverified)**
 > 1. **Retraction**: The earlier draft statement that the 16 existing games records use synthetic `2026_w05_*` identifiers is **EXPLICITLY RETRACTED**.
-> 2. **Live Facts**: Production contains 16 rows with numeric ESPN-style text identifiers `401872964` through `401872979`. Stored kickoffs are October 4, 2026 (15 rows) and October 5, 2026 (1 row). Zero rows match `external_game_id ILIKE '2026_w05_%'`.
-> 3. **Preservation**: The earlier proposed `UPDATE public.games SET week = 5 ... WHERE external_game_id ILIKE '2026_w05_%'` is **DELETED**. Unverified historical records are NOT classified solely from kickoff dates or ID ranges.
-> 4. **Nullable Provenance**: The additive columns `season`, `week`, and `manifest_revision` are added as **NULLABLE** without unconditional NOT NULL defaults that would silently certify legacy records. Their values remain `NULL` (unassigned) until separately reviewed with source-backed provider evidence.
+> 2. **Historical Inspection Baseline (2026-10-18)**: Isolated staging inspection on 2026-10-18 recorded 16 rows with numeric ESPN-style text identifiers `401872964` through `401872979` with kickoffs on October 4, 2026 (15 rows) and October 5, 2026 (1 row), and zero rows matching `external_game_id ILIKE '2026_w05_%'`. Current live production state was not re-queried in this task and remains unverified.
+> 3. **Preservation Specification**: The earlier proposed `UPDATE public.games SET week = 5 ... WHERE external_game_id ILIKE '2026_w05_%'` is **DELETED**. Unverified historical records must NOT be classified solely from kickoff dates or ID ranges.
+> 4. **Nullable Provenance**: The additive columns `season`, `week`, and `manifest_revision` are specified as **NULLABLE** without unconditional NOT NULL defaults that would silently certify legacy records. Their values remain `NULL` (unassigned) until separately reviewed with source-backed provider evidence.
 > 5. **Distinction**: Canonical slate entries (e.g. Week 6) are distinguished in queries by explicit criteria: `WHERE season = 2026 AND week = 6 AND manifest_revision IS NOT NULL`.
 
 ### 2. DDL Specification (Nonexecuted)
@@ -155,7 +156,7 @@ CREATE TABLE IF NOT EXISTS public.pool_slate_manifests (
 ## Proposal B — Canonical Games Import (Week 6 Candidate Manifest)
 
 ### 1. Objective
-Synchronize the official 2026 Week 6 NFL schedule from verified ESPN observations into `public.games` using canonical ESPN event text IDs (`401872995`..`401873008`), resolving all 80 existing picks across 9 events without modifying any pick row.
+Synchronize the official 2026 Week 6 NFL schedule from verified ESPN observations into `public.games` using canonical ESPN event text IDs (`401872995`..`401873008`), resolving the 80 historical Week 6 test picks across 9 events (recorded in the 2026-10-18 baseline; current live audit unverified) without modifying any pick row.
 
 > [!CAUTION]
 > **P0 PROVIDER CONTAMINATION RETRACTION & SUPERSEDED NOTICE (2026-10-18)**
@@ -399,11 +400,13 @@ CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_penalty_ledger_settlement_uni
 Eliminate over-permissive `Allow authenticated read picks` (`FOR SELECT USING (true)`) and `Allow user upsert own picks`, establishing strict authenticated ownership, active pool membership, and kickoff lock enforcement while preserving the direct Supabase client pick-save flow.
 
 ### 2. DDL, RLS & Trigger Guard Transition (Nonexecuted)
+
 ```sql
 -- Step 1: Drop over-permissive live policies
 DROP POLICY IF EXISTS "Allow authenticated read picks" ON public.picks;
 DROP POLICY IF EXISTS "Allow user upsert own picks" ON public.picks;
 DROP POLICY IF EXISTS "Allow authenticated all picks" ON public.picks;
+```
 
 > [!NOTE]
 > **SUPERSEDED CLAUSE — CONTROLLING PRODUCT OWNER DIRECTIVE (P41-POOL-VISIBILITY-2026-10-19-08 / HAG-20)**
@@ -412,7 +415,9 @@ DROP POLICY IF EXISTS "Allow authenticated all picks" ON public.picks;
 > 1. All picks and tiebreaker predictions are visible immediately to authenticated active pool members.
 > 2. Kickoff write locks (no submission, modification, or deletion after kickoff) and strict pool-membership tenancy isolation (non-members see nothing) remain fully enforced as anti-tampering controls.
 
+```sql
 -- Step 2: Privacy-preserving SELECT policy
+-- Note: Historical policy specification below retained for review; subject to P41-POOL-VISIBILITY-2026-10-19-08 above.
 -- A member sees their own picks anytime; other members' picks ONLY after game kickoff
 CREATE POLICY "picks_select_pool_member_policy"
 ON public.picks FOR SELECT
@@ -582,10 +587,10 @@ Stage 5: RLS Security Cutover (Proposal E — Atomic Drop Old & Grant Granular P
    - *Recovery*: If concurrent index build fails (e.g. deadlocks), drop the invalid index concurrently (`DROP INDEX CONCURRENTLY`) and re-run. Do not drop existing submission rows.
 
 3. **Stage 3: Separately Approved Canonical Games Import (Proposal B)**
-   - *Audited Data Operation*:
+   - *Audited Data Operation (Rehearsal Specification; Current Live Production State Unverified)*:
      - Synchronize authoritative 14 NFL events for Week 6 (`401872995`..`401873008`) from verified ESPN provider capture.
-     - Legacy 16 records (`401872964`..`401872979`) are untouched (0 modifications, verified by row hash pre/post check).
-     - Joins all 80 existing Week 6 test picks across 9 events.
+     - Legacy 16 records (`401872964`..`401872979`) specified to remain untouched (0 modifications, verified by rehearsal row hash pre/post check; live state unverified).
+     - Joins the 80 historical Week 6 test picks across 9 events (recorded in 2026-10-18 inspection).
    - *Recovery*: If import fails, transaction rolls back. If an event has incorrect kickoff, update via authoritative provider reconciliation, not destructive row deletion.
 
 4. **Stage 4: Application Cutover (Deploy New Application Code)**
@@ -601,7 +606,7 @@ Stage 5: RLS Security Cutover (Proposal E — Atomic Drop Old & Grant Granular P
        - Create immutability and kickoff trigger guard `trg_check_pick_kickoff_and_immutability`.
        - Issue schema reload: `NOTIFY pgrst, 'reload schema';`
    - *Zero Permissive OR Window*: The old policies are dropped and new policies created in the same transaction block, eliminating any window where an insecure permissive OR policy exists.
-   - *Preservation*: Member picks submitted before kickoff are accepted; member picks submitted after kickoff fail closed; other members cannot read unkicked picks.
+   - *Preservation*: Member picks submitted before kickoff are accepted; member picks submitted after kickoff fail closed; other pool members access picks in accordance with controlling directive P41-POOL-VISIBILITY-2026-10-19-08 (immediate same-pool visibility with kickoff anti-tampering locks).
 
 ### 6.2 Security-Preserving Forward Recovery Invariants
 - **No Insecure Rollback**: In the event of an operational anomaly after Stage 5, the system must **NEVER** reinstate `Allow authenticated read picks` (`FOR SELECT USING (true)`) or `Allow user upsert own picks` (which lacked kickoff guards). Doing so would re-open pre-kickoff opponent pick leakage and post-kickoff modification escapes.

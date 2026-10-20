@@ -1,0 +1,112 @@
+﻿node.exe : npm notice run nfl-pick-em@1.0.0 npx
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Users\kacone\AppData\Roaming ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (npm notice run nfl-pick-em@1.0.0 npx:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+npm notice run vitest run tests/phase41_runtime_mock_purge.test.ts tests/phase41_week7_tiebreaker.test.ts
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+[1m[30m[46m RUN [49m[39m[22m [36mv5.0.2 [39m[90mC:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em[39m
+
+[90mstdout[2m | tests/phase41_week7_tiebreaker.test.ts[2m > [22m[2mPhase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)[2m > [22m[2m5. Member Readiness Summary Under Immediate Pool Visibility (P41-POOL-VISIBILITY-2026-10-19-08)[2m > [22m[2mexposes stored predictions while denying writes (isLocked: true) when designation is UNRESOLVED
+[22m[39m[31mprisma:error[39m
+Invalid `prisma.$queryRawUnsafe()` invocation:
+
+
+Raw query failed. Code: `42703`. Message: `column "season" does not exist`
+
+[90mstderr[2m | tests/phase41_week7_tiebreaker.test.ts[2m > [22m[2mPhase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)[2m > [22m[2m6. Commissioner Designation
+Override & Concurrency Rules (Finding 3)[2m > [22m[2mrejects override if predictions have already been acknowledged (designation frozen)
+[22m[39mError applying commissioner override: Error: DESIGNATION_FROZEN: Cannot change designated tiebreaker game after predictions have been received
+    at C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/src/routes/poolTiebreakerRoutes.ts:643:15
+[90m    at processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+
+[90mstderr[2m | tests/phase41_week7_tiebreaker.test.ts[2m > [22m[2mPhase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)[2m > [22m[2m6. Commissioner Designation
+Override & Concurrency Rules (Finding 3)[2m > [22m[2mserializes overlapping first prediction save versus commissioner override via row lock
+[22m[39mError applying commissioner override: Error: DESIGNATION_FROZEN: Cannot change designated tiebreaker game after predictions have been received
+    at C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/src/routes/poolTiebreakerRoutes.ts:643:15
+    at Proxy.<anonymous> (C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/tests/phase41_week7_tiebreaker.test.ts:1098:23)
+
+[90mstderr[2m | tests/phase41_week7_tiebreaker.test.ts[2m > [22m[2mPhase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)[2m > [22m[2m6. Commissioner Designation
+Override & Concurrency Rules (Finding 3)[2m > [22m[2mfails closed and denies prediction submission when pool row lock acquisition fails
+[22m[39mError saving tiebreaker prediction: Error: LOCK_ACQUISITION_FAILED: could not obtain lock on row in relation pools
+    at Proxy.<anonymous> (C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/tests/phase41_week7_tiebreaker.test.ts:1173:54)
+    at Proxy.$transaction
+[90m(file:///C:/Users/kacone/Documents/AI%20and%20Tech/Antigravity/NFL%20Pick%20Em/[39mnode_modules/[4mvitest[24m/dist/chunks/spy.KLHgXex_.js:321:40[90m)[39m
+    at handlePostTiebreaker (C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/src/routes/poolTiebreakerRoutes.ts:438:33)
+[90m    at processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+
+[90mstderr[2m | tests/phase41_week7_tiebreaker.test.ts[2m > [22m[2mPhase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)[2m > [22m[2m6. Commissioner Designation
+Override & Concurrency Rules (Finding 3)[2m > [22m[2mfails closed and denies commissioner override when pool row lock acquisition fails
+[22m[39mError applying commissioner override: Error: LOCK_TIMEOUT: statement timeout on relation pools
+    at Proxy.<anonymous> (C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/tests/phase41_week7_tiebreaker.test.ts:1220:54)
+    at Proxy.$transaction
+[90m(file:///C:/Users/kacone/Documents/AI%20and%20Tech/Antigravity/NFL%20Pick%20Em/[39mnode_modules/[4mvitest[24m/dist/chunks/spy.KLHgXex_.js:321:40[90m)[39m
+    at handlePostTiebreakerOverride (C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/src/routes/poolTiebreakerRoutes.ts:620:38)
+[90m    at processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+
+[90mstderr[2m | tests/phase41_week7_tiebreaker.test.ts[2m > [22m[2mPhase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)[2m > [22m[2m6. Commissioner Designation
+Override & Concurrency Rules (Finding 3)[2m > [22m[2mpreserves designation freeze across clear and subsequent override attempts
+[22m[39mError applying commissioner override: Error: DESIGNATION_FROZEN: Cannot change designated tiebreaker game after predictions have been received
+    at C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/src/routes/poolTiebreakerRoutes.ts:650:15
+[90m    at processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+
+[90mstderr[2m | tests/phase41_week7_tiebreaker.test.ts[2m > [22m[2mPhase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)[2m > [22m[2m6. Commissioner Designation
+Override & Concurrency Rules (Finding 3)[2m > [22m[2mfails closed and denies override when existing designated game has missing kickoffTime
+[22m[39mError applying commissioner override: Error: UNVERIFIED_KICKOFF: Missing kickoff time for existing default designated game. Replacement denied.
+    at applyCommissionerOverride (C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/src/services/weeklyDesignationService.ts:234:13)
+    at C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/src/routes/poolTiebreakerRoutes.ts:662:64
+[90m    at processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+
+[90mstderr[2m | tests/phase41_week7_tiebreaker.test.ts[2m > [22m[2mPhase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)[2m > [22m[2m6. Commissioner Designation
+Override & Concurrency Rules (Finding 3)[2m > [22m[2mfails closed and denies override when existing designated game has invalid kickoffTime string
+[22m[39mError applying commissioner override: Error: UNVERIFIED_KICKOFF: Invalid kickoff time for existing default designated game. Replacement denied.
+    at applyCommissionerOverride (C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/src/services/weeklyDesignationService.ts:238:13)
+    at C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/src/routes/poolTiebreakerRoutes.ts:662:64
+[90m    at processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+
+[90mstderr[2m | tests/phase41_week7_tiebreaker.test.ts[2m > [22m[2mPhase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)[2m > [22m[2m6. Commissioner Designation
+Override & Concurrency Rules (Finding 3)[2m > [22m[2mfails closed and denies override when stored designated event is missing from weekly slate
+[22m[39mError applying commissioner override: Error: UNVERIFIED_KICKOFF: Stored designated game (999999999) is unresolved or missing from weekly slate. Replacement denied.
+    at applyCommissionerOverride (C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/src/services/weeklyDesignationService.ts:219:13)
+    at C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/src/routes/poolTiebreakerRoutes.ts:662:64
+[90m    at processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+
+[90mstderr[2m | tests/phase41_week7_tiebreaker.test.ts[2m > [22m[2mPhase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)[2m > [22m[2m6. Commissioner Designation
+Override & Concurrency Rules (Finding 3)[2m > [22m[2mfails closed and denies override when target proposed game has missing kickoffTime (Finding 4)
+[22m[39mError applying commissioner override: Error: UNVERIFIED_KICKOFF: Target game kickoff time is missing
+    at applyCommissionerOverride (C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/src/services/weeklyDesignationService.ts:262:11)
+    at C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/src/routes/poolTiebreakerRoutes.ts:662:64
+[90m    at processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+
+[90mstderr[2m | tests/phase41_week7_tiebreaker.test.ts[2m > [22m[2mPhase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)[2m > [22m[2m6. Commissioner Designation
+Override & Concurrency Rules (Finding 3)[2m > [22m[2mfails closed and denies override when target proposed game has invalid kickoffTime string (Finding 4)
+[22m[39mError applying commissioner override: Error: UNVERIFIED_KICKOFF: Target game kickoff time is invalid
+    at applyCommissionerOverride (C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/src/services/weeklyDesignationService.ts:266:11)
+    at C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/src/routes/poolTiebreakerRoutes.ts:662:64
+[90m    at processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+
+[90mstdout[2m | tests/phase41_week7_tiebreaker.test.ts[2m > [22m[2mPhase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)[2m > [22m[2m9. Critical Source Gate / Schema-Compatible Slate Query[2m > [22m[2mexecutes getGamesForWeek against actual prisma.game without season/week where clause
+[22m[39m[31mprisma:error[39m
+Invalid `prisma.$queryRawUnsafe()` invocation:
+
+
+Raw query failed. Code: `42703`. Message: `column "season" does not exist`
+
+[90mstderr[2m | tests/phase41_week7_tiebreaker.test.ts[2m > [22m[2mPhase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)[2m > [22m[2m11. Atomic Omission Preservation
+Under Concurrent Save/Clear (Finding 1)[2m > [22m[2mfails closed with zero database writes when transaction client lacks weeklySubmission capability (Finding 5)
+[22m[39mError saving tiebreaker prediction: Error: TRANSACTION_CAPABILITY_MISSING: Transaction client lacks weeklySubmission capability.
+    at C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em/src/routes/poolTiebreakerRoutes.ts:478:17
+[90m    at processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+
+ [32mΓ£ô[39m tests/phase41_week7_tiebreaker.test.ts [2m([22m[2m82 tests[22m[2m)[22m[33m 1102[2mms[22m[39m
+ [32mΓ£ô[39m tests/phase41_runtime_mock_purge.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 61[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m2 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[32m94 passed[39m[22m[90m (94)[39m
+[2m   Start at [22m 15:56:00
+[2m   Duration [22m 4.03s[2m (transform 35%, tests 32%, import 29%, setup 3%)[22m

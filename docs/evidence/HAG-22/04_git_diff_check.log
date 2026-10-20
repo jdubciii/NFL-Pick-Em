@@ -1,0 +1,9 @@
+﻿git : warning: in the working copy of 'client/src/pages/ProfilePage.tsx', LF will be replaced by CRLF the next time Git touches it
+At line:1 char:1
++ git diff --check *>&1 | Out-File -FilePath docs/evidence/HAG-22/04_gi ...
++ ~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: in the... Git touches it:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+warning: in the working copy of 'docs/proposals/P41_DATABASE_CONTRACT_PROPOSALS.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/phase41_runtime_mock_purge.test.ts', LF will be replaced by CRLF the next time Git touches it

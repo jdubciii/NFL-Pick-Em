@@ -598,14 +598,35 @@ describe('P41 — Runtime Mock Purge and Team Identity Normalization (Directive 
       picks?: any[];
       picksError?: any;
     }) {
+      const rpcCalls: Array<{ fnName: string; args: any }> = [];
       return {
-        rpc: async (fnName: string, _args: any) => {
+        rpcCalls,
+        rpc: async (fnName: string, args: any) => {
+          rpcCalls.push({ fnName, args });
           if (fnName === 'get_pool_canonical_games') {
             if (config.rpcError) {
               return { data: null, error: config.rpcError };
             }
             if (config.rpcGames !== undefined) {
-              return { data: config.rpcGames, error: null };
+              const poolId = args?.p_pool_id;
+              const season = args?.p_season;
+              const week = args?.p_week;
+
+              // Validate active pool membership for p_pool_id in context (Decision #55 fail-closed)
+              const allMems = config.memberships || (config.membership ? [config.membership] : []);
+              const hasActiveMem = allMems.some((m: any) => m.pool_id === poolId && m.status === 'ACTIVE');
+              if (!hasActiveMem) {
+                // Nonmember or inactive pool caller returns 0 rows
+                return { data: [], error: null };
+              }
+
+              // Filter RPC games by p_season and p_week
+              const filtered = config.rpcGames.filter((g: any) => {
+                if (season !== undefined && g.season !== undefined && g.season !== season) return false;
+                if (week !== undefined && g.week !== undefined && g.week !== week) return false;
+                return true;
+              });
+              return { data: filtered, error: null };
             }
           }
           return { data: null, error: null };
@@ -951,5 +972,145 @@ describe('P41 — Runtime Mock Purge and Team Identity Normalization (Directive 
     expect(resUnbound.hasAcceptedSlate).toBe(false);
     expect(resUnbound.unavailabilityReason).toBe('UNBOUND_MANIFEST_EVENT_SET');
     expect(resUnbound.windowGames).toEqual([]);
+
+    // Case 15: Partial RPC coverage regression (manifest has [A, B], RPC returns only [A], A picked)
+    // Incomplete coverage must fail closed to hasAcceptedSlate=false and never misreport isSlateSubmitted=true or schedule reminders
+    const sbPartialRpc = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, season_type: 2, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c', event_ids: ['401872995', '401873007'] },
+      rpcGames: [testDbGames[0]], // Only 1 of 2 manifest events returned!
+      games: [],
+      picks: [{ pool_id: 'pool-main', user_id: 'u1', game_id: '401872995' }], // User picked the 1 available game
+    });
+    const resPartialRpc = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sbPartialRpc });
+    expect(resPartialRpc.hasAcceptedSlate).toBe(false);
+    expect(resPartialRpc.isSlateSubmitted).toBe(false);
+    expect(resPartialRpc.unavailabilityReason).toBe('INCOMPLETE_MANIFEST_COVERAGE');
+    expect(resPartialRpc.windowGames).toEqual([]);
+
+    // Assert that deadline reminder planner fails closed (zero reminders scheduled)
+    const partialRpcPlan = planDeadlineReminders({
+      userId: 'u1',
+      poolId: 'pool-main',
+      season: 2026,
+      seasonType: 2,
+      week: 6,
+      optInEnabled: true,
+      permissionState: 'GRANTED',
+      isSlateSubmitted: resPartialRpc.isSlateSubmitted,
+      hasAcceptedSlate: resPartialRpc.hasAcceptedSlate,
+      games: resPartialRpc.windowGames,
+      nowMs: new Date('2026-10-15T12:00:00.000Z').getTime(),
+    });
+    expect(partialRpcPlan.isUnavailable).toBe(true);
+    expect(partialRpcPlan.toSchedule).toEqual([]);
+
+    // Case 16: Partial direct games coverage regression (manifest has [A, B], direct query returns only [A], A picked)
+    const sbPartialDirect = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, season_type: 2, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c', event_ids: ['401872995', '401873007'] },
+      games: [testDbGames[0]], // Direct query only returns 1 of 2 games
+      picks: [{ pool_id: 'pool-main', user_id: 'u1', game_id: '401872995' }],
+    });
+    const resPartialDirect = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sbPartialDirect });
+    expect(resPartialDirect.hasAcceptedSlate).toBe(false);
+    expect(resPartialDirect.isSlateSubmitted).toBe(false);
+    expect(resPartialDirect.unavailabilityReason).toBe('INCOMPLETE_MANIFEST_COVERAGE');
+    expect(resPartialDirect.windowGames).toEqual([]);
+
+    const partialDirectPlan = planDeadlineReminders({
+      userId: 'u1',
+      poolId: 'pool-main',
+      season: 2026,
+      seasonType: 2,
+      week: 6,
+      optInEnabled: true,
+      permissionState: 'GRANTED',
+      isSlateSubmitted: resPartialDirect.isSlateSubmitted,
+      hasAcceptedSlate: resPartialDirect.hasAcceptedSlate,
+      games: resPartialDirect.windowGames,
+      nowMs: new Date('2026-10-15T12:00:00.000Z').getTime(),
+    });
+    expect(partialDirectPlan.isUnavailable).toBe(true);
+    expect(partialDirectPlan.toSchedule).toEqual([]);
+
+    // Case 17: Duplicate manifest event mapping in returned games
+    const sbDuplicate = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, season_type: 2, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c', event_ids: ['401872995', '401873007'] },
+      games: [
+        testDbGames[0],
+        { ...testDbGames[0], id: 'g1_duplicate' }, // Duplicate row mapping to 401872995!
+        testDbGames[1],
+      ],
+      picks: [],
+    });
+    const resDuplicate = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sbDuplicate });
+    expect(resDuplicate.hasAcceptedSlate).toBe(false);
+    expect(resDuplicate.isSlateSubmitted).toBe(false);
+    expect(resDuplicate.unavailabilityReason).toBe('DUPLICATE_MANIFEST_EVENT_MAPPING');
+    expect(resDuplicate.windowGames).toEqual([]);
+
+    // Case 18: Conflicting ID mappings (same internal UUID mapped to multiple external events)
+    const sbConflicting = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, season_type: 2, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c', event_ids: ['401872995', '401873007'] },
+      games: [
+        { id: 'shared_uuid', external_game_id: '401872995', home_team_id: 'DEN', away_team_id: 'SEA', kickoff_time: '2026-10-16T00:15:00.000Z', status: 'FINAL', season: 2026, season_type: 2, week: 6 },
+        { id: 'shared_uuid', external_game_id: '401873007', home_team_id: 'GB', away_team_id: 'DAL', kickoff_time: '2026-10-19T00:20:00.000Z', status: 'SCHEDULED', season: 2026, season_type: 2, week: 6 },
+      ],
+      picks: [],
+    });
+    const resConflicting = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sbConflicting });
+    expect(resConflicting.hasAcceptedSlate).toBe(false);
+    expect(resConflicting.unavailabilityReason).toBe('CONFLICTING_MANIFEST_EVENT_MAPPING');
+    expect(resConflicting.windowGames).toEqual([]);
+
+    // Case 19: RPC args observation and wrong-context validation
+    const sbRpcArgs = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, season_type: 2, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c', event_ids: ['401872995', '401873007'] },
+      rpcGames: testDbGames,
+      picks: [{ pool_id: 'pool-main', user_id: 'u1', game_id: '401872995' }, { pool_id: 'pool-main', user_id: 'u1', game_id: '401873007' }],
+    });
+    const resRpcArgs = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sbRpcArgs });
+    expect(resRpcArgs.hasAcceptedSlate).toBe(true);
+    expect(sbRpcArgs.rpcCalls.length).toBe(1);
+    expect(sbRpcArgs.rpcCalls[0]).toEqual({
+      fnName: 'get_pool_canonical_games',
+      args: { p_pool_id: 'pool-main', p_season: 2026, p_week: 6 },
+    });
+
+    // Wrong-context case: inactive / non-member pool call to RPC returns 0 rows
+    const rpcWrongPool = await sbRpcArgs.rpc('get_pool_canonical_games', {
+      p_pool_id: 'pool-NONMEMBER',
+      p_season: 2026,
+      p_week: 6,
+    });
+    expect(rpcWrongPool.data).toEqual([]); // Fail closed
+
+    // Wrong season call to RPC returns 0 rows
+    const rpcWrongSeason = await sbRpcArgs.rpc('get_pool_canonical_games', {
+      p_pool_id: 'pool-main',
+      p_season: 2025,
+      p_week: 6,
+    });
+    expect(rpcWrongSeason.data).toEqual([]);
+
+    // Case 20: Internal UUID must never be accepted as manifest event identity
+    const sbUuidNotExtId = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, season_type: 2, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c', event_ids: ['401872995'] },
+      games: [
+        // Game whose database UUID happens to match the manifest event string, but external_game_id is unverified/different
+        { id: '401872995', external_game_id: 'UNVERIFIED_OTHER_ID', home_team_id: 'DEN', away_team_id: 'SEA', kickoff_time: '2026-10-16T00:15:00.000Z', status: 'FINAL', season: 2026, season_type: 2, week: 6 },
+      ],
+      picks: [],
+    });
+    const resUuidNotExt = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sbUuidNotExtId });
+    // Must NOT bind internal UUID as manifest event identity -> fails closed with INCOMPLETE_MANIFEST_COVERAGE
+    expect(resUuidNotExt.hasAcceptedSlate).toBe(false);
+    expect(resUuidNotExt.unavailabilityReason).toBe('INCOMPLETE_MANIFEST_COVERAGE');
+    expect(resUuidNotExt.windowGames).toEqual([]);
   });
 });

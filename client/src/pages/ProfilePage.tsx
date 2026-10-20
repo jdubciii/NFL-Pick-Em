@@ -227,15 +227,7 @@ export async function resolveProfileReminderScope(
     }
   }
 
-  // Filter raw games strictly against the accepted manifest's event set.
-  // Any extra event outside the manifest is excluded; unaccepted events never enter reminder windows.
-  const boundGames = rawGames.filter((g: any) => {
-    const extId = g.external_game_id ? String(g.external_game_id) : null;
-    const internalId = g.id ? String(g.id) : null;
-    return (extId && acceptedEventIdSet.has(extId)) || (internalId && acceptedEventIdSet.has(internalId));
-  });
-
-  if (boundGames.length === 0) {
+  if (rawGames.length === 0) {
     return {
       hasAcceptedSlate: false,
       resolvedPoolId,
@@ -247,13 +239,93 @@ export async function resolveProfileReminderScope(
     };
   }
 
+  // Filter and bind raw games strictly by canonical external event ID.
+  // Never accept internal database UUID as manifest event identity.
+  const mappedGamesByExternalId = new Map<string, any>();
+  const seenInternalIds = new Map<string, string>();
+
+  for (const game of rawGames) {
+    const extId = game.external_game_id != null
+      ? String(game.external_game_id)
+      : (game.externalGameId != null ? String(game.externalGameId) : null);
+
+    // If game has no canonical external ID, it cannot bind to the manifest event set
+    if (!extId) {
+      continue;
+    }
+
+    // Only process games that belong to the accepted manifest event set (extra events excluded)
+    if (!acceptedEventIdSet.has(extId)) {
+      continue;
+    }
+
+    // Detect duplicate mappings for the same canonical external event ID
+    if (mappedGamesByExternalId.has(extId)) {
+      return {
+        hasAcceptedSlate: false,
+        resolvedPoolId,
+        resolvedScope,
+        manifestRecord,
+        windowGames: [],
+        isSlateSubmitted: false,
+        unavailabilityReason: 'DUPLICATE_MANIFEST_EVENT_MAPPING',
+      };
+    }
+
+    // Detect conflicting internal IDs (same internal UUID mapped to multiple external IDs)
+    const internalId = game.id != null ? String(game.id) : null;
+    if (internalId) {
+      if (seenInternalIds.has(internalId) && seenInternalIds.get(internalId) !== extId) {
+        return {
+          hasAcceptedSlate: false,
+          resolvedPoolId,
+          resolvedScope,
+          manifestRecord,
+          windowGames: [],
+          isSlateSubmitted: false,
+          unavailabilityReason: 'CONFLICTING_MANIFEST_EVENT_MAPPING',
+        };
+      }
+      seenInternalIds.set(internalId, extId);
+    }
+
+    mappedGamesByExternalId.set(extId, game);
+  }
+
+  // Verify complete coverage: EVERY accepted event in the manifest must have exactly one bound game.
+  // A partial subset must never be misreported as a complete accepted slate or produce unauthorized reminders.
+  for (const expectedEventId of acceptedEventIdSet) {
+    if (!mappedGamesByExternalId.has(expectedEventId)) {
+      return {
+        hasAcceptedSlate: false,
+        resolvedPoolId,
+        resolvedScope,
+        manifestRecord,
+        windowGames: [],
+        isSlateSubmitted: false,
+        unavailabilityReason: 'INCOMPLETE_MANIFEST_COVERAGE',
+      };
+    }
+  }
+
+  // Complete, unique coverage verified. Build bound games in stable kickoff order.
+  const boundGames = Array.from(mappedGamesByExternalId.values()).sort((a: any, b: any) => {
+    const tA = new Date(a.kickoff_time || a.kickoffIso || 0).getTime();
+    const tB = new Date(b.kickoff_time || b.kickoffIso || 0).getTime();
+    return tA - tB;
+  });
+
   // 5. Query user's picks for this resolved pool and accepted games.
   // Uses existing schema columns (pool_id, user_id, game_id) and accepted game IDs.
   // Never uses picks.week or unmapped columns.
   const acceptedGameIds = Array.from(
     new Set(
       boundGames
-        .flatMap((g: any) => [g.external_game_id, g.id])
+        .flatMap((g: any) => [
+          g.external_game_id != null ? String(g.external_game_id) : null,
+          g.externalGameId != null ? String(g.externalGameId) : null,
+          g.id != null ? String(g.id) : null,
+        ])
         .filter(Boolean)
         .map(String)
     )
@@ -283,14 +355,17 @@ export async function resolveProfileReminderScope(
       .map((p: any) => String(p.game_id))
   );
 
-  const windowGames: DeadlineGameWindowInput[] = boundGames.map((g: any) => ({
-    gameId: g.external_game_id || g.id,
-    awayTeam: g.away_team_id,
-    homeTeam: g.home_team_id,
-    kickoffIso: g.kickoff_time,
-    status: g.status,
-    isPicked: pickSet.has(String(g.external_game_id)) || pickSet.has(String(g.id)),
-  }));
+  const windowGames: DeadlineGameWindowInput[] = boundGames.map((g: any) => {
+    const canonicalExtId = String(g.external_game_id || g.externalGameId);
+    return {
+      gameId: canonicalExtId,
+      awayTeam: g.away_team_id || g.awayTeam || '',
+      homeTeam: g.home_team_id || g.homeTeam || '',
+      kickoffIso: g.kickoff_time || g.kickoffIso || '',
+      status: g.status,
+      isPicked: pickSet.has(canonicalExtId) || (g.id != null && pickSet.has(String(g.id))),
+    };
+  });
 
   const isSlateSubmitted = windowGames.length > 0 && windowGames.every((g) => g.isPicked);
 
