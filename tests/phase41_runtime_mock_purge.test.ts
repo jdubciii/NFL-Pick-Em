@@ -583,92 +583,188 @@ describe('P41 — Runtime Mock Purge and Team Identity Normalization (Directive 
   // and strict fail-closed behavior across all missing/denied/inactive scopes.
   // =========================================================================
   it('Test 12: Profile Scope & Manifest Authority Dynamic Resolution Suite', async () => {
-    // Helper to construct a mock Supabase client with programmable responses
+    // Helper to construct a filter-observing mock Supabase client with programmable responses
     function createMockSupabase(config: {
       membership?: any;
       memberships?: any[];
+      membershipError?: any;
       manifestRecord?: any;
+      manifestRecords?: any[];
       manifestError?: any;
       games?: any[];
       gamesError?: any;
+      rpcGames?: any[];
+      rpcError?: any;
       picks?: any[];
+      picksError?: any;
     }) {
       return {
+        rpc: async (fnName: string, _args: any) => {
+          if (fnName === 'get_pool_canonical_games') {
+            if (config.rpcError) {
+              return { data: null, error: config.rpcError };
+            }
+            if (config.rpcGames !== undefined) {
+              return { data: config.rpcGames, error: null };
+            }
+          }
+          return { data: null, error: null };
+        },
         from: (table: string) => {
           if (table === 'pool_memberships') {
-            return {
-              select: () => ({
-                eq: (col1: string, val1: any) => ({
-                  eq: (col2: string, val2: any) => {
-                    if (config.membership !== undefined) {
-                      return {
-                        eq: () => ({
-                          maybeSingle: async () => ({ data: config.membership, error: null }),
-                        }),
-                        maybeSingle: async () => ({ data: config.membership, error: null }),
-                      };
-                    }
-                    return Promise.resolve({ data: config.memberships || [], error: null });
-                  },
-                }),
-              }),
+            const filters: Record<string, any> = {};
+            const queryBuilder: any = {
+              select: () => queryBuilder,
+              eq: (col: string, val: any) => {
+                filters[col] = val;
+                return queryBuilder;
+              },
+              maybeSingle: async () => {
+                if (config.membershipError) {
+                  return { data: null, error: config.membershipError };
+                }
+                if (config.membership !== undefined) {
+                  const m = config.membership;
+                  const matches = Object.entries(filters).every(([k, v]) => {
+                    if (k === 'status') return m.status === v;
+                    if (k === 'pool_id') return m.pool_id === v;
+                    if (k === 'user_id') return m.user_id === undefined || m.user_id === v;
+                    return true;
+                  });
+                  return { data: matches ? m : null, error: null };
+                }
+                const list = config.memberships || [];
+                const match = list.find((m: any) => {
+                  return Object.entries(filters).every(([k, v]) => {
+                    if (k === 'status') return m.status === v;
+                    if (k === 'pool_id') return m.pool_id === v;
+                    if (k === 'user_id') return m.user_id === undefined || m.user_id === v;
+                    return true;
+                  });
+                });
+                return { data: match || null, error: null };
+              },
+              then: (resolve: any) => {
+                if (config.membershipError) {
+                  return Promise.resolve(resolve({ data: null, error: config.membershipError }));
+                }
+                const list = config.memberships || [];
+                const filtered = list.filter((m: any) => {
+                  return Object.entries(filters).every(([k, v]) => {
+                    if (k === 'status') return m.status === v;
+                    if (k === 'pool_id') return m.pool_id === v;
+                    if (k === 'user_id') return m.user_id === undefined || m.user_id === v;
+                    return true;
+                  });
+                });
+                return Promise.resolve(resolve({ data: filtered, error: null }));
+              },
             };
+            return queryBuilder;
           }
+
           if (table === 'weekly_slate_manifests') {
-            return {
-              select: () => ({
-                eq: (_c1: string, _v1: any) => ({
-                  eq: (_c2: string, _v2: any) => ({
-                    eq: (_c3: string, _v3: any) => ({
-                      maybeSingle: async () => ({
-                        data: config.manifestRecord || null,
-                        error: config.manifestError || null,
-                      }),
-                    }),
-                  }),
-                }),
-              }),
+            const filters: Record<string, any> = {};
+            const queryBuilder: any = {
+              select: () => queryBuilder,
+              eq: (col: string, val: any) => {
+                filters[col] = val;
+                return queryBuilder;
+              },
+              maybeSingle: async () => {
+                if (config.manifestError) {
+                  return { data: null, error: config.manifestError };
+                }
+                const manifests = config.manifestRecords || (config.manifestRecord ? [config.manifestRecord] : []);
+                const match = manifests.find((m: any) => {
+                  if (filters.season !== undefined && m.season !== filters.season) return false;
+                  if (filters.season_type !== undefined && m.season_type !== filters.season_type) return false;
+                  if (filters.week_number !== undefined && m.week_number !== filters.week_number) return false;
+                  return true;
+                });
+                return { data: match || null, error: null };
+              },
             };
+            return queryBuilder;
           }
+
           if (table === 'games') {
-            return {
-              select: () => ({
-                eq: (_c: string, _v: any) => ({
-                  order: () => Promise.resolve({
-                    data: config.games || [],
-                    error: config.gamesError || null,
-                  }),
-                }),
-              }),
+            const filters: Record<string, any> = {};
+            const queryBuilder: any = {
+              select: () => queryBuilder,
+              eq: (col: string, val: any) => {
+                filters[col] = val;
+                return queryBuilder;
+              },
+              order: () => queryBuilder,
+              then: (resolve: any) => {
+                if (config.gamesError) {
+                  return Promise.resolve(resolve({ data: null, error: config.gamesError }));
+                }
+                const list = config.games || [];
+                const filtered = list.filter((g: any) => {
+                  if (filters.season !== undefined && g.season !== undefined && g.season !== filters.season) return false;
+                  if (filters.season_type !== undefined && g.season_type !== undefined && g.season_type !== filters.season_type) return false;
+                  if (filters.week !== undefined && g.week !== undefined && g.week !== filters.week) return false;
+                  return true;
+                });
+                return Promise.resolve(resolve({ data: filtered, error: null }));
+              },
             };
+            return queryBuilder;
           }
+
           if (table === 'picks') {
-            return {
-              select: () => ({
-                eq: () => ({
-                  eq: () => ({
-                    eq: () => Promise.resolve({ data: config.picks || [], error: null }),
-                  }),
-                }),
-              }),
+            const filters: Record<string, any> = {};
+            let inGameIds: string[] | null = null;
+            const queryBuilder: any = {
+              select: () => queryBuilder,
+              eq: (col: string, val: any) => {
+                filters[col] = val;
+                return queryBuilder;
+              },
+              in: (col: string, vals: any[]) => {
+                if (col === 'game_id') {
+                  inGameIds = vals.map(String);
+                }
+                return queryBuilder;
+              },
+              then: (resolve: any) => {
+                if (config.picksError) {
+                  return Promise.resolve(resolve({ data: null, error: config.picksError }));
+                }
+                const list = config.picks || [];
+                const filtered = list.filter((p: any) => {
+                  if (filters.pool_id !== undefined && p.pool_id !== undefined && p.pool_id !== filters.pool_id) return false;
+                  if (filters.user_id !== undefined && p.user_id !== undefined && p.user_id !== filters.user_id) return false;
+                  if (inGameIds !== null) {
+                    const pGid = String(p.game_id || p.gameId);
+                    if (!inGameIds.includes(pGid)) return false;
+                  }
+                  return true;
+                });
+                return Promise.resolve(resolve({ data: filtered, error: null }));
+              },
             };
+            return queryBuilder;
           }
+
           return {};
         },
       };
     }
 
     const testDbGames = [
-      { id: 'g1', external_game_id: '401872995', home_team_id: 'DEN', away_team_id: 'SEA', kickoff_time: '2026-10-16T00:15:00.000Z', status: 'FINAL' },
-      { id: 'g2', external_game_id: '401873007', home_team_id: 'GB', away_team_id: 'DAL', kickoff_time: '2026-10-19T00:20:00.000Z', status: 'SCHEDULED' },
+      { id: 'g1', external_game_id: '401872995', home_team_id: 'DEN', away_team_id: 'SEA', kickoff_time: '2026-10-16T00:15:00.000Z', status: 'FINAL', season: 2026, season_type: 2, week: 6 },
+      { id: 'g2', external_game_id: '401873007', home_team_id: 'GB', away_team_id: 'DAL', kickoff_time: '2026-10-19T00:20:00.000Z', status: 'SCHEDULED', season: 2026, season_type: 2, week: 6 },
     ];
 
-    // Case 1: Authenticated user in original pool viewing Week 6 with accepted manifest
+    // Case 1: Authenticated user in original pool viewing Week 6 with accepted manifest and exact scope
     const sb1 = createMockSupabase({
-      memberships: [{ pool_id: 'pool-main', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } }],
-      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c' },
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, season_type: 2, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c', event_ids: ['401872995', '401873007'] },
       games: testDbGames,
-      picks: [{ game_id: '401872995', selected_team: 'SEA' }],
+      picks: [{ pool_id: 'pool-main', user_id: 'u1', game_id: '401872995', selected_team: 'SEA' }],
     });
     const res1 = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sb1 });
     expect(res1.hasAcceptedSlate).toBe(true);
@@ -676,78 +772,184 @@ describe('P41 — Runtime Mock Purge and Team Identity Normalization (Directive 
     expect(res1.windowGames.length).toBe(2);
     expect(res1.isSlateSubmitted).toBe(false); // Only 1 of 2 picked
 
-    // Case 2: Same user selecting a different week (Week 7)
-    const sb2 = createMockSupabase({
-      memberships: [{ pool_id: 'pool-main', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } }],
-      manifestRecord: { season: 2026, season_type: 2, week_number: 7, manifest_fingerprint: 'week7fp' },
-      games: [{ id: 'g3', external_game_id: '401873010', home_team_id: 'KC', away_team_id: 'LAC', kickoff_time: '2026-10-23T00:15:00.000Z', status: 'SCHEDULED' }],
-      picks: [{ game_id: '401873010', selected_team: 'KC' }],
+    // Assert that planDeadlineReminders plans normally with valid exact scope
+    const validPlan = planDeadlineReminders({
+      userId: 'u1',
+      poolId: res1.resolvedPoolId,
+      season: res1.resolvedScope!.season,
+      seasonType: res1.resolvedScope!.seasonType,
+      week: res1.resolvedScope!.week,
+      optInEnabled: true,
+      permissionState: 'GRANTED',
+      isSlateSubmitted: res1.isSlateSubmitted,
+      hasAcceptedSlate: res1.hasAcceptedSlate,
+      games: res1.windowGames,
+      nowMs: new Date('2026-10-18T12:00:00.000Z').getTime(),
     });
-    const res2 = await resolveProfileReminderScope({ userId: 'u1', propWeek: 7, supabaseClient: sb2 });
-    expect(res2.hasAcceptedSlate).toBe(true);
-    expect(res2.resolvedScope?.week).toBe(7);
-    expect(res2.isSlateSubmitted).toBe(true);
+    expect(validPlan.isEnabled).toBe(true);
+    expect(validPlan.toSchedule.length).toBeGreaterThan(0);
 
-    // Case 3: A different season (2027)
-    const sb3 = createMockSupabase({
-      memberships: [{ pool_id: 'pool-main', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } }],
-      manifestRecord: { season: 2027, season_type: 2, week_number: 1, manifest_fingerprint: 's2027w1fp' },
-      games: [{ id: 'g4', external_game_id: '5001', home_team_id: 'DET', away_team_id: 'GB', kickoff_time: '2027-09-10T00:15:00.000Z', status: 'SCHEDULED' }],
-    });
-    const res3 = await resolveProfileReminderScope({ userId: 'u1', propSeason: 2027, propWeek: 1, supabaseClient: sb3 });
-    expect(res3.hasAcceptedSlate).toBe(true);
-    expect(res3.resolvedScope?.season).toBe(2027);
-
-    // Case 4: A different ACTIVE pool
-    const sb4 = createMockSupabase({
-      membership: { pool_id: 'pool-alternate', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } },
-      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c' },
-      games: testDbGames,
+    // Case 2: Filter-observing isolation across seasons and season types (same week number)
+    const multiScopeGames = [
+      { id: 'g_2026_w6', external_game_id: '401872995', home_team_id: 'DEN', away_team_id: 'SEA', kickoff_time: '2026-10-16T00:15:00.000Z', status: 'FINAL', season: 2026, season_type: 2, week: 6 },
+      { id: 'g_2025_w6', external_game_id: '301872995', home_team_id: 'KC', away_team_id: 'LV', kickoff_time: '2025-10-16T00:15:00.000Z', status: 'FINAL', season: 2025, season_type: 2, week: 6 },
+      { id: 'g_2026_pre_w6', external_game_id: 'pre_2026_w6', home_team_id: 'SF', away_team_id: 'LAR', kickoff_time: '2026-08-20T00:15:00.000Z', status: 'FINAL', season: 2026, season_type: 1, week: 6 },
+    ];
+    const sbScopeFilter = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, season_type: 2, current_week: 6 } } }],
+      manifestRecords: [
+        { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'fp2026', event_ids: ['401872995'] },
+        { season: 2025, season_type: 2, week_number: 6, manifest_fingerprint: 'fp2025', event_ids: ['301872995'] },
+      ],
+      games: multiScopeGames,
       picks: [],
     });
-    const res4 = await resolveProfileReminderScope({ userId: 'u1', propPoolId: 'pool-alternate', supabaseClient: sb4 });
-    expect(res4.hasAcceptedSlate).toBe(true);
-    expect(res4.resolvedPoolId).toBe('pool-alternate');
+    const resScopeFilter = await resolveProfileReminderScope({ userId: 'u1', propSeason: 2026, propSeasonType: 2, propWeek: 6, supabaseClient: sbScopeFilter });
+    expect(resScopeFilter.hasAcceptedSlate).toBe(true);
+    expect(resScopeFilter.windowGames.length).toBe(1);
+    expect(resScopeFilter.windowGames[0].gameId).toBe('401872995'); // Proves 2025 and preseason games are strictly isolated
 
-    // Case 5: Inactive membership (status !== 'ACTIVE')
-    const sb5 = createMockSupabase({
-      membership: { pool_id: 'pool-pending', status: 'PENDING' },
+    // Case 3: Extra game in games table outside the accepted manifest is excluded
+    const extraEventGames = [
+      { id: 'g1', external_game_id: '401872995', home_team_id: 'DEN', away_team_id: 'SEA', kickoff_time: '2026-10-16T00:15:00.000Z', status: 'FINAL', season: 2026, season_type: 2, week: 6 },
+      { id: 'g2', external_game_id: '401873007', home_team_id: 'GB', away_team_id: 'DAL', kickoff_time: '2026-10-19T00:20:00.000Z', status: 'SCHEDULED', season: 2026, season_type: 2, week: 6 },
+      { id: 'g_extra', external_game_id: 'UNACCEPTED_EXTRA_EVENT_999', home_team_id: 'XYZ', away_team_id: 'ABC', kickoff_time: '2026-10-19T00:20:00.000Z', status: 'SCHEDULED', season: 2026, season_type: 2, week: 6 },
+    ];
+    const sbExtraGame = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, season_type: 2, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c', event_ids: ['401872995', '401873007'] },
+      games: extraEventGames,
+      picks: [],
     });
-    const res5 = await resolveProfileReminderScope({ userId: 'u1', propPoolId: 'pool-pending', supabaseClient: sb5 });
-    expect(res5.hasAcceptedSlate).toBe(false);
-    expect(res5.unavailabilityReason).toBe('INACTIVE_OR_INVALID_POOL_MEMBERSHIP');
-    expect(res5.windowGames).toEqual([]);
+    const resExtra = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sbExtraGame });
+    expect(resExtra.hasAcceptedSlate).toBe(true);
+    expect(resExtra.windowGames.length).toBe(2);
+    expect(resExtra.windowGames.map(g => g.gameId)).not.toContain('UNACCEPTED_EXTRA_EVENT_999'); // Extra game outside manifest excluded
 
-    // Case 6: Missing manifest storage for scope
-    const sb6 = createMockSupabase({
-      memberships: [{ pool_id: 'pool-main', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } }],
+    // Case 4: Wrong pool and wrong member picks are strictly isolated
+    const sbPickIsolation = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, season_type: 2, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c', event_ids: ['401872995', '401873007'] },
+      games: testDbGames,
+      picks: [
+        { pool_id: 'pool-main', user_id: 'u1', game_id: '401872995' }, // Valid pick for user in this pool
+        { pool_id: 'pool-OTHER', user_id: 'u1', game_id: '401873007' }, // Pick for user in different pool!
+        { pool_id: 'pool-main', user_id: 'u2-DIFFERENT', game_id: '401873007' }, // Pick for different user in this pool!
+      ],
+    });
+    const resPickIso = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sbPickIsolation });
+    expect(resPickIso.hasAcceptedSlate).toBe(true);
+    expect(resPickIso.windowGames.find(g => g.gameId === '401872995')?.isPicked).toBe(true);
+    expect(resPickIso.windowGames.find(g => g.gameId === '401873007')?.isPicked).toBe(false); // Not picked for u1 in pool-main
+    expect(resPickIso.isSlateSubmitted).toBe(false);
+
+    // Case 5: Safe RPC get_pool_canonical_games support
+    const sbRpc = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, season_type: 2, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c', event_ids: ['401872995', '401873007'] },
+      rpcGames: testDbGames,
+      games: [], // direct games empty; proofs RPC path used
+      picks: [{ pool_id: 'pool-main', user_id: 'u1', game_id: '401872995' }, { pool_id: 'pool-main', user_id: 'u1', game_id: '401873007' }],
+    });
+    const resRpc = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sbRpc });
+    expect(resRpc.hasAcceptedSlate).toBe(true);
+    expect(resRpc.windowGames.length).toBe(2);
+    expect(resRpc.isSlateSubmitted).toBe(true);
+
+    // Case 6: RPC failure fails closed
+    const sbRpcErr = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, season_type: 2, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c', event_ids: ['401872995', '401873007'] },
+      rpcError: { message: 'RPC execution failed' },
+    });
+    const resRpcErr = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sbRpcErr });
+    expect(resRpcErr.hasAcceptedSlate).toBe(false);
+    expect(resRpcErr.unavailabilityReason).toBe('GAMES_RPC_ERROR');
+    expect(resRpcErr.windowGames).toEqual([]);
+
+    // Case 7: Direct games query access error fails closed
+    const sbGamesErr = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, season_type: 2, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c', event_ids: ['401872995', '401873007'] },
+      gamesError: { message: 'permission denied for table games' },
+    });
+    const resGamesErr = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sbGamesErr });
+    expect(resGamesErr.hasAcceptedSlate).toBe(false);
+    expect(resGamesErr.unavailabilityReason).toBe('DIRECT_GAMES_ACCESS_ERROR');
+    expect(resGamesErr.windowGames).toEqual([]);
+
+    // Case 8: Picks access error fails closed
+    const sbPicksErr = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, season_type: 2, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c', event_ids: ['401872995', '401873007'] },
+      games: testDbGames,
+      picksError: { message: 'permission denied for table picks' },
+    });
+    const resPicksErr = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sbPicksErr });
+    expect(resPicksErr.hasAcceptedSlate).toBe(false);
+    expect(resPicksErr.unavailabilityReason).toBe('PICKS_ACCESS_ERROR');
+    expect(resPicksErr.windowGames).toEqual([]);
+
+    // Case 9: Selecting a different week (Week 7) with exact scope
+    const sbW7 = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 7, manifest_fingerprint: 'week7fp', event_ids: ['401873010'] },
+      games: [{ id: 'g3', external_game_id: '401873010', home_team_id: 'KC', away_team_id: 'LAC', kickoff_time: '2026-10-23T00:15:00.000Z', status: 'SCHEDULED', season: 2026, season_type: 2, week: 7 }],
+      picks: [{ pool_id: 'pool-main', user_id: 'u1', game_id: '401873010', selected_team: 'KC' }],
+    });
+    const resW7 = await resolveProfileReminderScope({ userId: 'u1', propWeek: 7, supabaseClient: sbW7 });
+    expect(resW7.hasAcceptedSlate).toBe(true);
+    expect(resW7.resolvedScope?.week).toBe(7);
+    expect(resW7.isSlateSubmitted).toBe(true);
+
+    // Case 10: Inactive membership (status !== 'ACTIVE')
+    const sbInactive = createMockSupabase({
+      membership: { pool_id: 'pool-pending', user_id: 'u1', status: 'PENDING' },
+    });
+    const resInactive = await resolveProfileReminderScope({ userId: 'u1', propPoolId: 'pool-pending', supabaseClient: sbInactive });
+    expect(resInactive.hasAcceptedSlate).toBe(false);
+    expect(resInactive.unavailabilityReason).toBe('INACTIVE_OR_INVALID_POOL_MEMBERSHIP');
+    expect(resInactive.windowGames).toEqual([]);
+
+    // Case 11: Membership access error fails closed
+    const sbMemErr = createMockSupabase({
+      membershipError: { message: 'permission denied for table pool_memberships' },
+    });
+    const resMemErr = await resolveProfileReminderScope({ userId: 'u1', propPoolId: 'pool-main', supabaseClient: sbMemErr });
+    expect(resMemErr.hasAcceptedSlate).toBe(false);
+    expect(resMemErr.unavailabilityReason).toBe('MEMBERSHIP_ACCESS_ERROR');
+
+    // Case 12: Missing manifest storage for scope
+    const sbMissingManifest = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } }],
       manifestRecord: null, // No manifest record in table!
       games: testDbGames,
     });
-    const res6 = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sb6 });
-    expect(res6.hasAcceptedSlate).toBe(false);
-    expect(res6.unavailabilityReason).toBe('MISSING_ACCEPTED_MANIFEST');
-    expect(res6.windowGames).toEqual([]);
+    const resMissing = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sbMissingManifest });
+    expect(resMissing.hasAcceptedSlate).toBe(false);
+    expect(resMissing.unavailabilityReason).toBe('MISSING_ACCEPTED_MANIFEST');
+    expect(resMissing.windowGames).toEqual([]);
 
-    // Case 7: Denied manifest access (RLS error or network error)
-    const sb7 = createMockSupabase({
-      memberships: [{ pool_id: 'pool-main', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } }],
+    // Case 13: Denied manifest access (RLS error or network error)
+    const sbManifestErr = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } }],
       manifestError: { message: 'permission denied for table weekly_slate_manifests' },
       games: testDbGames,
     });
-    const res7 = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sb7 });
-    expect(res7.hasAcceptedSlate).toBe(false);
-    expect(res7.unavailabilityReason).toBe('MANIFEST_ACCESS_DENIED');
-    expect(res7.windowGames).toEqual([]);
+    const resManifestErr = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sbManifestErr });
+    expect(resManifestErr.hasAcceptedSlate).toBe(false);
+    expect(resManifestErr.unavailabilityReason).toBe('MANIFEST_ACCESS_DENIED');
+    expect(resManifestErr.windowGames).toEqual([]);
 
-    // Case 8: Games present in DB without an accepted manifest
-    const sb8 = createMockSupabase({
-      memberships: [{ pool_id: 'pool-main', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } }],
-      manifestRecord: null, // Missing manifest
-      games: testDbGames,   // Games present!
+    // Case 14: Manifest with unbound event set (event_ids is empty) fails closed
+    const sbUnboundManifest = createMockSupabase({
+      memberships: [{ pool_id: 'pool-main', user_id: 'u1', status: 'ACTIVE', pools: { settings: { season: 2026, current_week: 6 } } }],
+      manifestRecord: { season: 2026, season_type: 2, week_number: 6, manifest_fingerprint: 'c72f7e4c', event_ids: [] },
+      games: testDbGames,
     });
-    const res8 = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sb8 });
-    expect(res8.hasAcceptedSlate).toBe(false);
-    expect(res8.windowGames).toEqual([]);
+    const resUnbound = await resolveProfileReminderScope({ userId: 'u1', supabaseClient: sbUnboundManifest });
+    expect(resUnbound.hasAcceptedSlate).toBe(false);
+    expect(resUnbound.unavailabilityReason).toBe('UNBOUND_MANIFEST_EVENT_SET');
+    expect(resUnbound.windowGames).toEqual([]);
   });
 });

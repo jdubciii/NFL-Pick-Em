@@ -82,7 +82,7 @@ export async function resolveProfileReminderScope(
         manifestRecord: null,
         windowGames: [],
         isSlateSubmitted: false,
-        unavailabilityReason: 'INACTIVE_OR_INVALID_POOL_MEMBERSHIP',
+        unavailabilityReason: memErr ? 'MEMBERSHIP_ACCESS_ERROR' : 'INACTIVE_OR_INVALID_POOL_MEMBERSHIP',
       };
     }
     resolvedPoolId = specificMem.pool_id;
@@ -102,7 +102,7 @@ export async function resolveProfileReminderScope(
         manifestRecord: null,
         windowGames: [],
         isSlateSubmitted: false,
-        unavailabilityReason: 'NO_ACTIVE_POOL_MEMBERSHIPS',
+        unavailabilityReason: memErr ? 'MEMBERSHIP_ACCESS_ERROR' : 'NO_ACTIVE_POOL_MEMBERSHIPS',
       };
     }
     resolvedPoolId = memberships[0].pool_id;
@@ -135,7 +135,7 @@ export async function resolveProfileReminderScope(
   // 3. Query weekly_slate_manifests for the exact resolved scope
   const { data: manifestRecord, error: manifestErr } = await supabaseClient
     .from('weekly_slate_manifests')
-    .select('season, season_type, week_number, manifest_fingerprint')
+    .select('season, season_type, week_number, manifest_fingerprint, event_ids')
     .eq('season', resolvedSeason)
     .eq('season_type', resolvedSeasonType)
     .eq('week_number', resolvedWeek)
@@ -153,53 +153,137 @@ export async function resolveProfileReminderScope(
     };
   }
 
-  // 4. Query games for the exact resolved week (try safe RPC if available, fallback to direct games query)
-  let dbGames: any[] = [];
-  if (typeof supabaseClient.rpc === 'function') {
-    const { data: rpcGames } = await supabaseClient.rpc('get_pool_canonical_games', {
-      p_pool_id: resolvedPoolId,
-      p_season: resolvedSeason,
-      p_week: resolvedWeek,
-    });
-    if (Array.isArray(rpcGames) && rpcGames.length > 0) {
-      dbGames = rpcGames;
-    }
-  }
+  // Bind manifest event set: manifest existence alone is insufficient; it must bind an accepted event set
+  const manifestEventIds: string[] = Array.isArray(manifestRecord.event_ids)
+    ? manifestRecord.event_ids.map(String)
+    : [];
 
-  if (dbGames.length === 0) {
-    const { data: directGames } = await supabaseClient
-      .from('games')
-      .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, status')
-      .eq('week', resolvedWeek)
-      .order('kickoff_time', { ascending: true });
-    if (directGames && directGames.length > 0) {
-      dbGames = directGames;
-    }
-  }
-
-  if (dbGames.length === 0) {
+  if (manifestEventIds.length === 0) {
     return {
       hasAcceptedSlate: false,
       resolvedPoolId,
       resolvedScope,
-      manifestRecord: manifestRecord || null,
+      manifestRecord,
       windowGames: [],
       isSlateSubmitted: false,
-      unavailabilityReason: manifestRecord ? 'NO_GAMES_FOUND_FOR_SCOPE' : 'MISSING_ACCEPTED_MANIFEST',
+      unavailabilityReason: 'UNBOUND_MANIFEST_EVENT_SET',
     };
   }
 
-  // 5. Query user's picks for this resolved pool and week
-  const { data: dbPicks } = await supabaseClient
+  const acceptedEventIdSet = new Set(manifestEventIds);
+
+  // 4. Query games for the exact resolved scope.
+  // Prefer the approved pool-scoped canonical RPC get_pool_canonical_games.
+  let rawGames: any[] = [];
+
+  if (typeof supabaseClient.rpc === 'function') {
+    const { data: rpcGames, error: rpcErr } = await supabaseClient.rpc('get_pool_canonical_games', {
+      p_pool_id: resolvedPoolId,
+      p_season: resolvedSeason,
+      p_week: resolvedWeek,
+    });
+
+    if (rpcErr) {
+      return {
+        hasAcceptedSlate: false,
+        resolvedPoolId,
+        resolvedScope,
+        manifestRecord,
+        windowGames: [],
+        isSlateSubmitted: false,
+        unavailabilityReason: 'GAMES_RPC_ERROR',
+      };
+    }
+
+    if (Array.isArray(rpcGames) && rpcGames.length > 0) {
+      rawGames = rpcGames;
+    }
+  }
+
+  if (rawGames.length === 0) {
+    // If RPC unavailable or returns 0 rows, attempt exact-scope direct query (never week-only fallback).
+    const { data: directGames, error: directErr } = await supabaseClient
+      .from('games')
+      .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, status, season, season_type, week')
+      .eq('season', resolvedSeason)
+      .eq('season_type', resolvedSeasonType)
+      .eq('week', resolvedWeek)
+      .order('kickoff_time', { ascending: true });
+
+    if (directErr) {
+      return {
+        hasAcceptedSlate: false,
+        resolvedPoolId,
+        resolvedScope,
+        manifestRecord,
+        windowGames: [],
+        isSlateSubmitted: false,
+        unavailabilityReason: 'DIRECT_GAMES_ACCESS_ERROR',
+      };
+    }
+
+    if (Array.isArray(directGames) && directGames.length > 0) {
+      rawGames = directGames;
+    }
+  }
+
+  // Filter raw games strictly against the accepted manifest's event set.
+  // Any extra event outside the manifest is excluded; unaccepted events never enter reminder windows.
+  const boundGames = rawGames.filter((g: any) => {
+    const extId = g.external_game_id ? String(g.external_game_id) : null;
+    const internalId = g.id ? String(g.id) : null;
+    return (extId && acceptedEventIdSet.has(extId)) || (internalId && acceptedEventIdSet.has(internalId));
+  });
+
+  if (boundGames.length === 0) {
+    return {
+      hasAcceptedSlate: false,
+      resolvedPoolId,
+      resolvedScope,
+      manifestRecord,
+      windowGames: [],
+      isSlateSubmitted: false,
+      unavailabilityReason: 'NO_GAMES_FOUND_FOR_SCOPE',
+    };
+  }
+
+  // 5. Query user's picks for this resolved pool and accepted games.
+  // Uses existing schema columns (pool_id, user_id, game_id) and accepted game IDs.
+  // Never uses picks.week or unmapped columns.
+  const acceptedGameIds = Array.from(
+    new Set(
+      boundGames
+        .flatMap((g: any) => [g.external_game_id, g.id])
+        .filter(Boolean)
+        .map(String)
+    )
+  );
+
+  const { data: dbPicks, error: picksErr } = await supabaseClient
     .from('picks')
-    .select('game_id, selected_team')
+    .select('game_id')
     .eq('pool_id', resolvedPoolId)
     .eq('user_id', userId)
-    .eq('week', resolvedWeek);
+    .in('game_id', acceptedGameIds);
 
-  const pickSet = new Set((dbPicks || []).map((p: any) => String(p.game_id)));
+  if (picksErr) {
+    return {
+      hasAcceptedSlate: false,
+      resolvedPoolId,
+      resolvedScope,
+      manifestRecord,
+      windowGames: [],
+      isSlateSubmitted: false,
+      unavailabilityReason: 'PICKS_ACCESS_ERROR',
+    };
+  }
 
-  const windowGames: DeadlineGameWindowInput[] = dbGames.map((g: any) => ({
+  const pickSet = new Set(
+    (dbPicks || [])
+      .map((p: any) => String(p.game_id))
+  );
+
+  const windowGames: DeadlineGameWindowInput[] = boundGames.map((g: any) => ({
     gameId: g.external_game_id || g.id,
     awayTeam: g.away_team_id,
     homeTeam: g.home_team_id,
@@ -258,8 +342,8 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const [alertsOptedIn, setAlertsOptedIn] = useState<boolean>(() => {
     try {
       // Defer to initial user storage if present, default to false so prompt is triggered
-      const key = typeof window !== 'undefined' && (window as any).__ACTIVE_USER_ID__ 
-        ? getUserAlertKey((window as any).__ACTIVE_USER_ID__) 
+      const key = typeof window !== 'undefined' && (window as any).__ACTIVE_USER_ID__
+        ? getUserAlertKey((window as any).__ACTIVE_USER_ID__)
         : 'pickem_deadline_alerts_opted_in';
       const stored = localStorage.getItem(key);
       return stored !== null ? stored === 'true' : false;
