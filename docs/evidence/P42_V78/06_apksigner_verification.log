@@ -1,3 +1,8 @@
+﻿FILE: pickem-v78-season-release.apk
+SIZE: 7529246 bytes
+SHA256: 319AE7F5A98209BF86C07F22551BC0D791BB841E7B49DD72F53852BE46D19B43
+
+--- APKSIGNER VERIFY ---
 Verifies
 Verified using v1 scheme (JAR signing): false
 Verified using v2 scheme (APK Signature Scheme v2): true
@@ -6,15 +11,10 @@ Verified using v3.1 scheme (APK Signature Scheme v3.1): false
 Verified using v4 scheme (APK Signature Scheme v4): false
 Verified for SourceStamp: false
 Number of signers: 1
-Signer #1 certificate DN: CN=NFLPickEm, OU=Engineering, O=League, L=Phoenix, ST=AZ, C=US
-Signer #1 certificate SHA-256 digest: 0f4397ffa90b7934d49bbe58317839fd534e36f7d483cda52ce29e960af2e9a4
-Signer #1 certificate SHA-1 digest: 2618a2c5b08037ab311bd091e604e3725d21cfae
-Signer #1 certificate MD5 digest: d0a3bf6123849add630353b87bcff4e3
-Signer #1 key algorithm: RSA
-Signer #1 key size (bits): 2048
-Signer #1 public key SHA-256 digest: 69f02dc966956cfc5e6db7b86ad9df816ca0efb63e108d3cc43947ad6e71b807
-Signer #1 public key SHA-1 digest: 190ba26cf37dc21969fe47cbcdf1e192b9201047
-Signer #1 public key MD5 digest: 585aca7cc4c1cb5520f48e31145fe7be
 
-AAPT BADGING METADATA:
-package: name='com.nflpickem.app' versionCode='78' versionName='42.0.0' platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36' compileSdkVersionCodename='16'
+--- AAPT BADGING ---
+
+package: name='com.nflpickem.app' versionCode='78' versionName='42.0.0'
+platformBuildVersionName='16' platformBuildVersionCode='36' compileSdkVersion='36'
+compileSdkVersionCodename='16'
+application-label:'NFL Pick Em'

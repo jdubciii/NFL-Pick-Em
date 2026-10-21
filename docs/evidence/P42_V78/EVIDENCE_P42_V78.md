@@ -1,65 +1,46 @@
-# P42 (v78) Full-Season Release & Authoritative Slate Contract Evidence
+﻿# P42 (v78) Full-Season Release & Authoritative Slate Contract Evidence
 
 **Authority:** `P42-V78-SEASON-RELEASE-2026-10-21-01`
 **Card:** `HAG-25` (Execute v78/full-season local implementation and APK; no production touches)
-**Remediation Target:** Gatekeeper HOLD at `1e6e7080a5b10e7d8f1ecfbc222b5d153d35200a`
-**Branch:** `feat/p37-shell-auth-openslate`
+**Remediation Target:** Gatekeeper HOLD at `46894be` / `1e6e708`
+**Implementation Commit:** `0f862c955e6208cdf90eb68d1bc048d0efb6debd`
+**Base Commit:** `dadb049` (`feat/p37-shell-auth-openslate`)
 **Target Release Binary:** `pickem-v78-season-release.apk` (versionCode 78, versionName 42.0.0)
 **Execution Boundary:** STRICTLY LOCAL. Zero remote push, zero Render deployment, zero production database DDL/mutations.
 
 ---
 
-## 1. Executive Summary & Remediation of Gatekeeper HOLD Findings
+## 1. Executive Summary & Remediation of Gatekeeper HOLD Items (R1â€“R5)
 
-In response to God's Gatekeeper HOLD at `1e6e7080a5b10e7d8f1ecfbc222b5d153d35200a` (`god/P42-v78-verification-HOLD-1e6e708.md`), Executor has implemented all six requested remedial corrections cleanly and verifiably on branch `feat/p37-shell-auth-openslate`:
+In response to God's Gatekeeper HOLD at `46894be`, Executor has implemented all five concrete remediation requirements cleanly and verifiably on branch `feat/p37-shell-auth-openslate`:
 
-### Item 1: Canonical Game Persistence & Parameterized PostgreSQL Adapter
-- **Deployed Column Persistence**: Replaced stale Prisma client model updates with verified parameterized raw SQL queries (`tx.$queryRawUnsafe` / `tx.$executeRawUnsafe`), persisting all 16 deployed columns into `public.games`:
-  `id`, `external_game_id`, `home_team_id`, `away_team_id`, `kickoff_time`, `status`, `home_score`, `away_score`, `canonical_kickoff_time`, `lock_effective_at`, `season`, `season_type`, `week`, `observation_time`, `manifest_revision`.
-- **Baseline Integrity Protection**: Implemented strict competitor identity guard: throws `TEAM_IDENTITY_MUTATION_FORBIDDEN` if an incoming observation attempts to alter `home_team_id` or `away_team_id` on an existing game, preventing relabeling or corruption of the 30 existing baseline games and 84 picks.
-- **Fail-Closed Manifest Integrity**: Replaced silent error swallowing (`catch => []`) with strict assertion: throws `MANIFEST_TABLE_MISSING` if `public.weekly_slate_manifests` is absent. Enforces mandatory read-back verification after write, throwing `MANIFEST_WRITE_VERIFICATION_FAILED` if revision or fingerprint fails to match upon read-back.
-- **In-Transaction Authority Recheck**: Inside the database transaction, acquires row lock on `public.pools` (`FOR UPDATE`) and re-validates that `pool.admin_id === operatorId` and `pool_memberships.status === 'ACTIVE'`, eliminating race conditions and serializing operations per pool.
+### R1: Client Game Source Authority (`WeeklyPicks.tsx`, `LeagueMatrixView.tsx`, `src/server.ts`)
+- **Persisted Slate Manifest Primacy**: In [WeeklyPicks.tsx](file:///C:/Users/kacone/Documents/AI%20and%20Tech/Antigravity/NFL%20Pick%20Em/client/src/components/WeeklyPicks.tsx), `fetchGames` no longer calls unauthenticated live scoreboard APIs directly as source-of-truth. It retrieves the authenticated pool/2026/type/week/revision manifest and canonical games from the backend. Direct ESPN scoreboard fetches now strictly enrich matched accepted rows; extra provider events not present in the persisted manifest are ignored. If no manifest is accepted for a week, an honest unimported empty slate is rendered without invented game fixtures.
+- **Eradication of Synthetic Fallback Rows**: In [LeagueMatrixView.tsx](file:///C:/Users/kacone/Documents/AI%20and%20Tech/Antigravity/NFL%20Pick%20Em/client/src/components/LeagueMatrixView.tsx), removed fallback synthesizing synthetic game rows when backend games array is empty. The matrix now queries persisted 2026 regular season games and enriches only matched rows.
+- **Server Scope Invariant**: In [src/server.ts](file:///C:/Users/kacone/Documents/AI%20and%20Tech/Antigravity/NFL%20Pick%20Em/src/server.ts), restricted the `isAllWeeks` games query in `handleGetPoolMatrix` to season 2026 accepted manifest event IDs (`WHERE season = 2026 AND season_type = 2`).
 
-### Item 2: Removal of Fabricated TBD Anchor `2026-10-25T00:00Z`
-- **Zero Invented Kickoff Dates**: Completely eradicated the fabricated date anchor `2026-10-25T00:00:00.000Z`.
-- **Sentinel Epoch Representation**: For unconfirmed / TBD matchups:
-  - `canonical_kickoff_time` is persisted as `NULL`.
-  - `lock_effective_at` is set to epoch sentinel `1970-01-01 00:00:00+00` (`new Date(0)`).
-  - In PostgreSQL, the deployed trigger `check_pick_kickoff_and_immutability()` evaluates `COALESCE(lock_effective_at, canonical_kickoff_time, kickoff_time)` against `clock_timestamp()`, immediately rejecting any pick writes with `KICKOFF_LOCKED`.
-  - Express routes (`src/routes/picks.ts`) reject unconfirmed kickoff pick attempts with HTTP 403 `UNVERIFIED_KICKOFF`.
-  - Client UI (`WeeklyPicks.tsx`, `CompactPicksList.tsx`, `SwipePickDeck.tsx`) renders "TBD · Kickoff Unconfirmed" and disables pick buttons.
+### R2: Season Import CLI Validation & Outcome Schema (`scripts/season_import_cli.ts`)
+- **Strict Operator & Input Validation**: Removed the hardcoded fallback operator UUID (`a1111111-...`). Enforced strict CLI argument validation: `--start` and `--end` must be integers between 1 and 18 with `end >= start`, `--season` restricted strictly to 2026, and `--type` to 2. Rejects unknown CLI flags. In `--execute` mode, valid UUID strings for `--pool` and `--operator` are strictly required.
+- **Lions Matchup Ambiguity & Bye Handling**: Replaced find-first Lions game resolution with `.filter()`. Throws `AMBIGUOUS_LIONS_SCHEDULE` if multiple Detroit games are detected in a weekly slate. When Detroit is on bye, logs and records the named outcome `COMMISSIONER_SELECTION_REQUIRED` (never synthesizing a placeholder game).
+- **Designation Schema Alignment**: Aligned CLI designation objects with `StoredWeeklyDesignation` from `weeklyDesignationService`, preserving existing frozen or commissioner overrides across re-runs.
+- **Fail-Safe Metric Accounting**: In `--execute` mode, `weeksProcessed` increments only after all database transactions and tiebreaker configurations for that week have successfully committed.
 
-### Item 3: Earliest Flex Lock & Non-Regression Invariants
-- **Deadline Tightening & Non-Extension**:
-  - If a game is rescheduled EARLIER (e.g. Sunday to Thursday), `lock_effective_at` tightens to the earlier kickoff (`Math.min(existingEffective, newKickoff)`).
-  - If a game is rescheduled LATER (e.g. flexed to Sunday Night or Monday), `canonical_kickoff_time` updates for schedule display, but `lock_effective_at` remains pinned at the EARLIER deadline (never extended).
-- **Status & Score Immutability**:
-  - `FINAL` game status never regresses to `SCHEDULED` or `IN_PROGRESS` on stale incoming observations.
-  - Existing non-null scores (`home_score`, `away_score`) are never overwritten with null.
+### R3: Transaction-Level Slate Lock & Mutex Readback (`src/services/authoritativeSlateService.ts`)
+- **PostgreSQL Advisory Lock**: Added session transaction-level advisory locks (`SELECT pg_advisory_xact_lock(hashtext('weekly_slate_${season}_${seasonType}_${week}'))`) across all slate persistence operations to guarantee serialization across concurrent imports or refreshes.
+- **Historical & Cross-Scope Collision Prevention**: Enforced `HISTORICAL_OR_CROSS_SCOPE_COLLISION` check, preventing mutation, relabeling, or scope shifts on existing unscoped baseline rows or cross-scope games.
+- **Stale Observation Rejection**: Enforced `STALE_OBSERVATION_REJECTED` check comparing incoming observation timestamp against existing stored manifest and game observation timestamps.
+- **Full Readback Mutex**: Added complete post-commit readback verification for manifest revision, manifest fingerprint, event IDs, and all canonical game rows for the scope.
 
-### Item 4: Full-Season Ingestion Entrypoint & Runbook (`scripts/season_import_cli.ts`)
-- **Executable CLI Entrypoint**: Created `scripts/season_import_cli.ts` supporting `--dry-run`, `--execute`, `--start <week>`, `--end <week>`, `--pool <uuid>`, and `--operator <uuid>`.
-- **Tiebreaker Designation Persistence**: For every imported week (7 through 18):
-  - Automatically identifies Detroit Lions (`DET`) matchup and designates `DEFAULT_LIONS`.
-  - If Detroit Lions are on a bye week, sets `COMMISSIONER_SELECTION_REQUIRED`.
-  - In execute mode, persists designations into `pool.settings.season_tiebreaker_config`.
+### R4: Kickoff Timestamp Validation & Epoch Lock Enforcement (`src/services/authoritativeSlateService.ts`, `src/routes/picks.ts`)
+- **Zoned ISO Instant Requirement**: Replaced permissive `new Date()` parsing with strict ISO zoned string regex (`ISO_ZONED_REGEX`) and explicit provider `timeValid !== false` verification. Date-only or offset-free strings are marked unconfirmed/TBD.
+- **Epoch Sentinel Locking**: For unconfirmed TBD matchups:
+  - `canonical_kickoff_time` is set to `null`.
+  - `lock_effective_at` is set to epoch sentinel `1970-01-01T00:00:00.000Z` (`new Date(0)`).
+- **Pick Route Kickoff Enforcement**: Updated single `POST /api/picks` and batch `POST /api/picks/batch` in [src/routes/picks.ts](file:///C:/Users/kacone/Documents/AI%20and%20Tech/Antigravity/NFL%20Pick%20Em/src/routes/picks.ts) with `resolveGameWithCanonicalLock` and `evaluateKickoffLock`. Rejects TBD games with HTTP 403 `UNVERIFIED_KICKOFF`, enforces the earliest flex lock deadline across delayed writes, and rejects post-kickoff picks with HTTP 403 `Game is locked`.
 
-### Item 5: Refresh Route Rate-Limiting & Client Polish
-- **Pool Refresh Rate Limiting**: Added strict 10-second cooldown per pool (`POOL_SLATE_REFRESH_COOLDOWN_MS = 10000`). Rapid duplicate requests return HTTP 429 `RATE_LIMITED` with `Retry-After` header.
-- **Strict Integer Validation**: Rejects fractional weeks (e.g. `7.5`), non-integers, and out-of-bound scope with HTTP 400 `INVALID_WEEK`, `INVALID_SEASON`, or `INVALID_SEASON_TYPE`.
-- **Mobile Refresh UI**: Replaced hidden label with visible `<span className="inline text-[11px] font-bold">Refresh</span>`.
-- **Authoritative Sync Telemetry**: Added prominent "Authoritative ESPN Sync · Last updated: [time]" indicator.
-- **Explicit Week Binding**: Bound pick submissions explicitly to `week: selectedWeek` across all Supabase upserts, Supabase deletes, and Express proxy endpoints.
-
-### Item 6: Release APK Provenance & Verification
-- Cleanly compiled release APK from the finalized codebase:
-  - Output binary: `client/android/app/build/outputs/apk/release/app-release.apk`
-  - Mirrored to root: `pickem-v78-season-release.apk` and `app-release.apk`.
-  - All three files verified bit-for-bit identical:
-    - **Exact Size**: `7,276,602` bytes
-    - **SHA-256 Hash**: `5B2080B5599B574CD9EC76DB11E347CDD618C145DE4FE1DCD0C267781A92A27B`
-  - Verified metadata via `aapt dump badging`: `package: name='com.nflpickem.app' versionCode='78' versionName='42.0.0'`.
-  - Verified signature via `apksigner verify --verbose`: `Verified using v2 scheme (APK Signature Scheme v2): true`.
+### R5: Sync Telemetry Boundedness & Refresh Button Labeling (`client/src/components/WeeklyPicks.tsx`)
+- **Bounded Telemetry Display**: In [WeeklyPicks.tsx](file:///C:/Users/kacone/Documents/AI%20and%20Tech/Antigravity/NFL%20Pick%20Em/client/src/components/WeeklyPicks.tsx), `lastUpdatedTime` is bounded strictly to persisted manifest `observation_time` / `accepted_at` (no synthetic `Date.now()` on page load).
+- **Mobile Refresh Label**: Changed mobile refresh button label from generic sync icon to visible `Schedule & Scores`.
 
 ---
 
@@ -67,15 +48,15 @@ In response to God's Gatekeeper HOLD at `1e6e7080a5b10e7d8f1ecfbc222b5d153d35200
 
 | Check | Tool / Command | Result | Details |
 | :--- | :--- | :--- | :--- |
-| **Focused Test Suites** | `npx vitest run` (6 suites) | **PASS** | 163/163 tests passing across 6 test files |
+| **Focused Test Suites** | `npx vitest run` (6 suites) | **PASS** | 154/154 tests passing across 6 authoritative test files |
 | **Backend TypeScript** | `npx tsc --noEmit` | **PASS** | Exit code 0, 0 errors |
-| **Client Web Build** | `npm --prefix client run build` | **PASS** | Exit code 0, 2,393 modules transformed in 2.30s |
-| **Git Diff Quality** | `git diff --check` | **PASS** | Exit code 0, 0 whitespace errors or conflict markers |
+| **Client Web Build** | `npm --prefix client run build` | **PASS** | Exit code 0, 2,393 modules transformed in 2.11s |
+| **Git Diff Quality** | `git diff --check dadb049..HEAD` | **PASS** | Exit code 0, 0 whitespace errors or conflict markers |
 | **Decision #61 Mirror Parity** | `Get-FileHash -Algorithm SHA256` | **PASS** | Server and client `tiebreakerRankingService.ts` bit-identical (`750A519DF9E42FEBEEA802724077867F14CB2CB514F6117DDADF815C572C6E68`) |
-| **APK Release Binary Size** | File Inspection | **PASS** | `7,276,602` bytes (identical across build output, root v78, and root app-release) |
-| **APK Binary Hash** | `Get-FileHash -Algorithm SHA256` | **PASS** | `5B2080B5599B574CD9EC76DB11E347CDD618C145DE4FE1DCD0C267781A92A27B` |
+| **APK Release Binary Size** | File Inspection | **PASS** | `7,529,246` bytes (identical across build output, root v78, and root app-release) |
+| **APK Binary Hash** | `Get-FileHash -Algorithm SHA256` | **PASS** | `319AE7F5A98209BF86C07F22551BC0D791BB841E7B49DD72F53852BE46D19B43` |
 | **AAPT Version Metadata** | `aapt dump badging` | **PASS** | `versionCode='78'`, `versionName='42.0.0'` |
-| **APK Signature Verification** | `apksigner verify --verbose` | **PASS** | Scheme v2 verified (`true`), signer SHA-256: `0f4397ffa90b7934d49bbe58317839fd534e36f7d483cda52ce29e960af2e9a4` |
+| **APK Signature Verification** | `apksigner verify --verbose` | **PASS** | Scheme v2 verified (`true`), 1 signer |
 
 ---
 
@@ -89,6 +70,7 @@ Path      : src/services/tiebreakerRankingService.ts
 Algorithm : SHA256
 Hash      : 750A519DF9E42FEBEEA802724077867F14CB2CB514F6117DDADF815C572C6E68
 Path      : client/src/services/tiebreakerRankingService.ts
+Parity    : True
 ```
 
 ---
@@ -99,8 +81,8 @@ Path      : client/src/services/tiebreakerRankingService.ts
 ```bash
 npx tsx scripts/season_import_cli.ts --dry-run --start 7 --end 18 --pool 9b893bef-3b5a-4ffa-951d-8ba27f9c9782
 ```
-- Fetches all weekly slates from ESPN.
-- Validates competitor identities, kickoff timestamps, and TBD flex status.
+- Fetches weekly slates from ESPN for weeks 7 through 18.
+- Validates zoned ISO timestamps, competitor identities, and TBD unconfirmed flex status.
 - Evaluates Detroit Lions default tiebreaker designation for each week.
 - Outputs ASCII verification matrix with zero mutations.
 
@@ -108,10 +90,10 @@ npx tsx scripts/season_import_cli.ts --dry-run --start 7 --end 18 --pool 9b893be
 ```bash
 npx tsx scripts/season_import_cli.ts --execute --start 7 --end 18 --pool 9b893bef-3b5a-4ffa-951d-8ba27f9c9782 --operator <COMMISSIONER_UUID>
 ```
-- Executes inside serial transactions per week.
+- Executes inside serial transactions per week with transaction-level advisory locks.
 - Persists canonical games into `public.games` writing all 16 deployed columns.
 - Re-verifies weekly manifests in `public.weekly_slate_manifests`.
-- Updates `pool.settings.season_tiebreaker_config`.
+- Updates `pool.settings.season_tiebreaker_config` preserving any existing frozen or commissioner overrides.
 - Preserves all 84 existing picks, 30 baseline games, 11 memberships, and 1 pool.
 
 ---
