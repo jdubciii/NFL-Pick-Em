@@ -3,7 +3,7 @@
 **Authority:** `P42-V78-SEASON-RELEASE-2026-10-21-01`
 **Card:** `HAG-25` (Execute v78/full-season local implementation and APK; no production touches)
 **Remediation Target:** Gatekeeper Residual HOLD at `0c0be0e` / inbox `2026-10-21T19-32-21-177Z-72f9bb.json`
-**Implementation Commit (Prior):** `0af78dd06ec560df877d65b8b70b426a61aa8735`
+**Implementation Commit (E_SHA):** `c90ef411704e14e89c54464b7c6e8c44d1b7cdb9`
 **Base Commit:** `dadb049` (`feat/p37-shell-auth-openslate`)
 **Target Release Binary:** `pickem-v78-season-release.apk` (versionCode 78, versionName 42.0.0)
 **Execution Boundary:** STRICTLY LOCAL. Zero remote push, zero Render deployment, zero production database DDL/mutations.
