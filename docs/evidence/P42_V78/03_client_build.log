@@ -11,12 +11,12 @@ npm notice run tsc -b && vite build
 ignored.[39m The following esbuild options were set: `{ drop: [ 'console', 'debugger' ] }`
 [36mvite v8.3.1 [32mbuilding client environment for production...[36m[39m
 transforming...
-[32mΓ£ô[0m 2393 modules transformed.
+[32mΓ£ô[0m 2394 modules transformed.
 rendering chunks...
 computing gzip size...
 [2mdist/[0m[32mindex.html                 [0m[1;2m  0.49 kB[0m[2m Γöé gzip:   0.32 kB[0m
 [2mdist/[0m[2massets/[0m[35mindex-D9GTIAfN.css  [0m[1;2m182.31 kB[0m[2m Γöé gzip:  22.27 kB[0m
-[2mdist/[0m[2massets/[0m[36mindex-BW-Qy0YB.js   [0m[33;1m905.70 kB[0m[2m Γöé gzip: 254.92 kB[0m
+[2mdist/[0m[2massets/[0m[36mindex-BAbBDuGQ.js   [0m[33;1m907.81 kB[0m[2m Γöé gzip: 255.71 kB[0m
 
 [33m[plugin builtin:vite-reporter] [33;1m
 (!) Some chunks are larger than 500 kB after minification. Consider:
@@ -24,4 +24,4 @@ computing gzip size...
 - Use build.rolldownOptions.output.codeSplitting to improve chunking:
 https://rolldown.rs/reference/OutputOptions.codeSplitting
 - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[0m[39m
-[32mΓ£ô built in 3.67s[39m
+[32mΓ£ô built in 2.02s[39m
