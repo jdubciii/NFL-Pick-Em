@@ -40,10 +40,12 @@ export const NFL_2026_WEEK_WINDOWS: NFLWeekBoundary[] = [
  * Helper to determine week for a specific year, month, and day in October 2026
  */
 function getWeekForYMD(year: number, month: number, day: number): number | null {
-  if (year === 2026 && month === 10) {
-    if (day >= 20 && day <= 26) return 7;
-    if (day >= 13 && day <= 19) return 6;
-    if (day >= 6 && day <= 12) return 5;
+  const d = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  const t = d.getTime();
+  for (const window of NFL_2026_WEEK_WINDOWS) {
+    if (t >= window.start.getTime() && t <= window.end.getTime()) {
+      return window.week;
+    }
   }
   return null;
 }

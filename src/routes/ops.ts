@@ -11,6 +11,7 @@ import {
   getPoolOpsStatus,
 } from '../services/overrideService';
 import * as wrapUpEngine from '../services/wrapUpEngine';
+import { refreshWeeklySlateInDb } from '../services/authoritativeSlateService';
 
 export const opsRouter = Router({ mergeParams: true });
 
@@ -444,3 +445,98 @@ export async function handlePoolWrapUpPreview(req: Request, res: Response): Prom
 
 opsRouter.get('/:pool_id/wrap-up/preview', requireAuth, handlePoolWrapUpPreview);
 opsRouter.get('/:pool_id/ops/wrap-up/preview', requireAuth, handlePoolWrapUpPreview);
+
+/**
+ * Handler for POST /api/pools/:pool_id/slate/refresh (and /:pool_id/ops/slate/refresh)
+ * Canonical pool-scoped commissioner refresh workflow.
+ * Validates ACTIVE membership, commissioner ownership, explicit scope (season, week 1..18).
+ */
+export async function handlePoolSlateRefresh(req: Request, res: Response): Promise<void> {
+  const poolId = (req.params.pool_id || req.params.poolId || req.body?.poolId) as string;
+  if (!poolId || !UUID_REGEX.test(poolId)) {
+    res.status(400).json({ error: 'Valid poolId UUID is required.' });
+    return;
+  }
+
+  const actorId = req.user?.id;
+  if (!actorId) {
+    res.status(401).json({ error: 'Authentication required.' });
+    return;
+  }
+
+  // Verify pool exists
+  const pool = await prisma.pool.findUnique({
+    where: { id: poolId },
+  });
+  if (!pool) {
+    res.status(404).json({ error: 'Pool not found.' });
+    return;
+  }
+
+  // Verify ACTIVE pool membership (No bypass)
+  const membership = await prisma.poolMembership.findUnique({
+    where: {
+      poolId_userId: {
+        poolId,
+        userId: actorId,
+      },
+    },
+  });
+  if (!membership || membership.status !== 'ACTIVE') {
+    res.status(403).json({ error: 'FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED: Must be an ACTIVE member of the requested pool.' });
+    return;
+  }
+
+  // Verify commissioner authority (pool.adminId === actorId)
+  if (pool.adminId !== actorId) {
+    res.status(403).json({ error: 'FORBIDDEN_COMMISSIONER_REQUIRED: Only the pool commissioner may refresh the authoritative slate.' });
+    return;
+  }
+
+  const { season, seasonType, weekNumber, weekId } = req.body || {};
+  if (weekNumber === undefined && weekId === undefined) {
+    res.status(400).json({ error: 'EXPLICIT_WEEK_REQUIRED: weekNumber is required. Silent default to week 1 is prohibited.' });
+    return;
+  }
+
+  const targetWeek = Number(weekNumber !== undefined ? weekNumber : weekId);
+  if (isNaN(targetWeek) || targetWeek < 1 || targetWeek > 18) {
+    res.status(400).json({ error: 'INVALID_WEEK: weekNumber must be an integer between 1 and 18.' });
+    return;
+  }
+
+  const targetSeason = season !== undefined ? Number(season) : 2026;
+  const targetSeasonType = seasonType !== undefined ? Number(seasonType) : 2;
+
+  try {
+    const result = await refreshWeeklySlateInDb(prisma, {
+      poolId,
+      seasonYear: targetSeason,
+      seasonType: targetSeasonType,
+      weekNumber: targetWeek,
+      operatorId: actorId,
+    });
+
+    if (!result.success) {
+      res.status(422).json({
+        error: 'Authoritative slate refresh rejected',
+        reason: result.reason,
+      });
+      return;
+    }
+
+    res.status(200).json({
+      message: 'Weekly slate refreshed successfully',
+      result,
+    });
+  } catch (error: any) {
+    console.error('Error refreshing weekly slate:', error);
+    res.status(500).json({
+      error: 'Failed to refresh weekly slate',
+      details: error.message,
+    });
+  }
+}
+
+opsRouter.post('/:pool_id/slate/refresh', requireAuth, handlePoolSlateRefresh);
+opsRouter.post('/:pool_id/ops/slate/refresh', requireAuth, handlePoolSlateRefresh);

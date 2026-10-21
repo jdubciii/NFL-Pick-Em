@@ -323,25 +323,19 @@ export const MatrixPage: React.FC = () => {
             <h1 className="text-lg font-black tracking-wider text-cyan-400">
               THE MATRIX
             </h1>
-            <div className="inline-flex rounded-lg bg-slate-900 p-0.5 border border-slate-800 text-[10px]">
-              <button
-                type="button"
-                onClick={() => setSelectedWeek(5)}
-                className={`px-2 py-0.5 rounded transition ${
-                  selectedWeek === 5 ? 'bg-zinc-700 text-white font-bold' : 'text-zinc-400 hover:text-white'
-                }`}
+            <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-[10px]">
+              <select
+                aria-label="Select Matrix Week"
+                value={selectedWeek}
+                onChange={(e) => setSelectedWeek(Number(e.target.value))}
+                className="bg-transparent text-cyan-300 font-bold text-xs py-0.5 px-2 rounded focus:outline-none cursor-pointer"
               >
-                W5
-              </button>
-              <button
-                type="button"
-                onClick={() => setSelectedWeek(6)}
-                className={`px-2 py-0.5 rounded transition ${
-                  selectedWeek === 6 ? 'bg-cyan-600 text-white font-bold' : 'text-zinc-400 hover:text-white'
-                }`}
-              >
-                W6
-              </button>
+                {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
+                  <option key={w} value={w} className="bg-zinc-900 text-zinc-200">
+                    Week {w}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
           <p className="text-xs text-slate-400">

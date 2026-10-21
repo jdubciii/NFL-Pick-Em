@@ -36,6 +36,7 @@ export interface CanonicalGameRecord {
   awayScore: number | null;
   spread: string | null;
   statusDetail: string | null;
+  isKickoffConfirmed?: boolean;
 }
 
 export interface VerifiedSlateObservation {
@@ -224,15 +225,27 @@ export function validateAndTransformESPNScoreboard(
       continue;
     }
 
-    const dateStr = ev.date || competition.date;
-    const kickoffTime = new Date(dateStr);
-    if (isNaN(kickoffTime.getTime())) {
-      reasons.push(`INVALID_KICKOFF: Event ${eventId} has unparseable kickoff date "${dateStr}".`);
-      continue;
-    }
-
     const statusObj = ev.status?.type || competition.status?.type;
     const status = mapESPNStatus(statusObj?.name, statusObj?.state, statusObj?.completed);
+
+    const dateStr = ev.date || competition.date;
+    const timeValid = competition.timeValid !== false && ev.timeValid !== false;
+    const statusDetailStr = String(statusObj?.detail || '').toUpperCase();
+    const statusNameStr = String(statusObj?.name || '').toUpperCase();
+    const dateStrUpper = String(dateStr || '').toUpperCase();
+    const isTBD = !timeValid || statusDetailStr.includes('TBD') || statusNameStr.includes('TBD') || dateStrUpper.includes('TBD');
+    const isKickoffConfirmed = !isTBD;
+
+    let kickoffTime = new Date(dateStr);
+    if (isNaN(kickoffTime.getTime())) {
+      if (isTBD) {
+        // Default anchor for TBD game to preserve manifest coverage while denying writes
+        kickoffTime = new Date('2026-10-25T00:00:00.000Z');
+      } else {
+        reasons.push(`INVALID_KICKOFF: Event ${eventId} has unparseable kickoff date "${dateStr}".`);
+        continue;
+      }
+    }
 
     let homeScore: number | null = null;
     let awayScore: number | null = null;
@@ -270,6 +283,7 @@ export function validateAndTransformESPNScoreboard(
       awayScore,
       spread: spreadDetails,
       statusDetail,
+      isKickoffConfirmed,
     });
   }
 
@@ -444,9 +458,11 @@ export async function refreshWeeklySlateInDb(
   }
 
   // Step 2: Atomic database write transaction
-  const txRunner = typeof db.$transaction === 'function' ? (cb: any) => db.$transaction(cb) : async (cb: any) => cb(db);
+  if (typeof db.$transaction !== 'function') {
+    throw new Error('TRANSACTION_UNAVAILABLE: Real database transaction runner required for authoritative slate persistence.');
+  }
 
-  return await txRunner(async (tx: any) => {
+  return await db.$transaction(async (tx: any) => {
     // Check prior accepted manifest
     const currentManifest = await getAcceptedSlateManifest(tx, scope.seasonYear, scope.seasonType, scope.weekNumber);
 
@@ -462,7 +478,8 @@ export async function refreshWeeklySlateInDb(
       }
     }
 
-    const nextRevision = (currentManifest?.revision || 0) + 1;
+    const isIdempotent = currentManifest && currentManifest.manifestFingerprint === observation.manifestFingerprint;
+    const nextRevision = isIdempotent ? currentManifest.revision : (currentManifest?.revision || 0) + 1;
     const upsertedGames: any[] = [];
 
     // Persist canonical games into public.games
@@ -470,8 +487,21 @@ export async function refreshWeeklySlateInDb(
     for (const ev of observation.events) {
       let existingGame: any = null;
 
-      // Look up existing game by external_game_id (or legacy synthetic ID)
-      if (typeof tx.game?.findFirst === 'function') {
+      // Deterministic identity lookup: zero matches allows insert, 1 permits bounded update, >1 is conflict
+      if (typeof tx.game?.findMany === 'function') {
+        const matches = await tx.game.findMany({
+          where: {
+            OR: [
+              { externalGameId: ev.externalGameId },
+              { externalGameId: `espn_${ev.externalGameId}` },
+            ],
+          },
+        });
+        if (matches.length > 1) {
+          throw new Error(`CONFLICTING_GAME_IDENTITY: Multiple existing games matched external ID ${ev.externalGameId}.`);
+        }
+        existingGame = matches[0] || null;
+      } else if (typeof tx.game?.findFirst === 'function') {
         existingGame = await tx.game.findFirst({
           where: {
             OR: [
@@ -483,16 +513,21 @@ export async function refreshWeeklySlateInDb(
       }
 
       if (existingGame) {
-        // Update existing game, preserving internal UUID
+        // Bounded update: prevent regression of FINAL status and protect existing scores from null overwrite
+        const isAlreadyFinal = existingGame.status === GameStatus.FINAL;
+        const preserveStatus = isAlreadyFinal && ev.status !== GameStatus.FINAL ? existingGame.status : ev.status;
+        const preserveHomeScore = ev.homeScore !== null ? ev.homeScore : existingGame.homeScore;
+        const preserveAwayScore = ev.awayScore !== null ? ev.awayScore : existingGame.awayScore;
+
         const updated = await tx.game.update({
           where: { id: existingGame.id },
           data: {
             homeTeamId: ev.homeTeamId,
             awayTeamId: ev.awayTeamId,
             kickoffTime: ev.kickoffTime,
-            status: ev.status,
-            homeScore: ev.homeScore,
-            awayScore: ev.awayScore,
+            status: preserveStatus,
+            homeScore: preserveHomeScore,
+            awayScore: preserveAwayScore,
           },
         });
         upsertedGames.push(updated);
@@ -513,37 +548,33 @@ export async function refreshWeeklySlateInDb(
       }
     }
 
-    // Update or create manifest record if manifest table exists
-    try {
-      const manifestTableExists: any[] = await tx.$queryRawUnsafe(
-        `SELECT to_regclass('public.weekly_slate_manifests') as to_regclass;`
-      ).catch(() => []);
+    // Persist manifest atomically; fail closed and rollback if write fails
+    const manifestTableExists: any[] = await tx.$queryRawUnsafe(
+      `SELECT to_regclass('public.weekly_slate_manifests') as to_regclass;`
+    ).catch(() => []);
 
-      if (manifestTableExists?.[0]?.to_regclass) {
-        await tx.$queryRawUnsafe(
-          `INSERT INTO public.weekly_slate_manifests (
-             season, season_type, week_number, revision, event_ids, accepted_at, accepted_by, manifest_fingerprint, observation_time
-           ) VALUES (
-             $1::int, $2::int, $3::int, $4::int, $5::text[], NOW(), $6::uuid, $7::text, $8::timestamptz
-           ) ON CONFLICT (season, season_type, week_number) DO UPDATE SET
-             revision = $4::int,
-             event_ids = $5::text[],
-             accepted_at = NOW(),
-             accepted_by = $6::uuid,
-             manifest_fingerprint = $7::text,
-             observation_time = $8::timestamptz;`,
-          scope.seasonYear,
-          scope.seasonType,
-          scope.weekNumber,
-          nextRevision,
-          observation.events.map((e) => e.externalGameId),
-          params.operatorId,
-          observation.manifestFingerprint,
-          observation.observationTime
-        );
-      }
-    } catch {
-      // Non-fatal if table not yet migrated in test environment
+    if (manifestTableExists?.[0]?.to_regclass) {
+      await tx.$queryRawUnsafe(
+        `INSERT INTO public.weekly_slate_manifests (
+           season, season_type, week_number, revision, event_ids, accepted_at, accepted_by, manifest_fingerprint, observation_time
+         ) VALUES (
+           $1::int, $2::int, $3::int, $4::int, $5::text[], NOW(), $6::uuid, $7::text, $8::timestamptz
+         ) ON CONFLICT (season, season_type, week_number) DO UPDATE SET
+           revision = $4::int,
+           event_ids = $5::text[],
+           accepted_at = NOW(),
+           accepted_by = $6::uuid,
+           manifest_fingerprint = $7::text,
+           observation_time = $8::timestamptz;`,
+        scope.seasonYear,
+        scope.seasonType,
+        scope.weekNumber,
+        nextRevision,
+        observation.events.map((e) => e.externalGameId),
+        params.operatorId,
+        observation.manifestFingerprint,
+        observation.observationTime
+      );
     }
 
     return {
@@ -554,4 +585,66 @@ export async function refreshWeeklySlateInDb(
       games: upsertedGames,
     };
   });
+}
+
+/**
+ * Orchestrates full season schedule and scores import for weeks 7 through 18.
+ * Preserves existing games and performs additive upserts under Option A contract.
+ */
+export async function orchestrateFullSeasonImport(
+  db: any,
+  params: {
+    startWeek?: number;
+    endWeek?: number;
+    seasonYear?: number;
+    seasonType?: number;
+    operatorId: string;
+    customFetch?: typeof fetch;
+  }
+): Promise<{
+  success: boolean;
+  seasonYear: number;
+  seasonType: number;
+  importedWeeks: number[];
+  failedWeeks: { week: number; reason: string }[];
+  totalGamesUpserted: number;
+}> {
+  const start = params.startWeek ?? 7;
+  const end = params.endWeek ?? 18;
+  const seasonYear = params.seasonYear ?? 2026;
+  const seasonType = params.seasonType ?? 2;
+
+  const importedWeeks: number[] = [];
+  const failedWeeks: { week: number; reason: string }[] = [];
+  let totalGamesUpserted = 0;
+
+  for (let week = start; week <= end; week++) {
+    try {
+      const result = await refreshWeeklySlateInDb(db, {
+        seasonYear,
+        seasonType,
+        weekNumber: week,
+        operatorId: params.operatorId,
+        customFetch: params.customFetch,
+      });
+
+      if (result.success) {
+        importedWeeks.push(week);
+        totalGamesUpserted += result.eventCount;
+      } else {
+        failedWeeks.push({ week, reason: result.reason || 'Unknown rejection' });
+      }
+    } catch (err: any) {
+      failedWeeks.push({ week, reason: err.message || 'Execution exception' });
+    }
+  }
+
+  return {
+    success: failedWeeks.length === 0,
+    seasonYear,
+    seasonType,
+    importedWeeks,
+    failedWeeks,
+    totalGamesUpserted,
+  };
 }

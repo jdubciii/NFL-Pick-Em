@@ -75,7 +75,16 @@ adminOpsRouter.get('/scan-reminders/status', requireAuth, requireAdmin, async (_
  */
 adminOpsRouter.post('/wrap-up', requireAuth, requireAdmin, async (req: Request, res: Response): Promise<void> => {
   const { weekNumber, weekId, poolId, season, seasonType, previewRevision, inputFingerprint } = req.body || {};
-  const targetWeek = weekNumber !== undefined ? Number(weekNumber) : (weekId !== undefined ? Number(weekId) : 1);
+  if (weekNumber === undefined && weekId === undefined) {
+    res.status(400).json({ error: 'EXPLICIT_WEEK_REQUIRED: weekNumber is required. Silent default to week 1 is prohibited.' });
+    return;
+  }
+
+  const targetWeek = Number(weekNumber !== undefined ? weekNumber : weekId);
+  if (isNaN(targetWeek) || targetWeek < 1 || targetWeek > 18) {
+    res.status(400).json({ error: 'INVALID_WEEK: weekNumber must be an integer between 1 and 18.' });
+    return;
+  }
   const targetSeason = season !== undefined ? Number(season) : 2026;
   const targetSeasonType = seasonType !== undefined ? Number(seasonType) : 2;
 
@@ -198,7 +207,16 @@ adminOpsRouter.post('/slate/refresh', requireAuth, async (req: Request, res: Res
     return;
   }
 
-  const targetWeek = weekNumber !== undefined ? Number(weekNumber) : (weekId !== undefined ? Number(weekId) : 1);
+  if (weekNumber === undefined && weekId === undefined) {
+    res.status(400).json({ error: 'EXPLICIT_WEEK_REQUIRED: weekNumber is required. Silent default to week 1 is prohibited.' });
+    return;
+  }
+
+  const targetWeek = Number(weekNumber !== undefined ? weekNumber : weekId);
+  if (isNaN(targetWeek) || targetWeek < 1 || targetWeek > 18) {
+    res.status(400).json({ error: 'INVALID_WEEK: weekNumber must be an integer between 1 and 18.' });
+    return;
+  }
   const targetSeason = season !== undefined ? Number(season) : 2026;
   const targetSeasonType = seasonType !== undefined ? Number(seasonType) : 2;
 

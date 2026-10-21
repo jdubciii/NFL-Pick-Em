@@ -808,7 +808,44 @@ export const WeeklyPicks: React.FC = () => {
     setSnackbarState({ isOpen: false, message: '' });
   };
 
+  const [isRefreshingSchedule, setIsRefreshingSchedule] = useState<boolean>(false);
+  const handleCommissionerRefresh = async () => {
+    if (!activePoolId) return;
+    setIsRefreshingSchedule(true);
+    try {
+      const token = (await supabase.auth.getSession()).data.session?.access_token;
+      const res = await scopedExpressFetch(`/api/pools/${activePoolId}/slate/refresh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          poolId: activePoolId,
+          season: 2026,
+          seasonType: 2,
+          weekNumber: selectedWeek,
+        }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || errData.reason || `HTTP ${res.status}`);
+      }
+      setFeedbackMessage({ text: `Week ${selectedWeek} schedule & scores refreshed.`, type: 'success' });
+      setTimeout(() => setFeedbackMessage(null), 3000);
+      await fetchGames();
+    } catch (err: any) {
+      setFeedbackMessage({ text: `Refresh failed: ${err.message}`, type: 'error' });
+      setTimeout(() => setFeedbackMessage(null), 4000);
+    } finally {
+      setIsRefreshingSchedule(false);
+    }
+  };
+
   const isGameLocked = (game: GameItem): boolean => {
+    if ((game as any).isKickoffConfirmed === false || (game as any).is_kickoff_confirmed === false) {
+      return true; // Deny writes / fail closed on unconfirmed TBD kickoff
+    }
     if (game.status === 'IN_PROGRESS' || game.status === 'FINAL') {
       return true;
     }
@@ -885,12 +922,24 @@ export const WeeklyPicks: React.FC = () => {
 
       {/* ROW 2 (Sub-navigation) */}
       <div className="flex items-center justify-between px-4 py-2 bg-zinc-900/60 border-b border-zinc-800/50">
-          {/* Week Selector Dropdown */}
+          {/* Week Selector Dropdown & Commissioner Controls */}
           <div className="flex items-center gap-2">
             <button onClick={() => setShowWeekModal(true)} className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-zinc-800/90 border border-zinc-700/80 text-white text-xs font-bold">
               <span>WEEK {selectedWeek}</span>
               <ChevronDown className="w-3.5 h-3.5 text-zinc-400"/>
             </button>
+            {((pool as any)?.admin_id === user?.id || (pool as any)?.adminId === user?.id) && (
+              <button
+                type="button"
+                onClick={handleCommissionerRefresh}
+                disabled={isRefreshingSchedule}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-800/60 text-cyan-300 text-xs font-bold transition disabled:opacity-50"
+                title="Refresh schedule & scores from authoritative ESPN source"
+              >
+                <RefreshCw className={`w-3 h-3 text-cyan-400 ${isRefreshingSchedule ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Refresh Schedule</span>
+              </button>
+            )}
             {isOffline && (
               <div className="flex items-center gap-1 text-[10px] font-mono font-bold text-amber-400 bg-amber-500/15 px-2 py-0.5 rounded-md border border-amber-500/30">
                 <WifiOff className="w-3 h-3 text-amber-400" />
@@ -1122,15 +1171,16 @@ export const WeeklyPicks: React.FC = () => {
                 let statusText = 'Upcoming';
                 let statusClass = 'text-zinc-500 bg-zinc-900 border-zinc-800';
 
-                if (week < 5) {
+                const curWeek = getCurrentNFLWeek(now);
+                if (week < curWeek) {
                   statusText = 'Completed';
                   statusClass = 'text-zinc-400 bg-zinc-900 border-zinc-800';
-                } else if (week === 5) {
-                  statusText = 'Finalizing';
-                  statusClass = 'text-amber-400 bg-amber-500/15 border-amber-500/30';
-                } else if (week === 6) {
-                  statusText = 'Open for Picks';
+                } else if (week === curWeek) {
+                  statusText = 'Active / Open';
                   statusClass = 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30';
+                } else {
+                  statusText = 'Upcoming Slate';
+                  statusClass = 'text-cyan-400 bg-cyan-950/20 border-cyan-800/40';
                 }
 
                 return (
