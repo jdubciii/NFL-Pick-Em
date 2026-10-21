@@ -7,11 +7,12 @@
  * - Strict metadata & scope verification (season, seasonType, week, identity, kickoff).
  * - Complete manifest fingerprinting and revision tracking.
  * - Atomic database slate persistence and refresh workflow.
+ * - Earliest flex lock deadline enforcement and non-regressing scores.
+ * - Parameterized PostgreSQL adapter writing all 16 deployed columns.
  */
 
 import crypto from 'crypto';
 import { GameStatus } from '@prisma/client';
-import prisma from '../db/client';
 
 export const ADAPTER_VERSION = '1.0.0';
 
@@ -36,7 +37,7 @@ export interface CanonicalGameRecord {
   awayScore: number | null;
   spread: string | null;
   statusDetail: string | null;
-  isKickoffConfirmed?: boolean;
+  isKickoffConfirmed: boolean;
 }
 
 export interface VerifiedSlateObservation {
@@ -117,14 +118,14 @@ export function computeManifestFingerprint(
   season: number,
   seasonType: number,
   week: number,
-  events: { externalGameId: string; homeTeamId: string; awayTeamId: string; kickoffTime: Date | string }[]
+  events: { externalGameId: string; homeTeamId: string; awayTeamId: string; kickoffTime: Date | string; isKickoffConfirmed?: boolean }[]
 ): string {
   const sorted = [...events].sort((a, b) => a.externalGameId.localeCompare(b.externalGameId));
   const normalized = sorted.map((e) => ({
     id: e.externalGameId,
     home: e.homeTeamId,
     away: e.awayTeamId,
-    kickoff: new Date(e.kickoffTime).toISOString(),
+    kickoff: e.isKickoffConfirmed === false ? 'TBD' : new Date(e.kickoffTime).toISOString(),
   }));
 
   const payload = JSON.stringify({
@@ -233,18 +234,24 @@ export function validateAndTransformESPNScoreboard(
     const statusDetailStr = String(statusObj?.detail || '').toUpperCase();
     const statusNameStr = String(statusObj?.name || '').toUpperCase();
     const dateStrUpper = String(dateStr || '').toUpperCase();
-    const isTBD = !timeValid || statusDetailStr.includes('TBD') || statusNameStr.includes('TBD') || dateStrUpper.includes('TBD');
+    const isTBD = !timeValid || statusDetailStr.includes('TBD') || statusNameStr.includes('TBD') || dateStrUpper.includes('TBD') || !dateStr;
     const isKickoffConfirmed = !isTBD;
 
-    let kickoffTime = new Date(dateStr);
-    if (isNaN(kickoffTime.getTime())) {
-      if (isTBD) {
-        // Default anchor for TBD game to preserve manifest coverage while denying writes
-        kickoffTime = new Date('2026-10-25T00:00:00.000Z');
+    let kickoffTime: Date;
+    if (dateStr) {
+      const parsed = new Date(dateStr);
+      if (isNaN(parsed.getTime())) {
+        if (isTBD) {
+          kickoffTime = new Date(0); // Epoch sentinel for unconfirmed/TBD
+        } else {
+          reasons.push(`INVALID_KICKOFF: Event ${eventId} has unparseable kickoff date "${dateStr}".`);
+          continue;
+        }
       } else {
-        reasons.push(`INVALID_KICKOFF: Event ${eventId} has unparseable kickoff date "${dateStr}".`);
-        continue;
+        kickoffTime = parsed;
       }
+    } else {
+      kickoffTime = new Date(0);
     }
 
     let homeScore: number | null = null;
@@ -365,7 +372,7 @@ export async function fetchAuthoritativeESPNScoreboard(
 
 /**
  * Queries accepted weekly slate manifest.
- * Fallback to memory or database inspection without schema break.
+ * Fails closed and throws if weekly_slate_manifests table is missing.
  */
 export async function getAcceptedSlateManifest(
   db: any,
@@ -373,38 +380,36 @@ export async function getAcceptedSlateManifest(
   seasonType: number,
   weekNumber: number
 ): Promise<WeeklySlateManifest | null> {
-  try {
-    const tableExists: any[] = await db.$queryRawUnsafe(
-      `SELECT to_regclass('public.weekly_slate_manifests') as to_regclass;`
-    ).catch(() => []);
+  const tableExists: any[] = await db.$queryRawUnsafe(
+    `SELECT to_regclass('public.weekly_slate_manifests')::text as to_regclass;`
+  );
 
-    if (tableExists?.[0]?.to_regclass) {
-      const rows: any[] = await db.$queryRawUnsafe(
-        `SELECT season, season_type, week_number, revision, event_ids, accepted_at, accepted_by, manifest_fingerprint, observation_time
-         FROM public.weekly_slate_manifests
-         WHERE season = $1::int AND season_type = $2::int AND week_number = $3::int;`,
-        season,
-        seasonType,
-        weekNumber
-      ).catch(() => []);
+  if (!tableExists?.[0]?.to_regclass) {
+    throw new Error('MANIFEST_TABLE_MISSING: public.weekly_slate_manifests does not exist.');
+  }
 
-      if (rows.length > 0) {
-        const r = rows[0];
-        return {
-          season: r.season,
-          seasonType: r.season_type,
-          weekNumber: r.week_number,
-          revision: Number(r.revision),
-          eventIds: Array.isArray(r.event_ids) ? r.event_ids : JSON.parse(r.event_ids || '[]'),
-          acceptedAt: new Date(r.accepted_at).toISOString(),
-          acceptedBy: r.accepted_by,
-          manifestFingerprint: r.manifest_fingerprint,
-          observationTime: new Date(r.observation_time).toISOString(),
-        };
-      }
-    }
-  } catch {
-    // Return null if table absent or query fails
+  const rows: any[] = await db.$queryRawUnsafe(
+    `SELECT season, season_type, week_number, revision, event_ids, accepted_at, accepted_by, manifest_fingerprint, observation_time
+     FROM public.weekly_slate_manifests
+     WHERE season = $1::int AND season_type = $2::int AND week_number = $3::int;`,
+    season,
+    seasonType,
+    weekNumber
+  );
+
+  if (rows && rows.length > 0) {
+    const r = rows[0];
+    return {
+      season: r.season,
+      seasonType: r.season_type,
+      weekNumber: r.week_number,
+      revision: Number(r.revision),
+      eventIds: Array.isArray(r.event_ids) ? r.event_ids : JSON.parse(r.event_ids || '[]'),
+      acceptedAt: new Date(r.accepted_at).toISOString(),
+      acceptedBy: r.accepted_by,
+      manifestFingerprint: r.manifest_fingerprint,
+      observationTime: new Date(r.observation_time).toISOString(),
+    };
   }
   return null;
 }
@@ -413,10 +418,13 @@ export async function getAcceptedSlateManifest(
  * Controlled commissioner refresh workflow:
  * 1. Fetch & validate observations before opening database transaction.
  * 2. In transaction:
- *    - Recheck authoritative scope and accepted revision.
- *    - Apply deterministic canonical event mapping.
- *    - Preserve existing pick associations and Game identities.
- *    - Persist accepted observations and revision atomically.
+ *    - Recheck commissioner authority and active membership under lock.
+ *    - Query prior accepted manifest and verify CANNOT_SHRINK_MANIFEST.
+ *    - Lookup games with parameterized queries across externalGameId / espn_externalGameId.
+ *    - Throw TEAM_IDENTITY_MUTATION_FORBIDDEN on competitor identity mismatches.
+ *    - Enforce earliest flex lock (min of existingEffective vs incoming kickoff).
+ *    - Persist all 16 deployed columns into public.games.
+ *    - Persist manifest and read-back verify coverage and fingerprint.
  */
 export async function refreshWeeklySlateInDb(
   db: any,
@@ -463,12 +471,55 @@ export async function refreshWeeklySlateInDb(
   }
 
   return await db.$transaction(async (tx: any) => {
-    // Check prior accepted manifest
-    const currentManifest = await getAcceptedSlateManifest(tx, scope.seasonYear, scope.seasonType, scope.weekNumber);
+    // 2a. Recheck commissioner authority and active membership inside transaction under row lock
+    if (params.poolId) {
+      const poolRows: any[] = await tx.$queryRawUnsafe(
+        `SELECT id, admin_id FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
+        params.poolId
+      );
+      if (!poolRows || poolRows.length === 0) {
+        throw new Error(`POOL_NOT_FOUND: Pool ${params.poolId} not found.`);
+      }
+      if (poolRows[0].admin_id !== params.operatorId) {
+        throw new Error('FORBIDDEN_COMMISSIONER_REQUIRED: Operator is not commissioner of the requested pool.');
+      }
+      const memberRows: any[] = await tx.$queryRawUnsafe(
+        `SELECT status FROM public.pool_memberships WHERE pool_id = $1::uuid AND user_id = $2::uuid;`,
+        params.poolId,
+        params.operatorId
+      );
+      if (!memberRows || memberRows.length === 0 || memberRows[0].status !== 'ACTIVE') {
+        throw new Error('FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED: Operator does not have ACTIVE membership in requested pool.');
+      }
+    }
 
-    // Invariant: Do not shrink a verified manifest
-    if (currentManifest) {
-      const priorEventIds = new Set(currentManifest.eventIds);
+    // 2b. Check prior accepted manifest table and record
+    const regclassRows: any[] = await tx.$queryRawUnsafe(
+      `SELECT to_regclass('public.weekly_slate_manifests')::text as to_regclass;`
+    );
+    if (!regclassRows?.[0]?.to_regclass) {
+      throw new Error('MANIFEST_TABLE_MISSING: public.weekly_slate_manifests table is required for authoritative slate persistence.');
+    }
+
+    const priorManifestRows: any[] = await tx.$queryRawUnsafe(
+      `SELECT season, season_type, week_number, revision, event_ids, accepted_at, accepted_by, manifest_fingerprint, observation_time
+       FROM public.weekly_slate_manifests
+       WHERE season = $1::int AND season_type = $2::int AND week_number = $3::int;`,
+      scope.seasonYear,
+      scope.seasonType,
+      scope.weekNumber
+    );
+
+    let currentRevision = 0;
+    let isIdempotent = false;
+
+    if (priorManifestRows.length > 0) {
+      const prior = priorManifestRows[0];
+      currentRevision = Number(prior.revision) || 0;
+      isIdempotent = prior.manifest_fingerprint === observation.manifestFingerprint;
+
+      // Invariant: Do not shrink a verified manifest
+      const priorEventIds: string[] = Array.isArray(prior.event_ids) ? prior.event_ids : JSON.parse(prior.event_ids || '[]');
       const incomingEventIds = new Set(observation.events.map((e) => e.externalGameId));
 
       for (const priorId of priorEventIds) {
@@ -478,103 +529,179 @@ export async function refreshWeeklySlateInDb(
       }
     }
 
-    const isIdempotent = currentManifest && currentManifest.manifestFingerprint === observation.manifestFingerprint;
-    const nextRevision = isIdempotent ? currentManifest.revision : (currentManifest?.revision || 0) + 1;
+    const nextRevision = isIdempotent ? currentRevision : currentRevision + 1;
     const upsertedGames: any[] = [];
 
-    // Persist canonical games into public.games
-    // Preserve internal Game UUID if game already exists under externalGameId
+    // 2c. Persist canonical games into public.games using verified parameterized SQL adapter
     for (const ev of observation.events) {
-      let existingGame: any = null;
+      const matches: any[] = await tx.$queryRawUnsafe(
+        `SELECT id, external_game_id, home_team_id, away_team_id, kickoff_time, status, home_score, away_score,
+                canonical_kickoff_time, lock_effective_at, season, season_type, week, observation_time, manifest_revision
+         FROM public.games
+         WHERE external_game_id = $1::text OR external_game_id = $2::text;`,
+        ev.externalGameId,
+        `espn_${ev.externalGameId}`
+      );
 
-      // Deterministic identity lookup: zero matches allows insert, 1 permits bounded update, >1 is conflict
-      if (typeof tx.game?.findMany === 'function') {
-        const matches = await tx.game.findMany({
-          where: {
-            OR: [
-              { externalGameId: ev.externalGameId },
-              { externalGameId: `espn_${ev.externalGameId}` },
-            ],
-          },
-        });
-        if (matches.length > 1) {
-          throw new Error(`CONFLICTING_GAME_IDENTITY: Multiple existing games matched external ID ${ev.externalGameId}.`);
-        }
-        existingGame = matches[0] || null;
-      } else if (typeof tx.game?.findFirst === 'function') {
-        existingGame = await tx.game.findFirst({
-          where: {
-            OR: [
-              { externalGameId: ev.externalGameId },
-              { externalGameId: `espn_${ev.externalGameId}` },
-            ],
-          },
-        });
+      if (matches.length > 1) {
+        throw new Error(`CONFLICTING_GAME_IDENTITY: Multiple existing games matched external ID ${ev.externalGameId}.`);
       }
+      const existingGame = matches[0] || null;
 
       if (existingGame) {
-        // Bounded update: prevent regression of FINAL status and protect existing scores from null overwrite
-        const isAlreadyFinal = existingGame.status === GameStatus.FINAL;
-        const preserveStatus = isAlreadyFinal && ev.status !== GameStatus.FINAL ? existingGame.status : ev.status;
-        const preserveHomeScore = ev.homeScore !== null ? ev.homeScore : existingGame.homeScore;
-        const preserveAwayScore = ev.awayScore !== null ? ev.awayScore : existingGame.awayScore;
+        // Guard against team identity relabeling / collision with baseline games
+        if (
+          (existingGame.home_team_id && existingGame.home_team_id !== ev.homeTeamId) ||
+          (existingGame.away_team_id && existingGame.away_team_id !== ev.awayTeamId)
+        ) {
+          throw new Error(
+            `TEAM_IDENTITY_MUTATION_FORBIDDEN: Existing game ${existingGame.id} (${existingGame.away_team_id} @ ${existingGame.home_team_id}) cannot be mutated to (${ev.awayTeamId} @ ${ev.homeTeamId}).`
+          );
+        }
 
-        const updated = await tx.game.update({
-          where: { id: existingGame.id },
-          data: {
-            homeTeamId: ev.homeTeamId,
-            awayTeamId: ev.awayTeamId,
-            kickoffTime: ev.kickoffTime,
-            status: preserveStatus,
-            homeScore: preserveHomeScore,
-            awayScore: preserveAwayScore,
-          },
-        });
-        upsertedGames.push(updated);
+        // Bounded update: prevent regression of FINAL status and protect existing scores from null overwrite
+        const isAlreadyFinal = existingGame.status === GameStatus.FINAL || existingGame.status === 'FINAL';
+        const preserveStatus = isAlreadyFinal ? GameStatus.FINAL : ev.status;
+        const preserveHomeScore = ev.homeScore !== null && ev.homeScore !== undefined ? ev.homeScore : existingGame.home_score;
+        const preserveAwayScore = ev.awayScore !== null && ev.awayScore !== undefined ? ev.awayScore : existingGame.away_score;
+
+        // Earliest flex lock calculation
+        const existingEffectiveRaw = existingGame.lock_effective_at || existingGame.canonical_kickoff_time || existingGame.kickoff_time;
+        const existingEffective = existingEffectiveRaw ? new Date(existingEffectiveRaw) : null;
+
+        let canonicalKickoff: Date | null = null;
+        let effectiveLock: Date;
+
+        if (ev.isKickoffConfirmed) {
+          canonicalKickoff = ev.kickoffTime;
+          // Tighten lock to earlier kickoff if flexed earlier; never extend lock if flexed later
+          if (existingEffective && !isNaN(existingEffective.getTime()) && existingEffective.getTime() > 0) {
+            effectiveLock = new Date(Math.min(existingEffective.getTime(), ev.kickoffTime.getTime()));
+          } else {
+            effectiveLock = ev.kickoffTime;
+          }
+        } else {
+          // TBD / unconfirmed: lock past epoch sentinel
+          canonicalKickoff = null;
+          effectiveLock = new Date(0); // 1970-01-01
+        }
+
+        const updatedRows: any[] = await tx.$queryRawUnsafe(
+          `UPDATE public.games
+           SET home_team_id = $1::text,
+               away_team_id = $2::text,
+               kickoff_time = $3::timestamp,
+               status = $4::public."GameStatus",
+               home_score = $5::int,
+               away_score = $6::int,
+               canonical_kickoff_time = $7::timestamptz,
+               lock_effective_at = $8::timestamptz,
+               season = $9::int,
+               season_type = $10::int,
+               week = $11::int,
+               observation_time = $12::timestamptz,
+               manifest_revision = $13::int
+           WHERE id = $14::uuid
+           RETURNING id, external_game_id, home_team_id, away_team_id, kickoff_time, status, home_score, away_score,
+                     canonical_kickoff_time, lock_effective_at, season, season_type, week, observation_time, manifest_revision;`,
+          ev.homeTeamId,
+          ev.awayTeamId,
+          ev.kickoffTime,
+          preserveStatus,
+          preserveHomeScore,
+          preserveAwayScore,
+          canonicalKickoff ? canonicalKickoff.toISOString() : null,
+          effectiveLock.toISOString(),
+          scope.seasonYear,
+          scope.seasonType,
+          scope.weekNumber,
+          observation.observationTime,
+          nextRevision,
+          existingGame.id
+        );
+        upsertedGames.push(updatedRows[0]);
       } else {
-        // Create canonical game with externalGameId = canonical ESPN event ID
-        const created = await tx.game.create({
-          data: {
-            externalGameId: ev.externalGameId,
-            homeTeamId: ev.homeTeamId,
-            awayTeamId: ev.awayTeamId,
-            kickoffTime: ev.kickoffTime,
-            status: ev.status,
-            homeScore: ev.homeScore,
-            awayScore: ev.awayScore,
-          },
-        });
-        upsertedGames.push(created);
+        // Insert brand new canonical game writing all 16 deployed columns
+        let canonicalKickoff: Date | null = null;
+        let effectiveLock: Date;
+
+        if (ev.isKickoffConfirmed) {
+          canonicalKickoff = ev.kickoffTime;
+          effectiveLock = ev.kickoffTime;
+        } else {
+          canonicalKickoff = null;
+          effectiveLock = new Date(0); // Epoch sentinel locking unconfirmed game
+        }
+
+        const insertedRows: any[] = await tx.$queryRawUnsafe(
+          `INSERT INTO public.games (
+             id, external_game_id, home_team_id, away_team_id, kickoff_time, status, home_score, away_score,
+             canonical_kickoff_time, lock_effective_at, season, season_type, week, observation_time, manifest_revision
+           ) VALUES (
+             gen_random_uuid(), $1::text, $2::text, $3::text, $4::timestamp, $5::public."GameStatus", $6::int, $7::int,
+             $8::timestamptz, $9::timestamptz, $10::int, $11::int, $12::int, $13::timestamptz, $14::int
+           ) RETURNING id, external_game_id, home_team_id, away_team_id, kickoff_time, status, home_score, away_score,
+                       canonical_kickoff_time, lock_effective_at, season, season_type, week, observation_time, manifest_revision;`,
+          ev.externalGameId,
+          ev.homeTeamId,
+          ev.awayTeamId,
+          ev.kickoffTime,
+          ev.status,
+          ev.homeScore,
+          ev.awayScore,
+          canonicalKickoff ? canonicalKickoff.toISOString() : null,
+          effectiveLock.toISOString(),
+          scope.seasonYear,
+          scope.seasonType,
+          scope.weekNumber,
+          observation.observationTime,
+          nextRevision
+        );
+        upsertedGames.push(insertedRows[0]);
       }
     }
 
-    // Persist manifest atomically; fail closed and rollback if write fails
-    const manifestTableExists: any[] = await tx.$queryRawUnsafe(
-      `SELECT to_regclass('public.weekly_slate_manifests') as to_regclass;`
-    ).catch(() => []);
+    // 2d. Persist manifest atomically; throw if write fails
+    const manifestInsertSql = `INSERT INTO public.weekly_slate_manifests (
+         season, season_type, week_number, revision, event_ids, accepted_at, accepted_by, manifest_fingerprint, observation_time
+       ) VALUES (
+         $1::int, $2::int, $3::int, $4::int, $5::text[], NOW(), $6::uuid, $7::text, $8::timestamptz
+       ) ON CONFLICT (season, season_type, week_number) DO UPDATE SET
+         revision = $4::int,
+         event_ids = $5::text[],
+         accepted_at = NOW(),
+         accepted_by = $6::uuid,
+         manifest_fingerprint = $7::text,
+         observation_time = $8::timestamptz;`;
+    const manifestParams = [
+      scope.seasonYear,
+      scope.seasonType,
+      scope.weekNumber,
+      nextRevision,
+      observation.events.map((e) => e.externalGameId),
+      params.operatorId,
+      observation.manifestFingerprint,
+      observation.observationTime,
+    ];
 
-    if (manifestTableExists?.[0]?.to_regclass) {
-      await tx.$queryRawUnsafe(
-        `INSERT INTO public.weekly_slate_manifests (
-           season, season_type, week_number, revision, event_ids, accepted_at, accepted_by, manifest_fingerprint, observation_time
-         ) VALUES (
-           $1::int, $2::int, $3::int, $4::int, $5::text[], NOW(), $6::uuid, $7::text, $8::timestamptz
-         ) ON CONFLICT (season, season_type, week_number) DO UPDATE SET
-           revision = $4::int,
-           event_ids = $5::text[],
-           accepted_at = NOW(),
-           accepted_by = $6::uuid,
-           manifest_fingerprint = $7::text,
-           observation_time = $8::timestamptz;`,
-        scope.seasonYear,
-        scope.seasonType,
-        scope.weekNumber,
-        nextRevision,
-        observation.events.map((e) => e.externalGameId),
-        params.operatorId,
-        observation.manifestFingerprint,
-        observation.observationTime
-      );
+    if (typeof tx.$executeRawUnsafe === 'function') {
+      await tx.$executeRawUnsafe(manifestInsertSql, ...manifestParams);
+    } else {
+      await tx.$queryRawUnsafe(manifestInsertSql, ...manifestParams);
+    }
+
+    // 2e. Read back manifest record and verify coverage and fingerprint
+    const verifyRows: any[] = await tx.$queryRawUnsafe(
+      `SELECT season, season_type, week_number, revision, manifest_fingerprint
+       FROM public.weekly_slate_manifests
+       WHERE season = $1::int AND season_type = $2::int AND week_number = $3::int;`,
+      scope.seasonYear,
+      scope.seasonType,
+      scope.weekNumber
+    );
+
+    if (!verifyRows || verifyRows.length === 0 || verifyRows[0].manifest_fingerprint !== observation.manifestFingerprint) {
+      throw new Error('MANIFEST_WRITE_VERIFICATION_FAILED: Manifest record was not persisted or fingerprint mismatched upon read-back.');
     }
 
     return {

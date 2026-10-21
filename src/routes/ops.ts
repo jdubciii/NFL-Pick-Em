@@ -15,6 +15,10 @@ import { refreshWeeklySlateInDb } from '../services/authoritativeSlateService';
 
 export const opsRouter = Router({ mergeParams: true });
 
+// Rate-limiting map for commissioner slate refresh operations (poolId -> epoch ms)
+const poolSlateRefreshTimestamps = new Map<string, number>();
+export const POOL_SLATE_REFRESH_COOLDOWN_MS = 10000; // 10-second cooldown per pool
+
 // JobRun-level re-execution is out-of-scope for pool-scoped APIs. Job worker runs operate at the system/service tier.
 
 /**
@@ -493,20 +497,43 @@ export async function handlePoolSlateRefresh(req: Request, res: Response): Promi
     return;
   }
 
+  // Rate-limiting check per pool
+  const lastRefresh = poolSlateRefreshTimestamps.get(poolId) || 0;
+  const nowMs = Date.now();
+  if (nowMs - lastRefresh < POOL_SLATE_REFRESH_COOLDOWN_MS) {
+    const retryAfter = Math.ceil((POOL_SLATE_REFRESH_COOLDOWN_MS - (nowMs - lastRefresh)) / 1000);
+    res.setHeader('Retry-After', String(retryAfter));
+    res.status(429).json({
+      error: `RATE_LIMITED: Pool slate refresh rate limit exceeded. Please wait ${retryAfter}s before retrying.`,
+      retryAfterSeconds: retryAfter,
+    });
+    return;
+  }
+
   const { season, seasonType, weekNumber, weekId } = req.body || {};
   if (weekNumber === undefined && weekId === undefined) {
     res.status(400).json({ error: 'EXPLICIT_WEEK_REQUIRED: weekNumber is required. Silent default to week 1 is prohibited.' });
     return;
   }
 
-  const targetWeek = Number(weekNumber !== undefined ? weekNumber : weekId);
-  if (isNaN(targetWeek) || targetWeek < 1 || targetWeek > 18) {
+  const rawWeek = weekNumber !== undefined ? weekNumber : weekId;
+  const targetWeek = Number(rawWeek);
+  if (!Number.isInteger(targetWeek) || targetWeek < 1 || targetWeek > 18) {
     res.status(400).json({ error: 'INVALID_WEEK: weekNumber must be an integer between 1 and 18.' });
     return;
   }
 
   const targetSeason = season !== undefined ? Number(season) : 2026;
+  if (!Number.isInteger(targetSeason) || targetSeason < 2020 || targetSeason > 2030) {
+    res.status(400).json({ error: 'INVALID_SEASON: season must be an integer year between 2020 and 2030.' });
+    return;
+  }
+
   const targetSeasonType = seasonType !== undefined ? Number(seasonType) : 2;
+  if (!Number.isInteger(targetSeasonType) || (targetSeasonType !== 2 && targetSeasonType !== 3)) {
+    res.status(400).json({ error: 'INVALID_SEASON_TYPE: seasonType must be an integer: 2 (regular season) or 3 (postseason).' });
+    return;
+  }
 
   try {
     const result = await refreshWeeklySlateInDb(prisma, {
@@ -524,6 +551,8 @@ export async function handlePoolSlateRefresh(req: Request, res: Response): Promi
       });
       return;
     }
+
+    poolSlateRefreshTimestamps.set(poolId, Date.now());
 
     res.status(200).json({
       message: 'Weekly slate refreshed successfully',

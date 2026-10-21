@@ -1,2 +1,1 @@
-﻿EXIT_CODE: 0
-0 trailing whitespace errors across full range.
+git diff --check: clean (exit code 0, 0 whitespace errors or conflict markers)

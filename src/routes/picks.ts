@@ -104,6 +104,11 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
     const settings = (pool.settings as PoolSettings) || {};
     const lockOffsetMinutes = Number(settings.lock_offset ?? settings.lockOffset ?? 0);
 
+    if (new Date(game.kickoffTime).getTime() <= 0) {
+      res.status(403).json({ error: 'UNVERIFIED_KICKOFF: Matchup kickoff is unconfirmed (TBD). Picks are disabled.' });
+      return;
+    }
+
     if (isGameLocked(game.kickoffTime, lockOffsetMinutes)) {
       res.status(403).json({ error: 'Game is locked' });
       return;
@@ -215,7 +220,11 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
       });
       if (!game) continue;
 
-      if (isGameLocked(game.kickoffTime, lockOffsetMinutes)) {
+      if (new Date(game.kickoffTime).getTime() <= 0) {
+        continue;
+      }
+
+    if (isGameLocked(game.kickoffTime, lockOffsetMinutes)) {
         continue;
       }
 

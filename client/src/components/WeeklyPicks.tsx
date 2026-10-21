@@ -65,6 +65,7 @@ export const WeeklyPicks: React.FC = () => {
   const [savingPickForGameId, setSavingPickForGameId] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [now, setNow] = useState(new Date());
+  const [lastUpdatedTime, setLastUpdatedTime] = useState<string | null>(null);
 
   const [picksViewMode, setPicksViewMode] = useState<'swipe' | 'list'>(() => {
     const saved = localStorage.getItem('pickem_preferred_view_mode') || localStorage.getItem('picks_view_preference');
@@ -330,6 +331,7 @@ export const WeeklyPicks: React.FC = () => {
       );
 
       setGames(sortedGames);
+      setLastUpdatedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
       try {
         localStorage.setItem(slateCacheKey, JSON.stringify(sortedGames));
       } catch (_) {}
@@ -481,6 +483,7 @@ export const WeeklyPicks: React.FC = () => {
           pool_id: pool.id,
           game_id: game.id,
           selected_team_id: teamToSend,
+          week: selectedWeek,
         }),
       }).catch((err) => console.warn('Backend proxy save warning:', err));
     }
@@ -523,7 +526,8 @@ export const WeeklyPicks: React.FC = () => {
           supabase.from('picks').delete().match({
             pool_id: activePoolId,
             user_id: user.id,
-            matchup_id: game.id,
+            game_id: String(game.id),
+            week: selectedWeek,
           })
         )
       );
@@ -544,6 +548,7 @@ export const WeeklyPicks: React.FC = () => {
               pool_id: pool.id,
               game_id: game.id,
               selected_team_id: null,
+              week: selectedWeek,
             }),
           })
         )
@@ -843,7 +848,7 @@ export const WeeklyPicks: React.FC = () => {
   };
 
   const isGameLocked = (game: GameItem): boolean => {
-    if ((game as any).isKickoffConfirmed === false || (game as any).is_kickoff_confirmed === false) {
+    if ((game as any).isKickoffConfirmed === false || (game as any).is_kickoff_confirmed === false || new Date(game.kickoffTime).getTime() <= 0) {
       return true; // Deny writes / fail closed on unconfirmed TBD kickoff
     }
     if (game.status === 'IN_PROGRESS' || game.status === 'FINAL') {
@@ -937,7 +942,7 @@ export const WeeklyPicks: React.FC = () => {
                 title="Refresh schedule & scores from authoritative ESPN source"
               >
                 <RefreshCw className={`w-3 h-3 text-cyan-400 ${isRefreshingSchedule ? 'animate-spin' : ''}`} />
-                <span className="hidden sm:inline">Refresh Schedule</span>
+                <span className="inline text-[11px] font-bold">Refresh</span>
               </button>
             )}
             {isOffline && (
@@ -954,6 +959,17 @@ export const WeeklyPicks: React.FC = () => {
             <button onClick={() => setViewMode('list')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${viewMode === 'list' ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : 'text-zinc-400 hover:text-white'}`}>List</button>
           </div>
         </div>
+
+      {/* Authoritative ESPN Slate Status & Timestamp */}
+      {lastUpdatedTime && (
+        <div className="px-4 py-1 bg-zinc-950/80 border-b border-zinc-800/40 flex items-center justify-between text-[10px] text-zinc-400 font-mono">
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+            Authoritative ESPN Sync
+          </span>
+          <span>Last updated: {lastUpdatedTime}</span>
+        </div>
+      )}
 
       {/* Accidental-Edit Guard Explanatory Sub-Banner */}
       {isPicksProtected && (
@@ -1068,11 +1084,11 @@ export const WeeklyPicks: React.FC = () => {
                 periodLabel: g.periodLabel,
                 possession: g.possession,
                 inRedZone: g.inRedZone,
-                startTime: formatKickoff(g.kickoffTime),
+                startTime: ((g as any).isKickoffConfirmed === false || (g as any).is_kickoff_confirmed === false || new Date(g.kickoffTime).getTime() <= 0) ? 'TBD · Kickoff Unconfirmed' : formatKickoff(g.kickoffTime),
                 kickoffTime: g.kickoffTime,
                 spread: typeof g.spread === 'number' ? `${g.spread}` : (typeof g.spread === 'string' ? g.spread : undefined),
                 selectedTeam: g.userPick,
-                isLocked: isGameLocked(g) || isGameKickoffLocked(g),
+                isLocked: ((g as any).isKickoffConfirmed === false || (g as any).is_kickoff_confirmed === false || new Date(g.kickoffTime).getTime() <= 0) || isGameLocked(g) || isGameKickoffLocked(g),
               }))}
               onSelectPick={(gameId, team) => {
                 const targetGame = games.find((g) => g.id === gameId);
@@ -1094,8 +1110,8 @@ export const WeeklyPicks: React.FC = () => {
                 gameId: g.id,
                 awayTeam: g.awayTeamId,
                 homeTeam: g.homeTeamId,
-                kickoffTime: formatKickoff(g.kickoffTime),
-                isLocked: isGameLocked(g) || isGameKickoffLocked(g),
+                kickoffTime: ((g as any).isKickoffConfirmed === false || (g as any).is_kickoff_confirmed === false || new Date(g.kickoffTime).getTime() <= 0) ? 'TBD · Kickoff Unconfirmed' : formatKickoff(g.kickoffTime),
+                isLocked: ((g as any).isKickoffConfirmed === false || (g as any).is_kickoff_confirmed === false || new Date(g.kickoffTime).getTime() <= 0) || isGameLocked(g) || isGameKickoffLocked(g),
                 spread: typeof g.spread === 'number' ? `${g.spread}` : undefined,
                 gameStatus: (g.gameStatus === 'FINAL' || g.status === 'FINAL' ? 'FINAL' : g.gameStatus === 'LIVE' || g.status === 'IN_PROGRESS' || g.isLive ? 'LIVE' : 'SCHEDULED') as 'FINAL' | 'LIVE' | 'SCHEDULED',
                 homeScore: g.homeScore,
