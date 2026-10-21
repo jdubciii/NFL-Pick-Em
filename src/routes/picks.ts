@@ -7,6 +7,102 @@ import { normalizeTeamCode } from '../services/authoritativeSlateService';
 
 export const picksRouter = Router();
 
+export interface GameWithCanonicalLock {
+  id: string;
+  externalGameId: string;
+  homeTeamId: string;
+  awayTeamId: string;
+  kickoffTime: Date;
+  status: string;
+  canonicalKickoffTime: Date | null;
+  lockEffectiveAt: Date | null;
+  season?: number;
+  seasonType?: number;
+  week?: number;
+}
+
+export async function resolveGameWithCanonicalLock(db: any, gameId: string): Promise<GameWithCanonicalLock | null> {
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(gameId);
+
+  try {
+    const rows: any[] = await db.$queryRawUnsafe(
+      `SELECT id, external_game_id, home_team_id, away_team_id, kickoff_time, status,
+              canonical_kickoff_time, lock_effective_at, season, season_type, week
+       FROM public.games
+       WHERE ${isUuid ? 'id = $1::uuid OR external_game_id = $2::text' : 'external_game_id = $1::text'};`,
+      gameId,
+      gameId
+    );
+    if (rows && rows.length > 0) {
+      const r = rows[0];
+      return {
+        id: r.id,
+        externalGameId: r.external_game_id,
+        homeTeamId: r.home_team_id,
+        awayTeamId: r.away_team_id,
+        kickoffTime: new Date(r.kickoff_time),
+        status: r.status,
+        canonicalKickoffTime: r.canonical_kickoff_time ? new Date(r.canonical_kickoff_time) : null,
+        lockEffectiveAt: r.lock_effective_at ? new Date(r.lock_effective_at) : null,
+        season: r.season,
+        seasonType: r.season_type,
+        week: r.week,
+      };
+    }
+  } catch (_) {}
+
+  const prismaGame = await db.game.findFirst({
+    where: isUuid
+      ? { OR: [{ id: gameId }, { externalGameId: gameId }] }
+      : { externalGameId: gameId },
+  });
+
+  if (!prismaGame) return null;
+
+  return {
+    id: prismaGame.id,
+    externalGameId: prismaGame.externalGameId,
+    homeTeamId: prismaGame.homeTeamId,
+    awayTeamId: prismaGame.awayTeamId,
+    kickoffTime: new Date(prismaGame.kickoffTime),
+    status: prismaGame.status,
+    canonicalKickoffTime: new Date(prismaGame.kickoffTime),
+    lockEffectiveAt: new Date(prismaGame.kickoffTime),
+  };
+}
+
+export function evaluateKickoffLock(
+  game: {
+    kickoffTime: Date;
+    canonicalKickoffTime: Date | null;
+    lockEffectiveAt: Date | null;
+    status: string;
+  },
+  lockOffsetMinutes: number = 0,
+  now: Date = new Date()
+): { isLocked: boolean; reason?: 'UNVERIFIED_KICKOFF' | 'KICKOFF_PASSED' } {
+  const isUnconfirmed =
+    game.canonicalKickoffTime === null ||
+    (game.lockEffectiveAt !== null && game.lockEffectiveAt.getTime() <= 0) ||
+    game.kickoffTime.getTime() <= 0;
+
+  if (isUnconfirmed) {
+    return { isLocked: true, reason: 'UNVERIFIED_KICKOFF' };
+  }
+
+  const effectiveDeadline =
+    game.lockEffectiveAt && !isNaN(game.lockEffectiveAt.getTime()) && game.lockEffectiveAt.getTime() > 0
+      ? game.lockEffectiveAt
+      : game.canonicalKickoffTime || game.kickoffTime;
+
+  const lockTimeMs = effectiveDeadline.getTime() - lockOffsetMinutes * 60 * 1000;
+  if (now.getTime() >= lockTimeMs) {
+    return { isLocked: true, reason: 'KICKOFF_PASSED' };
+  }
+
+  return { isLocked: false };
+}
+
 /**
  * POST /api/picks
  * Protected route for users to submit or update their game pick.
@@ -68,13 +164,8 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
       return;
     }
 
-    // 2. Fetch Game by internal UUID or canonical ESPN event ID
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(gameId);
-    const game = await prisma.game.findFirst({
-      where: isUuid
-        ? { OR: [{ id: gameId }, { externalGameId: gameId }] }
-        : { externalGameId: gameId },
-    });
+    // 2. Fetch Game with canonical effective lock columns
+    const game = await resolveGameWithCanonicalLock(prisma, gameId);
 
     if (!game) {
       res.status(404).json({ error: 'Game not found.' });
@@ -104,12 +195,12 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
     const settings = (pool.settings as PoolSettings) || {};
     const lockOffsetMinutes = Number(settings.lock_offset ?? settings.lockOffset ?? 0);
 
-    if (new Date(game.kickoffTime).getTime() <= 0) {
-      res.status(403).json({ error: 'UNVERIFIED_KICKOFF: Matchup kickoff is unconfirmed (TBD). Picks are disabled.' });
-      return;
-    }
-
-    if (isGameLocked(game.kickoffTime, lockOffsetMinutes)) {
+    const lockResult = evaluateKickoffLock(game, lockOffsetMinutes, new Date());
+    if (lockResult.isLocked) {
+      if (lockResult.reason === 'UNVERIFIED_KICKOFF') {
+        res.status(403).json({ error: 'UNVERIFIED_KICKOFF: Matchup kickoff is unconfirmed (TBD). Picks are disabled.' });
+        return;
+      }
       res.status(403).json({ error: 'Game is locked' });
       return;
     }
@@ -212,19 +303,11 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
       if (!rawGameId) continue;
       const gameId = String(rawGameId).trim();
 
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(gameId);
-      const game = await prisma.game.findFirst({
-        where: isUuid
-          ? { OR: [{ id: gameId }, { externalGameId: gameId }] }
-          : { externalGameId: gameId },
-      });
+      const game = await resolveGameWithCanonicalLock(prisma, gameId);
       if (!game) continue;
 
-      if (new Date(game.kickoffTime).getTime() <= 0) {
-        continue;
-      }
-
-    if (isGameLocked(game.kickoffTime, lockOffsetMinutes)) {
+      const lockResult = evaluateKickoffLock(game, lockOffsetMinutes, new Date());
+      if (lockResult.isLocked) {
         continue;
       }
 

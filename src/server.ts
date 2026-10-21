@@ -1122,7 +1122,25 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
         games = [];
       }
     } else {
-      games = await db.game.findMany({ orderBy: { kickoffTime: 'asc' } });
+      // For all weeks, strictly scope to season 2026 accepted manifests (never unscoped or historical baseline games)
+      try {
+        const manifestRows: any[] = await db.$queryRawUnsafe(
+          `SELECT event_ids FROM public.weekly_slate_manifests WHERE season = 2026 AND season_type = 2;`
+        );
+        const allEventIds = manifestRows.flatMap((m: any) =>
+          Array.isArray(m.event_ids) ? m.event_ids : JSON.parse(m.event_ids || '[]')
+        );
+        if (allEventIds.length > 0) {
+          games = await db.game.findMany({
+            where: { externalGameId: { in: allEventIds } },
+            orderBy: { kickoffTime: 'asc' },
+          });
+        } else {
+          games = [];
+        }
+      } catch (_) {
+        games = [];
+      }
     }
 
     const gameIds = games.map((g: any) => g.id);

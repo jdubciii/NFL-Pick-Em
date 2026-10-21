@@ -140,12 +140,23 @@ export const WeeklyPicks: React.FC = () => {
 
   const fetchGames = useCallback(async () => {
     setLoading(true);
-    const slateCacheKey = `picks_slate_${activePoolId}_w${selectedWeek}`;
 
     // 1. Rehydrate initial cached state if available for instant render
+    const slateCachePrefix = `picks_slate_${activePoolId}_s2026_t2_w${selectedWeek}`;
     let cachedGames: GameItem[] = [];
     try {
-      const cachedStr = localStorage.getItem(slateCacheKey);
+      // Find latest cached revision for this pool, season, and week
+      let cachedStr: string | null = null;
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(slateCachePrefix)) {
+          cachedStr = localStorage.getItem(key);
+          break;
+        }
+      }
+      if (!cachedStr) {
+        cachedStr = localStorage.getItem(`picks_slate_${activePoolId}_w${selectedWeek}`);
+      }
       if (cachedStr) {
         const parsed = JSON.parse(cachedStr);
         cachedGames = [...parsed].sort(
@@ -156,53 +167,102 @@ export const WeeklyPicks: React.FC = () => {
     } catch (_) {}
 
     try {
-      // 2. Fetch live scores and ESPN scoreboard API for selectedWeek
+      // 2. Authoritative Persisted Fetch: weekly manifest and canonical games for (2026, type 2, selectedWeek)
+      let persistedRows: any[] = [];
+      let manifestRecord: any = null;
+
+      try {
+        const { data: manifest, error: manifestErr } = await supabase
+          .from('weekly_slate_manifests')
+          .select('season, season_type, week_number, revision, manifest_fingerprint, event_ids, observation_time, accepted_at')
+          .eq('season', 2026)
+          .eq('season_type', 2)
+          .eq('week_number', selectedWeek)
+          .maybeSingle();
+
+        if (!manifestErr && manifest) {
+          manifestRecord = manifest;
+        }
+      } catch (mErr) {
+        console.warn('Manifest fetch warning:', mErr);
+      }
+
+      // Query pool-scoped canonical RPC if available
+      if (typeof supabase.rpc === 'function' && activePoolId) {
+        try {
+          const { data: rpcGames, error: rpcErr } = await supabase.rpc('get_pool_canonical_games', {
+            p_pool_id: activePoolId,
+            p_season: 2026,
+            p_week: selectedWeek,
+          });
+          if (!rpcErr && Array.isArray(rpcGames) && rpcGames.length > 0) {
+            persistedRows = rpcGames;
+          }
+        } catch (_) {}
+      }
+
+      // Query games table directly to ensure full metadata (lock_effective_at, canonical_kickoff_time)
+      try {
+        const { data: directGames, error: directErr } = await supabase
+          .from('games')
+          .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, status, home_score, away_score, canonical_kickoff_time, lock_effective_at, season, season_type, week, observation_time, manifest_revision')
+          .eq('season', 2026)
+          .eq('season_type', 2)
+          .eq('week', selectedWeek);
+
+        if (!directErr && Array.isArray(directGames) && directGames.length > 0) {
+          if (persistedRows.length === 0) {
+            persistedRows = directGames;
+          } else {
+            // Merge metadata
+            const directMap = new Map(directGames.map((g: any) => [String(g.external_game_id || g.id), g]));
+            persistedRows = persistedRows.map((r: any) => {
+              const ext = String(r.externalGameId || r.external_game_id || r.id);
+              const dm = directMap.get(ext);
+              return dm ? { ...r, ...dm } : r;
+            });
+          }
+        }
+      } catch (dgErr) {
+        console.warn('Direct games fetch warning:', dgErr);
+      }
+
+      // Bound strictly to accepted manifest event IDs if manifest exists
+      if (manifestRecord && Array.isArray(manifestRecord.event_ids) && manifestRecord.event_ids.length > 0) {
+        const acceptedSet = new Set(manifestRecord.event_ids.map(String));
+        persistedRows = persistedRows.filter((g: any) => {
+          const extId = String(g.external_game_id || g.externalGameId || g.id);
+          return acceptedSet.has(extId);
+        });
+      }
+
+      setIsOffline(false);
+
+      // 3. Optional live enrichment: direct provider may enrich matched accepted rows only
       let liveScoresMap = new Map<string, any>();
       try {
         const liveScores = await fetchLiveNFLScores(selectedWeek);
-        liveScores.forEach((ls) => {
-          liveScoresMap.set(ls.id, ls);
-          liveScoresMap.set(`${ls.awayTeam.code}@${ls.homeTeam.code}`, ls);
-        });
+        if (Array.isArray(liveScores)) {
+          liveScores.forEach((ls) => {
+            liveScoresMap.set(String(ls.id), ls);
+            liveScoresMap.set(`${ls.awayTeam?.code}@${ls.homeTeam?.code}`, ls);
+          });
+        }
       } catch (scoreErr) {
-        console.warn('Live score fetch warning:', scoreErr);
+        console.warn('Live score enrichment warning:', scoreErr);
       }
 
-      const espnUrl = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${selectedWeek}`;
-      const response = await fetch(espnUrl);
+      // Map accepted persisted games to GameItem; extra provider rows are strictly excluded
+      const mappedGames: GameItem[] = persistedRows.map((g: any) => {
+        const extId = String(g.external_game_id || g.externalGameId || g.id);
+        const homeAbbr = normalizeTeamIdentity(g.home_team_id || g.homeTeamId || '');
+        const awayAbbr = normalizeTeamIdentity(g.away_team_id || g.awayTeamId || '');
 
-      if (!response.ok) {
-        throw new Error(`ESPN responded with status ${response.status}`);
-      }
+        const liveScore = liveScoresMap.get(extId) || liveScoresMap.get(`${awayAbbr}@${homeAbbr}`);
 
-      const data = await response.json();
-      setIsOffline(false);
-
-      // Map ESPN events to GameItem enriched with live scores
-      const espnGames: GameItem[] = (data.events || []).map((event: any) => {
-        const competition = event.competitions?.[0];
-        const competitors = competition?.competitors || [];
-        const home = competitors.find((c: any) => c.homeAway === 'home') || {};
-        const away = competitors.find((c: any) => c.homeAway === 'away') || {};
-        const rawHomeAbbr = home.team?.abbreviation || 'HOM';
-        const rawAwayAbbr = away.team?.abbreviation || 'AWY';
-        const homeAbbr = normalizeTeamIdentity(rawHomeAbbr);
-        const awayAbbr = normalizeTeamIdentity(rawAwayAbbr);
-        const statusName = event.status?.type?.name || '';
-        const statusDetail = event.status?.type?.detail || event.status?.type?.description || event.status?.type?.shortDetail || '';
-        const isHalftime = statusName === 'STATUS_HALFTIME' || statusDetail.toLowerCase().includes('halftime');
-
-        const liveScore =
-          liveScoresMap.get(event.id) ||
-          liveScoresMap.get(`${awayAbbr}@${homeAbbr}`);
-
-        let mappedStatus: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL' = 'SCHEDULED';
-        if (liveScore?.status) {
+        let mappedStatus: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL' = (g.status as any) || 'SCHEDULED';
+        if (mappedStatus !== 'FINAL' && liveScore?.status) {
           mappedStatus = liveScore.status;
-        } else if (statusName === 'STATUS_FINAL') {
-          mappedStatus = 'FINAL';
-        } else if (isHalftime || statusName === 'STATUS_IN_PROGRESS') {
-          mappedStatus = 'IN_PROGRESS';
         }
 
         let gameStatus: 'FINAL' | 'LIVE' | 'SCHEDULED' = 'SCHEDULED';
@@ -215,63 +275,62 @@ export const WeeklyPicks: React.FC = () => {
         const homeScoreVal =
           liveScore?.homeTeam?.score != null && !isNaN(parseInt(liveScore.homeTeam.score, 10))
             ? parseInt(liveScore.homeTeam.score, 10)
-            : home.score
-            ? parseInt(home.score, 10)
+            : g.home_score != null
+            ? Number(g.home_score)
+            : g.homeScore != null
+            ? Number(g.homeScore)
             : null;
+
         const awayScoreVal =
           liveScore?.awayTeam?.score != null && !isNaN(parseInt(liveScore.awayTeam.score, 10))
             ? parseInt(liveScore.awayTeam.score, 10)
-            : away.score
-            ? parseInt(away.score, 10)
+            : g.away_score != null
+            ? Number(g.away_score)
+            : g.awayScore != null
+            ? Number(g.awayScore)
             : null;
 
+        const isHalftime = liveScore?.statusDetail?.toLowerCase?.().includes('halftime');
         const displayClockVal =
           liveScore?.displayClock ||
-          (isHalftime ? 'HALFTIME' : event.status?.displayClock || '0:00');
-        const rawPeriod = Number(event.status?.period) || 1;
+          (isHalftime ? 'HALFTIME' : '0:00');
+        const rawPeriod = Number(liveScore?.period) || 1;
         const periodLabelVal =
           liveScore?.periodLabel ||
           (mappedStatus === 'FINAL' ? 'FINAL' : isHalftime ? 'HALF' : (rawPeriod >= 5 ? 'OT' : `Q${rawPeriod}`));
 
-        let spread: number | null = null;
-        const oddsDetail = competition?.odds?.[0]?.details;
-        if (oddsDetail) {
-          const match = oddsDetail.match(/-?[\d.]+/);
-          if (match) spread = parseFloat(match[0]);
-        }
+        const canonicalKickoffIso = g.canonical_kickoff_time || g.kickoff_time || g.kickoffTime;
+        const lockEffectiveIso = g.lock_effective_at || canonicalKickoffIso;
 
-        const canonicalKo = resolveCanonicalGameKickoff({
-          id: event.id,
-          awayTeam: awayAbbr,
-          homeTeam: homeAbbr,
-          kickoffIso: event.date,
-          season: 2026,
-          seasonType: 2,
-          week: selectedWeek,
-        });
+        const isUnconfirmed =
+          g.canonical_kickoff_time === null ||
+          (g.lock_effective_at && new Date(g.lock_effective_at).getTime() <= 0) ||
+          !canonicalKickoffIso ||
+          new Date(canonicalKickoffIso).getTime() <= 0;
 
         return {
-          id: canonicalKo.gameId,
-          externalGameId: event.id,
+          id: String(g.id),
+          externalGameId: extId,
           homeTeamId: homeAbbr,
           awayTeamId: awayAbbr,
-          kickoffTime: canonicalKo.kickoffIso,
+          kickoffTime: isUnconfirmed ? '1970-01-01T00:00:00.000Z' : typeof canonicalKickoffIso === 'string' ? canonicalKickoffIso : new Date(canonicalKickoffIso).toISOString(),
           status: mappedStatus,
           homeScore: homeScoreVal,
           awayScore: awayScoreVal,
-          spread,
+          spread: null,
           userPick: null,
           pickId: null,
           isLive: mappedStatus === 'IN_PROGRESS',
           gameStatus,
           displayClock: displayClockVal,
           periodLabel: periodLabelVal,
-          possession: competition?.situation?.possession,
-          inRedZone: Boolean(competition?.situation?.isRedZone),
-        };
+          isKickoffConfirmed: !isUnconfirmed,
+          canonical_kickoff_time: g.canonical_kickoff_time,
+          lock_effective_at: lockEffectiveIso,
+        } as any;
       });
 
-      // 3. Rehydrate user picks from localStorage and Supabase strictly scoped by active user
+      // 4. Rehydrate user picks from localStorage and Supabase strictly scoped by active user
       let userPicksMap: Record<string, string> = {};
       try {
         const savedPicks = localStorage.getItem(userPicksCacheKey);
@@ -320,7 +379,7 @@ export const WeeklyPicks: React.FC = () => {
       }
 
       // Merge picks onto games
-      const mergedGames = espnGames.map((g) => ({
+      const mergedGames = mappedGames.map((g) => ({
         ...g,
         userPick: userPicksMap[g.id] || null,
       }));
@@ -331,9 +390,28 @@ export const WeeklyPicks: React.FC = () => {
       );
 
       setGames(sortedGames);
-      setLastUpdatedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+
+      // Persisted observation/acceptance sync timestamp (R5)
+      const syncIso =
+        manifestRecord?.observation_time ||
+        manifestRecord?.accepted_at ||
+        (persistedRows.length > 0 ? persistedRows[0].observation_time : null);
+
+      if (syncIso) {
+        const syncDate = new Date(syncIso);
+        setLastUpdatedTime(
+          !isNaN(syncDate.getTime())
+            ? syncDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            : 'Unknown'
+        );
+      } else {
+        setLastUpdatedTime(null);
+      }
+
       try {
-        localStorage.setItem(slateCacheKey, JSON.stringify(sortedGames));
+        const rev = manifestRecord?.revision || 0;
+        const scopedSlateCacheKey = `picks_slate_${activePoolId}_s2026_t2_w${selectedWeek}_r${rev}`;
+        localStorage.setItem(scopedSlateCacheKey, JSON.stringify(sortedGames));
       } catch (_) {}
 
       // 4. Load pool info & prefetch matrix if available
@@ -369,7 +447,17 @@ export const WeeklyPicks: React.FC = () => {
       // Gracefully fall back to cached games without raising raw "Failed to fetch" banner
       if (cachedGames.length === 0) {
         try {
-          const fallbackCached = localStorage.getItem(slateCacheKey);
+          let fallbackCached: string | null = null;
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith(slateCachePrefix)) {
+              fallbackCached = localStorage.getItem(k);
+              break;
+            }
+          }
+          if (!fallbackCached) {
+            fallbackCached = localStorage.getItem(`picks_slate_${activePoolId}_w${selectedWeek}`);
+          }
           if (fallbackCached) {
             const parsed = JSON.parse(fallbackCached);
             const sortedFallback = [...parsed].sort(
@@ -848,14 +936,21 @@ export const WeeklyPicks: React.FC = () => {
   };
 
   const isGameLocked = (game: GameItem): boolean => {
-    if ((game as any).isKickoffConfirmed === false || (game as any).is_kickoff_confirmed === false || new Date(game.kickoffTime).getTime() <= 0) {
+    const isUnconfirmed =
+      (game as any).isKickoffConfirmed === false ||
+      (game as any).is_kickoff_confirmed === false ||
+      (game as any).canonical_kickoff_time === null ||
+      ((game as any).lock_effective_at && new Date((game as any).lock_effective_at).getTime() <= 0) ||
+      new Date(game.kickoffTime).getTime() <= 0;
+    if (isUnconfirmed) {
       return true; // Deny writes / fail closed on unconfirmed TBD kickoff
     }
     if (game.status === 'IN_PROGRESS' || game.status === 'FINAL') {
       return true;
     }
     const lockOffsetMinutes = pool?.lock_offset || 0;
-    const lockTime = new Date(new Date(game.kickoffTime).getTime() - lockOffsetMinutes * 60 * 1000);
+    const effectiveLockRaw = (game as any).lock_effective_at || (game as any).canonical_kickoff_time || game.kickoffTime;
+    const lockTime = new Date(new Date(effectiveLockRaw).getTime() - lockOffsetMinutes * 60 * 1000);
     return now.getTime() >= lockTime.getTime();
   };
 
@@ -942,7 +1037,7 @@ export const WeeklyPicks: React.FC = () => {
                 title="Refresh schedule & scores from authoritative ESPN source"
               >
                 <RefreshCw className={`w-3 h-3 text-cyan-400 ${isRefreshingSchedule ? 'animate-spin' : ''}`} />
-                <span className="inline text-[11px] font-bold">Refresh</span>
+                <span className="inline text-[11px] font-bold">Schedule & Scores</span>
               </button>
             )}
             {isOffline && (

@@ -288,22 +288,30 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
       console.warn('Matrix fetch API fallback to Supabase:', err);
       try {
         const weekNum = typeof selectedWeek === 'number' ? selectedWeek : parseInt(selectedWeek as string) || 6;
-        const [membersRes, liveScores, picksRes] = await Promise.all([
+        const [membersRes, liveScores, picksRes, dbGamesRes] = await Promise.all([
           supabase
             .from('pool_memberships')
             .select('user_id, role, users(id, email, display_name)')
             .eq('pool_id', selectedPoolId)
             .eq('status', 'ACTIVE'),
-          fetchLiveNFLScores(weekNum),
+          fetchLiveNFLScores(weekNum).catch(() => []),
           supabase
             .from('picks')
             .select('user_id, matchup_id, game_id, selected_team, week')
             .eq('pool_id', selectedPoolId)
             .eq('week', weekNum),
+          supabase
+            .from('games')
+            .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, status, home_score, away_score, canonical_kickoff_time, lock_effective_at, season, season_type, week')
+            .eq('season', 2026)
+            .eq('season_type', 2)
+            .eq('week', weekNum)
+            .order('kickoff_time', { ascending: true }),
         ]);
 
         const members = membersRes.data || [];
         const dbPicks = picksRes.data || [];
+        const rawDbGames = dbGamesRes.data || [];
 
         const columns: MatrixMemberColumn[] = members.map((m: any) => ({
           user_id: m.user_id,
@@ -311,17 +319,31 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
           displayName: m.users?.display_name || m.users?.email?.split('@')[0] || m.user_id,
         }));
 
-        const rows: MatrixGameRow[] = (liveScores || []).map((g) => ({
-          game_id: g.id,
-          external_game_id: g.id,
-          home_team_id: g.homeTeam.code,
-          away_team_id: g.awayTeam.code,
-          kickoff_time: new Date().toISOString(),
-          status: g.status,
-          home_score: parseInt(g.homeTeam.score, 10) || 0,
-          away_score: parseInt(g.awayTeam.score, 10) || 0,
-          spread: 0,
-        }));
+        const liveScoresList = Array.isArray(liveScores) ? liveScores : [];
+        const liveScoreMap = new Map<string, any>();
+        liveScoresList.forEach((ls) => {
+          liveScoreMap.set(String(ls.id), ls);
+          liveScoreMap.set(`${ls.awayTeam?.code}@${ls.homeTeam?.code}`, ls);
+        });
+
+        const rows: MatrixGameRow[] = rawDbGames.map((g: any) => {
+          const extId = String(g.external_game_id || g.id);
+          const home = g.home_team_id;
+          const away = g.away_team_id;
+          const ls = liveScoreMap.get(extId) || liveScoreMap.get(`${away}@${home}`);
+
+          return {
+            game_id: g.id,
+            external_game_id: extId,
+            home_team_id: home,
+            away_team_id: away,
+            kickoff_time: g.canonical_kickoff_time || g.kickoff_time,
+            status: ls?.status || g.status,
+            home_score: ls?.homeTeam?.score != null ? parseInt(ls.homeTeam.score, 10) : g.home_score,
+            away_score: ls?.awayTeam?.score != null ? parseInt(ls.awayTeam.score, 10) : g.away_score,
+            spread: 0,
+          };
+        });
 
         const cells: Record<string, Record<string, MatrixPickCell>> = {};
         for (const r of rows) {

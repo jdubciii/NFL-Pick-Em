@@ -229,20 +229,22 @@ export function validateAndTransformESPNScoreboard(
     const statusObj = ev.status?.type || competition.status?.type;
     const status = mapESPNStatus(statusObj?.name, statusObj?.state, statusObj?.completed);
 
-    const dateStr = ev.date || competition.date;
-    const timeValid = competition.timeValid !== false && ev.timeValid !== false;
+    const dateStr = ev.date || competition?.date;
+    const ISO_ZONED_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/i;
+    const isZonedInstant = Boolean(dateStr && ISO_ZONED_REGEX.test(dateStr));
+    const isTimeValid = competition?.timeValid === true || (competition?.timeValid !== false && ev?.timeValid === true);
     const statusDetailStr = String(statusObj?.detail || '').toUpperCase();
     const statusNameStr = String(statusObj?.name || '').toUpperCase();
     const dateStrUpper = String(dateStr || '').toUpperCase();
-    const isTBD = !timeValid || statusDetailStr.includes('TBD') || statusNameStr.includes('TBD') || dateStrUpper.includes('TBD') || !dateStr;
+    const isTBD = !isTimeValid || !isZonedInstant || statusDetailStr.includes('TBD') || statusNameStr.includes('TBD') || dateStrUpper.includes('TBD') || !dateStr;
     const isKickoffConfirmed = !isTBD;
 
     let kickoffTime: Date;
     if (dateStr) {
       const parsed = new Date(dateStr);
       if (isNaN(parsed.getTime())) {
-        if (isTBD) {
-          kickoffTime = new Date(0); // Epoch sentinel for unconfirmed/TBD
+        if (dateStrUpper.includes('TBD')) {
+          kickoffTime = new Date(0); // Epoch sentinel for explicit TBD
         } else {
           reasons.push(`INVALID_KICKOFF: Event ${eventId} has unparseable kickoff date "${dateStr}".`);
           continue;
@@ -382,10 +384,10 @@ export async function getAcceptedSlateManifest(
 ): Promise<WeeklySlateManifest | null> {
   const tableExists: any[] = await db.$queryRawUnsafe(
     `SELECT to_regclass('public.weekly_slate_manifests')::text as to_regclass;`
-  );
+  ).catch(() => []);
 
   if (!tableExists?.[0]?.to_regclass) {
-    throw new Error('MANIFEST_TABLE_MISSING: public.weekly_slate_manifests does not exist.');
+    return null;
   }
 
   const rows: any[] = await db.$queryRawUnsafe(
@@ -471,10 +473,15 @@ export async function refreshWeeklySlateInDb(
   }
 
   return await db.$transaction(async (tx: any) => {
-    // 2a. Recheck commissioner authority and active membership inside transaction under row lock
+    // 2a. Acquire transaction-level advisory lock across ALL writers for this exact weekly slate
+    const scopeLockKey = `weekly_slate_${scope.seasonYear}_${scope.seasonType}_${scope.weekNumber}`;
+    await tx.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1));`, scopeLockKey);
+
+    // Recheck commissioner authority and active membership inside transaction under row lock
+    let poolSettings: any = null;
     if (params.poolId) {
       const poolRows: any[] = await tx.$queryRawUnsafe(
-        `SELECT id, admin_id FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
+        `SELECT id, admin_id, settings FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
         params.poolId
       );
       if (!poolRows || poolRows.length === 0) {
@@ -491,6 +498,7 @@ export async function refreshWeeklySlateInDb(
       if (!memberRows || memberRows.length === 0 || memberRows[0].status !== 'ACTIVE') {
         throw new Error('FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED: Operator does not have ACTIVE membership in requested pool.');
       }
+      poolSettings = poolRows[0].settings || {};
     }
 
     // 2b. Check prior accepted manifest table and record
@@ -527,6 +535,13 @@ export async function refreshWeeklySlateInDb(
           throw new Error(`CANNOT_SHRINK_MANIFEST: Incoming slate drops previously accepted event ${priorId}.`);
         }
       }
+
+      // Invariant: Reject stale incoming observation older than accepted manifest
+      if (prior.observation_time && new Date(observation.observationTime).getTime() < new Date(prior.observation_time).getTime()) {
+        throw new Error(
+          `STALE_OBSERVATION_REJECTED: Incoming observation time (${observation.observationTime}) is older than accepted manifest observation time (${prior.observation_time}).`
+        );
+      }
     }
 
     const nextRevision = isIdempotent ? currentRevision : currentRevision + 1;
@@ -549,13 +564,29 @@ export async function refreshWeeklySlateInDb(
       const existingGame = matches[0] || null;
 
       if (existingGame) {
-        // Guard against team identity relabeling / collision with baseline games
+        // Prevent initial relabel/update of unscoped or different-scope baseline rows
+        const isUnscoped = existingGame.season === null || existingGame.season === undefined || existingGame.week === null || existingGame.week === undefined;
+        const isDifferentScope = Number(existingGame.season) !== scope.seasonYear || Number(existingGame.season_type) !== scope.seasonType || Number(existingGame.week) !== scope.weekNumber;
+        if (isUnscoped || isDifferentScope) {
+          throw new Error(
+            `HISTORICAL_OR_CROSS_SCOPE_COLLISION: Existing game ${existingGame.id} (season=${existingGame.season}, week=${existingGame.week}) cannot be mutated or relabeled by incoming scope (${scope.seasonYear}, week ${scope.weekNumber}).`
+          );
+        }
+
+        // Guard against team identity relabeling
         if (
           (existingGame.home_team_id && existingGame.home_team_id !== ev.homeTeamId) ||
           (existingGame.away_team_id && existingGame.away_team_id !== ev.awayTeamId)
         ) {
           throw new Error(
             `TEAM_IDENTITY_MUTATION_FORBIDDEN: Existing game ${existingGame.id} (${existingGame.away_team_id} @ ${existingGame.home_team_id}) cannot be mutated to (${ev.awayTeamId} @ ${ev.homeTeamId}).`
+          );
+        }
+
+        // Reject stale incoming game observation
+        if (existingGame.observation_time && new Date(observation.observationTime).getTime() < new Date(existingGame.observation_time).getTime()) {
+          throw new Error(
+            `STALE_OBSERVATION_REJECTED: Incoming observation for game ${existingGame.id} (${observation.observationTime}) is older than stored observation (${existingGame.observation_time}).`
           );
         }
 
@@ -690,9 +721,9 @@ export async function refreshWeeklySlateInDb(
       await tx.$queryRawUnsafe(manifestInsertSql, ...manifestParams);
     }
 
-    // 2e. Read back manifest record and verify coverage and fingerprint
+    // 2e. Read back manifest record and verify coverage, event_ids, and fingerprint
     const verifyRows: any[] = await tx.$queryRawUnsafe(
-      `SELECT season, season_type, week_number, revision, manifest_fingerprint
+      `SELECT season, season_type, week_number, revision, manifest_fingerprint, event_ids
        FROM public.weekly_slate_manifests
        WHERE season = $1::int AND season_type = $2::int AND week_number = $3::int;`,
       scope.seasonYear,
@@ -702,6 +733,96 @@ export async function refreshWeeklySlateInDb(
 
     if (!verifyRows || verifyRows.length === 0 || verifyRows[0].manifest_fingerprint !== observation.manifestFingerprint) {
       throw new Error('MANIFEST_WRITE_VERIFICATION_FAILED: Manifest record was not persisted or fingerprint mismatched upon read-back.');
+    }
+    if (Number(verifyRows[0].revision) !== nextRevision) {
+      throw new Error('MANIFEST_WRITE_VERIFICATION_FAILED: Manifest revision mismatch upon read-back.');
+    }
+    const readBackEventIds = Array.isArray(verifyRows[0].event_ids)
+      ? verifyRows[0].event_ids.map(String)
+      : JSON.parse(verifyRows[0].event_ids || '[]').map(String);
+    const expectedEventIds = observation.events.map((e) => String(e.externalGameId));
+    if (readBackEventIds.length !== expectedEventIds.length || !expectedEventIds.every((id) => readBackEventIds.includes(id))) {
+      throw new Error('MANIFEST_WRITE_VERIFICATION_FAILED: Manifest event_ids mismatch upon read-back.');
+    }
+
+    // Read back actual canonical game rows
+    const gameVerifyRows: any[] = await tx.$queryRawUnsafe(
+      `SELECT id, external_game_id, home_team_id, away_team_id, status, manifest_revision
+       FROM public.games
+       WHERE season = $1::int AND season_type = $2::int AND week = $3::int;`,
+      scope.seasonYear,
+      scope.seasonType,
+      scope.weekNumber
+    );
+
+    if (!gameVerifyRows || gameVerifyRows.length !== observation.events.length) {
+      throw new Error(`CANONICAL_GAMES_READBACK_FAILED: Expected ${observation.events.length} canonical games for scope, found ${gameVerifyRows?.length ?? 0}.`);
+    }
+    for (const ev of observation.events) {
+      const matched = gameVerifyRows.find((r) => r.external_game_id === ev.externalGameId);
+      if (!matched || matched.home_team_id !== ev.homeTeamId || matched.away_team_id !== ev.awayTeamId) {
+        throw new Error(`CANONICAL_GAMES_READBACK_FAILED: Game ${ev.externalGameId} read-back failed or team identity mismatch.`);
+      }
+    }
+
+    // 2f. Persist tiebreaker designation under pool lock if poolId is provided
+    if (params.poolId && poolSettings) {
+      const lionsGames = observation.events.filter((e) => e.homeTeamId === 'DET' || e.awayTeamId === 'DET');
+      if (lionsGames.length > 1) {
+        throw new Error('AMBIGUOUS_LIONS_SCHEDULE: Multiple Detroit Lions games found in weekly slate.');
+      }
+
+      const existingDesignations = poolSettings.tiebreaker_designations || {};
+      const seasonDesignations = existingDesignations[String(scope.seasonYear)] || {};
+      const currentWeekDesignation = seasonDesignations[String(scope.weekNumber)] || seasonDesignations[scope.weekNumber];
+
+      let shouldUpdateSettings = false;
+      let newWeekDesignation = currentWeekDesignation;
+
+      if (!currentWeekDesignation || (!currentWeekDesignation.isFrozen && currentWeekDesignation.provenance !== 'COMMISSIONER_OVERRIDE')) {
+        if (lionsGames.length === 1) {
+          const lions = lionsGames[0];
+          newWeekDesignation = {
+            eventId: lions.externalGameId,
+            gameTitle: `${lions.awayTeamId} @ ${lions.homeTeamId}`,
+            kickoffTime: lions.kickoffTime ? lions.kickoffTime.toISOString() : '',
+            designatedBy: 'SYSTEM_DEFAULT',
+            designatedAt: new Date().toISOString(),
+            provenance: 'DEFAULT_LIONS',
+            isFrozen: false,
+          };
+          shouldUpdateSettings = true;
+        } else if (lionsGames.length === 0) {
+          newWeekDesignation = {
+            eventId: null,
+            gameTitle: 'COMMISSIONER_SELECTION_REQUIRED',
+            kickoffTime: '',
+            designatedBy: 'SYSTEM_DEFAULT',
+            designatedAt: new Date().toISOString(),
+            provenance: 'COMMISSIONER_SELECTION_REQUIRED',
+            isFrozen: false,
+          };
+          shouldUpdateSettings = true;
+        }
+      }
+
+      if (shouldUpdateSettings) {
+        const updatedSettings = {
+          ...poolSettings,
+          tiebreaker_designations: {
+            ...existingDesignations,
+            [String(scope.seasonYear)]: {
+              ...seasonDesignations,
+              [String(scope.weekNumber)]: newWeekDesignation,
+            },
+          },
+        };
+        await tx.$queryRawUnsafe(
+          `UPDATE public.pools SET settings = $1::jsonb WHERE id = $2::uuid;`,
+          JSON.stringify(updatedSettings),
+          params.poolId
+        );
+      }
     }
 
     return {

@@ -255,7 +255,20 @@ describe('Phase 41: Authoritative Slate & Persistence Contract', () => {
             return m ? [m] : [];
           }
 
-          if (sql.includes('SELECT id, external_game_id, home_team_id, away_team_id')) {
+          if (sql.includes('WHERE season = $1::int AND season_type = $2::int AND week = $3::int')) {
+            const season = params[0];
+            const seasonType = params[1];
+            const week = params[2];
+            const matches: any[] = [];
+            for (const g of storedGames.values()) {
+              if (Number(g.season) === Number(season) && Number(g.season_type) === Number(seasonType) && Number(g.week) === Number(week)) {
+                matches.push(g);
+              }
+            }
+            return matches;
+          }
+
+          if (sql.includes('WHERE external_game_id = $1::text OR external_game_id = $2::text')) {
             const ext1 = params[0];
             const ext2 = params[1];
             const matches: any[] = [];
@@ -397,7 +410,7 @@ describe('Phase 41: Authoritative Slate & Persistence Contract', () => {
               accepted_at: new Date().toISOString(),
               accepted_by: 'admin',
               manifest_fingerprint: observation1.manifestFingerprint,
-              observation_time: new Date().toISOString(),
+              observation_time: observation1.observationTime,
             },
           ];
         }

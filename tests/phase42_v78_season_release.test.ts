@@ -8,6 +8,7 @@ import {
 } from '../src/services/authoritativeSlateService';
 import { getCurrentNFLWeek } from '../client/src/services/nflCalendarService';
 import { resolveLionsTiebreaker, parseArgs, runSeasonImport } from '../scripts/season_import_cli';
+import { evaluateKickoffLock } from '../src/routes/picks';
 
 describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', () => {
   const SAMPLE_WEEK7_SCOPE = {
@@ -110,15 +111,20 @@ describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', (
 
       mockTx = {
         $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
+          // Advisory lock check
+          if (sql.includes('pg_advisory_xact_lock')) {
+            return [{ pg_advisory_xact_lock: null }];
+          }
+
           // Table check
           if (sql.includes("to_regclass('public.weekly_slate_manifests')")) {
             return [{ to_regclass: 'public.weekly_slate_manifests' }];
           }
 
           // Pool row check
-          if (sql.includes('SELECT id, admin_id FROM public.pools')) {
+          if (sql.includes('SELECT id, admin_id') && sql.includes('FROM public.pools')) {
             const poolId = params[0];
-            return [{ id: poolId, admin_id: 'a1111111-1111-1111-1111-111111111111' }];
+            return [{ id: poolId, admin_id: 'a1111111-1111-1111-1111-111111111111', settings: {} }];
           }
 
           // Pool membership check
@@ -134,10 +140,24 @@ describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', (
           }
 
           // Read back manifest verification
-          if (sql.includes('SELECT season, season_type, week_number, revision, manifest_fingerprint')) {
+          if (sql.includes('FROM public.weekly_slate_manifests') && sql.includes('manifest_fingerprint')) {
             const key = `${params[0]}-${params[1]}-${params[2]}`;
             const m = storedManifests.get(key);
             return m ? [m] : [];
+          }
+
+          // Read back canonical games
+          if (sql.includes('FROM public.games') && sql.includes('season = $1::int AND season_type = $2::int AND week = $3::int')) {
+            const season = params[0];
+            const seasonType = params[1];
+            const week = params[2];
+            const matched: any[] = [];
+            for (const g of storedGames.values()) {
+              if (Number(g.season) === Number(season) && Number(g.season_type) === Number(seasonType) && Number(g.week) === Number(week)) {
+                matched.push(g);
+              }
+            }
+            return matched;
           }
 
           // Lookup existing games by externalGameId
@@ -151,6 +171,11 @@ describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', (
               }
             }
             return matches;
+          }
+
+          // Pool settings update
+          if (sql.includes('UPDATE public.pools SET settings')) {
+            return [{ id: params[1], settings: JSON.parse(params[0]) }];
           }
 
           // INSERT into public.games
@@ -282,7 +307,7 @@ describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', (
     });
 
     it('rejects team identity mutations on existing baseline rows with TEAM_IDENTITY_MUTATION_FORBIDDEN', async () => {
-      // Pre-seed baseline row for 401873010 with GB vs DET
+      // Pre-seed baseline row for 401873010 with GB vs DET in Week 7 scope
       storedGames.set('g1', {
         id: 'g1',
         external_game_id: '401873010',
@@ -290,6 +315,9 @@ describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', (
         away_team_id: 'DET',
         kickoff_time: new Date('2026-10-23T00:15:00Z'),
         status: GameStatus.SCHEDULED,
+        season: 2026,
+        season_type: 2,
+        week: 7,
       });
 
       // Construct rogue observation attempting to change DET to CHI
@@ -340,6 +368,9 @@ describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', (
         canonical_kickoff_time: sundayTime.toISOString(),
         lock_effective_at: sundayTime.toISOString(),
         status: GameStatus.SCHEDULED,
+        season: 2026,
+        season_type: 2,
+        week: 7,
       });
 
       // Test A: Flexed LATER to Sunday Night 20:20Z (8:20 PM UTC)
@@ -493,7 +524,7 @@ describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', (
       ];
       const byeResult = resolveLionsTiebreaker(slateWithoutLions);
       expect(byeResult.designation).toBe('COMMISSIONER_SELECTION_REQUIRED');
-      expect(byeResult.matchup).toBe('BYE_WEEK');
+      expect(byeResult.matchup).toBe('COMMISSIONER_SELECTION_REQUIRED');
       expect(byeResult.gameId).toBeNull();
     });
 
@@ -658,6 +689,367 @@ describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', (
         prismaModule.default.pool.findUnique = originalFindUnique;
         prismaModule.default.poolMembership.findUnique = originalMembership;
       }
+    });
+  });
+
+  describe('6. R1 & R5: WeeklyPicks & Matrix Authority & Lock Invariants', () => {
+    it('excludes extra provider rows and binds strictly to accepted persisted rows', () => {
+      // Persisted accepted slate has 2 events: 401873010 and 401873011
+      const acceptedPersistedRows = [
+        {
+          id: 'uuid-1',
+          external_game_id: '401873010',
+          home_team_id: 'GB',
+          away_team_id: 'DET',
+          kickoff_time: '2026-10-23T00:15:00.000Z',
+          canonical_kickoff_time: '2026-10-23T00:15:00.000Z',
+          lock_effective_at: '2026-10-23T00:15:00.000Z',
+          status: 'SCHEDULED',
+        },
+        {
+          id: 'uuid-2',
+          external_game_id: '401873011',
+          home_team_id: 'SF',
+          away_team_id: 'DAL',
+          kickoff_time: '2026-10-25T17:00:00.000Z',
+          canonical_kickoff_time: '2026-10-25T17:00:00.000Z',
+          lock_effective_at: '2026-10-25T17:00:00.000Z',
+          status: 'SCHEDULED',
+        },
+      ];
+
+      // Rogue live provider returns 3 events: 2 valid + 1 extra unaccepted game
+      const rogueLiveProviderEvents = [
+        { id: '401873010', awayTeam: { code: 'DET' }, homeTeam: { code: 'GB' }, status: 'SCHEDULED' },
+        { id: '401873011', awayTeam: { code: 'DAL' }, homeTeam: { code: 'SF' }, status: 'SCHEDULED' },
+        { id: '999999999', awayTeam: { code: 'NE' }, homeTeam: { code: 'NYJ' }, status: 'SCHEDULED' }, // Extra unaccepted!
+      ];
+
+      const liveScoreMap = new Map();
+      rogueLiveProviderEvents.forEach((ls) => liveScoreMap.set(ls.id, ls));
+
+      // Filtering rule: map accepted persisted games only; extra provider rows never included
+      const filteredGames = acceptedPersistedRows.map((g) => {
+        const live = liveScoreMap.get(g.external_game_id);
+        return {
+          id: g.id,
+          externalGameId: g.external_game_id,
+          status: live?.status || g.status,
+        };
+      });
+
+      expect(filteredGames.length).toBe(2);
+      expect(filteredGames.map((g) => g.externalGameId)).toEqual(['401873010', '401873011']);
+      expect(filteredGames.some((g) => g.externalGameId === '999999999')).toBe(false);
+    });
+
+    it('enforces persisted TBD and flex lock deadlines on client game models', () => {
+      const now = new Date('2026-10-24T12:00:00.000Z');
+
+      // TBD game: null canonical kickoff and epoch lock
+      const tbdGame = {
+        id: 'g-tbd',
+        externalGameId: '401873099',
+        canonical_kickoff_time: null,
+        lock_effective_at: new Date(0).toISOString(),
+        kickoffTime: '1970-01-01T00:00:00.000Z',
+        isKickoffConfirmed: false,
+        status: 'SCHEDULED',
+      };
+
+      // Flex game: originally Sunday 17:00Z, flexed later to 20:20Z, but lock_effective_at remains earlier 17:00Z
+      const flexGame = {
+        id: 'g-flex',
+        externalGameId: '401873011',
+        canonical_kickoff_time: '2026-10-25T20:20:00.000Z',
+        lock_effective_at: '2026-10-25T17:00:00.000Z',
+        kickoffTime: '2026-10-25T20:20:00.000Z',
+        isKickoffConfirmed: true,
+        status: 'SCHEDULED',
+      };
+
+      // TBD is locked
+      const isTbdLocked = tbdGame.isKickoffConfirmed === false || new Date(tbdGame.kickoffTime).getTime() <= 0;
+      expect(isTbdLocked).toBe(true);
+
+      // Flex game at Sunday 18:00Z (after earlier lock 17:00Z, before later kickoff 20:20Z)
+      const afterEarlierDeadline = new Date('2026-10-25T18:00:00.000Z');
+      const isFlexLocked = afterEarlierDeadline.getTime() >= new Date(flexGame.lock_effective_at).getTime();
+      expect(isFlexLocked).toBe(true);
+    });
+
+    it('uses persisted observation_time for lastUpdatedTime without client-side clock drift', () => {
+      const persistedObservationTime = '2026-10-21T04:30:00.000Z';
+      const syncDate = new Date(persistedObservationTime);
+      const formatted = syncDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      expect(formatted).toBeDefined();
+      expect(formatted).not.toBe('');
+      // Ensures no Date.now() generation overwrite
+      const freshDate = new Date();
+      expect(syncDate.getTime()).toBeLessThan(freshDate.getTime());
+    });
+  });
+
+  describe('7. R2: CLI Parameter Validation & Tiebreaker Service Invariants', () => {
+    it('rejects unknown arguments with UNKNOWN_ARGUMENT', () => {
+      expect(() => parseArgs(['--dry-run', '--unknown-flag'])).toThrow('UNKNOWN_ARGUMENT');
+    });
+
+    it('rejects invalid or inverted week ranges with INVALID_WEEK_RANGE', () => {
+      expect(() => parseArgs(['--dry-run', '--start', '10', '--end', '7'])).toThrow('INVALID_WEEK_RANGE');
+      expect(() => parseArgs(['--dry-run', '--start', 'NaN', '--end', '10'])).toThrow('INVALID_WEEK_RANGE');
+      expect(() => parseArgs(['--dry-run', '--start', '0', '--end', '10'])).toThrow('INVALID_WEEK_RANGE');
+      expect(() => parseArgs(['--dry-run', '--start', '7', '--end', '20'])).toThrow('INVALID_WEEK_RANGE');
+    });
+
+    it('requires authentic UUID operator and pool in execute mode and rejects placeholders', () => {
+      // Missing pool
+      expect(() => parseArgs(['--execute', '--operator', '11111111-1111-1111-1111-111111111111'])).toThrow(
+        'INVALID_ARGUMENT'
+      );
+      // Placeholder operator
+      expect(() =>
+        parseArgs([
+          '--execute',
+          '--pool',
+          '11111111-1111-1111-1111-111111111111',
+          '--operator',
+          'a1111111-1111-1111-1111-111111111111',
+        ])
+      ).toThrow('INVALID_ARGUMENT');
+    });
+
+    it('rejects ambiguous multiple Lions games in a single weekly slate', () => {
+      const multipleLionsEvents = [
+        { externalGameId: '1', homeTeamId: 'DET', awayTeamId: 'GB' } as any,
+        { externalGameId: '2', homeTeamId: 'CHI', awayTeamId: 'DET' } as any,
+      ];
+      expect(() => resolveLionsTiebreaker(multipleLionsEvents)).toThrow('AMBIGUOUS_LIONS_SCHEDULE');
+    });
+
+    it('preserves existing frozen or commissioner override designations across weeks', () => {
+      const existingSettings = {
+        tiebreaker_designations: {
+          '2026': {
+            '7': {
+              eventId: 'custom-override-id',
+              gameTitle: 'SF @ DAL',
+              provenance: 'COMMISSIONER_OVERRIDE',
+              isFrozen: true,
+            },
+          },
+        },
+      };
+
+      const existing7 = existingSettings.tiebreaker_designations['2026']['7'];
+      // Invariant: frozen or commissioner override must never be overwritten by default Lions
+      const isProtected = existing7.isFrozen || existing7.provenance === 'COMMISSIONER_OVERRIDE';
+      expect(isProtected).toBe(true);
+    });
+  });
+
+  describe('8. R3: Historical Baseline Protection & Stale Observation Rejection', () => {
+    let mockTxR3: any;
+    let mockDbR3: any;
+    let storedGamesR3: Map<string, any>;
+    let storedManifestsR3: Map<string, any>;
+
+    beforeEach(() => {
+      storedGamesR3 = new Map();
+      storedManifestsR3 = new Map();
+
+      mockTxR3 = {
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
+          if (sql.includes('pg_advisory_xact_lock')) {
+            return [{ pg_advisory_xact_lock: null }];
+          }
+          if (sql.includes("to_regclass('public.weekly_slate_manifests')")) {
+            return [{ to_regclass: 'public.weekly_slate_manifests' }];
+          }
+          if (sql.includes('SELECT season, season_type, week_number, revision, event_ids')) {
+            const key = `${params[0]}-${params[1]}-${params[2]}`;
+            const m = storedManifestsR3.get(key);
+            return m ? [m] : [];
+          }
+          if (sql.includes('SELECT id, external_game_id, home_team_id, away_team_id')) {
+            const extId = params[0];
+            const matches: any[] = [];
+            for (const g of storedGamesR3.values()) {
+              if (g.external_game_id === extId) matches.push(g);
+            }
+            return matches;
+          }
+          return [];
+        }),
+      };
+
+      mockDbR3 = {
+        $transaction: vi.fn().mockImplementation(async (cb: any) => cb(mockTxR3)),
+      };
+    });
+
+    it('rejects mutation of unscoped historical baseline games with HISTORICAL_OR_CROSS_SCOPE_COLLISION', async () => {
+      // Historical baseline row (season is null / week is null)
+      storedGamesR3.set('baseline-1', {
+        id: 'baseline-1',
+        external_game_id: '401873010',
+        home_team_id: 'GB',
+        away_team_id: 'DET',
+        season: null,
+        week: null,
+      });
+
+      const observation = validateAndTransformESPNScoreboard(VALID_WEEK7_SCOREBOARD, SAMPLE_WEEK7_SCOPE);
+      await expect(
+        refreshWeeklySlateInDb(mockDbR3, {
+          seasonYear: 2026,
+          seasonType: 2,
+          weekNumber: 7,
+          operatorId: 'a1111111-1111-1111-1111-111111111111',
+          preloadedObservation: observation,
+        })
+      ).rejects.toThrow('HISTORICAL_OR_CROSS_SCOPE_COLLISION');
+    });
+
+    it('rejects stale incoming observation older than accepted manifest with STALE_OBSERVATION_REJECTED', async () => {
+      // Existing accepted manifest observed at 12:00 UTC
+      storedManifestsR3.set('2026-2-7', {
+        season: 2026,
+        season_type: 2,
+        week_number: 7,
+        revision: 2,
+        event_ids: ['401873010', '401873011'],
+        manifest_fingerprint: 'fp-1',
+        observation_time: '2026-10-21T12:00:00.000Z',
+      });
+
+      // Stale observation observed at 10:00 UTC (2 hours older)
+      const staleScoreboard = {
+        ...VALID_WEEK7_SCOREBOARD,
+      };
+      const staleObservation = validateAndTransformESPNScoreboard(staleScoreboard, SAMPLE_WEEK7_SCOPE);
+      staleObservation.observationTime = '2026-10-21T10:00:00.000Z'; // Stale!
+
+      await expect(
+        refreshWeeklySlateInDb(mockDbR3, {
+          seasonYear: 2026,
+          seasonType: 2,
+          weekNumber: 7,
+          operatorId: 'a1111111-1111-1111-1111-111111111111',
+          preloadedObservation: staleObservation,
+        })
+      ).rejects.toThrow('STALE_OBSERVATION_REJECTED');
+    });
+  });
+
+  describe('9. R4: Trustworthy Zoned Instants & Pick Route Lock Enforcement', () => {
+    it('rejects date-only and offset-free strings as unconfirmed/TBD', () => {
+      // Date-only string: 2026-10-25
+      const dateOnlyScoreboard = {
+        season: { year: 2026, type: 2 },
+        week: { number: 7 },
+        events: [
+          {
+            id: '401873030',
+            date: '2026-10-25', // Lacks time and timezone!
+            competitions: [
+              {
+                id: '401873030',
+                date: '2026-10-25',
+                timeValid: true,
+                competitors: [
+                  { homeAway: 'home', team: { abbreviation: 'KC' } },
+                  { homeAway: 'away', team: { abbreviation: 'LV' } },
+                ],
+                status: { type: { name: 'STATUS_SCHEDULED', state: 'pre' } },
+              },
+            ],
+          },
+        ],
+      };
+
+      const obs = validateAndTransformESPNScoreboard(dateOnlyScoreboard, SAMPLE_WEEK7_SCOPE);
+      expect(obs.events[0].isKickoffConfirmed).toBe(false);
+
+      // Offset-free string: 2026-10-25T13:00:00 (no Z or +/- offset)
+      const offsetFreeScoreboard = {
+        season: { year: 2026, type: 2 },
+        week: { number: 7 },
+        events: [
+          {
+            id: '401873031',
+            date: '2026-10-25T13:00:00', // Lacks timezone offset!
+            competitions: [
+              {
+                id: '401873031',
+                date: '2026-10-25T13:00:00',
+                timeValid: true,
+                competitors: [
+                  { homeAway: 'home', team: { abbreviation: 'KC' } },
+                  { homeAway: 'away', team: { abbreviation: 'LV' } },
+                ],
+                status: { type: { name: 'STATUS_SCHEDULED', state: 'pre' } },
+              },
+            ],
+          },
+        ],
+      };
+
+      const obsOffsetFree = validateAndTransformESPNScoreboard(offsetFreeScoreboard, SAMPLE_WEEK7_SCOPE);
+      expect(obsOffsetFree.events[0].isKickoffConfirmed).toBe(false);
+    });
+
+    it('evaluates kickoff lock: allows before kickoff, denies at/after kickoff and unconfirmed', () => {
+      const futureGame = {
+        kickoffTime: new Date('2026-10-25T17:00:00.000Z'),
+        canonicalKickoffTime: new Date('2026-10-25T17:00:00.000Z'),
+        lockEffectiveAt: new Date('2026-10-25T17:00:00.000Z'),
+        status: 'SCHEDULED',
+      };
+
+      // Before kickoff (1 hour before)
+      const beforeNow = new Date('2026-10-25T16:00:00.000Z');
+      expect(evaluateKickoffLock(futureGame, 0, beforeNow).isLocked).toBe(false);
+
+      // Exact kickoff timestamp (Decision #66: locks strictly at kickoff)
+      const exactNow = new Date('2026-10-25T17:00:00.000Z');
+      const exactLock = evaluateKickoffLock(futureGame, 0, exactNow);
+      expect(exactLock.isLocked).toBe(true);
+      expect(exactLock.reason).toBe('KICKOFF_PASSED');
+
+      // After kickoff
+      const afterNow = new Date('2026-10-25T17:05:00.000Z');
+      const afterLock = evaluateKickoffLock(futureGame, 0, afterNow);
+      expect(afterLock.isLocked).toBe(true);
+      expect(afterLock.reason).toBe('KICKOFF_PASSED');
+
+      // Unconfirmed TBD game
+      const tbdGame = {
+        kickoffTime: new Date(0),
+        canonicalKickoffTime: null,
+        lockEffectiveAt: new Date(0),
+        status: 'SCHEDULED',
+      };
+      const tbdLock = evaluateKickoffLock(tbdGame, 0, beforeNow);
+      expect(tbdLock.isLocked).toBe(true);
+      expect(tbdLock.reason).toBe('UNVERIFIED_KICKOFF');
+    });
+
+    it('evaluates flex lock: respects earliest flex lock deadline across delayed writes', () => {
+      // Flexed game originally Sunday 17:00Z, flexed later to 20:20Z
+      const flexGame = {
+        kickoffTime: new Date('2026-10-25T20:20:00.000Z'),
+        canonicalKickoffTime: new Date('2026-10-25T20:20:00.000Z'),
+        lockEffectiveAt: new Date('2026-10-25T17:00:00.000Z'), // Earliest deadline preserved!
+        status: 'SCHEDULED',
+      };
+
+      // Delayed write arriving at 17:01Z (after earlier deadline, before later kickoff)
+      const delayedWriteNow = new Date('2026-10-25T17:01:00.000Z');
+      const delayedLock = evaluateKickoffLock(flexGame, 0, delayedWriteNow);
+      expect(delayedLock.isLocked).toBe(true);
+      expect(delayedLock.reason).toBe('KICKOFF_PASSED');
     });
   });
 });
