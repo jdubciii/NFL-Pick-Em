@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import http from 'http';
-import { picksRouter } from '../src/routes/picks';
+import { picksRouter, setLegacyGameAdapterForTesting, setLegacyPickSaveAdapterForTesting } from '../src/routes/picks';
 import { adminRouter } from '../src/routes/admin';
 import prisma from '../src/db/client';
 import {
@@ -79,6 +79,24 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
       };
     });
 
+    setLegacyGameAdapterForTesting(async (_db, gameId) => {
+      const g = mockWasAtSfGame;
+      if (gameId !== g.externalGameId && gameId !== g.id) return null;
+      return {
+        id: g.id,
+        externalGameId: g.externalGameId,
+        homeTeamId: g.homeTeamId,
+        awayTeamId: g.awayTeamId,
+        kickoffTime: g.kickoffTime,
+        status: g.status,
+        canonicalKickoffTime: g.kickoffTime,
+        lockEffectiveAt: g.kickoffTime,
+        season: 2026,
+        seasonType: 2,
+        week: 6,
+      };
+    });
+
     app = express();
     app.use(express.json());
     app.use('/api/picks', picksRouter);
@@ -94,6 +112,8 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
   });
 
   afterEach(async () => {
+    setLegacyGameAdapterForTesting(null);
+    setLegacyPickSaveAdapterForTesting(null);
     setSupabaseAuthClientForTesting(null);
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
@@ -164,15 +184,16 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
       } as any);
       vi.spyOn(prisma.game, 'findFirst').mockResolvedValue(mockWasAtSfGame as any);
 
-      const upsertMock = vi.fn().mockResolvedValue({
+      const upsertMock = vi.fn().mockImplementation(async (_db, params) => ({
         id: 'pick-uuid-1',
-        poolId: POOL_ID,
-        userId: MEMBER_ID,
-        gameId: mockWasAtSfGame.id,
-        selectedTeamId: 'SF',
-        submittedById: MEMBER_ID,
-      });
-      vi.spyOn(prisma.pick, 'upsert').mockImplementation(upsertMock);
+        poolId: params.poolId,
+        userId: params.userId,
+        gameId: params.gameId,
+        week: params.week,
+        selectedTeamId: params.selectedTeamId,
+        submittedById: params.userId,
+      }));
+      setLegacyPickSaveAdapterForTesting(upsertMock);
 
       const token = createAuthToken(MEMBER_ID);
       const res = await fetch(`${baseUrl}/api/picks`, {
@@ -193,9 +214,9 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
       expect(data.message).toBe('Pick saved successfully');
       expect(data.pick.selectedTeamId).toBe('SF');
       expect(upsertMock).toHaveBeenCalledWith(
+        expect.anything(),
         expect.objectContaining({
-          create: expect.objectContaining({ selectedTeamId: 'SF' }),
-          update: expect.objectContaining({ selectedTeamId: 'SF' }),
+          selectedTeamId: 'SF',
         })
       );
     });
@@ -209,15 +230,16 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
       } as any);
       vi.spyOn(prisma.game, 'findFirst').mockResolvedValue(mockWasAtSfGame as any);
 
-      const upsertMock = vi.fn().mockResolvedValue({
+      const upsertMock = vi.fn().mockImplementation(async (_db, params) => ({
         id: 'pick-uuid-2',
-        poolId: POOL_ID,
-        userId: MEMBER_ID,
-        gameId: mockWasAtSfGame.id,
-        selectedTeamId: 'WAS',
-        submittedById: MEMBER_ID,
-      });
-      vi.spyOn(prisma.pick, 'upsert').mockImplementation(upsertMock);
+        poolId: params.poolId,
+        userId: params.userId,
+        gameId: params.gameId,
+        week: params.week,
+        selectedTeamId: params.selectedTeamId,
+        submittedById: params.userId,
+      }));
+      setLegacyPickSaveAdapterForTesting(upsertMock);
 
       const token = createAuthToken(MEMBER_ID);
       const res = await fetch(`${baseUrl}/api/picks`, {
@@ -237,9 +259,9 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
       const data = await res.json();
       expect(data.message).toBe('Pick saved successfully');
       expect(upsertMock).toHaveBeenCalledWith(
+        expect.anything(),
         expect.objectContaining({
-          create: expect.objectContaining({ selectedTeamId: 'WAS' }),
-          update: expect.objectContaining({ selectedTeamId: 'WAS' }),
+          selectedTeamId: 'WAS',
         })
       );
     });
@@ -253,15 +275,16 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
       } as any);
       vi.spyOn(prisma.game, 'findFirst').mockResolvedValue(mockWasAtSfGame as any);
 
-      const upsertMock = vi.fn().mockResolvedValue({
+      const upsertMock = vi.fn().mockImplementation(async (_db, params) => ({
         id: 'pick-uuid-3',
-        poolId: POOL_ID,
-        userId: MEMBER_ID,
-        gameId: mockWasAtSfGame.id,
-        selectedTeamId: null,
-        submittedById: MEMBER_ID,
-      });
-      vi.spyOn(prisma.pick, 'upsert').mockImplementation(upsertMock);
+        poolId: params.poolId,
+        userId: params.userId,
+        gameId: params.gameId,
+        week: params.week,
+        selectedTeamId: params.selectedTeamId,
+        submittedById: params.userId,
+      }));
+      setLegacyPickSaveAdapterForTesting(upsertMock);
 
       const token = createAuthToken(MEMBER_ID);
       const res = await fetch(`${baseUrl}/api/picks`, {
@@ -279,9 +302,9 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
 
       expect(res.status).toBe(200);
       expect(upsertMock).toHaveBeenCalledWith(
+        expect.anything(),
         expect.objectContaining({
-          create: expect.objectContaining({ selectedTeamId: null }),
-          update: expect.objectContaining({ selectedTeamId: null }),
+          selectedTeamId: null,
         })
       );
     });
@@ -300,6 +323,14 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
         status: 'ACTIVE',
       } as any);
       vi.spyOn(prisma.game, 'findFirst').mockResolvedValue(corruptGame as any);
+      setLegacyGameAdapterForTesting(async () => ({
+        ...corruptGame,
+        canonicalKickoffTime: corruptGame.kickoffTime,
+        lockEffectiveAt: corruptGame.kickoffTime,
+        season: 2026,
+        seasonType: 2,
+        week: 6,
+      }));
 
       const token = createAuthToken(MEMBER_ID);
       const res = await fetch(`${baseUrl}/api/picks`, {
@@ -334,6 +365,14 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
         status: 'ACTIVE',
       } as any);
       vi.spyOn(prisma.game, 'findFirst').mockResolvedValue(lockedGame as any);
+      setLegacyGameAdapterForTesting(async () => ({
+        ...lockedGame,
+        canonicalKickoffTime: lockedGame.kickoffTime,
+        lockEffectiveAt: lockedGame.kickoffTime,
+        season: 2026,
+        seasonType: 2,
+        week: 6,
+      }));
 
       const token = createAuthToken(MEMBER_ID);
       const res = await fetch(`${baseUrl}/api/picks`, {
@@ -365,15 +404,16 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
       } as any);
       vi.spyOn(prisma.game, 'findFirst').mockResolvedValue(mockWasAtSfGame as any);
 
-      const upsertMock = vi.fn().mockResolvedValue({
+      const upsertMock = vi.fn().mockImplementation(async (_db, params) => ({
         id: 'pick-uuid-batch',
-        poolId: POOL_ID,
-        userId: MEMBER_ID,
-        gameId: mockWasAtSfGame.id,
-        selectedTeamId: 'SF',
-        submittedById: MEMBER_ID,
-      });
-      vi.spyOn(prisma.pick, 'upsert').mockImplementation(upsertMock);
+        poolId: params.poolId,
+        userId: params.userId,
+        gameId: params.gameId,
+        week: params.week,
+        selectedTeamId: params.selectedTeamId,
+        submittedById: params.userId,
+      }));
+      setLegacyPickSaveAdapterForTesting(upsertMock);
 
       const token = createAuthToken(MEMBER_ID);
       const res = await fetch(`${baseUrl}/api/picks/batch`, {
@@ -396,8 +436,9 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
       expect(data.count).toBe(1);
       expect(upsertMock).toHaveBeenCalledTimes(1);
       expect(upsertMock).toHaveBeenCalledWith(
+        expect.anything(),
         expect.objectContaining({
-          create: expect.objectContaining({ selectedTeamId: 'SF' }),
+          selectedTeamId: 'SF',
         })
       );
     });

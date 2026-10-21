@@ -1,9 +1,0 @@
-﻿node.exe : npm notice run nfl-pick-em@1.0.0 npx
-At line:1 char:1
-+ & "C:\Program Files\nodejs/node.exe" "C:\Users\kacone\AppData\Roaming ...
-+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (npm notice run nfl-pick-em@1.0.0 npx:String) [], Remot
-   eException
-    + FullyQualifiedErrorId : NativeCommandError
-
-npm notice run tsc --noEmit

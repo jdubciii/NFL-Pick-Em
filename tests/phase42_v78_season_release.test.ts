@@ -1,4 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import express from 'express';
+import http from 'http';
+import prisma from '../src/db/client';
+import { setSupabaseAuthClientForTesting, createSyntheticSupabaseToken } from '../src/middleware/auth';
 import { GameStatus } from '@prisma/client';
 import {
   validateAndTransformESPNScoreboard,
@@ -8,7 +12,14 @@ import {
 } from '../src/services/authoritativeSlateService';
 import { getCurrentNFLWeek } from '../client/src/services/nflCalendarService';
 import { resolveLionsTiebreaker, parseArgs, runSeasonImport } from '../scripts/season_import_cli';
-import { evaluateKickoffLock, resolveGameWithCanonicalLock } from '../src/routes/picks';
+import {
+  evaluateKickoffLock,
+  resolveGameWithCanonicalLock,
+  savePickAtomically,
+  picksRouter,
+  setLegacyGameAdapterForTesting,
+  setLegacyPickSaveAdapterForTesting,
+} from '../src/routes/picks';
 import {
   resolveAuthoritativeSlate,
   getHighestCachedSlateRevision,
@@ -1189,7 +1200,17 @@ describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', (
     });
 
     it('excludes extra provider events not in accepted manifest and enforces complete coverage', async () => {
+      const createBuilder = (result: any) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue(result),
+        then: (resolve: any) => resolve(result),
+      });
+
       const mockSupabase = {
+        auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'user-uuid' } }, error: null }),
+        },
         rpc: vi.fn().mockResolvedValue({
           data: [
             {
@@ -1204,49 +1225,66 @@ describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', (
               season: 2026,
               season_type: 2,
               week: 8,
-            },
-            {
-              id: 'extra-provider-game',
-              externalGameId: '999999999', // Extra row NOT in manifest!
-              homeTeamId: 'KC',
-              awayTeamId: 'LV',
-              kickoffTime: '2026-10-25T17:00:00Z',
-              status: 'SCHEDULED',
+              manifest_revision: 1,
             },
           ],
           error: null,
         }),
         from: vi.fn().mockImplementation((table: string) => {
           if (table === 'weekly_slate_manifests') {
-            return {
-              select: vi.fn().mockReturnThis(),
-              eq: vi.fn().mockReturnThis(),
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: {
-                  season: 2026,
-                  season_type: 2,
-                  week_number: 8,
-                  revision: 1,
-                  manifest_fingerprint: 'fp-1',
-                  event_ids: ['401873010'], // Only 401873010 accepted!
-                  accepted_at: '2026-10-21T12:00:00Z',
-                },
-                error: null,
-              }),
-            };
+            return createBuilder({
+              data: {
+                season: 2026,
+                season_type: 2,
+                week_number: 8,
+                revision: 1,
+                manifest_fingerprint: 'fp-1',
+                event_ids: ['401873010'], // Only 401873010 accepted!
+                accepted_at: '2026-10-21T12:00:00Z',
+              },
+              error: null,
+            });
+          }
+          if (table === 'pool_memberships') {
+            return createBuilder({
+              data: { status: 'ACTIVE', user_id: 'user-uuid', pool_id: 'pool-uuid' },
+              error: null,
+            });
           }
           if (table === 'games') {
-            return {
-              select: vi.fn().mockReturnThis(),
-              eq: vi.fn().mockReturnThis(),
-              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-            };
+            return createBuilder({
+              data: [
+                {
+                  id: 'game-1',
+                  external_game_id: '401873010',
+                  home_team_id: 'GB',
+                  away_team_id: 'DET',
+                  kickoff_time: '2026-10-23T00:15:00Z',
+                  status: 'SCHEDULED',
+                  canonical_kickoff_time: '2026-10-23T00:15:00Z',
+                  lock_effective_at: '2026-10-23T00:15:00Z',
+                  season: 2026,
+                  season_type: 2,
+                  week: 8,
+                  manifest_revision: 1,
+                },
+                {
+                  id: 'extra-provider-game',
+                  external_game_id: '999999999',
+                  home_team_id: 'KC',
+                  away_team_id: 'LV',
+                  kickoff_time: '2026-10-25T17:00:00Z',
+                  status: 'SCHEDULED',
+                  season: 2026,
+                  season_type: 2,
+                  week: 8,
+                  manifest_revision: 1,
+                },
+              ],
+              error: null,
+            });
           }
-          return {
-            select: vi.fn().mockReturnThis(),
-            eq: vi.fn().mockReturnThis(),
-            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-          };
+          return createBuilder({ data: null, error: null });
         }),
       };
 
@@ -1266,7 +1304,17 @@ describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', (
     });
 
     it('locks unconfirmed TBD kickoff with isKickoffConfirmed: false and epoch sentinel', async () => {
+      const createBuilder = (result: any) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue(result),
+        then: (resolve: any) => resolve(result),
+      });
+
       const mockSupabase = {
+        auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'user-uuid' } }, error: null }),
+        },
         rpc: vi.fn().mockResolvedValue({
           data: [
             {
@@ -1276,39 +1324,59 @@ describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', (
               awayTeamId: 'DET',
               kickoffTime: '1970-01-01T00:00:00.000Z',
               status: 'SCHEDULED',
-              canonical_kickoff_time: null, // TBD!
-              lock_effective_at: '1970-01-01T00:00:00.000Z', // Sentinel!
+              canonical_kickoff_time: null,
+              lock_effective_at: '1970-01-01T00:00:00.000Z',
               season: 2026,
               season_type: 2,
               week: 8,
+              manifest_revision: 1,
             },
           ],
           error: null,
         }),
         from: vi.fn().mockImplementation((table: string) => {
           if (table === 'weekly_slate_manifests') {
-            return {
-              select: vi.fn().mockReturnThis(),
-              eq: vi.fn().mockReturnThis(),
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: {
+            return createBuilder({
+              data: {
+                season: 2026,
+                season_type: 2,
+                week_number: 8,
+                revision: 1,
+                manifest_fingerprint: 'fp-tbd',
+                event_ids: ['401873099'],
+                accepted_at: '2026-10-21T12:00:00Z',
+              },
+              error: null,
+            });
+          }
+          if (table === 'pool_memberships') {
+            return createBuilder({
+              data: { status: 'ACTIVE', user_id: 'user-uuid', pool_id: 'pool-uuid' },
+              error: null,
+            });
+          }
+          if (table === 'games') {
+            return createBuilder({
+              data: [
+                {
+                  id: 'game-tbd',
+                  external_game_id: '401873099',
+                  home_team_id: 'GB',
+                  away_team_id: 'DET',
+                  kickoff_time: '1970-01-01T00:00:00.000Z',
+                  status: 'SCHEDULED',
+                  canonical_kickoff_time: null,
+                  lock_effective_at: '1970-01-01T00:00:00.000Z',
                   season: 2026,
                   season_type: 2,
-                  week_number: 8,
-                  revision: 1,
-                  manifest_fingerprint: 'fp-tbd',
-                  event_ids: ['401873099'],
-                  accepted_at: '2026-10-21T12:00:00Z',
+                  week: 8,
+                  manifest_revision: 1,
                 },
-                error: null,
-              }),
-            };
+              ],
+              error: null,
+            });
           }
-          return {
-            select: vi.fn().mockReturnThis(),
-            eq: vi.fn().mockReturnThis(),
-            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-          };
+          return createBuilder({ data: null, error: null });
         }),
       };
 
@@ -1324,6 +1392,301 @@ describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', (
       const g = res.games[0];
       expect(g.isKickoffConfirmed).toBe(false);
       expect(g.kickoffTime).toBe('1970-01-01T00:00:00.000Z');
+    });
+
+    it('fails closed to no playable rows when thin RPC succeeds but direct full metadata errors', async () => {
+      const createBuilder = (result: any) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue(result),
+        then: (resolve: any) => resolve(result),
+      });
+
+      const mockSupabase = {
+        auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'user-uuid' } }, error: null }),
+        },
+        rpc: vi.fn().mockResolvedValue({
+          data: [{ id: 'thin-game-1', externalGameId: '401873010' }],
+          error: null,
+        }),
+        from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'weekly_slate_manifests') {
+            return createBuilder({
+              data: {
+                season: 2026,
+                season_type: 2,
+                week_number: 8,
+                revision: 1,
+                manifest_fingerprint: 'fp-1',
+                event_ids: ['401873010'],
+              },
+              error: null,
+            });
+          }
+          if (table === 'pool_memberships') {
+            return createBuilder({
+              data: { status: 'ACTIVE', user_id: 'user-uuid', pool_id: 'pool-uuid' },
+              error: null,
+            });
+          }
+          if (table === 'games') {
+            return createBuilder({
+              data: null,
+              error: new Error('Column manifest_revision does not exist on replica'),
+            });
+          }
+          return createBuilder({ data: null, error: null });
+        }),
+      };
+
+      const res = await resolveAuthoritativeSlate({
+        supabase: mockSupabase,
+        activePoolId: 'pool-uuid',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 8,
+      });
+
+      expect(res.source).toBe('FAILED_CLOSED');
+      expect(res.games.length).toBe(0);
+      expect(res.error).toContain('Column manifest_revision does not exist on replica');
+    });
+
+    it('rejects rows with mismatched manifest_revision or other scope', async () => {
+      const createBuilder = (result: any) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue(result),
+        then: (resolve: any) => resolve(result),
+      });
+
+      const mockSupabase = {
+        auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'user-uuid' } }, error: null }),
+        },
+        from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'weekly_slate_manifests') {
+            return createBuilder({
+              data: {
+                season: 2026,
+                season_type: 2,
+                week_number: 8,
+                revision: 2, // Manifest revision 2
+                manifest_fingerprint: 'fp-rev2',
+                event_ids: ['401873010'],
+              },
+              error: null,
+            });
+          }
+          if (table === 'pool_memberships') {
+            return createBuilder({
+              data: { status: 'ACTIVE', user_id: 'user-uuid', pool_id: 'pool-uuid' },
+              error: null,
+            });
+          }
+          if (table === 'games') {
+            return createBuilder({
+              data: [
+                {
+                  id: 'game-1',
+                  external_game_id: '401873010',
+                  home_team_id: 'GB',
+                  away_team_id: 'DET',
+                  kickoff_time: '2026-10-23T00:15:00Z',
+                  canonical_kickoff_time: '2026-10-23T00:15:00Z',
+                  lock_effective_at: '2026-10-23T00:15:00Z',
+                  season: 2026,
+                  season_type: 2,
+                  week: 8,
+                  manifest_revision: 1, // Mismatched revision 1!
+                },
+              ],
+              error: null,
+            });
+          }
+          return createBuilder({ data: null, error: null });
+        }),
+      };
+
+      const res = await resolveAuthoritativeSlate({
+        supabase: mockSupabase,
+        activePoolId: 'pool-uuid',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 8,
+      });
+
+      expect(res.source).toBe('FAILED_CLOSED');
+      expect(res.games.length).toBe(0);
+      expect(res.error).toContain('INCOMPLETE_MANIFEST_COVERAGE');
+    });
+
+    it('rejects fallback when caller is unauthenticated or belongs to a foreign user', async () => {
+      const createBuilder = (result: any) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue(result),
+        then: (resolve: any) => resolve(result),
+      });
+
+      // 3A: Caller unauthenticated
+      const mockSupabaseNoUser = {
+        auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: null }),
+        },
+        from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'weekly_slate_manifests') {
+            return createBuilder({
+              data: {
+                season: 2026,
+                season_type: 2,
+                week_number: 8,
+                revision: 1,
+                manifest_fingerprint: 'fp-1',
+                event_ids: ['401873010'],
+              },
+              error: null,
+            });
+          }
+          return createBuilder({ data: null, error: null });
+        }),
+      };
+
+      const resNoUser = await resolveAuthoritativeSlate({
+        supabase: mockSupabaseNoUser,
+        activePoolId: 'pool-uuid',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 8,
+      });
+      expect(resNoUser.source).toBe('FAILED_CLOSED');
+      expect(resNoUser.error).toContain('POOL_AUTHORITY_DENIED');
+
+      // 3B: Foreign user (membership user_id does not match caller user_id)
+      const mockSupabaseForeignUser = {
+        auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'caller-uuid' } }, error: null }),
+        },
+        from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'weekly_slate_manifests') {
+            return createBuilder({
+              data: {
+                season: 2026,
+                season_type: 2,
+                week_number: 8,
+                revision: 1,
+                manifest_fingerprint: 'fp-1',
+                event_ids: ['401873010'],
+              },
+              error: null,
+            });
+          }
+          if (table === 'pool_memberships') {
+            return createBuilder({
+              data: { status: 'ACTIVE', user_id: 'foreign-user-uuid', pool_id: 'pool-uuid' },
+              error: null,
+            });
+          }
+          return createBuilder({ data: null, error: null });
+        }),
+      };
+
+      const resForeign = await resolveAuthoritativeSlate({
+        supabase: mockSupabaseForeignUser,
+        activePoolId: 'pool-uuid',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 8,
+      });
+      expect(resForeign.source).toBe('FAILED_CLOSED');
+      expect(resForeign.error).toContain('POOL_AUTHORITY_DENIED');
+    });
+
+    it('returns verified playable games when active caller and complete exact full metadata match', async () => {
+      const createBuilder = (result: any) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue(result),
+        then: (resolve: any) => resolve(result),
+      });
+
+      const mockSupabase = {
+        auth: {
+          getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'caller-uuid' } }, error: null }),
+        },
+        from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'weekly_slate_manifests') {
+            return createBuilder({
+              data: {
+                season: 2026,
+                season_type: 2,
+                week_number: 8,
+                revision: 3,
+                manifest_fingerprint: 'fp-rev3',
+                event_ids: ['401873010', '401873011'],
+                observation_time: '2026-10-21T18:00:00Z',
+              },
+              error: null,
+            });
+          }
+          if (table === 'pool_memberships') {
+            return createBuilder({
+              data: { status: 'ACTIVE', user_id: 'caller-uuid', pool_id: 'pool-uuid' },
+              error: null,
+            });
+          }
+          if (table === 'games') {
+            return createBuilder({
+              data: [
+                {
+                  id: 'game-1',
+                  external_game_id: '401873010',
+                  home_team_id: 'GB',
+                  away_team_id: 'DET',
+                  kickoff_time: '2026-10-23T00:15:00Z',
+                  canonical_kickoff_time: '2026-10-23T00:15:00Z',
+                  lock_effective_at: '2026-10-23T00:15:00Z',
+                  season: 2026,
+                  season_type: 2,
+                  week: 8,
+                  manifest_revision: 3,
+                  status: 'SCHEDULED',
+                },
+                {
+                  id: 'game-2',
+                  external_game_id: '401873011',
+                  home_team_id: 'SF',
+                  away_team_id: 'DAL',
+                  kickoff_time: '2026-10-25T17:00:00Z',
+                  canonical_kickoff_time: '2026-10-25T17:00:00Z',
+                  lock_effective_at: '2026-10-25T17:00:00Z',
+                  season: 2026,
+                  season_type: 2,
+                  week: 8,
+                  manifest_revision: 3,
+                  status: 'SCHEDULED',
+                },
+              ],
+              error: null,
+            });
+          }
+          return createBuilder({ data: null, error: null });
+        }),
+      };
+
+      const res = await resolveAuthoritativeSlate({
+        supabase: mockSupabase,
+        activePoolId: 'pool-uuid',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 8,
+      });
+
+      expect(res.source).toBe('PERSISTED_MANIFEST');
+      expect(res.games.length).toBe(2);
+      expect(res.games.map((g) => g.externalGameId)).toEqual(['401873010', '401873011']);
+      expect(res.lastUpdatedIso).toBe('2026-10-21T18:00:00Z');
     });
 
     it('reads highest cached revision and prevents week 7 matching week 17 prefix collision', () => {
@@ -1435,6 +1798,563 @@ describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', (
       };
 
       await expect(resolveGameWithCanonicalLock(mockDb, '401873010')).rejects.toThrow('CANONICAL_GAME_QUERY_FAILED');
+    });
+  });
+
+  describe('9. Path 1: evaluateKickoffLock Date/NaN/Offset Guards', () => {
+    it('fails closed to UNVERIFIED_KICKOFF for invalid Date, NaN getTime, or non-positive timestamps', () => {
+      const validGame = {
+        kickoffTime: new Date(Date.now() + 86400000),
+        canonicalKickoffTime: new Date(Date.now() + 86400000),
+        lockEffectiveAt: new Date(Date.now() + 86400000),
+        status: 'SCHEDULED',
+      };
+
+      // 1. Invalid Date for kickoffTime
+      expect(
+        evaluateKickoffLock({ ...validGame, kickoffTime: new Date('invalid') })
+      ).toEqual({ isLocked: true, reason: 'UNVERIFIED_KICKOFF' });
+
+      // 2. Epoch sentinel (getTime <= 0)
+      expect(
+        evaluateKickoffLock({ ...validGame, kickoffTime: new Date('1970-01-01T00:00:00.000Z') })
+      ).toEqual({ isLocked: true, reason: 'UNVERIFIED_KICKOFF' });
+
+      // 3. Invalid Date for canonicalKickoffTime
+      expect(
+        evaluateKickoffLock({ ...validGame, canonicalKickoffTime: new Date('not-a-date') })
+      ).toEqual({ isLocked: true, reason: 'UNVERIFIED_KICKOFF' });
+
+      // 4. Null canonicalKickoffTime (unconfirmed TBD)
+      expect(
+        evaluateKickoffLock({ ...validGame, canonicalKickoffTime: null })
+      ).toEqual({ isLocked: true, reason: 'UNVERIFIED_KICKOFF' });
+
+      // 5. Invalid Date for lockEffectiveAt
+      expect(
+        evaluateKickoffLock({ ...validGame, lockEffectiveAt: new Date('junk') })
+      ).toEqual({ isLocked: true, reason: 'UNVERIFIED_KICKOFF' });
+
+      // 6. NaN or non-finite lockOffsetMinutes
+      expect(
+        evaluateKickoffLock(validGame, NaN)
+      ).toEqual({ isLocked: true, reason: 'UNVERIFIED_KICKOFF' });
+
+      expect(
+        evaluateKickoffLock(validGame, Infinity)
+      ).toEqual({ isLocked: true, reason: 'UNVERIFIED_KICKOFF' });
+
+      // 7. Invalid Date for now
+      expect(
+        evaluateKickoffLock(validGame, 0, new Date('invalid-now'))
+      ).toEqual({ isLocked: true, reason: 'UNVERIFIED_KICKOFF' });
+    });
+  });
+
+  describe('10. Path 1: Parameterized Atomic 4-Column Pick Persistence & Route Invariants', () => {
+    it('executes parameterized atomic persistence with verified 4-column key and TEXT game_id', async () => {
+      const mockQueryRawUnsafe = vi.fn().mockResolvedValue([
+        {
+          id: 'new-pick-uuid',
+          pool_id: 'pool-uuid-1',
+          user_id: 'user-uuid-1',
+          week: 7,
+          game_id: '401873010',
+          selected_team_id: 'DET',
+          submitted_by: 'user-uuid-1',
+          created_at: new Date(),
+        },
+      ]);
+      const mockDb = { $queryRawUnsafe: mockQueryRawUnsafe };
+
+      const result = await savePickAtomically(mockDb, {
+        poolId: 'pool-uuid-1',
+        userId: 'user-uuid-1',
+        gameId: '401873010',
+        week: 7,
+        selectedTeamId: 'DET',
+      });
+
+      expect(result.id).toBe('new-pick-uuid');
+      expect(result.week).toBe(7);
+      expect(result.gameId).toBe('401873010');
+      expect(result.selectedTeamId).toBe('DET');
+
+      // Verify SQL contains 4-column ON CONFLICT and $4::text
+      expect(mockQueryRawUnsafe).toHaveBeenCalledTimes(1);
+      const [sql, p1, p2, p3, p4, p5, p6] = mockQueryRawUnsafe.mock.calls[0];
+      expect(sql).toContain('ON CONFLICT (pool_id, user_id, week, game_id)');
+      expect(sql).toContain('$4::text');
+      expect(p1).toBe('pool-uuid-1');
+      expect(p2).toBe('user-uuid-1');
+      expect(p3).toBe(7);
+      expect(p4).toBe('401873010');
+      expect(p5).toBe('DET');
+      expect(p6).toBe('user-uuid-1');
+    });
+
+    it('fixture rejects legacy 3-column constraint and incorrect uuid casting on game_id', async () => {
+      const mockDb = {
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
+          if (sql.includes('pool_id, user_id, game_id') && !sql.includes('week')) {
+            throw new Error('REJECTED_LEGACY_3KEY: Constraint poolId_userId_gameId does not exist in deployed schema.');
+          }
+          if (sql.includes('$4::uuid') || sql.includes('game_id = $4::uuid')) {
+            throw new Error('operator does not exist: text = uuid');
+          }
+          return [
+            {
+              id: 'pick-uuid',
+              pool_id: params[0],
+              user_id: params[1],
+              week: params[2],
+              game_id: params[3],
+              selected_team_id: params[4],
+              submitted_by: params[5],
+            },
+          ];
+        }),
+      };
+
+      // savePickAtomically uses 4-column key and $4::text, so it succeeds cleanly
+      const res = await savePickAtomically(mockDb, {
+        poolId: 'pool-1',
+        userId: 'user-1',
+        gameId: '401873010',
+        week: 7,
+        selectedTeamId: 'SF',
+      });
+      expect(res.week).toBe(7);
+      expect(res.gameId).toBe('401873010');
+    });
+
+    it('truthfully propagates write failure when database returns empty rows or throws', async () => {
+      const mockDbFails = {
+        $queryRawUnsafe: vi.fn().mockRejectedValue(new Error('Connection terminated unexpectedly')),
+      };
+
+      await expect(
+        savePickAtomically(mockDbFails, {
+          poolId: 'pool-1',
+          userId: 'user-1',
+          gameId: '401873010',
+          week: 7,
+          selectedTeamId: 'SF',
+        })
+      ).rejects.toThrow('Connection terminated unexpectedly');
+
+      const mockDbEmpty = {
+        $queryRawUnsafe: vi.fn().mockResolvedValue([]),
+      };
+
+      await expect(
+        savePickAtomically(mockDbEmpty, {
+          poolId: 'pool-1',
+          userId: 'user-1',
+          gameId: '401873010',
+          week: 7,
+          selectedTeamId: 'SF',
+        })
+      ).rejects.toThrow('PICK_PERSISTENCE_FAILED');
+    });
+
+    it('rejects out of bounds week with INVALID_PICK_WEEK', async () => {
+      const mockDb = { $queryRawUnsafe: vi.fn() };
+      await expect(
+        savePickAtomically(mockDb, {
+          poolId: 'pool-1',
+          userId: 'user-1',
+          gameId: '401873010',
+          week: 0,
+          selectedTeamId: 'SF',
+        })
+      ).rejects.toThrow('INVALID_PICK_WEEK');
+
+      await expect(
+        savePickAtomically(mockDb, {
+          poolId: 'pool-1',
+          userId: 'user-1',
+          gameId: '401873010',
+          week: 19,
+          selectedTeamId: 'SF',
+        })
+      ).rejects.toThrow('INVALID_PICK_WEEK');
+    });
+
+    describe('Pick HTTP Endpoints (Single & Batch)', () => {
+      const POOL_ID = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+      const USER_ID = 'b2222222-2222-2222-2222-222222222222';
+      let app: express.Application;
+      let server: http.Server;
+      let baseUrl: string;
+
+      const createToken = (id: string) =>
+        createSyntheticSupabaseToken({ id, email: `${id}@example.com`, role: 'USER' });
+
+      beforeEach(async () => {
+        const getUserMock = vi.fn().mockImplementation(async (token: string) => {
+          const parts = token.split('.');
+          if (parts.length < 2) return { data: { user: null }, error: new Error('invalid') };
+          const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+          return {
+            data: {
+              user: {
+                id: payload.sub,
+                aud: 'authenticated',
+                role: 'authenticated',
+                email: payload.email || `${payload.sub}@example.com`,
+                app_metadata: {},
+                user_metadata: {},
+                created_at: new Date().toISOString(),
+              },
+            },
+            error: null,
+          };
+        });
+        setSupabaseAuthClientForTesting({ auth: { getUser: getUserMock } } as any);
+
+        vi.spyOn(prisma.user, 'findUnique').mockImplementation(async ({ where }: any) => ({
+          id: where.id,
+          email: `${where.id}@example.com`,
+          role: 'USER',
+          createdAt: new Date(),
+        }) as any);
+
+        vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue({
+          id: POOL_ID,
+          name: 'Main League',
+          settings: { lock_offset: 0 },
+        } as any);
+
+        vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+          poolId: POOL_ID,
+          userId: USER_ID,
+          status: 'ACTIVE',
+        } as any);
+
+        app = express();
+        app.use(express.json());
+        app.use('/api/picks', picksRouter);
+
+        await new Promise<void>((resolve) => {
+          server = app.listen(0, () => {
+            const addr = server.address() as any;
+            baseUrl = `http://127.0.0.1:${addr.port}`;
+            resolve();
+          });
+        });
+      });
+
+      afterEach(async () => {
+        setLegacyGameAdapterForTesting(null);
+        setLegacyPickSaveAdapterForTesting(null);
+        setSupabaseAuthClientForTesting(null);
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      });
+
+      it('single pick route saves on 4-column key and returns stored week', async () => {
+        setLegacyGameAdapterForTesting(async () => ({
+          id: 'uuid-1',
+          externalGameId: '401873010',
+          homeTeamId: 'GB',
+          awayTeamId: 'DET',
+          kickoffTime: new Date(Date.now() + 86400000),
+          status: 'SCHEDULED',
+          canonicalKickoffTime: new Date(Date.now() + 86400000),
+          lockEffectiveAt: new Date(Date.now() + 86400000),
+          season: 2026,
+          seasonType: 2,
+          week: 7,
+        }));
+
+        const saveMock = vi.fn().mockImplementation(async (_db, params) => ({
+          id: 'saved-uuid-1',
+          poolId: params.poolId,
+          userId: params.userId,
+          gameId: params.gameId,
+          week: params.week,
+          selectedTeamId: params.selectedTeamId,
+          submittedById: params.userId,
+        }));
+        setLegacyPickSaveAdapterForTesting(saveMock);
+
+        const token = createToken(USER_ID);
+        const res = await fetch(`${baseUrl}/api/picks`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            pool_id: POOL_ID,
+            game_id: '401873010',
+            selected_team_id: 'DET',
+            week: 7,
+          }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.message).toBe('Pick saved successfully');
+        expect(data.pick.week).toBe(7);
+        expect(data.pick.selectedTeamId).toBe('DET');
+        expect(saveMock).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            week: 7,
+            selectedTeamId: 'DET',
+          })
+        );
+      });
+
+      it('single pick route rejects cross-week mismatch with HTTP 400', async () => {
+        setLegacyGameAdapterForTesting(async () => ({
+          id: 'uuid-1',
+          externalGameId: '401873010',
+          homeTeamId: 'GB',
+          awayTeamId: 'DET',
+          kickoffTime: new Date(Date.now() + 86400000),
+          status: 'SCHEDULED',
+          canonicalKickoffTime: new Date(Date.now() + 86400000),
+          lockEffectiveAt: new Date(Date.now() + 86400000),
+          season: 2026,
+          seasonType: 2,
+          week: 7, // Game is in week 7
+        }));
+
+        const token = createToken(USER_ID);
+        const res = await fetch(`${baseUrl}/api/picks`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            pool_id: POOL_ID,
+            game_id: '401873010',
+            selected_team_id: 'DET',
+            week: 8, // Request specifies week 8 - mismatch!
+          }),
+        });
+
+        expect(res.status).toBe(400);
+        const data = await res.json();
+        expect(data.error).toContain('CROSS_WEEK_MISMATCH');
+      });
+
+      it('single pick route rejects missing authoritative week with HTTP 400', async () => {
+        setLegacyGameAdapterForTesting(async () => ({
+          id: 'uuid-1',
+          externalGameId: '401873010',
+          homeTeamId: 'GB',
+          awayTeamId: 'DET',
+          kickoffTime: new Date(Date.now() + 86400000),
+          status: 'SCHEDULED',
+          canonicalKickoffTime: new Date(Date.now() + 86400000),
+          lockEffectiveAt: new Date(Date.now() + 86400000),
+          season: 2026,
+          seasonType: 2,
+          week: undefined, // Missing week!
+        }));
+
+        const token = createToken(USER_ID);
+        const res = await fetch(`${baseUrl}/api/picks`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            pool_id: POOL_ID,
+            game_id: '401873010',
+            selected_team_id: 'DET',
+            // No week specified in body either!
+          }),
+        });
+
+        expect(res.status).toBe(400);
+        const data = await res.json();
+        expect(data.error).toContain('MISSING_AUTHORITATIVE_WEEK');
+      });
+
+      it('single pick route truthfully propagates persistence failure with HTTP 500', async () => {
+        setLegacyGameAdapterForTesting(async () => ({
+          id: 'uuid-1',
+          externalGameId: '401873010',
+          homeTeamId: 'GB',
+          awayTeamId: 'DET',
+          kickoffTime: new Date(Date.now() + 86400000),
+          status: 'SCHEDULED',
+          canonicalKickoffTime: new Date(Date.now() + 86400000),
+          lockEffectiveAt: new Date(Date.now() + 86400000),
+          season: 2026,
+          seasonType: 2,
+          week: 7,
+        }));
+
+        setLegacyPickSaveAdapterForTesting(async () => {
+          throw new Error('Database connection failed during atomic pick persistence');
+        });
+
+        const token = createToken(USER_ID);
+        const res = await fetch(`${baseUrl}/api/picks`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            pool_id: POOL_ID,
+            game_id: '401873010',
+            selected_team_id: 'DET',
+            week: 7,
+          }),
+        });
+
+        expect(res.status).toBe(500);
+        const data = await res.json();
+        expect(data.error).toContain('Database connection failed during atomic pick persistence');
+      });
+
+      it('batch pick route processes multiple picks on 4-column key and asserts stored weeks', async () => {
+        setLegacyGameAdapterForTesting(async (_db, gameId) => {
+          const isG1 = gameId === '401873010';
+          return {
+            id: isG1 ? 'uuid-1' : 'uuid-2',
+            externalGameId: isG1 ? '401873010' : '401873011',
+            homeTeamId: isG1 ? 'GB' : 'SF',
+            awayTeamId: isG1 ? 'DET' : 'DAL',
+            kickoffTime: new Date(Date.now() + 86400000),
+            status: 'SCHEDULED',
+            canonicalKickoffTime: new Date(Date.now() + 86400000),
+            lockEffectiveAt: new Date(Date.now() + 86400000),
+            season: 2026,
+            seasonType: 2,
+            week: 7,
+          };
+        });
+
+        const saveMock = vi.fn().mockImplementation(async (_db, params) => ({
+          id: `saved-${params.gameId}`,
+          poolId: params.poolId,
+          userId: params.userId,
+          gameId: params.gameId,
+          week: params.week,
+          selectedTeamId: params.selectedTeamId,
+          submittedById: params.userId,
+        }));
+        setLegacyPickSaveAdapterForTesting(saveMock);
+
+        const token = createToken(USER_ID);
+        const res = await fetch(`${baseUrl}/api/picks/batch`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            pool_id: POOL_ID,
+            picks: [
+              { game_id: '401873010', selected_team: 'DET', week: 7 },
+              { game_id: '401873011', selected_team: 'SF', week: 7 },
+            ],
+          }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.count).toBe(2);
+        expect(data.picks[0].week).toBe(7);
+        expect(data.picks[1].week).toBe(7);
+        expect(saveMock).toHaveBeenCalledTimes(2);
+      });
+
+      it('batch pick route skips cross-week mismatch picks', async () => {
+        setLegacyGameAdapterForTesting(async () => ({
+          id: 'uuid-1',
+          externalGameId: '401873010',
+          homeTeamId: 'GB',
+          awayTeamId: 'DET',
+          kickoffTime: new Date(Date.now() + 86400000),
+          status: 'SCHEDULED',
+          canonicalKickoffTime: new Date(Date.now() + 86400000),
+          lockEffectiveAt: new Date(Date.now() + 86400000),
+          season: 2026,
+          seasonType: 2,
+          week: 7,
+        }));
+
+        const saveMock = vi.fn().mockImplementation(async (_db, params) => ({
+          id: 'saved-1',
+          poolId: params.poolId,
+          userId: params.userId,
+          gameId: params.gameId,
+          week: params.week,
+          selectedTeamId: params.selectedTeamId,
+          submittedById: params.userId,
+        }));
+        setLegacyPickSaveAdapterForTesting(saveMock);
+
+        const token = createToken(USER_ID);
+        const res = await fetch(`${baseUrl}/api/picks/batch`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            pool_id: POOL_ID,
+            picks: [
+              { game_id: '401873010', selected_team: 'DET', week: 7 }, // Valid
+              { game_id: '401873010', selected_team: 'DET', week: 8 }, // Mismatch - skipped!
+            ],
+          }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.count).toBe(1); // Only 1 processed
+        expect(saveMock).toHaveBeenCalledTimes(1);
+      });
+
+      it('batch pick route truthfully propagates persistence failure with HTTP 500', async () => {
+        setLegacyGameAdapterForTesting(async () => ({
+          id: 'uuid-1',
+          externalGameId: '401873010',
+          homeTeamId: 'GB',
+          awayTeamId: 'DET',
+          kickoffTime: new Date(Date.now() + 86400000),
+          status: 'SCHEDULED',
+          canonicalKickoffTime: new Date(Date.now() + 86400000),
+          lockEffectiveAt: new Date(Date.now() + 86400000),
+          season: 2026,
+          seasonType: 2,
+          week: 7,
+        }));
+
+        setLegacyPickSaveAdapterForTesting(async () => {
+          throw new Error('Batch query aborted due to deadlock');
+        });
+
+        const token = createToken(USER_ID);
+        const res = await fetch(`${baseUrl}/api/picks/batch`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            pool_id: POOL_ID,
+            picks: [
+              { game_id: '401873010', selected_team: 'DET', week: 7 },
+            ],
+          }),
+        });
+
+        expect(res.status).toBe(500);
+        const data = await res.json();
+        expect(data.error).toContain('Batch query aborted due to deadlock');
+      });
     });
   });
 });

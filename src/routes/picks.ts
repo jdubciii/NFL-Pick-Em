@@ -2,7 +2,6 @@ import { Router, Request, Response } from 'express';
 import prisma from '../db/client';
 import { requireAuth } from '../middleware/auth';
 import { PoolSettings } from '../types/pool';
-import { isGameLocked } from '../services/lockResolver';
 import { normalizeTeamCode } from '../services/authoritativeSlateService';
 
 export const picksRouter = Router();
@@ -21,8 +20,40 @@ export interface GameWithCanonicalLock {
   week?: number;
 }
 
+export interface SavedPickRecord {
+  id: string;
+  poolId: string;
+  userId: string;
+  gameId: string;
+  week: number;
+  selectedTeamId: string | null;
+  submittedById: string;
+  createdAt?: Date | string;
+}
+
+let legacyGameAdapterForTesting: ((db: any, gameId: string) => Promise<GameWithCanonicalLock | null>) | null = null;
+let legacyPickSaveAdapterForTesting: ((db: any, params: any) => Promise<SavedPickRecord>) | null = null;
+
+export function setLegacyGameAdapterForTesting(
+  adapter: ((db: any, gameId: string) => Promise<GameWithCanonicalLock | null>) | null
+): void {
+  legacyGameAdapterForTesting = adapter;
+}
+
+export function setLegacyPickSaveAdapterForTesting(
+  adapter: ((db: any, params: any) => Promise<SavedPickRecord>) | null
+): void {
+  legacyPickSaveAdapterForTesting = adapter;
+}
+
 export async function resolveGameWithCanonicalLock(db: any, gameId: string): Promise<GameWithCanonicalLock | null> {
   if (!gameId) return null;
+
+  // In test environments where an explicit legacy adapter is injected, use it directly
+  if (legacyGameAdapterForTesting) {
+    return await legacyGameAdapterForTesting(db, gameId);
+  }
+
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(gameId);
 
   // Exact parameter count matching placeholders
@@ -38,19 +69,17 @@ export async function resolveGameWithCanonicalLock(db: any, gameId: string): Pro
   const queryParams = isUuid ? [gameId, gameId] : [gameId];
 
   let rows: any[] | null = null;
-  let rawQueryFailed = false;
 
   if (typeof db.$queryRawUnsafe === 'function') {
     try {
       rows = await db.$queryRawUnsafe(querySql, ...queryParams);
     } catch (err: any) {
-      rawQueryFailed = true;
       const msg = String(err?.message || '');
-      // Do not swallow real database/syntax/binder errors; only catch missing table in SQLite/mock
-      if (!msg.includes('does not exist') && !msg.includes('no such table')) {
-        throw new Error(`CANONICAL_GAME_QUERY_FAILED: ${msg}`);
-      }
+      // Real production canonical schema/query failure must fail closed; no generic catch or silent fallback to legacy
+      throw new Error(`CANONICAL_GAME_QUERY_FAILED: ${msg}`);
     }
+  } else {
+    throw new Error('CANONICAL_GAME_QUERY_FAILED: No raw SQL executor available for canonical game resolution.');
   }
 
   if (rows && Array.isArray(rows)) {
@@ -100,44 +129,6 @@ export async function resolveGameWithCanonicalLock(db: any, gameId: string): Pro
     return null;
   }
 
-  // Fallback to Prisma findFirst only when raw table is missing (unit tests / SQLite)
-  if (rawQueryFailed || typeof db.$queryRawUnsafe !== 'function') {
-    if (typeof db.game?.findFirst === 'function') {
-      const prismaGame = await db.game.findFirst({
-        where: isUuid
-          ? { OR: [{ id: gameId }, { externalGameId: gameId }] }
-          : { externalGameId: gameId },
-      });
-      if (!prismaGame) return null;
-
-      const kickoffDate = new Date(prismaGame.kickoffTime);
-      if (isNaN(kickoffDate.getTime())) {
-        throw new Error(`INVALID_KICKOFF_METADATA: Legacy game ${gameId} has unparseable kickoff timestamp.`);
-      }
-
-      const canonicalKickoff = prismaGame.canonicalKickoffTime !== undefined
-        ? (prismaGame.canonicalKickoffTime ? new Date(prismaGame.canonicalKickoffTime) : null)
-        : kickoffDate;
-      const lockEffective = prismaGame.lockEffectiveAt !== undefined
-        ? (prismaGame.lockEffectiveAt ? new Date(prismaGame.lockEffectiveAt) : null)
-        : kickoffDate;
-
-      return {
-        id: prismaGame.id,
-        externalGameId: prismaGame.externalGameId,
-        homeTeamId: prismaGame.homeTeamId,
-        awayTeamId: prismaGame.awayTeamId,
-        kickoffTime: kickoffDate,
-        status: prismaGame.status,
-        canonicalKickoffTime: canonicalKickoff,
-        lockEffectiveAt: lockEffective,
-        season: prismaGame.season != null ? Number(prismaGame.season) : undefined,
-        seasonType: prismaGame.seasonType != null ? Number(prismaGame.seasonType) : undefined,
-        week: prismaGame.week != null ? Number(prismaGame.week) : undefined,
-      };
-    }
-  }
-
   return null;
 }
 
@@ -151,21 +142,65 @@ export function evaluateKickoffLock(
   lockOffsetMinutes: number = 0,
   now: Date = new Date()
 ): { isLocked: boolean; reason?: 'UNVERIFIED_KICKOFF' | 'KICKOFF_PASSED' } {
-  const isUnconfirmed =
-    game.canonicalKickoffTime === null ||
-    (game.lockEffectiveAt !== null && game.lockEffectiveAt.getTime() <= 0) ||
-    game.kickoffTime.getTime() <= 0;
+  // Guard against null/invalid game or kickoffTime
+  if (
+    !game ||
+    !game.kickoffTime ||
+    !(game.kickoffTime instanceof Date) ||
+    isNaN(game.kickoffTime.getTime()) ||
+    game.kickoffTime.getTime() <= 0
+  ) {
+    return { isLocked: true, reason: 'UNVERIFIED_KICKOFF' };
+  }
 
-  if (isUnconfirmed) {
+  // canonicalKickoffTime: null means unconfirmed TBD; invalid Date or non-positive fails closed
+  if (game.canonicalKickoffTime === null) {
+    return { isLocked: true, reason: 'UNVERIFIED_KICKOFF' };
+  }
+  if (
+    !(game.canonicalKickoffTime instanceof Date) ||
+    isNaN(game.canonicalKickoffTime.getTime()) ||
+    game.canonicalKickoffTime.getTime() <= 0
+  ) {
+    return { isLocked: true, reason: 'UNVERIFIED_KICKOFF' };
+  }
+
+  // lockEffectiveAt: if provided, must be valid positive date
+  if (game.lockEffectiveAt !== null && game.lockEffectiveAt !== undefined) {
+    if (
+      !(game.lockEffectiveAt instanceof Date) ||
+      isNaN(game.lockEffectiveAt.getTime()) ||
+      game.lockEffectiveAt.getTime() <= 0
+    ) {
+      return { isLocked: true, reason: 'UNVERIFIED_KICKOFF' };
+    }
+  }
+
+  // Guard against NaN/non-finite lockOffsetMinutes
+  const offsetNum = Number(lockOffsetMinutes);
+  if (isNaN(offsetNum) || !Number.isFinite(offsetNum)) {
+    return { isLocked: true, reason: 'UNVERIFIED_KICKOFF' };
+  }
+
+  // Guard against invalid Date for now
+  if (!now || !(now instanceof Date) || isNaN(now.getTime())) {
     return { isLocked: true, reason: 'UNVERIFIED_KICKOFF' };
   }
 
   const effectiveDeadline =
     game.lockEffectiveAt && !isNaN(game.lockEffectiveAt.getTime()) && game.lockEffectiveAt.getTime() > 0
       ? game.lockEffectiveAt
-      : game.canonicalKickoffTime || game.kickoffTime;
+      : game.canonicalKickoffTime;
 
-  const lockTimeMs = effectiveDeadline.getTime() - lockOffsetMinutes * 60 * 1000;
+  if (!effectiveDeadline || isNaN(effectiveDeadline.getTime()) || effectiveDeadline.getTime() <= 0) {
+    return { isLocked: true, reason: 'UNVERIFIED_KICKOFF' };
+  }
+
+  const lockTimeMs = effectiveDeadline.getTime() - offsetNum * 60 * 1000;
+  if (isNaN(lockTimeMs)) {
+    return { isLocked: true, reason: 'UNVERIFIED_KICKOFF' };
+  }
+
   if (now.getTime() >= lockTimeMs) {
     return { isLocked: true, reason: 'KICKOFF_PASSED' };
   }
@@ -173,19 +208,90 @@ export function evaluateKickoffLock(
   return { isLocked: false };
 }
 
+export async function savePickAtomically(
+  db: any,
+  params: {
+    poolId: string;
+    userId: string;
+    gameId: string;
+    week: number;
+    selectedTeamId: string | null;
+  }
+): Promise<SavedPickRecord> {
+  const { poolId, userId, gameId, week, selectedTeamId } = params;
+
+  if (week == null || isNaN(week) || week < 1 || week > 18) {
+    throw new Error(`INVALID_PICK_WEEK: Authoritative week ${week} is invalid or outside season bounds (1-18).`);
+  }
+
+  // In test environments where an explicit legacy save adapter is injected, use it directly
+  if (legacyPickSaveAdapterForTesting) {
+    return await legacyPickSaveAdapterForTesting(db, params);
+  }
+
+  if (typeof db.$queryRawUnsafe === 'function') {
+    const upsertSql = `
+      INSERT INTO public.picks (
+        id, pool_id, user_id, week, game_id, selected_team_id, submitted_by, created_at
+      )
+      VALUES (
+        gen_random_uuid(),
+        $1::uuid,
+        $2::uuid,
+        $3::int,
+        $4::text,
+        $5,
+        $6::uuid,
+        NOW()
+      )
+      ON CONFLICT (pool_id, user_id, week, game_id)
+      DO UPDATE SET
+        selected_team_id = EXCLUDED.selected_team_id,
+        submitted_by = EXCLUDED.submitted_by
+      RETURNING id, pool_id, user_id, week, game_id, selected_team_id, submitted_by, created_at;
+    `;
+    const rows = await db.$queryRawUnsafe(
+      upsertSql,
+      poolId,
+      userId,
+      week,
+      gameId,
+      selectedTeamId,
+      userId
+    );
+
+    if (!rows || !Array.isArray(rows) || rows.length === 0) {
+      throw new Error('PICK_PERSISTENCE_FAILED: Database returned no row after atomic pick save.');
+    }
+
+    const r = rows[0];
+    return {
+      id: String(r.id),
+      poolId: String(r.pool_id || r.poolId),
+      userId: String(r.user_id || r.userId),
+      gameId: String(r.game_id || r.gameId),
+      week: Number(r.week),
+      selectedTeamId: r.selected_team_id !== undefined ? r.selected_team_id : (r.selectedTeamId !== undefined ? r.selectedTeamId : null),
+      submittedById: String(r.submitted_by || r.submittedById || userId),
+      createdAt: r.created_at || r.createdAt,
+    };
+  }
+
+  throw new Error('PICK_PERSISTENCE_FAILED: No raw SQL executor available for atomic pick persistence.');
+}
+
 /**
  * POST /api/picks
  * Protected route for users to submit or update their game pick.
- * Accepts: pool_id, game_id, selected_team_id (optional)
+ * Accepts: pool_id, game_id, selected_team_id (optional), week (optional for validation)
  * Enforces verified actor, applicable ACTIVE pool membership, correct pool,
- * valid home/away selection, and granular kickoff locking.
- * Uses Prisma upsert on compound unique [pool_id, user_id, game_id].
+ * participant validation, kickoff locks, and 4-column atomic persistence with TEXT game identity.
  */
 picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const poolId = req.body.pool_id || req.body.poolId;
   const rawGameId = req.body.game_id || req.body.gameId;
-  const rawSelectedTeamId = req.body.selected_team_id !== undefined 
-    ? req.body.selected_team_id 
+  const rawSelectedTeamId = req.body.selected_team_id !== undefined
+    ? req.body.selected_team_id
     : (req.body.selectedTeamId !== undefined
       ? req.body.selectedTeamId
       : (req.body.selected_team !== undefined
@@ -286,43 +392,24 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
       }
     }
 
-    // 6. Upsert pick record using internal game.id and normalized selected team
-    const pick = await prisma.pick.upsert({
-      where: {
-        poolId_userId_gameId: {
-          poolId,
-          userId,
-          gameId: game.id,
-        },
-      },
-      update: {
-        selectedTeamId: normSelected,
-        submittedById: userId,
-      },
-      create: {
-        poolId,
-        userId,
-        gameId: game.id,
-        selectedTeamId: normSelected,
-        submittedById: userId,
-      },
-    });
+    const targetWeek = game.week ?? (requestedWeek !== undefined && requestedWeek !== null ? Number(requestedWeek) : null);
+    if (targetWeek == null || isNaN(targetWeek) || targetWeek < 1 || targetWeek > 18) {
+      res.status(400).json({ error: 'MISSING_AUTHORITATIVE_WEEK: Matchup lacks authoritative week metadata.' });
+      return;
+    }
 
-    try {
-      if (typeof prisma.$executeRawUnsafe === 'function' && game.week != null) {
-        await prisma.$executeRawUnsafe(
-          `UPDATE public.picks SET week = $1::int WHERE pool_id = $2::uuid AND user_id = $3::uuid AND game_id = $4::uuid;`,
-          game.week,
-          poolId,
-          userId,
-          game.id
-        );
-      }
-    } catch (_) {}
+    // 6. Parameterized atomic persistence on verified 4-column key and TEXT game identity
+    const savedPick = await savePickAtomically(prisma, {
+      poolId,
+      userId,
+      gameId: String(game.id),
+      week: targetWeek,
+      selectedTeamId: normSelected,
+    });
 
     res.status(200).json({
       message: 'Pick saved successfully',
-      pick,
+      pick: savedPick,
     });
   } catch (error: any) {
     console.error('Error saving pick:', error);
@@ -332,14 +419,15 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
       return;
     }
 
-    res.status(500).json({ error: 'Failed to save pick.' });
+    res.status(500).json({ error: error?.message || 'Failed to save pick.' });
   }
 });
 
 /**
  * POST /api/picks/batch
  * Submits or updates multiple picks in bulk for a pool.
- * Accepts: { pool_id, picks: Array<{ game_id, selected_team_id }> }
+ * Accepts: { pool_id, picks: Array<{ game_id, selected_team_id, week? }> }
+ * Enforces atomic 4-column persistence with TEXT game identity.
  */
 picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const poolId = req.body.pool_id || req.body.poolId;
@@ -373,7 +461,7 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
     const settings = (pool.settings as PoolSettings) || {};
     const lockOffsetMinutes = Number(settings.lock_offset ?? settings.lockOffset ?? 0);
 
-    const savedPicks = [];
+    const savedPicks: SavedPickRecord[] = [];
     for (const item of picksList) {
       const rawGameId = item.game_id || item.gameId;
       const rawSelected = item.selected_team_id !== undefined
@@ -407,6 +495,11 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
         }
       }
 
+      const targetWeek = game.week ?? (requestedWeek !== undefined && requestedWeek !== null ? Number(requestedWeek) : null);
+      if (targetWeek == null || isNaN(targetWeek) || targetWeek < 1 || targetWeek > 18) {
+        continue;
+      }
+
       const lockResult = evaluateKickoffLock(game, lockOffsetMinutes, new Date());
       if (lockResult.isLocked) {
         continue;
@@ -422,40 +515,15 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
         }
       }
 
-      const pick = await prisma.pick.upsert({
-        where: {
-          poolId_userId_gameId: {
-            poolId,
-            userId,
-            gameId: game.id,
-          },
-        },
-        update: {
-          selectedTeamId: normSelected,
-          submittedById: userId,
-        },
-        create: {
-          poolId,
-          userId,
-          gameId: game.id,
-          selectedTeamId: normSelected,
-          submittedById: userId,
-        },
+      const savedPick = await savePickAtomically(prisma, {
+        poolId,
+        userId,
+        gameId: String(game.id),
+        week: targetWeek,
+        selectedTeamId: normSelected,
       });
 
-      try {
-        if (typeof prisma.$executeRawUnsafe === 'function' && game.week != null) {
-          await prisma.$executeRawUnsafe(
-            `UPDATE public.picks SET week = $1::int WHERE pool_id = $2::uuid AND user_id = $3::uuid AND game_id = $4::uuid;`,
-            game.week,
-            poolId,
-            userId,
-            game.id
-          );
-        }
-      } catch (_) {}
-
-      savedPicks.push(pick);
+      savedPicks.push(savedPick);
     }
 
     res.status(200).json({
@@ -465,7 +533,7 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
     });
   } catch (error: any) {
     console.error('Error in batch picks:', error);
-    res.status(500).json({ error: 'Failed to process batch picks.' });
+    res.status(500).json({ error: error?.message || 'Failed to process batch picks.' });
   }
 });
 

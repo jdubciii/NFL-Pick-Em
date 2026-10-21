@@ -1,6 +1,6 @@
 /**
  * Client Authoritative Slate Resolution Service
- * Governs manifest primacy, pool authority, exact unique coverage, and bounded cache.
+ * Governs manifest primacy, pool authority, exact unique coverage, full metadata, and bounded cache.
  */
 
 export interface AuthoritativeManifestRecord {
@@ -98,7 +98,8 @@ export function saveScopedSlateRevisionCache(
 /**
  * Resolves authoritative games slate for a pool, season, seasonType, and week.
  * Enforces manifest primacy: missing/denied/error state strictly fails closed to empty games.
- * Direct games fallback requires verified active pool authority.
+ * Binds actual authenticated current subject and verifies ACTIVE pool membership.
+ * Direct games query requires full metadata (manifest_revision, canonical_kickoff_time, lock_effective_at).
  * Coverage must be complete, exact, and unique for accepted event_ids.
  */
 export async function resolveAuthoritativeSlate(
@@ -147,12 +148,25 @@ export async function resolveAuthoritativeSlate(
     };
   }
 
-  if (!manifest || !Array.isArray(manifest.event_ids) || manifest.event_ids.length === 0) {
+  // Validate manifest fields
+  if (
+    !manifest ||
+    Number(manifest.season) !== Number(seasonYear) ||
+    Number(manifest.season_type) !== Number(seasonType) ||
+    Number(manifest.week_number) !== Number(weekNumber) ||
+    manifest.revision == null ||
+    isNaN(Number(manifest.revision)) ||
+    Number(manifest.revision) < 0 ||
+    typeof manifest.manifest_fingerprint !== 'string' ||
+    manifest.manifest_fingerprint.trim().length === 0 ||
+    !Array.isArray(manifest.event_ids) ||
+    manifest.event_ids.length === 0
+  ) {
     return {
       games: [],
-      manifest: null,
+      manifest: manifest || null,
       lastUpdatedIso: null,
-      error: 'EMPTY_MANIFEST_EVENTS',
+      error: 'INVALID_OR_EMPTY_MANIFEST: Manifest fields failed validation or events array is empty.',
       source: 'FAILED_CLOSED',
     };
   }
@@ -169,80 +183,130 @@ export async function resolveAuthoritativeSlate(
     };
   }
 
-  // 2. Fetch canonical games via RPC or direct table with pool authority check
-  let candidateRows: any[] = [];
-  let rpcSuccess = false;
+  // 2. Caller Pool Authority & Membership Scoping:
+  // Bind actual authenticated current subject and verify ACTIVE same pool; reject foreign user or missing identity.
+  let currentUserId: string | null = null;
+  try {
+    if (typeof supabase.auth?.getUser === 'function') {
+      const { data: userData } = await supabase.auth.getUser();
+      currentUserId = userData?.user?.id || null;
+    } else if (typeof supabase.auth?.getSession === 'function') {
+      const { data: sessionData } = await supabase.auth.getSession();
+      currentUserId = sessionData?.session?.user?.id || null;
+    }
+  } catch (_) {}
 
-  if (typeof supabase.rpc === 'function') {
-    try {
-      const { data: rpcData, error: rpcErr } = await supabase.rpc('get_pool_canonical_games', {
-        p_pool_id: activePoolId,
-        p_season: seasonYear,
-        p_week: weekNumber,
-      });
-      if (!rpcErr && Array.isArray(rpcData) && rpcData.length > 0) {
-        candidateRows = rpcData;
-        rpcSuccess = true;
-      }
-    } catch (_) {}
+  if (!currentUserId) {
+    return {
+      games: [],
+      manifest,
+      lastUpdatedIso: null,
+      error: 'POOL_AUTHORITY_DENIED: Cannot verify authenticated caller identity for pool authority.',
+      source: 'FAILED_CLOSED',
+    };
   }
 
-  // If direct fallback is needed or to enrich metadata:
-  // Direct fallback MUST prove active pool authority, not override denial
-  let hasPoolAuthority = rpcSuccess;
-  if (!hasPoolAuthority) {
-    try {
-      const { data: membership, error: memErr } = await supabase
-        .from('pool_memberships')
-        .select('status')
-        .eq('pool_id', activePoolId)
-        .maybeSingle();
+  let hasPoolAuthority = false;
+  try {
+    const { data: membership, error: memErr } = await supabase
+      .from('pool_memberships')
+      .select('status, user_id, pool_id')
+      .eq('pool_id', activePoolId)
+      .eq('user_id', currentUserId)
+      .maybeSingle();
 
-      if (!memErr && membership && membership.status === 'ACTIVE') {
-        hasPoolAuthority = true;
-      }
-    } catch (_) {}
-  }
+    if (!memErr && membership && membership.status === 'ACTIVE' && String(membership.user_id) === String(currentUserId)) {
+      hasPoolAuthority = true;
+    }
+  } catch (_) {}
 
   if (!hasPoolAuthority) {
     return {
       games: [],
       manifest,
       lastUpdatedIso: null,
-      error: 'POOL_AUTHORITY_DENIED: Direct games query requires verified active pool membership.',
+      error: 'POOL_AUTHORITY_DENIED: Direct games query requires verified active caller pool membership.',
       source: 'FAILED_CLOSED',
     };
   }
 
-  // Query games table matching exact revision
+  // 3. Query direct full metadata from games table matching exact scope and manifest revision
+  // A thin RPC cannot substitute missing lock data; direct metadata error => FAILED_CLOSED
+  let directGames: any[] | null = null;
   try {
-    const { data: directGames, error: directErr } = await supabase
+    const { data, error: directErr } = await supabase
       .from('games')
-      .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, status, home_score, away_score, canonical_kickoff_time, lock_effective_at, season, season_type, week, observation_time, manifest_revision')
+      .select(
+        'id, external_game_id, home_team_id, away_team_id, kickoff_time, status, home_score, away_score, canonical_kickoff_time, lock_effective_at, season, season_type, week, observation_time, manifest_revision'
+      )
       .eq('season', seasonYear)
       .eq('season_type', seasonType)
       .eq('week', weekNumber)
       .eq('manifest_revision', manifest.revision);
 
-    if (!directErr && Array.isArray(directGames) && directGames.length > 0) {
-      if (candidateRows.length === 0) {
-        candidateRows = directGames;
-      } else {
-        const directMap = new Map(directGames.map((g: any) => [String(g.external_game_id || g.id), g]));
-        candidateRows = candidateRows.map((r: any) => {
-          const ext = String(r.externalGameId || r.external_game_id || r.id);
-          const dm = directMap.get(ext);
-          return dm ? { ...r, ...dm } : r;
-        });
-      }
+    if (directErr || !Array.isArray(data)) {
+      return {
+        games: [],
+        manifest,
+        lastUpdatedIso: null,
+        error: directErr?.message || 'DIRECT_METADATA_FETCH_FAILED',
+        source: 'FAILED_CLOSED',
+      };
     }
-  } catch (_) {}
+    directGames = data;
+  } catch (err: any) {
+    return {
+      games: [],
+      manifest,
+      lastUpdatedIso: null,
+      error: err?.message || 'DIRECT_METADATA_FETCH_FAILED',
+      source: 'FAILED_CLOSED',
+    };
+  }
 
-  // 3. Verify complete, exact, unique coverage for acceptedEventIds
-  const matchedGames: any[] = [];
+  if (!directGames || directGames.length === 0) {
+    return {
+      games: [],
+      manifest,
+      lastUpdatedIso: null,
+      error: `NO_FULL_METADATA_ROWS: No canonical game rows found for revision ${manifest.revision}`,
+      source: 'FAILED_CLOSED',
+    };
+  }
+
+  // 4. Validate every candidate row has provably exact year/type/week/revision and trustworthy metadata
   const candidateMap = new Map<string, any>();
 
-  for (const g of candidateRows) {
+  for (const g of directGames) {
+    const gSeason = Number(g.season);
+    const gSeasonType = Number(g.season_type ?? g.seasonType);
+    const gWeek = Number(g.week);
+    const gRevision = Number(g.manifest_revision ?? g.manifestRevision);
+
+    if (
+      gSeason !== Number(seasonYear) ||
+      gSeasonType !== Number(seasonType) ||
+      gWeek !== Number(weekNumber) ||
+      gRevision !== Number(manifest.revision)
+    ) {
+      // Reject rows outside exact scope or revision
+      continue;
+    }
+
+    // Must have trustworthy lock metadata
+    if (g.canonical_kickoff_time !== null && g.canonical_kickoff_time !== undefined) {
+      const d = new Date(g.canonical_kickoff_time);
+      if (isNaN(d.getTime())) {
+        continue;
+      }
+    }
+    if (g.lock_effective_at !== null && g.lock_effective_at !== undefined) {
+      const d = new Date(g.lock_effective_at);
+      if (isNaN(d.getTime())) {
+        continue;
+      }
+    }
+
     const ext = String(g.external_game_id || g.externalGameId || g.id);
     if (acceptedEventIds.includes(ext)) {
       if (candidateMap.has(ext)) {
@@ -258,6 +322,8 @@ export async function resolveAuthoritativeSlate(
     }
   }
 
+  // Verify complete coverage
+  const matchedGames: any[] = [];
   for (const eventId of acceptedEventIds) {
     const matched = candidateMap.get(eventId);
     if (!matched) {
@@ -272,7 +338,7 @@ export async function resolveAuthoritativeSlate(
     matchedGames.push(matched);
   }
 
-  // 4. Map to playable GameItems with lock/score enrichment
+  // 5. Map to playable GameItems with lock/score enrichment
   let liveScoresMap = new Map<string, any>();
   if (Array.isArray(liveScores)) {
     liveScores.forEach((ls) => {
