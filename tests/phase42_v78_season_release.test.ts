@@ -8,7 +8,12 @@ import {
 } from '../src/services/authoritativeSlateService';
 import { getCurrentNFLWeek } from '../client/src/services/nflCalendarService';
 import { resolveLionsTiebreaker, parseArgs, runSeasonImport } from '../scripts/season_import_cli';
-import { evaluateKickoffLock } from '../src/routes/picks';
+import { evaluateKickoffLock, resolveGameWithCanonicalLock } from '../src/routes/picks';
+import {
+  resolveAuthoritativeSlate,
+  getHighestCachedSlateRevision,
+  saveScopedSlateRevisionCache,
+} from '../client/src/services/authoritativeSlateClientService';
 
 describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', () => {
   const SAMPLE_WEEK7_SCOPE = {
@@ -798,7 +803,7 @@ describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', (
 
     it('rejects invalid or inverted week ranges with INVALID_WEEK_RANGE', () => {
       expect(() => parseArgs(['--dry-run', '--start', '10', '--end', '7'])).toThrow('INVALID_WEEK_RANGE');
-      expect(() => parseArgs(['--dry-run', '--start', 'NaN', '--end', '10'])).toThrow('INVALID_WEEK_RANGE');
+      expect(() => parseArgs(['--dry-run', '--start', 'NaN', '--end', '10'])).toThrow('INVALID_INTEGER');
       expect(() => parseArgs(['--dry-run', '--start', '0', '--end', '10'])).toThrow('INVALID_WEEK_RANGE');
       expect(() => parseArgs(['--dry-run', '--start', '7', '--end', '20'])).toThrow('INVALID_WEEK_RANGE');
     });
@@ -1050,6 +1055,386 @@ describe('Phase 42 (v78): Full-Season Release & Authoritative Slate Contract', (
       const delayedLock = evaluateKickoffLock(flexGame, 0, delayedWriteNow);
       expect(delayedLock.isLocked).toBe(true);
       expect(delayedLock.reason).toBe('KICKOFF_PASSED');
+    });
+  });
+
+  describe('6. CLI parseArgs Validation & Mode Contracts', () => {
+    it('rejects decimal input for week flags with INVALID_INTEGER', () => {
+      expect(() => parseArgs(['--start', '7.5'])).toThrow('INVALID_INTEGER');
+      expect(() => parseArgs(['--end', '10.2'])).toThrow('INVALID_INTEGER');
+    });
+
+    it('rejects alphanumeric junk for week flags with INVALID_INTEGER', () => {
+      expect(() => parseArgs(['--start', '7junk'])).toThrow('INVALID_INTEGER');
+      expect(() => parseArgs(['--end', 'week8'])).toThrow('INVALID_INTEGER');
+    });
+
+    it('rejects flag missing value with MISSING_ARGUMENT_VALUE', () => {
+      expect(() => parseArgs(['--start'])).toThrow('MISSING_ARGUMENT_VALUE');
+      expect(() => parseArgs(['--pool'])).toThrow('MISSING_ARGUMENT_VALUE');
+      expect(() => parseArgs(['--start', '--end', '10'])).toThrow('MISSING_ARGUMENT_VALUE');
+    });
+
+    it('rejects contradictory modes (--dry-run and --execute) with CONTRADICTORY_MODES', () => {
+      expect(() => parseArgs(['--dry-run', '--execute'])).toThrow('CONTRADICTORY_MODES');
+      expect(() => parseArgs(['--execute', '--dry-run'])).toThrow('CONTRADICTORY_MODES');
+    });
+
+    it('rejects out of bounds week ranges', () => {
+      expect(() => parseArgs(['--start', '0'])).toThrow('INVALID_WEEK_RANGE');
+      expect(() => parseArgs(['--end', '19'])).toThrow('INVALID_WEEK_RANGE');
+      expect(() => parseArgs(['--start', '10', '--end', '8'])).toThrow('INVALID_WEEK_RANGE');
+    });
+
+    it('rejects non-2026 season and non-2 season type', () => {
+      expect(() => parseArgs(['--season', '2025'])).toThrow('INVALID_SEASON');
+      expect(() => parseArgs(['--season-type', '1'])).toThrow('INVALID_SEASON_TYPE');
+    });
+
+    it('rejects invalid or placeholder UUID in execute mode', () => {
+      expect(() => parseArgs(['--execute', '--start', '7', '--end', '8', '--pool', 'not-a-uuid', '--operator', '11111111-1111-1111-1111-111111111111'])).toThrow('INVALID_ARGUMENT');
+      expect(() => parseArgs(['--execute', '--start', '7', '--end', '8', '--pool', '11111111-1111-1111-1111-111111111111', '--operator', 'a1111111-1111-1111-1111-111111111111'])).toThrow('INVALID_ARGUMENT');
+    });
+
+    it('parses valid dry-run and execute arguments cleanly', () => {
+      const dry = parseArgs(['--dry-run', '--start', '7', '--end', '12']);
+      expect(dry.dryRun).toBe(true);
+      expect(dry.execute).toBe(false);
+      expect(dry.startWeek).toBe(7);
+      expect(dry.endWeek).toBe(12);
+
+      const exec = parseArgs([
+        '--execute',
+        '--start', '8',
+        '--end', '10',
+        '--pool', '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+        '--operator', '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+      ]);
+      expect(exec.execute).toBe(true);
+      expect(exec.dryRun).toBe(false);
+      expect(exec.startWeek).toBe(8);
+      expect(exec.endWeek).toBe(10);
+    });
+  });
+
+  describe('7. Client Authoritative Slate Resolution & Cache Isolation', () => {
+    it('fails closed to empty games when manifest is missing or returns error', async () => {
+      const mockSupabaseMissing = {
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      };
+
+      const res = await resolveAuthoritativeSlate({
+        supabase: mockSupabaseMissing,
+        activePoolId: 'pool-uuid',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 8,
+      });
+
+      expect(res.source).toBe('FAILED_CLOSED');
+      expect(res.games.length).toBe(0);
+      expect(res.manifest).toBeNull();
+    });
+
+    it('fails closed when caller lacks verified active pool authority', async () => {
+      const mockSupabaseNoAuth = {
+        from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'weekly_slate_manifests') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  season: 2026,
+                  season_type: 2,
+                  week_number: 8,
+                  revision: 1,
+                  manifest_fingerprint: 'fp-1',
+                  event_ids: ['401873010'],
+                },
+                error: null,
+              }),
+            };
+          }
+          if (table === 'pool_memberships') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }), // NOT a member!
+            };
+          }
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+          };
+        }),
+      };
+
+      const res = await resolveAuthoritativeSlate({
+        supabase: mockSupabaseNoAuth,
+        activePoolId: 'pool-uuid',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 8,
+      });
+
+      expect(res.source).toBe('FAILED_CLOSED');
+      expect(res.games.length).toBe(0);
+      expect(res.error).toContain('POOL_AUTHORITY_DENIED');
+    });
+
+    it('excludes extra provider events not in accepted manifest and enforces complete coverage', async () => {
+      const mockSupabase = {
+        rpc: vi.fn().mockResolvedValue({
+          data: [
+            {
+              id: 'game-1',
+              externalGameId: '401873010',
+              homeTeamId: 'GB',
+              awayTeamId: 'DET',
+              kickoffTime: '2026-10-23T00:15:00Z',
+              status: 'SCHEDULED',
+              canonical_kickoff_time: '2026-10-23T00:15:00Z',
+              lock_effective_at: '2026-10-23T00:15:00Z',
+              season: 2026,
+              season_type: 2,
+              week: 8,
+            },
+            {
+              id: 'extra-provider-game',
+              externalGameId: '999999999', // Extra row NOT in manifest!
+              homeTeamId: 'KC',
+              awayTeamId: 'LV',
+              kickoffTime: '2026-10-25T17:00:00Z',
+              status: 'SCHEDULED',
+            },
+          ],
+          error: null,
+        }),
+        from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'weekly_slate_manifests') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  season: 2026,
+                  season_type: 2,
+                  week_number: 8,
+                  revision: 1,
+                  manifest_fingerprint: 'fp-1',
+                  event_ids: ['401873010'], // Only 401873010 accepted!
+                  accepted_at: '2026-10-21T12:00:00Z',
+                },
+                error: null,
+              }),
+            };
+          }
+          if (table === 'games') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            };
+          }
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+          };
+        }),
+      };
+
+      const res = await resolveAuthoritativeSlate({
+        supabase: mockSupabase,
+        activePoolId: 'pool-uuid',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 8,
+      });
+
+      expect(res.source).toBe('PERSISTED_MANIFEST');
+      expect(res.games.length).toBe(1);
+      expect(res.games[0].externalGameId).toBe('401873010');
+      // Extra game 999999999 was strictly excluded!
+      expect(res.games.some((g: any) => g.externalGameId === '999999999')).toBe(false);
+    });
+
+    it('locks unconfirmed TBD kickoff with isKickoffConfirmed: false and epoch sentinel', async () => {
+      const mockSupabase = {
+        rpc: vi.fn().mockResolvedValue({
+          data: [
+            {
+              id: 'game-tbd',
+              externalGameId: '401873099',
+              homeTeamId: 'GB',
+              awayTeamId: 'DET',
+              kickoffTime: '1970-01-01T00:00:00.000Z',
+              status: 'SCHEDULED',
+              canonical_kickoff_time: null, // TBD!
+              lock_effective_at: '1970-01-01T00:00:00.000Z', // Sentinel!
+              season: 2026,
+              season_type: 2,
+              week: 8,
+            },
+          ],
+          error: null,
+        }),
+        from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'weekly_slate_manifests') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  season: 2026,
+                  season_type: 2,
+                  week_number: 8,
+                  revision: 1,
+                  manifest_fingerprint: 'fp-tbd',
+                  event_ids: ['401873099'],
+                  accepted_at: '2026-10-21T12:00:00Z',
+                },
+                error: null,
+              }),
+            };
+          }
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+          };
+        }),
+      };
+
+      const res = await resolveAuthoritativeSlate({
+        supabase: mockSupabase,
+        activePoolId: 'pool-uuid',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 8,
+      });
+
+      expect(res.games.length).toBe(1);
+      const g = res.games[0];
+      expect(g.isKickoffConfirmed).toBe(false);
+      expect(g.kickoffTime).toBe('1970-01-01T00:00:00.000Z');
+    });
+
+    it('reads highest cached revision and prevents week 7 matching week 17 prefix collision', () => {
+      const mockStorage: any = {
+        store: new Map<string, string>(),
+        getItem(k: string) { return this.store.get(k) || null; },
+        setItem(k: string, v: string) { this.store.set(k, v); },
+        key(i: number) { return Array.from(this.store.keys())[i] || null; },
+        get length() { return this.store.size; },
+      };
+
+      // Populate week 17 cache and week 7 cache
+      mockStorage.setItem('picks_slate_pool1_s2026_t2_w17_r5', JSON.stringify([{ id: 'w17-game' }]));
+      mockStorage.setItem('picks_slate_pool1_s2026_t2_w7_r1', JSON.stringify([{ id: 'w7-game-r1' }]));
+      mockStorage.setItem('picks_slate_pool1_s2026_t2_w7_r2', JSON.stringify([{ id: 'w7-game-r2' }]));
+
+      // Query week 7: must return r2 and NOT match w17
+      const cachedW7 = getHighestCachedSlateRevision(mockStorage, 'pool1', 2026, 2, 7);
+      expect(cachedW7).not.toBeNull();
+      expect(cachedW7?.revision).toBe(2);
+      expect(cachedW7?.games[0].id).toBe('w7-game-r2');
+
+      // Query week 17: returns r5
+      const cachedW17 = getHighestCachedSlateRevision(mockStorage, 'pool1', 2026, 2, 17);
+      expect(cachedW17).not.toBeNull();
+      expect(cachedW17?.revision).toBe(5);
+      expect(cachedW17?.games[0].id).toBe('w17-game');
+    });
+  });
+
+  describe('8. Pick Route Canonical Locking & Cross-Week Invariants', () => {
+    it('passes exact binder counts for UUID vs non-UUID game IDs', async () => {
+      const queryMock = vi.fn().mockResolvedValue([
+        {
+          id: 'uuid-1',
+          external_game_id: '401873010',
+          home_team_id: 'GB',
+          away_team_id: 'DET',
+          kickoff_time: '2026-10-23T00:15:00Z',
+          status: 'SCHEDULED',
+          canonical_kickoff_time: '2026-10-23T00:15:00Z',
+          lock_effective_at: '2026-10-23T00:15:00Z',
+          season: 2026,
+          season_type: 2,
+          week: 7,
+        },
+      ]);
+      const mockDb = { $queryRawUnsafe: queryMock };
+
+      // Non-UUID: exactly 1 parameter
+      await resolveGameWithCanonicalLock(mockDb, '401873010');
+      expect(queryMock).toHaveBeenCalledTimes(1);
+      expect(queryMock.mock.calls[0].length).toBe(2); // (sql, param1)
+      expect(queryMock.mock.calls[0][1]).toBe('401873010');
+
+      // UUID: exactly 2 parameters
+      queryMock.mockClear();
+      const validUuid = '11111111-1111-1111-1111-111111111111';
+      await resolveGameWithCanonicalLock(mockDb, validUuid);
+      expect(queryMock).toHaveBeenCalledTimes(1);
+      expect(queryMock.mock.calls[0].length).toBe(3); // (sql, param1, param2)
+      expect(queryMock.mock.calls[0][1]).toBe(validUuid);
+      expect(queryMock.mock.calls[0][2]).toBe(validUuid);
+    });
+
+    it('rejects ambiguous game identities with AMBIGUOUS_GAME_IDENTITY', async () => {
+      const mockDb = {
+        $queryRawUnsafe: vi.fn().mockResolvedValue([
+          { id: 'uuid-1', kickoff_time: '2026-10-23T00:15:00Z' },
+          { id: 'uuid-2', kickoff_time: '2026-10-23T00:15:00Z' },
+        ]),
+      };
+
+      await expect(resolveGameWithCanonicalLock(mockDb, '401873010')).rejects.toThrow('AMBIGUOUS_GAME_IDENTITY');
+    });
+
+    it('rejects unparseable kickoff metadata with truthful error', async () => {
+      const mockDb = {
+        $queryRawUnsafe: vi.fn().mockResolvedValue([
+          {
+            id: 'uuid-1',
+            external_game_id: '401873010',
+            kickoff_time: 'invalid-date-string',
+          },
+        ]),
+      };
+
+      await expect(resolveGameWithCanonicalLock(mockDb, '401873010')).rejects.toThrow('INVALID_KICKOFF_METADATA');
+    });
+
+    it('rejects NaN lock_effective_at timestamp with INVALID_LOCK_METADATA', async () => {
+      const mockDb = {
+        $queryRawUnsafe: vi.fn().mockResolvedValue([
+          {
+            id: 'uuid-1',
+            external_game_id: '401873010',
+            kickoff_time: '2026-10-23T00:15:00Z',
+            lock_effective_at: 'not-a-timestamp',
+          },
+        ]),
+      };
+
+      await expect(resolveGameWithCanonicalLock(mockDb, '401873010')).rejects.toThrow('INVALID_LOCK_METADATA');
+    });
+
+    it('propagates real database errors without swallowing or fabricating locks', async () => {
+      const mockDb = {
+        $queryRawUnsafe: vi.fn().mockRejectedValue(new Error('Connection timeout on pool replica')),
+      };
+
+      await expect(resolveGameWithCanonicalLock(mockDb, '401873010')).rejects.toThrow('CANONICAL_GAME_QUERY_FAILED');
     });
   });
 });

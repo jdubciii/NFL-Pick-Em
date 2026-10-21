@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { scopedExpressFetch } from '../lib/apiClient';
 import { supabase } from '../lib/supabase';
 import { fetchLiveNFLScores } from '../services/liveScoreService';
+import { resolveAuthoritativeSlate } from '../services/authoritativeSlateClientService';
 import {
   Grid,
   Lock,
@@ -288,7 +289,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
       console.warn('Matrix fetch API fallback to Supabase:', err);
       try {
         const weekNum = typeof selectedWeek === 'number' ? selectedWeek : parseInt(selectedWeek as string) || 6;
-        const [membersRes, liveScores, picksRes, dbGamesRes] = await Promise.all([
+        const [membersRes, liveScores, picksRes, slateResolution] = await Promise.all([
           supabase
             .from('pool_memberships')
             .select('user_id, role, users(id, email, display_name)')
@@ -300,18 +301,18 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
             .select('user_id, matchup_id, game_id, selected_team, week')
             .eq('pool_id', selectedPoolId)
             .eq('week', weekNum),
-          supabase
-            .from('games')
-            .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, status, home_score, away_score, canonical_kickoff_time, lock_effective_at, season, season_type, week')
-            .eq('season', 2026)
-            .eq('season_type', 2)
-            .eq('week', weekNum)
-            .order('kickoff_time', { ascending: true }),
+          resolveAuthoritativeSlate({
+            supabase,
+            activePoolId: selectedPoolId,
+            seasonYear: 2026,
+            seasonType: 2,
+            weekNumber: weekNum,
+          }),
         ]);
 
         const members = membersRes.data || [];
         const dbPicks = picksRes.data || [];
-        const rawDbGames = dbGamesRes.data || [];
+        const rawDbGames = slateResolution.source === 'PERSISTED_MANIFEST' ? slateResolution.games : [];
 
         const columns: MatrixMemberColumn[] = members.map((m: any) => ({
           user_id: m.user_id,
@@ -327,9 +328,9 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
         });
 
         const rows: MatrixGameRow[] = rawDbGames.map((g: any) => {
-          const extId = String(g.external_game_id || g.id);
-          const home = g.home_team_id;
-          const away = g.away_team_id;
+          const extId = String(g.externalGameId || g.external_game_id || g.id);
+          const home = g.homeTeamId || g.home_team_id;
+          const away = g.awayTeamId || g.away_team_id;
           const ls = liveScoreMap.get(extId) || liveScoreMap.get(`${away}@${home}`);
 
           return {
@@ -337,10 +338,10 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
             external_game_id: extId,
             home_team_id: home,
             away_team_id: away,
-            kickoff_time: g.canonical_kickoff_time || g.kickoff_time,
+            kickoff_time: g.canonical_kickoff_time || g.kickoffTime || g.kickoff_time,
             status: ls?.status || g.status,
-            home_score: ls?.homeTeam?.score != null ? parseInt(ls.homeTeam.score, 10) : g.home_score,
-            away_score: ls?.awayTeam?.score != null ? parseInt(ls.awayTeam.score, 10) : g.away_score,
+            home_score: ls?.homeTeam?.score != null ? parseInt(ls.homeTeam.score, 10) : g.homeScore ?? g.home_score,
+            away_score: ls?.awayTeam?.score != null ? parseInt(ls.awayTeam.score, 10) : g.awayScore ?? g.away_score,
             spread: 0,
           };
         });

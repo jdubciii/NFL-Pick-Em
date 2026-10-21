@@ -22,53 +22,123 @@ export interface GameWithCanonicalLock {
 }
 
 export async function resolveGameWithCanonicalLock(db: any, gameId: string): Promise<GameWithCanonicalLock | null> {
+  if (!gameId) return null;
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(gameId);
 
-  try {
-    const rows: any[] = await db.$queryRawUnsafe(
-      `SELECT id, external_game_id, home_team_id, away_team_id, kickoff_time, status,
+  // Exact parameter count matching placeholders
+  const querySql = isUuid
+    ? `SELECT id, external_game_id, home_team_id, away_team_id, kickoff_time, status,
               canonical_kickoff_time, lock_effective_at, season, season_type, week
        FROM public.games
-       WHERE ${isUuid ? 'id = $1::uuid OR external_game_id = $2::text' : 'external_game_id = $1::text'};`,
-      gameId,
-      gameId
-    );
-    if (rows && rows.length > 0) {
+       WHERE id = $1::uuid OR external_game_id = $2::text;`
+    : `SELECT id, external_game_id, home_team_id, away_team_id, kickoff_time, status,
+              canonical_kickoff_time, lock_effective_at, season, season_type, week
+       FROM public.games
+       WHERE external_game_id = $1::text;`;
+  const queryParams = isUuid ? [gameId, gameId] : [gameId];
+
+  let rows: any[] | null = null;
+  let rawQueryFailed = false;
+
+  if (typeof db.$queryRawUnsafe === 'function') {
+    try {
+      rows = await db.$queryRawUnsafe(querySql, ...queryParams);
+    } catch (err: any) {
+      rawQueryFailed = true;
+      const msg = String(err?.message || '');
+      // Do not swallow real database/syntax/binder errors; only catch missing table in SQLite/mock
+      if (!msg.includes('does not exist') && !msg.includes('no such table')) {
+        throw new Error(`CANONICAL_GAME_QUERY_FAILED: ${msg}`);
+      }
+    }
+  }
+
+  if (rows && Array.isArray(rows)) {
+    if (rows.length > 1) {
+      throw new Error(`AMBIGUOUS_GAME_IDENTITY: Multiple games matched ID ${gameId}.`);
+    }
+    if (rows.length === 1) {
       const r = rows[0];
+      const rawKickoff = r.kickoff_time;
+      const kickoffDate = rawKickoff ? new Date(rawKickoff) : null;
+      if (!kickoffDate || isNaN(kickoffDate.getTime())) {
+        throw new Error(`INVALID_KICKOFF_METADATA: Game ${gameId} has missing or unparseable kickoff timestamp.`);
+      }
+
+      const rawLockEffective = r.lock_effective_at;
+      let lockEffectiveDate: Date | null = null;
+      if (rawLockEffective !== null && rawLockEffective !== undefined) {
+        lockEffectiveDate = new Date(rawLockEffective);
+        if (isNaN(lockEffectiveDate.getTime())) {
+          throw new Error(`INVALID_LOCK_METADATA: Game ${gameId} has NaN/unparseable lock_effective_at timestamp.`);
+        }
+      }
+
+      const rawCanonicalKickoff = r.canonical_kickoff_time;
+      let canonicalKickoffDate: Date | null = null;
+      if (rawCanonicalKickoff !== null && rawCanonicalKickoff !== undefined) {
+        canonicalKickoffDate = new Date(rawCanonicalKickoff);
+        if (isNaN(canonicalKickoffDate.getTime())) {
+          throw new Error(`INVALID_CANONICAL_KICKOFF: Game ${gameId} has NaN/unparseable canonical_kickoff_time.`);
+        }
+      }
+
       return {
-        id: r.id,
-        externalGameId: r.external_game_id,
+        id: String(r.id),
+        externalGameId: String(r.external_game_id || r.externalGameId || r.id),
         homeTeamId: r.home_team_id,
         awayTeamId: r.away_team_id,
-        kickoffTime: new Date(r.kickoff_time),
+        kickoffTime: kickoffDate,
         status: r.status,
-        canonicalKickoffTime: r.canonical_kickoff_time ? new Date(r.canonical_kickoff_time) : null,
-        lockEffectiveAt: r.lock_effective_at ? new Date(r.lock_effective_at) : null,
-        season: r.season,
-        seasonType: r.season_type,
-        week: r.week,
+        canonicalKickoffTime: canonicalKickoffDate,
+        lockEffectiveAt: lockEffectiveDate,
+        season: r.season != null ? Number(r.season) : undefined,
+        seasonType: r.season_type != null ? Number(r.season_type) : undefined,
+        week: r.week != null ? Number(r.week) : undefined,
       };
     }
-  } catch (_) {}
+    return null;
+  }
 
-  const prismaGame = await db.game.findFirst({
-    where: isUuid
-      ? { OR: [{ id: gameId }, { externalGameId: gameId }] }
-      : { externalGameId: gameId },
-  });
+  // Fallback to Prisma findFirst only when raw table is missing (unit tests / SQLite)
+  if (rawQueryFailed || typeof db.$queryRawUnsafe !== 'function') {
+    if (typeof db.game?.findFirst === 'function') {
+      const prismaGame = await db.game.findFirst({
+        where: isUuid
+          ? { OR: [{ id: gameId }, { externalGameId: gameId }] }
+          : { externalGameId: gameId },
+      });
+      if (!prismaGame) return null;
 
-  if (!prismaGame) return null;
+      const kickoffDate = new Date(prismaGame.kickoffTime);
+      if (isNaN(kickoffDate.getTime())) {
+        throw new Error(`INVALID_KICKOFF_METADATA: Legacy game ${gameId} has unparseable kickoff timestamp.`);
+      }
 
-  return {
-    id: prismaGame.id,
-    externalGameId: prismaGame.externalGameId,
-    homeTeamId: prismaGame.homeTeamId,
-    awayTeamId: prismaGame.awayTeamId,
-    kickoffTime: new Date(prismaGame.kickoffTime),
-    status: prismaGame.status,
-    canonicalKickoffTime: new Date(prismaGame.kickoffTime),
-    lockEffectiveAt: new Date(prismaGame.kickoffTime),
-  };
+      const canonicalKickoff = prismaGame.canonicalKickoffTime !== undefined
+        ? (prismaGame.canonicalKickoffTime ? new Date(prismaGame.canonicalKickoffTime) : null)
+        : kickoffDate;
+      const lockEffective = prismaGame.lockEffectiveAt !== undefined
+        ? (prismaGame.lockEffectiveAt ? new Date(prismaGame.lockEffectiveAt) : null)
+        : kickoffDate;
+
+      return {
+        id: prismaGame.id,
+        externalGameId: prismaGame.externalGameId,
+        homeTeamId: prismaGame.homeTeamId,
+        awayTeamId: prismaGame.awayTeamId,
+        kickoffTime: kickoffDate,
+        status: prismaGame.status,
+        canonicalKickoffTime: canonicalKickoff,
+        lockEffectiveAt: lockEffective,
+        season: prismaGame.season != null ? Number(prismaGame.season) : undefined,
+        seasonType: prismaGame.seasonType != null ? Number(prismaGame.seasonType) : undefined,
+        week: prismaGame.week != null ? Number(prismaGame.week) : undefined,
+      };
+    }
+  }
+
+  return null;
 }
 
 export function evaluateKickoffLock(
@@ -205,7 +275,18 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
       return;
     }
 
-    // 5. Upsert pick record using internal game.id and normalized selected team
+    // 5. Validate requested week vs authoritative game week (No cross-week false success)
+    const requestedWeek = req.body.week !== undefined ? req.body.week : req.body.selectedWeek;
+    if (requestedWeek !== undefined && requestedWeek !== null && game.week !== undefined && game.week !== null) {
+      if (Number(requestedWeek) !== Number(game.week)) {
+        res.status(400).json({
+          error: `CROSS_WEEK_MISMATCH: Requested week (${requestedWeek}) does not match authoritative game week (${game.week}).`,
+        });
+        return;
+      }
+    }
+
+    // 6. Upsert pick record using internal game.id and normalized selected team
     const pick = await prisma.pick.upsert({
       where: {
         poolId_userId_gameId: {
@@ -226,6 +307,18 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
         submittedById: userId,
       },
     });
+
+    try {
+      if (typeof prisma.$executeRawUnsafe === 'function' && game.week != null) {
+        await prisma.$executeRawUnsafe(
+          `UPDATE public.picks SET week = $1::int WHERE pool_id = $2::uuid AND user_id = $3::uuid AND game_id = $4::uuid;`,
+          game.week,
+          poolId,
+          userId,
+          game.id
+        );
+      }
+    } catch (_) {}
 
     res.status(200).json({
       message: 'Pick saved successfully',
@@ -306,6 +399,14 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
       const game = await resolveGameWithCanonicalLock(prisma, gameId);
       if (!game) continue;
 
+      // Validate requested week vs game week
+      const requestedWeek = item.week !== undefined ? item.week : (item.selectedWeek !== undefined ? item.selectedWeek : req.body.week);
+      if (requestedWeek !== undefined && requestedWeek !== null && game.week !== undefined && game.week !== null) {
+        if (Number(requestedWeek) !== Number(game.week)) {
+          continue; // skip mismatched cross-week picks
+        }
+      }
+
       const lockResult = evaluateKickoffLock(game, lockOffsetMinutes, new Date());
       if (lockResult.isLocked) {
         continue;
@@ -341,6 +442,19 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
           submittedById: userId,
         },
       });
+
+      try {
+        if (typeof prisma.$executeRawUnsafe === 'function' && game.week != null) {
+          await prisma.$executeRawUnsafe(
+            `UPDATE public.picks SET week = $1::int WHERE pool_id = $2::uuid AND user_id = $3::uuid AND game_id = $4::uuid;`,
+            game.week,
+            poolId,
+            userId,
+            game.id
+          );
+        }
+      } catch (_) {}
+
       savedPicks.push(pick);
     }
 

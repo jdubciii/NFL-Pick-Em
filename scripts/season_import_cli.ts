@@ -32,6 +32,21 @@ export interface SeasonImportOptions {
   operatorId: string;
 }
 
+function parseStrictInteger(value: string, flagName: string): number {
+  if (!value || typeof value !== 'string') {
+    throw new Error(`MISSING_ARGUMENT_VALUE: Flag "${flagName}" requires a value.`);
+  }
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(`INVALID_INTEGER: Argument for ${flagName} must be a valid integer, received "${value}".`);
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(`INVALID_INTEGER: Argument for ${flagName} must be a safe integer, received "${value}".`);
+  }
+  return parsed;
+}
+
 export function parseArgs(args: string[]): SeasonImportOptions {
   const options: SeasonImportOptions = {
     dryRun: true,
@@ -55,6 +70,9 @@ export function parseArgs(args: string[]): SeasonImportOptions {
     '--operator',
   ]);
 
+  let seenDryRun = false;
+  let seenExecute = false;
+
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (!allowedFlags.has(arg)) {
@@ -62,30 +80,54 @@ export function parseArgs(args: string[]): SeasonImportOptions {
     }
 
     if (arg === '--dry-run') {
+      if (seenExecute) {
+        throw new Error('CONTRADICTORY_MODES: Cannot specify both --dry-run and --execute.');
+      }
+      seenDryRun = true;
       options.dryRun = true;
       options.execute = false;
     } else if (arg === '--execute') {
+      if (seenDryRun) {
+        throw new Error('CONTRADICTORY_MODES: Cannot specify both --dry-run and --execute.');
+      }
+      seenExecute = true;
       options.execute = true;
       options.dryRun = false;
-    } else if (arg === '--start' && args[i + 1]) {
-      options.startWeek = parseInt(args[++i], 10);
-    } else if (arg === '--end' && args[i + 1]) {
-      options.endWeek = parseInt(args[++i], 10);
-    } else if (arg === '--season' && args[i + 1]) {
-      options.seasonYear = parseInt(args[++i], 10);
-    } else if (arg === '--season-type' && args[i + 1]) {
-      options.seasonType = parseInt(args[++i], 10);
-    } else if (arg === '--pool' && args[i + 1]) {
-      options.poolId = args[++i];
-    } else if (arg === '--operator' && args[i + 1]) {
-      options.operatorId = args[++i];
+    } else if (arg === '--start') {
+      if (i + 1 >= args.length || args[i + 1].startsWith('--')) {
+        throw new Error(`MISSING_ARGUMENT_VALUE: Flag "--start" requires a value.`);
+      }
+      options.startWeek = parseStrictInteger(args[++i], '--start');
+    } else if (arg === '--end') {
+      if (i + 1 >= args.length || args[i + 1].startsWith('--')) {
+        throw new Error(`MISSING_ARGUMENT_VALUE: Flag "--end" requires a value.`);
+      }
+      options.endWeek = parseStrictInteger(args[++i], '--end');
+    } else if (arg === '--season') {
+      if (i + 1 >= args.length || args[i + 1].startsWith('--')) {
+        throw new Error(`MISSING_ARGUMENT_VALUE: Flag "--season" requires a value.`);
+      }
+      options.seasonYear = parseStrictInteger(args[++i], '--season');
+    } else if (arg === '--season-type') {
+      if (i + 1 >= args.length || args[i + 1].startsWith('--')) {
+        throw new Error(`MISSING_ARGUMENT_VALUE: Flag "--season-type" requires a value.`);
+      }
+      options.seasonType = parseStrictInteger(args[++i], '--season-type');
+    } else if (arg === '--pool') {
+      if (i + 1 >= args.length || args[i + 1].startsWith('--')) {
+        throw new Error(`MISSING_ARGUMENT_VALUE: Flag "--pool" requires a value.`);
+      }
+      options.poolId = args[++i].trim();
+    } else if (arg === '--operator') {
+      if (i + 1 >= args.length || args[i + 1].startsWith('--')) {
+        throw new Error(`MISSING_ARGUMENT_VALUE: Flag "--operator" requires a value.`);
+      }
+      options.operatorId = args[++i].trim();
     }
   }
 
   // Strict numeric range and year validation
   if (
-    isNaN(options.startWeek) ||
-    isNaN(options.endWeek) ||
     options.startWeek < 1 ||
     options.endWeek > 18 ||
     options.endWeek < options.startWeek
