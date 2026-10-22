@@ -133,23 +133,24 @@ async function main() {
   // Step 4: Apply Commissioner Override for Week 7 (PIT @ NO Steelers@Saints)
   console.log('--- Step 4: Applying Commissioner Tiebreaker Override for Week 7 (Steelers @ Saints) ---');
   const overrideResult = await prisma.$transaction(async (tx) => {
-    // 1. Row-level lock on pool record (scoped to season_type 2)
+    // 1. Row-level lock on pool record
     await tx.$queryRawUnsafe(`SELECT id FROM public.pools WHERE id = $1::uuid FOR UPDATE;`, POOL_ID);
 
     // 2. Fetch fresh pool state
     const pool = await tx.pool.findUnique({ where: { id: POOL_ID } });
     if (!pool) throw new Error('Pool not found');
 
-    // 3. Verify real ACTIVE membership from database (no asserted booleans)
+    // 3. Verify real ACTIVE membership from database (no asserted booleans).
+    //    pool_memberships columns: pool_id, user_id, status, id, role, created_at — no season_type.
     const memberRows: any[] = await tx.$queryRawUnsafe(
       `SELECT status FROM public.pool_memberships
-       WHERE pool_id = $1::uuid AND user_id = $2::uuid AND season_type = 2;`,
+       WHERE pool_id = $1::uuid AND user_id = $2::uuid;`,
       POOL_ID,
       COMMISSIONER_ID
     );
     const isUserActiveMember = memberRows.length > 0 && memberRows[0].status === 'ACTIVE';
     if (!isUserActiveMember) {
-      throw new Error('FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED: Commissioner does not have ACTIVE season_type=2 membership in pool.');
+      throw new Error('FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED: Commissioner does not have ACTIVE membership in pool.');
     }
 
     // 4. Concurrency check: zero submissions
