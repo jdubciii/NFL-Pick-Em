@@ -475,7 +475,11 @@ export async function refreshWeeklySlateInDb(
   return await db.$transaction(async (tx: any) => {
     // 2a. Acquire transaction-level advisory lock across ALL writers for this exact weekly slate
     const scopeLockKey = `weekly_slate_${scope.seasonYear}_${scope.seasonType}_${scope.weekNumber}`;
-    await tx.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1));`, scopeLockKey);
+    if (typeof tx.$executeRawUnsafe === 'function') {
+      await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1));`, scopeLockKey);
+    } else {
+      await tx.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1));`, scopeLockKey);
+    }
 
     // Recheck commissioner authority and active membership inside transaction under row lock
     let poolSettings: any = null;
@@ -832,7 +836,7 @@ export async function refreshWeeklySlateInDb(
       eventCount: observation.events.length,
       games: upsertedGames,
     };
-  });
+  }, { maxWait: 20000, timeout: 60000 });
 }
 
 /**
