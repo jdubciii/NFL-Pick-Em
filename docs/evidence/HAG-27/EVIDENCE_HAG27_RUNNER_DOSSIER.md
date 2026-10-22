@@ -1,8 +1,8 @@
-# HAG-27 Evidence: Production Import Runner Dossier (Runtime Fix Corrections)
+﻿# HAG-27 Evidence: Production Import Runner Dossier (Runtime Fix Corrections)
 
-**Authority**: god dispatch `2026-10-22T07-44-16-987Z-dc6b1c`  
-**Branch**: `feat/p37-shell-auth-openslate`  
-**Commit**: `d3357b3d21bf5fd372aee7b146994e73cd1cab21`  
+**Authority**: god dispatch `2026-10-22T07-44-16-987Z-dc6b1c`
+**Branch**: `feat/p37-shell-auth-openslate`
+**Commit**: `d3357b3d21bf5fd372aee7b146994e73cd1cab21`
 **UTC Timestamp**: 2026-10-22T08:01:00Z
 
 ---
@@ -20,21 +20,21 @@ No re-import was executed. The three runner issues identified by god during HAG-
 ### 2.1 Real ACTIVE Membership Query (was: hardcoded `isUserActiveMember: true`)
 
 > [!IMPORTANT]
-> **HAG-27 HOLD correction (god review `318d11`)**: The initial d3357b3 fix erroneously added `AND season_type = 2` to the `pool_memberships` query. Live `information_schema` confirms `pool_memberships` columns are only `pool_id, user_id, status, id, role, created_at` — no `season_type` column exists on that table. Corrected to `pool_id + user_id` predicate only, matching `authoritativeSlateService`.
+> **HAG-27 HOLD correction (god review `318d11`)**: The initial d3357b3 fix erroneously added `AND season_type = 2` to the `pool_memberships` query. Live `information_schema` confirms `pool_memberships` columns are only `pool_id, user_id, status, id, role, created_at` â€” no `season_type` column exists on that table. Corrected to `pool_id + user_id` predicate only, matching `authoritativeSlateService`.
 
-**Before (d3357b3 — incorrect):**
+**Before (d3357b3 â€” incorrect):**
 ```typescript
 const { updatedSettings, designation } = applyCommissionerOverride({
   ...
-  isUserActiveMember: true,  // ← asserted, not verified
+  isUserActiveMember: true,  // â† asserted, not verified
   ...
 });
 ```
 
-**After (this commit — correct):**
+**After (this commit â€” correct):**
 ```typescript
 // Verify real ACTIVE membership from database (no asserted booleans).
-// pool_memberships columns: pool_id, user_id, status, id, role, created_at — no season_type.
+// pool_memberships columns: pool_id, user_id, status, id, role, created_at â€” no season_type.
 const memberRows: any[] = await tx.$queryRawUnsafe(
   `SELECT status FROM public.pool_memberships
    WHERE pool_id = $1::uuid AND user_id = $2::uuid;`,
@@ -53,9 +53,9 @@ const { updatedSettings, designation } = applyCommissionerOverride({
 });
 ```
 
-**Why**: `applyCommissionerOverride` accepts the boolean as a parameter to allow unit testing. The runner must not assert it statically — it must prove active membership from the database under the same transaction context and pool row lock. `season_type` is not a column on `pool_memberships`; it is scoped only on the `games` query (correction 2.2 below).
+**Why**: `applyCommissionerOverride` accepts the boolean as a parameter to allow unit testing. The runner must not assert it statically â€” it must prove active membership from the database under the same transaction context and pool row lock. `season_type` is not a column on `pool_memberships`; it is scoped only on the `games` query (correction 2.2 below).
 
-Also removed misleading pool-lock comment that said "scoped to season_type 2" — pools are not scoped by season_type.
+Also removed misleading pool-lock comment that said "scoped to season_type 2" â€” pools are not scoped by season_type.
 
 ### 2.2 Game Query Scoped to `season_type = 2`
 
@@ -93,7 +93,7 @@ console.log(`[DONE] ${obs.events.length} games imported. Manifest rev ${refresh.
 | :--- | :--- |
 | **TypeScript typecheck** (`npx tsc --noEmit`) | **Exit 0**, 0 errors |
 | **Focused test suite** (`tests/phase42_v78_season_release.test.ts`) | **60/60 PASS** |
-| **Decision #61 mirror hash** (`tiebreakerRankingService.ts`) | **Bit-identical**: `750A519DF9E42FEBEEA802724077867F14CB2CB514F6117DDADF815C572C6E68` (server ≡ client) |
+| **Decision #61 mirror hash** (`tiebreakerRankingService.ts`) | **Bit-identical**: `750A519DF9E42FEBEEA802724077867F14CB2CB514F6117DDADF815C572C6E68` (server â‰¡ client) |
 | **Whitespace check** (`git diff --check dadb049..HEAD`) | **Exit 0**, 0 errors |
 | **Release binary** (`pickem-v78-season-release.apk`) | **Intact/unchanged**: 7,003,436 bytes, SHA-256 `10BD6BCAD6FC3FD29BDE819C5CA9BBA32888B2437F4D60862229F204E1056A05` |
 
@@ -123,7 +123,7 @@ The runner at `d3357b3` is the corrected LOCAL CLI dossier. It was NOT re-execut
 
 ---
 
-## 6. Final Source SHA Registry (HAG-27 Delivery — Corrected)
+## 6. Final Source SHA Registry (HAG-27 Delivery â€” Corrected)
 
 > [!NOTE]
 > d3357b3 (first HAG-27 attempt) is superseded by this commit due to the nonexistent `season_type` column on `pool_memberships`. Only the corrected SHA below is the pinned delivery.
@@ -142,5 +142,5 @@ The runner at `d3357b3` is the corrected LOCAL CLI dossier. It was NOT re-execut
 ## 7. Boundaries
 
 - **Local commit only**: zero remote push, zero database DDL, zero deployment, zero production mutation.
-- **Runner corrections do not alter deployed state** — the import is done and accepted by god.
+- **Runner corrections do not alter deployed state** â€” the import is done and accepted by god.
 - Executor stands by for HAG-27 existing release pipeline instructions.
