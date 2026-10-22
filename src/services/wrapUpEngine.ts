@@ -133,10 +133,10 @@ export async function previewWeeklyWrapUpForPool(
   let markerTableExists = false;
   try {
     if (typeof (db as any).$queryRaw === 'function') {
-      const check: any[] = (await db.$queryRaw`SELECT to_regclass('public.weekly_wrapups') as to_regclass;` as any[]) || [];
+      const check: any[] = (await db.$queryRaw`SELECT to_regclass('public.weekly_wrapups')::text as to_regclass;` as any[]) || [];
       markerTableExists = check[0]?.to_regclass !== null && check[0]?.to_regclass !== undefined;
     } else if (typeof (db as any).$queryRawUnsafe === 'function') {
-      const check: any[] = (await db.$queryRawUnsafe(`SELECT to_regclass('public.weekly_wrapups') as to_regclass;`) as any[]) || [];
+      const check: any[] = (await db.$queryRawUnsafe(`SELECT to_regclass('public.weekly_wrapups')::text as to_regclass;`) as any[]) || [];
       markerTableExists = check[0]?.to_regclass !== null && check[0]?.to_regclass !== undefined;
     }
   } catch {
