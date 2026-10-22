@@ -133,31 +133,43 @@ async function main() {
   // Step 4: Apply Commissioner Override for Week 7 (PIT @ NO Steelers@Saints)
   console.log('--- Step 4: Applying Commissioner Tiebreaker Override for Week 7 (Steelers @ Saints) ---');
   const overrideResult = await prisma.$transaction(async (tx) => {
-    // 1. Row-level lock on pool record
+    // 1. Row-level lock on pool record (scoped to season_type 2)
     await tx.$queryRawUnsafe(`SELECT id FROM public.pools WHERE id = $1::uuid FOR UPDATE;`, POOL_ID);
 
     // 2. Fetch fresh pool state
     const pool = await tx.pool.findUnique({ where: { id: POOL_ID } });
     if (!pool) throw new Error('Pool not found');
 
-    // 3. Concurrency check: zero submissions
+    // 3. Verify real ACTIVE membership from database (no asserted booleans)
+    const memberRows: any[] = await tx.$queryRawUnsafe(
+      `SELECT status FROM public.pool_memberships
+       WHERE pool_id = $1::uuid AND user_id = $2::uuid AND season_type = 2;`,
+      POOL_ID,
+      COMMISSIONER_ID
+    );
+    const isUserActiveMember = memberRows.length > 0 && memberRows[0].status === 'ACTIVE';
+    if (!isUserActiveMember) {
+      throw new Error('FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED: Commissioner does not have ACTIVE season_type=2 membership in pool.');
+    }
+
+    // 4. Concurrency check: zero submissions
     const existingSubs = await tx.weeklySubmission.findMany({
       where: { poolId: POOL_ID, weekNumber: 7, tieBreakerPrediction: { not: null } },
     });
     if (existingSubs.length > 0) throw new Error('DESIGNATION_FROZEN: Predictions already received');
 
-    // 4. Query Week 7 games from DB
+    // 5. Query Week 7 games from DB (scoped to season 2026, season_type 2, week 7)
     const games: any[] = await tx.$queryRawUnsafe(
       `SELECT id, external_game_id as "externalGameId", home_team_id as "homeTeamId", away_team_id as "awayTeamId",
               kickoff_time as "kickoffTime", status
        FROM public.games
-       WHERE season = 2026 AND week = 7
+       WHERE season = 2026 AND season_type = 2 AND week = 7
        ORDER BY kickoff_time ASC;`
     );
 
-    const pitNoGame = games.find((g) => g.externalGameId === STEELERS_SAINTS_EVENT_ID);
+    const pitNoGame = games.find((g: any) => g.externalGameId === STEELERS_SAINTS_EVENT_ID);
     if (!pitNoGame) {
-      throw new Error(`PIT@NO game ${STEELERS_SAINTS_EVENT_ID} not found in Week 7 games.`);
+      throw new Error(`PIT@NO game ${STEELERS_SAINTS_EVENT_ID} not found in Week 7 season_type=2 games.`);
     }
 
     const { updatedSettings, designation } = applyCommissionerOverride({
@@ -168,7 +180,7 @@ async function main() {
       games: games as any,
       requestingUserId: COMMISSIONER_ID,
       poolAdminId: pool.adminId,
-      isUserActiveMember: true,
+      isUserActiveMember, // verified from real DB query above
       now: new Date(),
     });
 
@@ -240,7 +252,7 @@ async function main() {
     if (!refresh.success) {
       throw new Error(`Week ${week} DB persistence failed: ${refresh.reason}`);
     }
-    console.log(`[DONE] ${obs.events.length} games imported. Manifest rev ${refresh.manifestRevision}.`);
+    console.log(`[DONE] ${obs.events.length} games imported. Manifest rev ${refresh.revision}.`);
   }
   console.log('✅ Weeks 8..18 successfully imported.\n');
 
