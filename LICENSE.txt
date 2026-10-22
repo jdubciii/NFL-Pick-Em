@@ -1,0 +1,6 @@
+Copyright (c) 2026 Jack W Cone III. All rights reserved.
+
+This source code and its documentation are proprietary and confidential. 
+No permission is granted to reproduce, distribute, reverse-engineer, modify, 
+deploy, or create derivative works from this software, in whole or in part, 
+for any purpose, without the prior written consent of the copyright holder.
