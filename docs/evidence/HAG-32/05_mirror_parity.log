@@ -1,11 +1,12 @@
-Algorithm : SHA256
-Hash      : 750A519DF9E42FEBEEA802724077867F14CB2CB514F6117DDADF815C572C6E68
-Path      : C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\src\services\tiebreakerRankingService.ts
 
-Algorithm : SHA256
-Hash      : 750A519DF9E42FEBEEA802724077867F14CB2CB514F6117DDADF815C572C6E68
-Path      : C:\Users\kacone\Documents\AI and Tech\Antigravity\NFL Pick Em\client\src\services\tiebreakerRankingService.ts
+Algorithm       Hash                                                                   Path
+---------       ----                                                                   ----
+SHA256          750A519DF9E42FEBEEA802724077867F14CB2CB514F6117DDADF815C572C6E68       C:\Users\kacone\Documents\AI and Tech\A...
+SHA256          750A519DF9E42FEBEEA802724077867F14CB2CB514F6117DDADF815C572C6E68       C:\Users\kacone\Documents\AI and Tech\A...
 
-Byte lengths:
-src/services/tiebreakerRankingService.ts: 9011
-client/src/services/tiebreakerRankingService.ts: 9011
+
+
+Name                        Length
+----                        ------
+tiebreakerRankingService.ts   9011
+tiebreakerRankingService.ts   9011

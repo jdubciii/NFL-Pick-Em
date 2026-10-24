@@ -90,7 +90,7 @@ export async function resolveProfileReminderScope(
     }
     resolvedPoolId = specificMem.pool_id;
     poolSettings = specificMem.pools?.settings || null;
-    const rawOff = specificMem.pools?.lock_offset ?? poolSettings?.lock_offset ?? 0;
+    const rawOff = poolSettings?.lock_offset ?? poolSettings?.lockOffset ?? specificMem.pools?.lock_offset ?? 0;
     poolLockOffset = Number(rawOff) || 0;
   } else {
     const { data: memberships, error: memErr } = await supabaseClient
@@ -112,7 +112,7 @@ export async function resolveProfileReminderScope(
     }
     resolvedPoolId = memberships[0].pool_id;
     poolSettings = memberships[0].pools?.settings || null;
-    const rawOff = memberships[0].pools?.lock_offset ?? poolSettings?.lock_offset ?? 0;
+    const rawOff = poolSettings?.lock_offset ?? poolSettings?.lockOffset ?? memberships[0].pools?.lock_offset ?? 0;
     poolLockOffset = Number(rawOff) || 0;
   }
 
@@ -211,7 +211,7 @@ export async function resolveProfileReminderScope(
     // If RPC unavailable or returns 0 rows, attempt exact-scope direct query (never week-only fallback).
     const { data: directGames, error: directErr } = await supabaseClient
       .from('games')
-      .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, status, season, season_type, week')
+      .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, canonical_kickoff_time, lock_effective_at, status, season, season_type, week')
       .eq('season', resolvedSeason)
       .eq('season_type', resolvedSeasonType)
       .eq('week', resolvedWeek)
@@ -657,12 +657,18 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     loadActiveMembers();
   }, [selectedPoolId, propPoolId]);
 
+  const isScopeMismatch =
+    Boolean(propPoolId && selectedPoolId !== propPoolId) ||
+    Boolean(propWeek !== undefined && activeScope?.week !== propWeek) ||
+    Boolean(propSeason && activeScope?.season !== propSeason) ||
+    Boolean(propSeasonType && activeScope?.seasonType !== propSeasonType);
+
   const nextKickoffLockText = useMemo(() => {
-    if (!hasAcceptedSlate || !activeScope?.week) {
+    if (isScopeMismatch || !hasAcceptedSlate || !activeScope?.week) {
       return 'Unavailable';
     }
     return formatNextKickoffLock(manifestGames, activeScope.week, poolLockOffset, clockNow);
-  }, [hasAcceptedSlate, manifestGames, activeScope?.week, poolLockOffset, clockNow]);
+  }, [isScopeMismatch, hasAcceptedSlate, manifestGames, activeScope?.week, poolLockOffset, clockNow]);
 
   useEffect(() => {
     if (!user) return;

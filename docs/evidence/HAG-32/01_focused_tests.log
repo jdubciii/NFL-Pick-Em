@@ -1,9 +1,9 @@
-$ npx vitest run tests/phase42_device_readiness_scope.test.ts --pool=threads
- RUN  v5.0.2 C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em
 
- ✓ tests/phase42_device_readiness_scope.test.ts (33 tests) 427ms
+[1m[30m[46m RUN [49m[39m[22m [36mv5.0.2 [39m[90mC:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em[39m
 
- Test Files  1 passed (1)
-      Tests  33 passed (33)
-   Start at  14:03:30
-   Duration  3.61s (transform 52%, import 29%, tests 13%, setup 4%, worker 1%)
+ [32mΓ£ô[39m tests/phase42_device_readiness_scope.test.ts [2m([22m[2m40 tests[22m[2m)[22m[32m 287[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m40 passed[39m[22m[90m (40)[39m
+[2m   Start at [22m 14:36:21
+[2m   Duration [22m 1.38s[2m (transform 45%, import 27%, tests 24%, setup 4%)[22m

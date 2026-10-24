@@ -1,13 +1,34 @@
-$ npx vitest run tests/sweatProjectionService.test.ts tests/phase41_runtime_mock_purge.test.ts tests/phase41_picks_tiebreaker_settlement.test.ts tests/phase41_pick_validation.test.ts tests/phase41_week7_tiebreaker.test.ts --pool=threads
- RUN  v5.0.2 C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em
 
- ✓ tests/phase41_picks_tiebreaker_settlement.test.ts (16 tests) 2203ms
- ✓ tests/phase41_week7_tiebreaker.test.ts (82 tests) 3474ms
- ✓ tests/phase41_pick_validation.test.ts (10 tests) 212ms
- ✓ tests/phase41_runtime_mock_purge.test.ts (12 tests) 33ms
- ✓ tests/sweatProjectionService.test.ts (5 tests) 10ms
+[1m[30m[46m RUN [49m[39m[22m [36mv5.0.2 [39m[90mC:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em[39m
 
- Test Files  5 passed (5)
-      Tests  125 passed (125)
-   Start at  14:03:47
-   Duration  10.76s (tests 60%, import 20%, transform 17%, setup 3%)
+ [32mΓ£ô[39m tests/phase41_picks_tiebreaker_settlement.test.ts [2m([22m[2m16 tests[22m[2m)[22m[33m 1418[2mms[22m[39m
+   [32mΓ£ô[39m Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract [2m(16)[22m
+     [32mΓ£ô[39m Section 6: Member Prediction Entry & Validation [2m(5)[22m
+       [33m[2mΓ£ô[22m[39m accepts valid predictions from 0.00 to 999.99 with up to 2 decimal places[33m 426[2mms[22m[39m
+       [33m[2mΓ£ô[22m[39m rejects negative, nonfinite, > 999.99, and excess decimal precision predictions[33m 567[2mms[22m[39m
+[90mstdout[2m | tests/phase41_week7_tiebreaker.test.ts[2m > [22m[2mPhase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)[2m > [22m[2m5. Member Readiness Summary Under Immediate Pool Visibility (P41-POOL-VISIBILITY-2026-10-19-08)[2m > [22m[2mexposes stored predictions while denying writes (isLocked: true) when designation is UNRESOLVED
+[22m[39m[31mprisma:error[39m
+Invalid `prisma.$queryRawUnsafe()` invocation:
+
+
+Raw query failed. Code: `42703`. Message: `column "season" does not exist`
+
+[90mstdout[2m | tests/phase41_week7_tiebreaker.test.ts[2m > [22m[2mPhase 41 Week 7 Tiebreaker Entry, Contract & Privacy Tests (HAG-9)[2m > [22m[2m9. Critical Source Gate / Schema-Compatible Slate Query[2m > [22m[2mexecutes getGamesForWeek against actual prisma.game without season/week where clause
+[22m[39m[31mprisma:error[39m
+Invalid `prisma.$queryRawUnsafe()` invocation:
+
+
+Raw query failed. Code: `42703`. Message: `column "season" does not exist`
+
+ [32mΓ£ô[39m tests/phase41_week7_tiebreaker.test.ts [2m([22m[2m82 tests[22m[2m)[22m[33m 1072[2mms[22m[39m
+ [32mΓ£ô[39m tests/phase41_pick_validation.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 173[2mms[22m[39m
+ [32mΓ£ô[39m tests/phase41_runtime_mock_purge.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+ [32mΓ£ô[39m tests/sweatProjectionService.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m5 passed[39m[22m[90m (5)[39m
+[2m      Tests [22m [1m[32m125 passed[39m[22m[90m (125)[39m
+[2m   Start at [22m 14:36:35
+[2m   Duration [22m 6.84s[2m (tests 45%, import 30%, transform 20%, setup 5%, worker 1%)[22m
+
+[2m    Isolate [22m [33m5 workers spawned[39m[2m ┬╖ ~166ms startup each (spawn + environment, per file)[22m
+[2m            [22m [2mat least ~665ms faster with [22m[33misolate: false[39m[2m ΓÇö reuses workers across files instead of one per file[22m

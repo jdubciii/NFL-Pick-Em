@@ -12,9 +12,11 @@ import {
   WeeklyLadderView,
 } from '../client/src/components/shame/WeeklyLadderView';
 import {
+  ProfilePage,
   resolveProfileReminderScope,
   formatNextKickoffLock,
 } from '../client/src/pages/ProfilePage';
+import { MatrixPage } from '../client/src/pages/MatrixPage';
 import { LiveGame } from '../client/src/services/liveScoreService';
 import * as apiClient from '../client/src/lib/apiClient';
 import * as liveScoreService from '../client/src/services/liveScoreService';
@@ -130,6 +132,10 @@ function setupMockDom() {
     value: string = '';
     className: string = '';
 
+    get options() {
+      return this.children.filter((c: any) => c.tagName === 'OPTION');
+    }
+
     constructor(tag: string, doc: any) {
       super();
       this.tagName = tag.toUpperCase();
@@ -235,6 +241,13 @@ function setupWallMocks(options: {
     { user_id: 'u2', role: 'MEMBER', users: { id: 'u2', email: 'smoketester@example.com', display_name: 'smoke_test_runner' } },
   ];
 
+  if (supabase.auth) {
+    vi.spyOn(supabase.auth, 'getUser').mockResolvedValue({
+      data: { user: { id: 'u1', email: 'adambrickner@example.com' } },
+      error: null,
+    } as any);
+  }
+
   vi.spyOn(supabase, 'from').mockImplementation(((table: string) => {
     const filters: Record<string, any> = {};
     const builder: any = {
@@ -252,6 +265,35 @@ function setupWallMocks(options: {
         if (table === 'weekly_wrapups') {
           return { data: options.wrapup ?? null, error: options.wrapupError ?? null };
         }
+        if (table === 'pool_memberships') {
+          return {
+            data: options.membersError ? null : { status: 'ACTIVE', user_id: 'u1', pool_id: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782' },
+            error: options.membersError ?? null,
+          };
+        }
+        if (table === 'weekly_slate_manifests') {
+          return {
+            data: {
+              season: 2026,
+              season_type: 2,
+              week_number: 7,
+              revision: 1,
+              manifest_fingerprint: 'fp-mock-7',
+              event_ids: (options.dbGames ?? options.matrixRows ?? []).map((g: any) => g.external_game_id || g.externalGameId || g.id || g.game_id),
+            },
+            error: null,
+          };
+        }
+        if (table === 'pools') {
+          return {
+            data: {
+              id: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+              lock_offset: 0,
+              settings: { lock_offset: 0, lockOffset: 0 },
+            },
+            error: null,
+          };
+        }
         return { data: null, error: null };
       },
       then: (resolve: Function) => {
@@ -261,6 +303,27 @@ function setupWallMocks(options: {
           resolve({ data: options.picksError ? null : (options.picks ?? []), error: options.picksError ?? null });
         } else if (table === 'games') {
           resolve({ data: options.dbGames ?? [], error: null });
+        } else if (table === 'weekly_slate_manifests') {
+          resolve({
+            data: {
+              season: 2026,
+              season_type: 2,
+              week_number: 7,
+              revision: 1,
+              manifest_fingerprint: 'fp-mock-7',
+              event_ids: (options.dbGames ?? options.matrixRows ?? []).map((g: any) => g.external_game_id || g.externalGameId || g.id || g.game_id),
+            },
+            error: null,
+          });
+        } else if (table === 'pools') {
+          resolve({
+            data: {
+              id: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+              lock_offset: 0,
+              settings: { lock_offset: 0, lockOffset: 0 },
+            },
+            error: null,
+          });
         } else {
           resolve({ data: [], error: null });
         }
@@ -277,12 +340,20 @@ function setupWallMocks(options: {
       if (options.matrixShouldFail) {
         return { ok: false, status: 500, json: async () => ({ error: 'FAILED' }) } as any;
       }
+      const weekMatch = url.match(/week_no=(\d+)/);
+      const weekNum = weekMatch ? Number(weekMatch[1]) : 7;
+      const poolMatch = url.match(/\/api\/pools\/([^/]+)\/matrix/);
+      const poolId = poolMatch ? poolMatch[1] : '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
       return {
         ok: true,
         json: async () => ({
+          metadata: {
+            pool_id: poolId,
+            week_number: weekNum,
+          },
           rows: options.matrixRows ?? [],
           cells: options.matrixCells ?? {},
-          columns: options.matrixColumns ?? [],
+          columns: options.matrixColumns ?? members.map((m: any) => ({ user_id: m.user_id })),
         }),
       } as any;
     }
@@ -1284,6 +1355,367 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       expect(evalResult.state).toBe('UNAVAILABLE');
       expect(evalResult.isLocked).toBe(true);
       expect(evalResult.reason).toBe('UNVERIFIED_KICKOFF');
+    });
+
+    it('subtracts pool lock offset from stored effective deadline (lock_effective_at) at exact boundaries', () => {
+      // Effective kickoff is 17:00:00Z, with 15-minute pool offset -> lock deadline is 16:45:00Z
+      const effectiveKickoff = '2026-10-18T17:00:00.000Z';
+      const lockDeadlineMs = new Date('2026-10-18T16:45:00.000Z').getTime();
+
+      // 1 ms before boundary
+      const before = evaluateCanonicalGameLock(
+        { lock_effective_at: effectiveKickoff, isKickoffConfirmed: true },
+        15,
+        lockDeadlineMs - 1
+      );
+      expect(before.state).toBe('OPEN');
+      expect(before.isLocked).toBe(false);
+
+      // Exact boundary
+      const exact = evaluateCanonicalGameLock(
+        { lock_effective_at: effectiveKickoff, isKickoffConfirmed: true },
+        15,
+        lockDeadlineMs
+      );
+      expect(exact.state).toBe('LOCKED');
+      expect(exact.isLocked).toBe(true);
+
+      // 1 ms after boundary
+      const after = evaluateCanonicalGameLock(
+        { lock_effective_at: effectiveKickoff, isKickoffConfirmed: true },
+        15,
+        lockDeadlineMs + 1
+      );
+      expect(after.state).toBe('LOCKED');
+      expect(after.isLocked).toBe(true);
+    });
+
+    it('honors flexed earlier lock_effective_at over display kickoff_time', () => {
+      const game = {
+        kickoff_time: '2026-10-18T20:00:00.000Z',
+        lock_effective_at: '2026-10-18T17:00:00.000Z', // flexed 3 hours earlier
+        isKickoffConfirmed: true,
+      };
+
+      // Reference time is 17:00:01Z with 0 offset: locked by effective deadline even though display kickoff is 20:00Z
+      const evalResult = evaluateCanonicalGameLock(game, 0, new Date('2026-10-18T17:00:01.000Z'));
+      expect(evalResult.state).toBe('LOCKED');
+      expect(evalResult.isLocked).toBe(true);
+    });
+
+    it('Profile resolveProfileReminderScope selects canonical_kickoff_time and lock_effective_at and carries to windowGames', async () => {
+      const mockSb = {
+        from: (table: string) => {
+          const builder: any = {
+            select: () => builder,
+            eq: () => builder,
+            in: () => builder,
+            order: () => builder,
+            maybeSingle: async () => {
+              if (table === 'pool_memberships') {
+                return {
+                  data: {
+                    pool_id: 'p-1',
+                    status: 'ACTIVE',
+                    pools: {
+                      id: 'p-1',
+                      settings: { season: 2026, season_type: 2, current_week: 7, lockOffset: 15 },
+                      lock_offset: 0,
+                    },
+                  },
+                  error: null,
+                };
+              }
+              if (table === 'weekly_slate_manifests') {
+                return {
+                  data: {
+                    season: 2026,
+                    season_type: 2,
+                    week_number: 7,
+                    event_ids: ['401872995'],
+                  },
+                  error: null,
+                };
+              }
+              return { data: null, error: null };
+            },
+            then: (resolve: Function) => {
+              if (table === 'games') {
+                resolve({
+                  data: [
+                    {
+                      id: 'g-internal-uuid',
+                      external_game_id: '401872995',
+                      home_team_id: 'DEN',
+                      away_team_id: 'SEA',
+                      kickoff_time: '2026-10-18T20:00:00Z',
+                      canonical_kickoff_time: '2026-10-18T20:00:00Z',
+                      lock_effective_at: '2026-10-18T17:00:00Z',
+                      status: 'SCHEDULED',
+                    },
+                  ],
+                  error: null,
+                });
+              } else if (table === 'picks') {
+                resolve({ data: [], error: null });
+              } else {
+                resolve({ data: [], error: null });
+              }
+            },
+          };
+          return builder;
+        },
+      };
+
+      const res = await resolveProfileReminderScope({
+        userId: 'u1',
+        propPoolId: 'p-1',
+        supabaseClient: mockSb as any,
+      });
+
+      expect(res.hasAcceptedSlate).toBe(true);
+      expect(res.poolLockOffset).toBe(15);
+      expect(res.windowGames[0].canonical_kickoff_time).toBe('2026-10-18T20:00:00Z');
+      expect(res.windowGames[0].lock_effective_at).toBe('2026-10-18T17:00:00Z');
+    });
+
+    it('WallOfShamePage distinguishes live designated game from final designated game for tiebreaker ranking', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      // Both u1 and u2 picked the winning team NE in game 1.
+      // u1 predicted 45, u2 predicted 55 for tiebreaker event 401772648.
+      // In first render, tiebreaker event 401772648 is IN_PROGRESS (live score 24-20 = 44).
+      setupWallMocks({
+        matrixRows: [
+          { game_id: 'g-uuid-1', external_game_id: '401772648', home_team_id: 'NE', away_team_id: 'CHI', kickoff_time: '2026-10-15T00:15:00Z' },
+        ],
+        liveScores: [
+          { id: '401772648', status: 'IN_PROGRESS', homeTeam: { code: 'NE', score: '24' }, awayTeam: { code: 'CHI', score: '20' } },
+        ],
+        picks: [
+          { user_id: 'u1', game_id: 'g-uuid-1', selected_team: 'NE' },
+          { user_id: 'u2', game_id: 'g-uuid-1', selected_team: 'NE' },
+        ],
+        tiebreakerResponse: {
+          status: 'DEFAULT',
+          tiebreakerOffered: true,
+          eventId: '401772648',
+          readiness: [
+            { userId: 'u1', prediction: 45 },
+            { userId: 'u2', prediction: 55 },
+          ],
+        },
+      });
+
+      await act(async () => {
+        root.render(
+          React.createElement(WallOfShamePage, {
+            key: 'live',
+            poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            season: 2026,
+            seasonType: 2,
+            week: 7,
+          })
+        );
+      });
+
+      let text = container.textContent;
+      // When live, tiebreaker score is not final so provisional ties are preserved
+      expect(text).toContain('GAMES LIVE');
+      expect(text).toContain('T-#1'); // both members tied at rank 1
+
+      // Now game finishes and is FINAL with total 45 (NE 24, CHI 21)
+      setupWallMocks({
+        matrixRows: [
+          { game_id: 'g-uuid-1', external_game_id: '401772648', home_team_id: 'NE', away_team_id: 'CHI', kickoff_time: '2026-10-15T00:15:00Z' },
+        ],
+        liveScores: [
+          { id: '401772648', status: 'FINAL', homeTeam: { code: 'NE', score: '24' }, awayTeam: { code: 'CHI', score: '21' } },
+        ],
+        picks: [
+          { user_id: 'u1', game_id: 'g-uuid-1', selected_team: 'NE' },
+          { user_id: 'u2', game_id: 'g-uuid-1', selected_team: 'NE' },
+        ],
+        tiebreakerResponse: {
+          status: 'DEFAULT',
+          tiebreakerOffered: true,
+          eventId: '401772648',
+          readiness: [
+            { userId: 'u1', prediction: 45 },
+            { userId: 'u2', prediction: 55 },
+          ],
+        },
+      });
+
+      await act(async () => {
+        root.render(
+          React.createElement(WallOfShamePage, {
+            key: 'final',
+            poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            season: 2026,
+            seasonType: 2,
+            week: 7,
+          })
+        );
+      });
+
+      text = container.textContent;
+      // u1 (distance 0) should be #1, u2 (distance 10) should be #2
+      expect(text).toContain('#1');
+      expect(text).toContain('#2');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('WallOfShamePage fails closed to INCOMPLETE_TELEMETRY when tiebreaker designation is UNRESOLVED or readiness incomplete', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      setupWallMocks({
+        matrixRows: [
+          { game_id: 'g-uuid-1', external_game_id: '401772648', home_team_id: 'NE', away_team_id: 'CHI', kickoff_time: '2026-10-15T00:15:00Z' },
+        ],
+        liveScores: [
+          { id: '401772648', status: 'FINAL', homeTeam: { code: 'NE', score: '24' }, awayTeam: { code: 'CHI', score: '30' } },
+        ],
+        tiebreakerResponse: {
+          status: 'UNRESOLVED',
+          tiebreakerOffered: false,
+          readiness: [],
+        },
+      });
+
+      await act(async () => {
+        root.render(
+          React.createElement(WallOfShamePage, {
+            poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            season: 2026,
+            seasonType: 2,
+            week: 7,
+          })
+        );
+      });
+
+      let text = container.textContent;
+      expect(text).toContain('INCOMPLETE GAME TELEMETRY');
+      expect(text).toContain('Tiebreaker designation is unresolved for this week.');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('WallOfShamePage resets isSettled and clears prior rows on refresh and error', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      setupWallMocks({
+        wrapup: {
+          pool_id: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+          week_number: 6,
+          completed_at: '2026-10-24T18:00:00Z',
+          summary: {
+            poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            season: 2026,
+            seasonType: 2,
+            weekNumber: 6,
+            standings: [
+              { userId: 'u1', rank: 1, score: 10, shots: 0, isSafeHaven: true, isDeadPlace: false },
+            ],
+          },
+        },
+      });
+
+      await act(async () => {
+        root.render(
+          React.createElement(WallOfShamePage, {
+            key: 'settled',
+            poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            season: 2026,
+            seasonType: 2,
+            week: 6,
+          })
+        );
+      });
+
+      expect(container.textContent).toContain('OFFICIALLY SETTLED');
+
+      // Error during subsequent refresh
+      setupWallMocks({
+        membersError: new Error('Database connection failed'),
+      });
+
+      await act(async () => {
+        root.render(
+          React.createElement(WallOfShamePage, {
+            key: 'error',
+            poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            season: 2026,
+            seasonType: 2,
+            week: 6,
+          })
+        );
+      });
+
+      expect(container.textContent).not.toContain('OFFICIALLY SETTLED');
+      expect(container.textContent).toContain('Failed to retrieve active pool memberships.');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('MatrixPage displays [ DATA UNAVAILABLE ] on query error and [ NO PICKS SUBMITTED ] on verified empty', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      // 1. Error state
+      setupWallMocks({
+        membersError: new Error('RPC query failed'),
+      });
+
+      await act(async () => {
+        root.render(React.createElement(MatrixPage, { key: 'err' }));
+      });
+
+      expect(container.textContent).toContain('[ DATA UNAVAILABLE ]');
+      expect(container.textContent).not.toContain('[ NO PICKS SUBMITTED ]');
+
+      // 2. Verified empty state (queries succeed, 0 picks submitted)
+      setupWallMocks({
+        matrixRows: [],
+        picks: [],
+        dbGames: [
+          {
+            id: 'g-1',
+            external_game_id: '401872995',
+            home_team_id: 'DEN',
+            away_team_id: 'SEA',
+            kickoff_time: '2026-10-18T17:00:00Z',
+            season: 2026,
+            season_type: 2,
+            week: 7,
+            manifest_revision: 1,
+          },
+        ],
+      });
+
+      await act(async () => {
+        root.render(React.createElement(MatrixPage, { key: 'empty' }));
+      });
+
+      expect(container.textContent).toContain('[ NO PICKS SUBMITTED ]');
+
+      await act(async () => {
+        root.unmount();
+      });
     });
   });
 });

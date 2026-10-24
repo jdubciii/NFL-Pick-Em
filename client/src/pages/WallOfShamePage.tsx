@@ -148,22 +148,20 @@ export function WallOfShamePage({
       const targetSeasonType: number = resolvedSeasonType;
       const targetWeek: number = resolvedWeek as number;
 
-      if (!isRefresh) {
-        setSnapshot((prev) => ({
-          ...prev,
-          userId: user?.id,
-          poolId: targetPoolId,
-          season: targetSeason,
-          seasonType: targetSeasonType,
-          week: targetWeek,
-          ladderData: [],
-          status: 'LOADING',
-          scoreStatus: 'STATUS_UNAVAILABLE',
-          isSettled: false,
-          errorMessage: undefined,
-          isStale: false,
-        }));
-      }
+      setSnapshot((prev) => ({
+        ...prev,
+        userId: user?.id,
+        poolId: targetPoolId,
+        season: targetSeason,
+        seasonType: targetSeasonType,
+        week: targetWeek,
+        ladderData: [],
+        status: 'LOADING',
+        scoreStatus: 'STATUS_UNAVAILABLE',
+        isSettled: false,
+        errorMessage: undefined,
+        isStale: false,
+      }));
 
       // 2. Parallel authoritative data fetch for resolved scope
       const [membersResult, wrapupResult, matrixResult, liveScores] = await Promise.all([
@@ -190,8 +188,13 @@ export function WallOfShamePage({
           ...prev,
           userId: user?.id,
           poolId: targetPoolId,
+          season: targetSeason,
+          seasonType: targetSeasonType,
           week: targetWeek,
+          ladderData: [],
           status: 'ERROR',
+          scoreStatus: 'STATUS_UNAVAILABLE',
+          isSettled: false,
           errorMessage: 'Failed to retrieve active pool memberships.',
           observedAt: new Date().toISOString(),
           isStale: false,
@@ -205,17 +208,116 @@ export function WallOfShamePage({
           ...prev,
           userId: user?.id,
           poolId: targetPoolId,
+          season: targetSeason,
+          seasonType: targetSeasonType,
           week: targetWeek,
           ladderData: [],
           status: 'EMPTY',
           scoreStatus: 'STATUS_UNAVAILABLE',
+          isSettled: false,
           observedAt: new Date().toISOString(),
           isStale: false,
         }));
         return;
       }
 
-      // 3. Official Settled Contract Verification (Finding 1 & 3)
+      // 3. Resolve gamesList and complete matrix picks
+      let gamesList: any[] = [];
+      let matrixPicks: UserPickItem[] = [];
+      let isMatrixComplete = false;
+
+      if (matrixResult && matrixResult.ok) {
+        try {
+          const matrix = await matrixResult.json();
+          if (reqGenRef.current !== currentGen) return;
+          const isScopeMatch =
+            matrix &&
+            (!matrix.metadata ||
+              (matrix.metadata.pool_id === targetPoolId &&
+                Number(matrix.metadata.week_number) === targetWeek));
+
+          if (
+            isScopeMatch &&
+            Array.isArray(matrix.rows) &&
+            matrix.rows.length > 0
+          ) {
+            gamesList = matrix.rows.map((row: any) => ({
+              id: String(row.game_id),
+              externalGameId: row.external_game_id ? String(row.external_game_id) : String(row.game_id),
+              homeTeam: row.home_team_id,
+              awayTeam: row.away_team_id,
+              spread: row.spread,
+              kickoffTime: row.kickoff_time,
+            }));
+
+            const hasValidMetadata =
+              Boolean(matrix.metadata) &&
+              matrix.metadata.pool_id === targetPoolId &&
+              Number(matrix.metadata.week_number) === targetWeek;
+
+            const hasAllMemberColumns =
+              Array.isArray(matrix.columns) &&
+              members.every((m: any) =>
+                matrix.columns.some((c: any) => (c.user_id || c.id) === m.user_id)
+              );
+            const hasAllRowCells =
+              matrix.cells &&
+              typeof matrix.cells === 'object' &&
+              matrix.rows.every((row: any) => {
+                const gCells = matrix.cells[row.game_id];
+                return gCells && typeof gCells === 'object' && members.every((m: any) => gCells[m.user_id] !== undefined);
+              });
+
+            if (hasValidMetadata && hasAllMemberColumns && hasAllRowCells) {
+              isMatrixComplete = true;
+              for (const row of matrix.rows) {
+                const gId = String(row.game_id);
+                const gCells = matrix.cells[gId];
+                for (const m of members) {
+                  const cell = gCells[m.user_id];
+                  if (cell && cell.selected_team_id) {
+                    matrixPicks.push({
+                      userId: m.user_id,
+                      gameId: gId,
+                      selectedTeam: cell.selected_team_id,
+                      isSubmitted: true,
+                      isHidden: false,
+                    });
+                  }
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (reqGenRef.current !== currentGen) return;
+
+      if (gamesList.length === 0) {
+        const resolution = await resolveAuthoritativeSlate({
+          supabase,
+          activePoolId: targetPoolId,
+          seasonYear: targetSeason,
+          seasonType: targetSeasonType,
+          weekNumber: targetWeek,
+          liveScores,
+        });
+
+        if (reqGenRef.current !== currentGen) return;
+
+        if (resolution.source !== 'FAILED_CLOSED' && Array.isArray(resolution.games) && resolution.games.length > 0) {
+          gamesList = resolution.games.map((g: any) => ({
+            id: String(g.id),
+            externalGameId: g.externalGameId ? String(g.externalGameId) : String(g.id),
+            homeTeam: g.homeTeamId,
+            awayTeam: g.awayTeamId,
+            spread: g.spread,
+            kickoffTime: g.kickoffTime,
+          }));
+        }
+      }
+
+      // 4. Official Settled Contract Verification (Finding 1 & 3)
       let isOfficialSettled = false;
       const wrapup = wrapupResult.error ? null : wrapupResult.data;
       if (
@@ -304,10 +406,18 @@ export function WallOfShamePage({
         });
 
         let settledScoreStatus: ScopedLadderSnapshot['scoreStatus'] = 'STATUS_UNAVAILABLE';
-        if (Array.isArray(liveScores) && liveScores.length > 0) {
-          const allFinal = liveScores.every((g: any) => (g?.status || '').toUpperCase() === 'FINAL');
-          const anyLive = liveScores.some((g: any) => {
-            const st = (g?.status || '').toUpperCase();
+        if (Array.isArray(liveScores) && liveScores.length > 0 && gamesList.length > 0) {
+          const scoreMap = new Map<string, any>();
+          for (const sc of liveScores) {
+            if (sc && sc.id) scoreMap.set(String(sc.id), sc);
+          }
+          const allFinal = gamesList.every((g) => {
+            const sc = scoreMap.get(g.externalGameId) || scoreMap.get(g.id);
+            return (sc?.status || '').toUpperCase() === 'FINAL';
+          });
+          const anyLive = gamesList.some((g) => {
+            const sc = scoreMap.get(g.externalGameId) || scoreMap.get(g.id);
+            const st = (sc?.status || '').toUpperCase();
             return st === 'IN_PROGRESS' || st === 'LIVE' || st === 'HALFTIME';
           });
           settledScoreStatus = allFinal ? 'ALL_GAMES_FINAL' : anyLive ? 'GAMES_LIVE' : 'STATUS_UNAVAILABLE';
@@ -329,73 +439,6 @@ export function WallOfShamePage({
         return;
       }
 
-      // 4. Resolve Canonical Games List from Matrix or resolveAuthoritativeSlate
-      let gamesList: any[] = [];
-      let matrixPicks: UserPickItem[] = [];
-
-      if (matrixResult && matrixResult.ok) {
-        try {
-          const matrix = await matrixResult.json();
-          if (reqGenRef.current !== currentGen) return;
-          if (matrix && Array.isArray(matrix.rows) && matrix.rows.length > 0) {
-            gamesList = matrix.rows.map((row: any) => ({
-              id: String(row.game_id),
-              externalGameId: row.external_game_id ? String(row.external_game_id) : String(row.game_id),
-              homeTeam: row.home_team_id,
-              awayTeam: row.away_team_id,
-              spread: row.spread,
-              kickoffTime: row.kickoff_time,
-            }));
-
-            if (matrix.cells && typeof matrix.cells === 'object') {
-              for (const row of matrix.rows) {
-                const gId = String(row.game_id);
-                const gCells = matrix.cells[gId];
-                if (gCells && typeof gCells === 'object') {
-                  for (const [uId, cell] of Object.entries<any>(gCells)) {
-                    if (cell && cell.selected_team_id) {
-                      matrixPicks.push({
-                        userId: uId,
-                        gameId: gId,
-                        selectedTeam: cell.selected_team_id,
-                        isSubmitted: true,
-                        isHidden: false,
-                      });
-                    }
-                  }
-                }
-              }
-            }
-          }
-        } catch (_) {}
-      }
-
-      if (reqGenRef.current !== currentGen) return;
-
-      if (gamesList.length === 0) {
-        const resolution = await resolveAuthoritativeSlate({
-          supabase,
-          activePoolId: targetPoolId,
-          seasonYear: targetSeason,
-          seasonType: targetSeasonType,
-          weekNumber: targetWeek,
-          liveScores,
-        });
-
-        if (reqGenRef.current !== currentGen) return;
-
-        if (resolution.source !== 'FAILED_CLOSED' && Array.isArray(resolution.games) && resolution.games.length > 0) {
-          gamesList = resolution.games.map((g: any) => ({
-            id: String(g.id),
-            externalGameId: g.externalGameId ? String(g.externalGameId) : String(g.id),
-            homeTeam: g.homeTeamId,
-            awayTeam: g.awayTeamId,
-            spread: g.spread,
-            kickoffTime: g.kickoffTime,
-          }));
-        }
-      }
-
       if (gamesList.length === 0) {
         setSnapshot((prev) => ({
           ...prev,
@@ -406,6 +449,8 @@ export function WallOfShamePage({
           week: targetWeek,
           ladderData: [],
           status: 'ERROR',
+          scoreStatus: 'STATUS_UNAVAILABLE',
+          isSettled: false,
           errorMessage: `No active games found for Week ${targetWeek}.`,
           observedAt: new Date().toISOString(),
           isStale: false,
@@ -413,9 +458,9 @@ export function WallOfShamePage({
         return;
       }
 
-      // 5. Query user picks using accepted game IDs
+      // 5. Query user picks using accepted game IDs if matrix was incomplete
       let resolvedPicks: UserPickItem[] = matrixPicks;
-      if (resolvedPicks.length === 0) {
+      if (!isMatrixComplete) {
         const acceptedGameIds = Array.from(
           new Set(
             gamesList
@@ -441,7 +486,10 @@ export function WallOfShamePage({
             season: targetSeason,
             seasonType: targetSeasonType,
             week: targetWeek,
+            ladderData: [],
             status: 'ERROR',
+            scoreStatus: 'STATUS_UNAVAILABLE',
+            isSettled: false,
             errorMessage: 'Failed to retrieve member picks for this week.',
             observedAt: new Date().toISOString(),
             isStale: false,
@@ -526,7 +574,83 @@ export function WallOfShamePage({
           const tbJson = await tbRes.json();
           if (reqGenRef.current !== currentGen) return;
 
-          if (tbJson && tbJson.tiebreakerOffered) {
+          if (!tbJson || typeof tbJson !== 'object') {
+            setSnapshot({
+              userId: user?.id,
+              poolId: targetPoolId,
+              season: targetSeason,
+              seasonType: targetSeasonType,
+              week: targetWeek,
+              ladderData: [],
+              status: 'INCOMPLETE_TELEMETRY',
+              scoreStatus: 'STATUS_UNAVAILABLE',
+              isSettled: false,
+              errorMessage: 'Malformed tiebreaker response received.',
+              observedAt: new Date().toISOString(),
+              isStale: false,
+            });
+            return;
+          }
+
+          if (tbJson.status === 'UNRESOLVED') {
+            setSnapshot({
+              userId: user?.id,
+              poolId: targetPoolId,
+              season: targetSeason,
+              seasonType: targetSeasonType,
+              week: targetWeek,
+              ladderData: [],
+              status: 'INCOMPLETE_TELEMETRY',
+              scoreStatus: 'STATUS_UNAVAILABLE',
+              isSettled: false,
+              errorMessage: 'Tiebreaker designation is unresolved for this week.',
+              observedAt: new Date().toISOString(),
+              isStale: false,
+            });
+            return;
+          }
+
+          if (tbJson.tiebreakerOffered) {
+            const designatedEventId = String(tbJson.eventId || tbJson.designatedGame?.id || '');
+            if (!designatedEventId) {
+              setSnapshot({
+                userId: user?.id,
+                poolId: targetPoolId,
+                season: targetSeason,
+                seasonType: targetSeasonType,
+                week: targetWeek,
+                ladderData: [],
+                status: 'INCOMPLETE_TELEMETRY',
+                scoreStatus: 'STATUS_UNAVAILABLE',
+                isSettled: false,
+                errorMessage: 'Designated tiebreaker event is missing.',
+                observedAt: new Date().toISOString(),
+                isStale: false,
+              });
+              return;
+            }
+
+            const isEventInSlate = gamesList.some(
+              (g) => g.id === designatedEventId || g.externalGameId === designatedEventId
+            );
+            if (!isEventInSlate) {
+              setSnapshot({
+                userId: user?.id,
+                poolId: targetPoolId,
+                season: targetSeason,
+                seasonType: targetSeasonType,
+                week: targetWeek,
+                ladderData: [],
+                status: 'INCOMPLETE_TELEMETRY',
+                scoreStatus: 'STATUS_UNAVAILABLE',
+                isSettled: false,
+                errorMessage: 'Designated tiebreaker event is missing from weekly slate.',
+                observedAt: new Date().toISOString(),
+                isStale: false,
+              });
+              return;
+            }
+
             if (!Array.isArray(tbJson.readiness)) {
               setSnapshot({
                 userId: user?.id,
@@ -545,27 +669,77 @@ export function WallOfShamePage({
               return;
             }
 
+            // Verify member readiness coverage: every active member must be covered in readiness
+            const readinessUserIds = new Set(tbJson.readiness.map((r: any) => r?.userId).filter(Boolean));
+            const hasFullMemberCoverage = members.every((m: any) => readinessUserIds.has(m.user_id));
+            if (!hasFullMemberCoverage) {
+              setSnapshot({
+                userId: user?.id,
+                poolId: targetPoolId,
+                season: targetSeason,
+                seasonType: targetSeasonType,
+                week: targetWeek,
+                ladderData: [],
+                status: 'INCOMPLETE_TELEMETRY',
+                scoreStatus: 'STATUS_UNAVAILABLE',
+                isSettled: false,
+                errorMessage: 'Tiebreaker readiness does not cover all active pool members.',
+                observedAt: new Date().toISOString(),
+                isStale: false,
+              });
+              return;
+            }
+
             const preds: Record<string, number> = {};
             for (const item of tbJson.readiness) {
               if (item && item.userId && item.prediction !== null && item.prediction !== undefined) {
                 const pVal = Number(item.prediction);
-                if (Number.isFinite(pVal) && pVal >= 0) {
-                  preds[item.userId] = pVal;
+                if (!Number.isFinite(pVal) || pVal < 0 || pVal > 999.99) {
+                  setSnapshot({
+                    userId: user?.id,
+                    poolId: targetPoolId,
+                    season: targetSeason,
+                    seasonType: targetSeasonType,
+                    week: targetWeek,
+                    ladderData: [],
+                    status: 'INCOMPLETE_TELEMETRY',
+                    scoreStatus: 'STATUS_UNAVAILABLE',
+                    isSettled: false,
+                    errorMessage: 'Malformed tiebreaker prediction value encountered.',
+                    observedAt: new Date().toISOString(),
+                    isStale: false,
+                  });
+                  return;
                 }
+                preds[item.userId] = pVal;
               }
             }
 
-            const designatedEventId = String(tbJson.eventId || tbJson.designatedGame?.id || '');
             let actualTotalScore: number | undefined = undefined;
+            const liveGame = (liveScores || []).find((s: any) => String(s?.id) === designatedEventId);
+            if (!liveGame) {
+              setSnapshot({
+                userId: user?.id,
+                poolId: targetPoolId,
+                season: targetSeason,
+                seasonType: targetSeasonType,
+                week: targetWeek,
+                ladderData: [],
+                status: 'INCOMPLETE_TELEMETRY',
+                scoreStatus: 'STATUS_UNAVAILABLE',
+                isSettled: false,
+                errorMessage: 'Live scoring telemetry for designated tiebreaker event is missing.',
+                observedAt: new Date().toISOString(),
+                isStale: false,
+              });
+              return;
+            }
 
-            if (designatedEventId) {
-              const liveGame = (liveScores || []).find((s: any) => String(s?.id) === designatedEventId);
-              if (liveGame && liveGame.homeTeam?.score !== undefined && liveGame.awayTeam?.score !== undefined) {
-                const h = Number(liveGame.homeTeam.score);
-                const a = Number(liveGame.awayTeam.score);
-                if (Number.isFinite(h) && Number.isFinite(a)) {
-                  actualTotalScore = h + a;
-                }
+            if ((liveGame.status || '').toUpperCase() === 'FINAL') {
+              const h = Number(liveGame.homeTeam?.score);
+              const a = Number(liveGame.awayTeam?.score);
+              if (Number.isFinite(h) && Number.isFinite(a) && h >= 0 && a >= 0) {
+                actualTotalScore = h + a;
               }
             }
 
@@ -683,6 +857,9 @@ export function WallOfShamePage({
       if (reqGenRef.current === currentGen) {
         setSnapshot((prev) => ({
           ...prev,
+          ladderData: [],
+          isSettled: false,
+          scoreStatus: 'STATUS_UNAVAILABLE',
           status: 'ERROR',
           errorMessage: err?.message || 'Failed to load ladder data.',
           observedAt: new Date().toISOString(),
@@ -705,11 +882,11 @@ export function WallOfShamePage({
 
   // Prevent scope collision: render loading immediately if snapshot scope does not match requested scope (Finding 2 & 4)
   const isScopeMismatch =
-    Boolean(snapshot.userId && user?.id && snapshot.userId !== user.id) ||
-    Boolean(propPoolId && snapshot.poolId !== propPoolId) ||
-    Boolean(propSeason && snapshot.season !== propSeason) ||
-    Boolean(propSeasonType && snapshot.seasonType !== propSeasonType) ||
-    Boolean(propWeek !== undefined && snapshot.week !== propWeek);
+    (snapshot.userId ?? null) !== (user?.id ?? null) ||
+    (propPoolId !== undefined && snapshot.poolId !== propPoolId) ||
+    (propSeason !== undefined && snapshot.season !== propSeason) ||
+    (propSeasonType !== undefined && snapshot.seasonType !== propSeasonType) ||
+    (propWeek !== undefined && snapshot.week !== propWeek);
 
   const effectiveStatus: LadderViewStatus = isScopeMismatch ? 'LOADING' : snapshot.status;
   const effectiveLadder = isScopeMismatch ? [] : snapshot.ladderData;

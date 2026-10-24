@@ -1,3 +1,1 @@
-$ npx tsc --noEmit
-Exit code: 0
-Root TypeScript compilation check passed with zero errors.
+

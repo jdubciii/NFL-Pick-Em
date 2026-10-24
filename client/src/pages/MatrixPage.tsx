@@ -98,6 +98,8 @@ export const MatrixPage: React.FC = () => {
 
   const [clockNow, setClockNow] = useState<number>(Date.now());
   const [poolOffset, setPoolOffset] = useState<number>(0);
+  const [renderedWeek, setRenderedWeek] = useState<number>(selectedWeek);
+  const [hasLoadError, setHasLoadError] = useState<boolean>(false);
 
   useEffect(() => {
     const timer = setInterval(() => setClockNow(Date.now()), 10000);
@@ -114,7 +116,8 @@ export const MatrixPage: React.FC = () => {
       .maybeSingle()
       .then(({ data }) => {
         if (!isMounted || !data) return;
-        const off = Number(data.lock_offset ?? (data.settings as any)?.lock_offset ?? 0);
+        const settings = (data.settings as any) || {};
+        const off = Number(settings.lock_offset ?? settings.lockOffset ?? data.lock_offset ?? 0);
         if (Number.isFinite(off)) setPoolOffset(off);
       });
     return () => {
@@ -126,6 +129,7 @@ export const MatrixPage: React.FC = () => {
   useEffect(() => {
     let isMounted = true;
     setLoadingGames(true);
+    setHasLoadError(false);
     setLiveGames([]);
     setSlateGames([]);
     setPoolPicks([]);
@@ -137,13 +141,17 @@ export const MatrixPage: React.FC = () => {
         setLiveGames(liveData);
 
         // Query active members
-        const { data: membersData } = await supabase
+        const { data: membersData, error: membersErr } = await supabase
           .from('pool_memberships')
           .select('user_id, role, users(id, email, display_name)')
           .eq('pool_id', activePoolId)
           .eq('status', 'ACTIVE');
 
         if (!isMounted) return;
+        if (membersErr) {
+          setHasLoadError(true);
+          return;
+        }
 
         let membersList: { userId: string; userName: string; isAutopilot: boolean }[] = [];
         if (membersData && membersData.length > 0) {
@@ -174,7 +182,14 @@ export const MatrixPage: React.FC = () => {
 
         if (!isMounted) return;
 
-        if (resolution.source !== 'FAILED_CLOSED' && resolution.games.length > 0) {
+        if (resolution.source === 'FAILED_CLOSED') {
+          setSlateGames([]);
+          setPoolPicks([]);
+          setHasLoadError(true);
+          return;
+        }
+
+        if (resolution.games.length > 0) {
           setSlateGames(resolution.games);
 
           // Query submitted picks for accepted games
@@ -186,13 +201,18 @@ export const MatrixPage: React.FC = () => {
             )
           );
 
-          const { data: dbPicks } = await supabase
+          const { data: dbPicks, error: picksErr } = await supabase
             .from('picks')
             .select('user_id, game_id, selected_team')
             .eq('pool_id', activePoolId)
             .in('game_id', acceptedGameIds);
 
           if (!isMounted) return;
+
+          if (picksErr) {
+            setHasLoadError(true);
+            return;
+          }
 
           if (dbPicks && dbPicks.length > 0) {
             const memberNameMap = new Map<string, string>();
@@ -215,8 +235,12 @@ export const MatrixPage: React.FC = () => {
         }
       } catch (err) {
         console.error('Failed to query matrix data:', err);
+        if (isMounted) setHasLoadError(true);
       } finally {
-        if (isMounted) setLoadingGames(false);
+        if (isMounted) {
+          setRenderedWeek(selectedWeek);
+          setLoadingGames(false);
+        }
       }
     };
 
@@ -238,17 +262,19 @@ export const MatrixPage: React.FC = () => {
   const matrixPhase = slateSummary.phaseLabel;
   const allGamesUpcoming = slateSummary.openCount > 0 && !slateSummary.anyStartedOrFinal;
 
+  const shouldShowLeverage = hasLoadError || poolPicks.length === 0 || allGamesUpcoming;
+
   const [activeTab, setActiveTab] = useState<'LEVERAGE' | 'GAMETRACK'>(
-    allGamesUpcoming ? 'LEVERAGE' : 'GAMETRACK'
+    shouldShowLeverage ? 'LEVERAGE' : 'GAMETRACK'
   );
 
   useEffect(() => {
-    if (allGamesUpcoming) {
+    if (shouldShowLeverage) {
       setActiveTab('LEVERAGE');
     } else {
       setActiveTab('GAMETRACK');
     }
-  }, [allGamesUpcoming, selectedWeek]);
+  }, [shouldShowLeverage, selectedWeek]);
 
   const [selectedRivalId, setSelectedRivalId] = useState<string | null>(null);
 
@@ -439,7 +465,19 @@ export const MatrixPage: React.FC = () => {
 
       {/* TAB 2: PRE-LOCK LEVERAGE BOARD */}
       {activeTab === 'LEVERAGE' && (
-        poolPicks.length === 0 ? (
+        loadingGames || renderedWeek !== selectedWeek ? (
+          <EmptyStateWireframe
+            header="[ SYNCING SLATE ]"
+            subtitle={`[ LOADING WEEK ${selectedWeek} ]`}
+            contextDetail="Fetching authoritative slate games and league picks..."
+          />
+        ) : hasLoadError ? (
+          <EmptyStateWireframe
+            header="[ DATA UNAVAILABLE ]"
+            subtitle="[ LEAGUE DATA COULD NOT BE VERIFIED ]"
+            contextDetail="Failed to verify pool memberships or slate picks for this week. Please retry."
+          />
+        ) : poolPicks.length === 0 ? (
           <EmptyStateWireframe
             header="[ AWAITING LEAGUE ACTION ]"
             subtitle="[ NO PICKS SUBMITTED ]"
