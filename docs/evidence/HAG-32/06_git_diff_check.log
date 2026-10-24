@@ -1,2 +1,13 @@
-git diff --check: clean (0 errors)
-git diff --check 790cfc84b1c044fd8db8174b2593bf12269dc804..HEAD: clean (0 errors)
+GIT DIFF WHITESPACE CHECK REPORT
+Timestamp: 2026-10-24T16:09:18-07:00
+Working Tree git diff --check:
+warning: in the working copy of 'client/src/components/WeeklyPicks.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/evidence/HAG-32/01_focused_tests.log', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/evidence/HAG-32/02_broader_tests.log', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/evidence/HAG-32/03_typecheck.log', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/evidence/HAG-32/04_client_build.log', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/evidence/HAG-32/05_mirror_parity.log', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/phase42_device_readiness_scope.test.ts', LF will be replaced by CRLF the next time Git touches it
+
+Full Range 790cfc84..HEAD git diff --check:
+Clean (0 trailing whitespace / format errors)

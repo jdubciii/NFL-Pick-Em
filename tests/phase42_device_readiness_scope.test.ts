@@ -18,6 +18,7 @@ import {
   formatNextKickoffLock,
 } from '../client/src/pages/ProfilePage';
 import { MatrixPage } from '../client/src/pages/MatrixPage';
+import { WeeklyPicks } from '../client/src/components/WeeklyPicks';
 import { LiveGame } from '../client/src/services/liveScoreService';
 import * as apiClient from '../client/src/lib/apiClient';
 import * as liveScoreService from '../client/src/services/liveScoreService';
@@ -40,6 +41,16 @@ vi.mock('../client/src/context/AuthContext', () => ({
 // Mock DOM container for React createRoot testing in jsdom/node
 function setupMockDom() {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+  const storageMap: Record<string, string> = {};
+  (globalThis as any).localStorage = {
+    getItem: (key: string) => storageMap[key] ?? null,
+    setItem: (key: string, val: string) => { storageMap[key] = String(val); },
+    removeItem: (key: string) => { delete storageMap[key]; },
+    clear: () => { Object.keys(storageMap).forEach(k => delete storageMap[k]); },
+    get length() { return Object.keys(storageMap).length; },
+    key: (i: number) => Object.keys(storageMap)[i] ?? null,
+  };
 
   const windowListeners: Record<string, Function[]> = {};
   (globalThis as any).addEventListener = (evt: string, fn: Function) => {
@@ -175,6 +186,10 @@ function setupMockDom() {
       return results;
     }
 
+    getBoundingClientRect() {
+      return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0 };
+    }
+
     constructor(tag: string, doc: any) {
       super();
       this.tagName = tag.toUpperCase();
@@ -253,6 +268,13 @@ function setupMockDom() {
   (globalThis as any).HTMLIFrameElement = MockHTMLIFrameElement;
   (globalThis as any).document = mockDoc;
   (globalThis as any).window = globalThis;
+  (globalThis as any).getComputedStyle = (_el: any) => ({
+    transform: 'none',
+    opacity: '1',
+    display: 'block',
+    position: 'static',
+    getPropertyValue: (_prop: string) => '',
+  });
   mockDoc.defaultView = globalThis;
 
   return { mockDoc, MockElement };
@@ -265,6 +287,7 @@ function setupWallMocks(options: {
   poolSettings?: any;
   poolError?: any;
   poolDelayMs?: number;
+  poolData?: any;
   wrapup?: any;
   wrapupError?: any;
   matrixRows?: any[];
@@ -349,6 +372,9 @@ function setupWallMocks(options: {
           }
           if (options.poolError) {
             return { data: null, error: options.poolError };
+          }
+          if (options.poolData === null) {
+            return { data: null, error: null };
           }
           return {
             data: {
@@ -2623,6 +2649,282 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       await act(async () => {
         root.unmount();
       });
+    });
+  });
+
+  describe('P42 R1: WeeklyPicks Settings Readiness, Lock Gating & Retry Contract', () => {
+    it('WeeklyPicks gates open counts during delayed settings load, never claiming offset 0 open counts', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      // Kickoff is in 45 minutes
+      // With offset 0: game is OPEN (45 min remaining).
+      // With offset 60: lock was 15 min ago (45 - 60 = -15 min), so game is LOCKED.
+      const kickoffIn45Min = new Date(Date.now() + 45 * 60 * 1000).toISOString();
+
+      setupWallMocks({
+        poolDelayMs: 60,
+        poolSettings: { lock_offset: 60 },
+        dbGames: [
+          { game_id: 'g-45', home_team_id: 'KC', away_team_id: 'DEN', kickoff_time: kickoffIn45Min },
+        ],
+        picks: [],
+      });
+
+      let renderPromise: Promise<void>;
+      act(() => {
+        renderPromise = new Promise(async (resolve) => {
+          root.render(React.createElement(WeeklyPicks, null));
+          resolve();
+        });
+      });
+
+      // While settings is delayed / in-flight:
+      // Header MUST show SYNCING, NOT offset 0 open counts (PICKS OPEN / 1 PICK OPEN)
+      expect(container.textContent).toContain('SYNCING');
+      expect(container.textContent).not.toContain('PICKS OPEN');
+      expect(container.textContent).not.toContain('1 PICK OPEN');
+
+      // Allow settings to complete with lock_offset = 60
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 80));
+      });
+
+      // With offset 60 validated, kickoff in 45 min is LOCKED!
+      expect(container.textContent).not.toContain('SYNCING...');
+      expect(container.textContent).not.toContain('PICKS OPEN');
+      expect(container.textContent).toContain('ALL GAMES LOCKED');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('WeeklyPicks fails closed when pool settings query fails, denying pick entry and displaying retry', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      const kickoffIn2Hours = new Date(Date.now() + 120 * 60 * 1000).toISOString();
+
+      setupWallMocks({
+        poolError: new Error('Settings database timeout'),
+        dbGames: [
+          { game_id: 'g-future', home_team_id: 'KC', away_team_id: 'DEN', kickoff_time: kickoffIn2Hours },
+        ],
+        picks: [],
+      });
+
+      await act(async () => {
+        root.render(React.createElement(WeeklyPicks, null));
+      });
+
+      // Fails closed to UNAVAILABLE
+      expect(container.textContent).toContain('UNAVAILABLE');
+      expect(container.textContent).toContain('[ DATA UNAVAILABLE ]');
+      expect(container.textContent).not.toContain('PICKS OPEN');
+
+      // Verify retry button is present
+      const retryBtn = container.querySelectorAll('button').find((b: any) => b.textContent.includes('RETRY'));
+      expect(retryBtn).toBeDefined();
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('WeeklyPicks fails closed when pool settings is missing or null, denying open claims', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      const kickoffIn2Hours = new Date(Date.now() + 120 * 60 * 1000).toISOString();
+
+      setupWallMocks({
+        poolSettings: null,
+        dbGames: [
+          { game_id: 'g-future', home_team_id: 'KC', away_team_id: 'DEN', kickoff_time: kickoffIn2Hours },
+        ],
+        picks: [],
+      });
+
+      await act(async () => {
+        root.render(React.createElement(WeeklyPicks, null));
+      });
+
+      // Missing settings fails closed to UNAVAILABLE
+      expect(container.textContent).toContain('UNAVAILABLE');
+      expect(container.textContent).toContain('[ DATA UNAVAILABLE ]');
+      expect(container.textContent).not.toContain('PICKS OPEN');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('WeeklyPicks fails closed on malformed lock_offset, never masking invalid values to offset 0', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      const kickoffIn45Min = new Date(Date.now() + 45 * 60 * 1000).toISOString();
+
+      // String "invalid" should NOT become NaN || 0 => 0
+      setupWallMocks({
+        poolSettings: { lock_offset: 'invalid' },
+        dbGames: [
+          { game_id: 'g-malformed', home_team_id: 'KC', away_team_id: 'DEN', kickoff_time: kickoffIn45Min },
+        ],
+        picks: [],
+      });
+
+      await act(async () => {
+        root.render(React.createElement(WeeklyPicks, null));
+      });
+
+      // Must fail closed to UNAVAILABLE
+      expect(container.textContent).toContain('UNAVAILABLE');
+      expect(container.textContent).toContain('[ DATA UNAVAILABLE ]');
+      expect(container.textContent).not.toContain('PICKS OPEN');
+
+      // Negative offset should also fail closed
+      setupWallMocks({
+        poolSettings: { lock_offset: -15 },
+        dbGames: [
+          { game_id: 'g-neg', home_team_id: 'KC', away_team_id: 'DEN', kickoff_time: kickoffIn45Min },
+        ],
+        picks: [],
+      });
+
+      const container2 = mockDoc.createElement('div');
+      const root2 = createRoot(container2 as any);
+
+      await act(async () => {
+        root2.render(React.createElement(WeeklyPicks, null));
+      });
+
+      expect(container2.textContent).toContain('UNAVAILABLE');
+      expect(container2.textContent).toContain('[ DATA UNAVAILABLE ]');
+      expect(container2.textContent).not.toContain('PICKS OPEN');
+
+      await act(async () => {
+        root.unmount();
+        root2.unmount();
+      });
+    });
+
+    it('WeeklyPicks successful retry interaction clears error and recovers valid open counts', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      const kickoffIn2Hours = new Date(Date.now() + 120 * 60 * 1000).toISOString();
+
+      // 1. Initial failed state
+      setupWallMocks({
+        poolError: new Error('Initial network error'),
+        dbGames: [
+          { game_id: 'g-retry', home_team_id: 'KC', away_team_id: 'DEN', kickoff_time: kickoffIn2Hours },
+        ],
+        picks: [],
+      });
+
+      await act(async () => {
+        root.render(React.createElement(WeeklyPicks, null));
+      });
+
+      expect(container.textContent).toContain('UNAVAILABLE');
+      expect(container.textContent).toContain('[ DATA UNAVAILABLE ]');
+
+      // 2. Configure mock to succeed on retry
+      setupWallMocks({
+        poolError: null,
+        poolSettings: { lock_offset: 0 },
+        dbGames: [
+          { game_id: 'g-retry', home_team_id: 'KC', away_team_id: 'DEN', kickoff_time: kickoffIn2Hours },
+        ],
+        picks: [],
+      });
+
+      const retryBtn = container.querySelectorAll('button').find((b: any) => b.textContent.includes('RETRY'));
+      expect(retryBtn).toBeDefined();
+      const reactPropsKey = Object.keys(retryBtn!).find((k) => k.startsWith('__reactProps$'));
+      expect(reactPropsKey).toBeDefined();
+
+      await act(async () => {
+        (retryBtn as any)[reactPropsKey!].onClick();
+      });
+
+      // Allow retry to complete
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 40));
+      });
+
+      // Error clears and valid open count publishes
+      expect(container.textContent).not.toContain('[ DATA UNAVAILABLE ]');
+      expect(container.textContent).toContain('PICKS OPEN: 1');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('enforces exact canonical lock deadline and verifies absent offset server zero default', () => {
+      const baseKickoff = new Date('2026-10-25T17:00:00.000Z');
+
+      // Valid loaded settings with absent offset uses server zero default (deadline == kickoff)
+      const zeroDefaultResult = evaluateCanonicalGameLock(
+        { kickoff_time: baseKickoff.toISOString() },
+        0,
+        new Date('2026-10-25T16:59:00.000Z')
+      );
+      expect(zeroDefaultResult.isLocked).toBe(false);
+      expect(zeroDefaultResult.effectiveDeadline?.toISOString()).toBe(baseKickoff.toISOString());
+
+      // At exact kickoff, game locks
+      const atKickoffResult = evaluateCanonicalGameLock(
+        { kickoff_time: baseKickoff.toISOString() },
+        0,
+        baseKickoff
+      );
+      expect(atKickoffResult.isLocked).toBe(true);
+
+      // Non-zero offset (e.g. 15 minutes before kickoff)
+      // Effective deadline: 17:00 - 15m = 16:45:00
+      const offsetResult = evaluateCanonicalGameLock(
+        { kickoff_time: baseKickoff.toISOString() },
+        15,
+        new Date('2026-10-25T16:40:00.000Z')
+      );
+      expect(offsetResult.isLocked).toBe(false);
+      expect(offsetResult.effectiveDeadline?.getTime()).toBe(baseKickoff.getTime() - 15 * 60 * 1000);
+
+      // At exact offset boundary (16:45), game locks
+      const atOffsetBoundaryResult = evaluateCanonicalGameLock(
+        { kickoff_time: baseKickoff.toISOString() },
+        15,
+        new Date('2026-10-25T16:45:00.000Z')
+      );
+      expect(atOffsetBoundaryResult.isLocked).toBe(true);
+
+      // 5 minutes after offset deadline (16:50), game remains locked even though kickoff is in future
+      const pastOffsetResult = evaluateCanonicalGameLock(
+        { kickoff_time: baseKickoff.toISOString() },
+        15,
+        new Date('2026-10-25T16:50:00.000Z')
+      );
+      expect(pastOffsetResult.isLocked).toBe(true);
+      expect(pastOffsetResult.reason).toBe('KICKOFF_PASSED');
+
+      // Unvalidated NaN offset must fail closed to UNAVAILABLE, never defaulting to 0
+      const nanResult = evaluateCanonicalGameLock(
+        { kickoff_time: baseKickoff.toISOString() },
+        NaN,
+        new Date('2026-10-25T12:00:00.000Z')
+      );
+      expect(nanResult.isLocked).toBe(true);
+      expect(nanResult.state).toBe('UNAVAILABLE');
     });
   });
 });

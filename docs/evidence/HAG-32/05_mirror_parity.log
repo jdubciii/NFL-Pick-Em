@@ -1,9 +1,11 @@
-
-Algorithm       Hash                                                                   Path
----------       ----                                                                   ----
-SHA256          750A519DF9E42FEBEEA802724077867F14CB2CB514F6117DDADF815C572C6E68       C:\Users\kacone\Documents\AI and Tech\Antigravity\NF...
-SHA256          750A519DF9E42FEBEEA802724077867F14CB2CB514F6117DDADF815C572C6E68       C:\Users\kacone\Documents\AI and Tech\Antigravity\NF...
-
-
-9011
-9011
+DECISION 61 BIT-IDENTICAL MIRROR PARITY REPORT
+Timestamp: 2026-10-24T16:09:11-07:00
+Target 1: src/services/tiebreakerRankingService.ts
+  SHA-256: 750A519DF9E42FEBEEA802724077867F14CB2CB514F6117DDADF815C572C6E68
+  Length:  9011 bytes
+Target 2: client/src/services/tiebreakerRankingService.ts
+  SHA-256: 750A519DF9E42FEBEEA802724077867F14CB2CB514F6117DDADF815C572C6E68
+  Length:  9011 bytes
+Canonical Baseline Hash: 750A519DF9E42FEBEEA802724077867F14CB2CB514F6117DDADF815C572C6E68
+Canonical Baseline Length: 9011 bytes
+Parity Verified: True

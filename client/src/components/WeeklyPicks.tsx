@@ -22,6 +22,7 @@ import {
 } from '../services/authoritativeSlateClientService';
 import type { MatrixResponsePayload } from './LeagueMatrixView';
 import { AppHeader } from './common/AppHeader';
+import { EmptyStateWireframe } from './common/EmptyStateWireframe';
 
 export interface GameItem {
   id: string;
@@ -46,22 +47,52 @@ export interface GameItem {
 export interface PoolInfo {
   id: string;
   name: string;
-  lock_offset: number;
+  lock_offset?: number;
   hide_picks_until_kickoff?: boolean;
 }
 
 const DEFAULT_POOL: PoolInfo = {
   id: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
   name: 'Main League',
-  lock_offset: 0,
   hide_picks_until_kickoff: false,
 };
+
+function parseAndValidateLockOffset(rawOffset: any): { valid: true; offset: number } | { valid: false } {
+  if (rawOffset === undefined || rawOffset === null) {
+    return { valid: true, offset: 0 };
+  }
+  if (typeof rawOffset === 'boolean') {
+    return { valid: false };
+  }
+  if (typeof rawOffset === 'string' && rawOffset.trim() === '') {
+    return { valid: false };
+  }
+  const num = Number(rawOffset);
+  if (Number.isFinite(num) && num >= 0) {
+    return { valid: true, offset: num };
+  }
+  return { valid: false };
+}
 
 export const WeeklyPicks: React.FC = () => {
   const { token, user } = useAuth();
   const [selectedWeek, setSelectedWeek] = useState<number>(() => getCurrentNFLWeek());
   const [isWeekModalOpen, setIsWeekModalOpen] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+
+  const activePoolId = DEFAULT_POOL.id;
+  const [settingsRetryGen, setSettingsRetryGen] = useState<number>(0);
+  const [poolSettingsState, setPoolSettingsState] = useState<{
+    poolId: string;
+    status: 'LOADING' | 'READY' | 'ERROR';
+    offset: number;
+    errorMessage?: string;
+  }>({
+    poolId: activePoolId,
+    status: 'LOADING',
+    offset: 0,
+  });
+  const settingsGenRef = React.useRef(0);
 
   const [games, setGames] = useState<GameItem[]>([]);
   const [liveScores, setLiveScores] = useState<LiveGame[]>([]);
@@ -74,8 +105,14 @@ export const WeeklyPicks: React.FC = () => {
   const [lastUpdatedTime, setLastUpdatedTime] = useState<string | null>(null);
 
   const [picksViewMode, setPicksViewMode] = useState<'swipe' | 'list'>(() => {
-    const saved = localStorage.getItem('pickem_preferred_view_mode') || localStorage.getItem('picks_view_preference');
-    return (saved === 'swipe' || saved === 'list') ? (saved as 'swipe' | 'list') : 'swipe';
+    try {
+      const saved = typeof localStorage !== 'undefined'
+        ? (localStorage.getItem('pickem_preferred_view_mode') || localStorage.getItem('picks_view_preference'))
+        : null;
+      return (saved === 'swipe' || saved === 'list') ? (saved as 'swipe' | 'list') : 'swipe';
+    } catch (_) {
+      return 'swipe';
+    }
   });
 
   const [snackbarState, setSnackbarState] = useState<{ isOpen: boolean; message: string }>({
@@ -94,7 +131,77 @@ export const WeeklyPicks: React.FC = () => {
   const [lastBulkSnapshot, setLastBulkSnapshot] = useState<Record<string, string> | null>(null);
 
   const [userPicks, setUserPicks] = useState<Record<string, string>>({});
-  const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+
+  // Dedicated pool settings readiness effect with current-pool/request generation ownership
+  useEffect(() => {
+    let isMounted = true;
+    const currentGen = ++settingsGenRef.current;
+    const targetPoolId = activePoolId;
+
+    setPoolSettingsState({
+      poolId: targetPoolId,
+      status: 'LOADING',
+      offset: 0,
+    });
+
+    async function loadPoolSettings() {
+      try {
+        const { data, error } = await supabase
+          .from('pools')
+          .select('id, name, settings')
+          .eq('id', targetPoolId)
+          .maybeSingle();
+
+        if (!isMounted || currentGen !== settingsGenRef.current) return;
+
+        if (error || !data || !data.settings || typeof data.settings !== 'object') {
+          setPoolSettingsState({
+            poolId: targetPoolId,
+            status: 'ERROR',
+            offset: 0,
+            errorMessage: 'Failed to retrieve pool settings.',
+          });
+          return;
+        }
+
+        const settings = (data.settings as any) || {};
+        const rawOffset = settings.lock_offset ?? settings.lockOffset;
+        const validation = parseAndValidateLockOffset(rawOffset);
+
+        if (validation.valid) {
+          setPoolSettingsState({
+            poolId: targetPoolId,
+            status: 'READY',
+            offset: validation.offset,
+          });
+          if (data.name) {
+            setPool((prev) => (prev ? { ...prev, name: data.name } : { id: targetPoolId, name: data.name }));
+          }
+        } else {
+          setPoolSettingsState({
+            poolId: targetPoolId,
+            status: 'ERROR',
+            offset: 0,
+            errorMessage: 'Invalid pool lock offset configuration.',
+          });
+        }
+      } catch (err: any) {
+        if (isMounted && currentGen === settingsGenRef.current) {
+          setPoolSettingsState({
+            poolId: targetPoolId,
+            status: 'ERROR',
+            offset: 0,
+            errorMessage: err?.message || 'Failed to retrieve pool settings.',
+          });
+        }
+      }
+    }
+
+    loadPoolSettings();
+    return () => {
+      isMounted = false;
+    };
+  }, [activePoolId, settingsRetryGen]);
 
   // USER STATE ISOLATION:
   // When user changes or on initial mount, IMMEDIATELY reset in-memory pick state
@@ -105,7 +212,11 @@ export const WeeklyPicks: React.FC = () => {
   const userPicksCacheKey = `picks_${user?.id}_${activePoolId}_w${selectedWeek}`;
 
   const [isPicksProtected, setIsPicksProtected] = useState<boolean>(() => {
-    return localStorage.getItem('user_picks_protected') === 'true';
+    try {
+      return typeof localStorage !== 'undefined' && localStorage.getItem('user_picks_protected') === 'true';
+    } catch (_) {
+      return false;
+    }
   });
 
   const togglePicksProtection = () => {
@@ -280,27 +391,10 @@ export const WeeklyPicks: React.FC = () => {
         );
       }
 
-      // 4. Load pool info & prefetch matrix if available
-      try {
-        const { data: poolData } = await supabase
-          .from('pools')
-          .select('*')
-          .eq('id', DEFAULT_POOL.id)
-          .maybeSingle();
-
-        if (poolData) {
-          setPool({
-            id: poolData.id,
-            name: poolData.name,
-            lock_offset: Number(poolData.settings?.lock_offset ?? poolData.settings?.lockOffset ?? 0),
-            hide_picks_until_kickoff: false,
-          });
-        }
-      } catch (_) {}
-
+      // 4. Prefetch matrix if available
       if (token) {
         try {
-          const matrixRes = await scopedExpressFetch(`/api/pools/${DEFAULT_POOL.id}/matrix`);
+          const matrixRes = await scopedExpressFetch(`/api/pools/${activePoolId}/matrix`);
           if (matrixRes.ok) {
             const mData = await matrixRes.json();
             setMatrixData(mData);
@@ -344,6 +438,60 @@ export const WeeklyPicks: React.FC = () => {
     return () => clearInterval(liveInterval);
   }, [games, fetchGames, isOffline]);
 
+  const isSettingsLoading = poolSettingsState.status === 'LOADING' || poolSettingsState.poolId !== activePoolId;
+  const isSettingsError = poolSettingsState.status === 'ERROR' && poolSettingsState.poolId === activePoolId;
+  const isSettingsReady = poolSettingsState.status === 'READY' && poolSettingsState.poolId === activePoolId;
+
+  const isSyncing = loading || isSettingsLoading;
+
+  const isGameLocked = (game: GameItem): boolean => {
+    if (!isSettingsReady) {
+      return true; // Fail closed: pending, failed, missing, or malformed settings deny entry
+    }
+    return evaluateCanonicalGameLock(game as any, poolSettingsState.offset, now).isLocked;
+  };
+
+  const formatKickoff = (isoString: string) => formatGameKickoff(isoString);
+
+  const isGameKickoffLocked = (g: GameItem) => isGameLocked(g);
+
+  const slateSummary = evaluateSlateLockSummary(
+    games,
+    liveScores,
+    isSettingsReady ? poolSettingsState.offset : NaN,
+    now
+  );
+  const allLocked = slateSummary.allGamesLocked;
+  const lockedCount = slateSummary.lockedCount;
+  const openCount = isSettingsReady ? slateSummary.openCount : 0;
+  const allCompleted = slateSummary.allGamesFinal;
+  const anyLive = slateSummary.anyGameLive;
+  const anyStartedOrFinal = slateSummary.anyStartedOrFinal;
+  const anyUpcoming = slateSummary.anyUpcoming;
+
+  let phaseLabel: string;
+  let lockBadgeText: string;
+  let isBadgeOpen = false;
+
+  if (isSyncing) {
+    phaseLabel = 'SYNCING';
+    lockBadgeText = 'SYNCING';
+    isBadgeOpen = false;
+  } else if (isSettingsError) {
+    phaseLabel = 'Status unavailable';
+    lockBadgeText = 'UNAVAILABLE';
+    isBadgeOpen = false;
+  } else {
+    phaseLabel = slateSummary.phaseLabel;
+    lockBadgeText = slateSummary.lockBadgeText;
+    isBadgeOpen = slateSummary.isBadgeOpen;
+  }
+
+  const handleRetry = () => {
+    setSettingsRetryGen((g) => g + 1);
+    fetchGames();
+  };
+
   const handlePick = async (game: GameItem, selectedTeamId: string) => {
     if (isPicksProtected) {
       setFeedbackMessage({
@@ -355,6 +503,14 @@ export const WeeklyPicks: React.FC = () => {
       return;
     }
     if (!pool) return;
+    if (!isSettingsReady) {
+      setFeedbackMessage({
+        text: 'Pool settings unavailable. Picks locked.',
+        type: 'error'
+      });
+      setTimeout(() => setFeedbackMessage(null), 3500);
+      return;
+    }
     if (isGameLocked(game) || isKickoffLocked(game.kickoffTime, now)) {
       const formattedTime = formatKickoff(game.kickoffTime);
       setFeedbackMessage({ text: `Matchup locked: Kickoff passed on ${formattedTime}.`, type: 'error' });
@@ -442,7 +598,7 @@ export const WeeklyPicks: React.FC = () => {
    * Clears all unlocked picks across the active slate.
    */
   const performClearAllPicks = async () => {
-    if (isPicksProtected || !pool || !user?.id) return;
+    if (isPicksProtected || !pool || !user?.id || !isSettingsReady) return;
     const unlockedPickedGames = games.filter((g) => !isGameLocked(g) && !isGameKickoffLocked(g) && g.userPick);
     if (unlockedPickedGames.length === 0) return;
 
@@ -502,6 +658,11 @@ export const WeeklyPicks: React.FC = () => {
   };
 
   const handleClearAllPicks = () => {
+    if (!isSettingsReady) {
+      setFeedbackMessage({ text: 'Pool settings unavailable. Picks locked.', type: 'error' });
+      setTimeout(() => setFeedbackMessage(null), 3500);
+      return;
+    }
     if (isPicksProtected) {
       setFeedbackMessage({
         text: 'Picks are protected against accidental edits. Tap PICKS PROTECTED at the top to unlock.',
@@ -526,7 +687,7 @@ export const WeeklyPicks: React.FC = () => {
    * Applies quick-fill presets through the QuickFillSafetyEngine with a 7-second undo grace period.
    */
   const performApplyPreset = (updatedPicks: Record<string, string | null>, presetDescription: string) => {
-    if (isPicksProtected || !pool) return;
+    if (isPicksProtected || !pool || !isSettingsReady) return;
 
     const slateItems: SlateGameItem[] = games.map((g) => ({
       gameId: g.id,
@@ -642,6 +803,11 @@ export const WeeklyPicks: React.FC = () => {
   };
 
   const handleApplyPreset = (updatedPicks: Record<string, string | null>, presetDescription: string) => {
+    if (!isSettingsReady) {
+      setFeedbackMessage({ text: 'Pool settings unavailable. Picks locked.', type: 'error' });
+      setTimeout(() => setFeedbackMessage(null), 3500);
+      return;
+    }
     if (isPicksProtected) {
       setFeedbackMessage({
         text: 'Picks are protected against accidental edits. Tap PICKS PROTECTED at the top to unlock.',
@@ -790,27 +956,6 @@ export const WeeklyPicks: React.FC = () => {
     }
   };
 
-  const isGameLocked = (game: GameItem): boolean => {
-    return evaluateCanonicalGameLock(game as any, pool?.lock_offset || 0, now).isLocked;
-  };
-
-  const formatKickoff = (isoString: string) => formatGameKickoff(isoString);
-
-  const isGameKickoffLocked = (g: GameItem) => isGameLocked(g);
-
-  const slateSummary = evaluateSlateLockSummary(games, liveScores, pool?.lock_offset || 0, now);
-  const allLocked = slateSummary.allGamesLocked;
-  const lockedCount = slateSummary.lockedCount;
-  const openCount = slateSummary.openCount;
-  const allCompleted = slateSummary.allGamesFinal;
-  const anyLive = slateSummary.anyGameLive;
-  const anyStartedOrFinal = slateSummary.anyStartedOrFinal;
-  const anyUpcoming = slateSummary.anyUpcoming;
-
-  const phaseLabel = slateSummary.phaseLabel;
-  const lockBadgeText = slateSummary.lockBadgeText;
-  const isBadgeOpen = slateSummary.isBadgeOpen;
-
   const setShowWeekModal = setIsWeekModalOpen;
   const viewMode = picksViewMode;
   const setViewMode = handleTogglePicksView;
@@ -821,7 +966,7 @@ export const WeeklyPicks: React.FC = () => {
       {/* ROW 1 (Branding & Controls) */}
       <AppHeader
         poolName="MAIN LEAGUE"
-        scope={`WEEK ${selectedWeek}`}
+        scope={isSyncing ? 'SYNCING...' : `WEEK ${selectedWeek}`}
         phase={phaseLabel}
         rightContent={
           <div className="flex items-center gap-1.5 shrink-0">
@@ -930,11 +1075,44 @@ export const WeeklyPicks: React.FC = () => {
         </div>
       )}
 
+      {/* Settings Error Banner */}
+      {isSettingsError && (
+        <div className="mx-4 my-3 p-4 rounded-xl bg-red-950/40 border border-red-500/50 text-red-200 text-xs font-mono flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+          <div className="flex items-center gap-2">
+            <span>⚠️ [ DATA UNAVAILABLE ] {poolSettingsState.errorMessage || 'Failed to verify pool settings. Picks are locked.'}</span>
+          </div>
+          <button
+            type="button"
+            onClick={handleRetry}
+            className="shrink-0 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 hover:border-cyan-500 text-xs font-mono font-bold text-cyan-400 transition cursor-pointer"
+          >
+            [ RETRY TELEMETRY INTAKE ]
+          </button>
+        </div>
+      )}
+
       {/* Content Rendering */}
-      {loading && games.length === 0 ? (
+      {isSyncing && games.length === 0 ? (
         <div className="py-20 text-center">
           <div className="w-10 h-10 border-3 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-sm text-slate-400 font-medium">Loading NFL matchups and live odds...</p>
+        </div>
+      ) : isSettingsError && games.length === 0 ? (
+        <div className="py-12 px-4 max-w-md mx-auto text-center space-y-4">
+          <EmptyStateWireframe
+            header="[ DATA UNAVAILABLE ]"
+            subtitle="[ POOL SETTINGS COULD NOT BE VERIFIED ]"
+            contextDetail={poolSettingsState.errorMessage || 'Failed to verify pool settings. Picks entry is locked.'}
+          />
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={handleRetry}
+              className="px-4 py-2 bg-slate-900 border border-slate-700 hover:border-cyan-500 text-xs font-mono font-bold text-cyan-400 rounded-lg transition-colors cursor-pointer"
+            >
+              [ RETRY TELEMETRY INTAKE ]
+            </button>
+          </div>
         </div>
       ) : games.length === 0 ? (
         <div className="py-20 text-center font-mono text-sm text-slate-400 bg-slate-900/60 border border-slate-800 rounded-2xl p-8 shadow-xl max-w-md mx-auto">
