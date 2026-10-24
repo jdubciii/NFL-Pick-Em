@@ -1,9 +1,9 @@
 
 [1m[30m[46m RUN [49m[39m[22m [36mv5.0.2 [39m[90mC:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em[39m
 
- [32mΓ£ô[39m tests/phase42_device_readiness_scope.test.ts [2m([22m[2m40 tests[22m[2m)[22m[32m 287[2mms[22m[39m
+ [32mΓ£ô[39m tests/phase42_device_readiness_scope.test.ts [2m([22m[2m46 tests[22m[2m)[22m[33m 766[2mms[22m[39m
 
 [2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
-[2m      Tests [22m [1m[32m40 passed[39m[22m[90m (40)[39m
-[2m   Start at [22m 14:36:21
-[2m   Duration [22m 1.38s[2m (transform 45%, import 27%, tests 24%, setup 4%)[22m
+[2m      Tests [22m [1m[32m46 passed[39m[22m[90m (46)[39m
+[2m   Start at [22m 15:09:43
+[2m   Duration [22m 2.21s[2m (tests 39%, transform 34%, import 23%, setup 3%)[22m

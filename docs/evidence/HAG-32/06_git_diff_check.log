@@ -1,2 +1,2 @@
-git diff --check 790cfc84b1c044fd8db8174b2593bf12269dc804..HEAD: clean (exit 0)
-git diff --check: clean (exit 0)
+git diff --check: clean (0 errors)
+git diff --check 790cfc84b1c044fd8db8174b2593bf12269dc804..HEAD: clean (0 errors)

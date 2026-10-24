@@ -292,7 +292,7 @@ export const WeeklyPicks: React.FC = () => {
           setPool({
             id: poolData.id,
             name: poolData.name,
-            lock_offset: poolData.settings?.lock_offset || 0,
+            lock_offset: Number(poolData.settings?.lock_offset ?? poolData.settings?.lockOffset ?? 0),
             hide_picks_until_kickoff: false,
           });
         }

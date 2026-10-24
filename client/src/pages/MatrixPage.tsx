@@ -109,17 +109,32 @@ export const MatrixPage: React.FC = () => {
   // Fetch pool settings for offset
   useEffect(() => {
     let isMounted = true;
-    supabase
-      .from('pools')
-      .select('id, lock_offset, settings')
-      .eq('id', activePoolId)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (!isMounted || !data) return;
+    async function loadPoolSettings() {
+      try {
+        const { data, error } = await supabase
+          .from('pools')
+          .select('id, settings')
+          .eq('id', activePoolId)
+          .maybeSingle();
+
+        if (!isMounted) return;
+        if (error || !data || !data.settings || typeof data.settings !== 'object') {
+          setHasLoadError(true);
+          return;
+        }
         const settings = (data.settings as any) || {};
-        const off = Number(settings.lock_offset ?? settings.lockOffset ?? data.lock_offset ?? 0);
-        if (Number.isFinite(off)) setPoolOffset(off);
-      });
+        const rawOff = settings.lock_offset ?? settings.lockOffset ?? 0;
+        const off = Number(rawOff);
+        if (Number.isFinite(off) && off >= 0) {
+          setPoolOffset(off);
+        } else {
+          setHasLoadError(true);
+        }
+      } catch {
+        if (isMounted) setHasLoadError(true);
+      }
+    }
+    loadPoolSettings();
     return () => {
       isMounted = false;
     };
@@ -352,15 +367,23 @@ export const MatrixPage: React.FC = () => {
     );
   }, [selectedRivalId, poolMembers, currentUserId, currentUserName, poolPicks, rawGames]);
 
+  const isSyncing = loadingGames || renderedWeek !== selectedWeek;
+
   return (
     <div className="min-h-screen bg-zinc-950 text-white pb-24">
       {/* Unified Top Branding Banner with Consolidated Status Pills */}
       <AppHeader
         poolName="MAIN LEAGUE"
-        scope={`WEEK ${selectedWeek}`}
-        phase={matrixPhase}
+        scope={isSyncing ? 'SYNCING...' : `WEEK ${selectedWeek}`}
+        phase={isSyncing ? 'SYNCING' : matrixPhase}
         rightContent={
-          slateSummary.total === 0 ? (
+          isSyncing ? (
+            <div className="flex items-center gap-1.5">
+              <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-zinc-700 bg-zinc-800 text-zinc-400">
+                SYNCING
+              </div>
+            </div>
+          ) : slateSummary.total === 0 ? (
             <div className="flex items-center gap-1.5">
               <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-zinc-800 bg-zinc-900 text-zinc-500">
                 UNAVAILABLE
@@ -460,12 +483,20 @@ export const MatrixPage: React.FC = () => {
 
       {/* TAB 1: LIVE GAMETRACK & DRIVE FLOW */}
       {activeTab === 'GAMETRACK' && (
-        <LiveGametrackStream weekNumber={selectedWeek} />
+        isSyncing ? (
+          <EmptyStateWireframe
+            header="[ SYNCING SLATE ]"
+            subtitle={`[ LOADING WEEK ${selectedWeek} ]`}
+            contextDetail="Fetching authoritative slate games and league picks..."
+          />
+        ) : (
+          <LiveGametrackStream weekNumber={selectedWeek} />
+        )
       )}
 
       {/* TAB 2: PRE-LOCK LEVERAGE BOARD */}
       {activeTab === 'LEVERAGE' && (
-        loadingGames || renderedWeek !== selectedWeek ? (
+        isSyncing ? (
           <EmptyStateWireframe
             header="[ SYNCING SLATE ]"
             subtitle={`[ LOADING WEEK ${selectedWeek} ]`}

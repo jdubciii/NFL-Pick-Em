@@ -77,16 +77,16 @@ export function WallOfShamePage({
   const loadScopedData = useCallback(async (isRefresh: boolean = false) => {
     const currentGen = ++reqGenRef.current;
 
-    // Reset view state on refresh/retry to avoid leaving prior safe claims
-    if (isRefresh) {
-      setSnapshot((prev) => ({
-        ...prev,
-        ladderData: [],
-        status: 'LOADING',
-        scoreStatus: 'STATUS_UNAVAILABLE',
-        isStale: true,
-      }));
-    }
+    // Reset view state immediately on reload/refresh to clear prior safe claims and settlement headers
+    setSnapshot((prev) => ({
+      ...prev,
+      ladderData: [],
+      status: 'LOADING',
+      scoreStatus: 'STATUS_UNAVAILABLE',
+      isSettled: false,
+      errorMessage: undefined,
+      isStale: isRefresh,
+    }));
 
     try {
       // 1. Resolve active pool & scope without hardcoded fallbacks (Fail Closed: Decision #55)
@@ -230,17 +230,57 @@ export function WallOfShamePage({
         try {
           const matrix = await matrixResult.json();
           if (reqGenRef.current !== currentGen) return;
-          const isScopeMatch =
-            matrix &&
-            (!matrix.metadata ||
-              (matrix.metadata.pool_id === targetPoolId &&
-                Number(matrix.metadata.week_number) === targetWeek));
 
-          if (
-            isScopeMatch &&
-            Array.isArray(matrix.rows) &&
-            matrix.rows.length > 0
-          ) {
+          // Require verified scoped metadata
+          const hasValidMetadata =
+            Boolean(matrix?.metadata) &&
+            matrix.metadata.pool_id === targetPoolId &&
+            Number(matrix.metadata.week_number) === targetWeek;
+
+          // Require complete valid rows with non-empty identifiers and valid kickoff
+          const hasValidRows =
+            Array.isArray(matrix?.rows) &&
+            matrix.rows.length > 0 &&
+            matrix.rows.every(
+              (r: any) =>
+                r &&
+                typeof r.game_id === 'string' &&
+                r.game_id.trim().length > 0 &&
+                typeof r.home_team_id === 'string' &&
+                typeof r.away_team_id === 'string' &&
+                Boolean(r.kickoff_time)
+            );
+
+          // Require complete columns covering all active members
+          const hasAllMemberColumns =
+            Array.isArray(matrix?.columns) &&
+            members.every((m: any) =>
+              matrix.columns.some((c: any) => (c.user_id || c.id) === m.user_id)
+            );
+
+          // Require actual producer cell shapes:
+          // cell must be non-null object with explicit nullable pick_id and selected_team_id
+          const hasAllValidCells =
+            Boolean(matrix?.cells) &&
+            typeof matrix.cells === 'object' &&
+            hasValidRows &&
+            matrix.rows.every((row: any) => {
+              const gCells = matrix.cells[row.game_id];
+              if (!gCells || typeof gCells !== 'object') return false;
+              return members.every((m: any) => {
+                const cell = gCells[m.user_id];
+                if (!cell || typeof cell !== 'object' || Array.isArray(cell)) return false;
+                const hasValidPickId = 'pick_id' in cell && (cell.pick_id === null || typeof cell.pick_id === 'string');
+                const hasValidTeamId =
+                  'selected_team_id' in cell &&
+                  (cell.selected_team_id === null ||
+                    (typeof cell.selected_team_id === 'string' && cell.selected_team_id.trim().length > 0));
+                return hasValidPickId && hasValidTeamId;
+              });
+            });
+
+          if (hasValidMetadata && hasValidRows && hasAllMemberColumns && hasAllValidCells) {
+            isMatrixComplete = true;
             gamesList = matrix.rows.map((row: any) => ({
               id: String(row.game_id),
               externalGameId: row.external_game_id ? String(row.external_game_id) : String(row.game_id),
@@ -250,40 +290,19 @@ export function WallOfShamePage({
               kickoffTime: row.kickoff_time,
             }));
 
-            const hasValidMetadata =
-              Boolean(matrix.metadata) &&
-              matrix.metadata.pool_id === targetPoolId &&
-              Number(matrix.metadata.week_number) === targetWeek;
-
-            const hasAllMemberColumns =
-              Array.isArray(matrix.columns) &&
-              members.every((m: any) =>
-                matrix.columns.some((c: any) => (c.user_id || c.id) === m.user_id)
-              );
-            const hasAllRowCells =
-              matrix.cells &&
-              typeof matrix.cells === 'object' &&
-              matrix.rows.every((row: any) => {
-                const gCells = matrix.cells[row.game_id];
-                return gCells && typeof gCells === 'object' && members.every((m: any) => gCells[m.user_id] !== undefined);
-              });
-
-            if (hasValidMetadata && hasAllMemberColumns && hasAllRowCells) {
-              isMatrixComplete = true;
-              for (const row of matrix.rows) {
-                const gId = String(row.game_id);
-                const gCells = matrix.cells[gId];
-                for (const m of members) {
-                  const cell = gCells[m.user_id];
-                  if (cell && cell.selected_team_id) {
-                    matrixPicks.push({
-                      userId: m.user_id,
-                      gameId: gId,
-                      selectedTeam: cell.selected_team_id,
-                      isSubmitted: true,
-                      isHidden: false,
-                    });
-                  }
+            for (const row of matrix.rows) {
+              const gId = String(row.game_id);
+              const gCells = matrix.cells[gId];
+              for (const m of members) {
+                const cell = gCells[m.user_id];
+                if (cell && cell.selected_team_id) {
+                  matrixPicks.push({
+                    userId: m.user_id,
+                    gameId: gId,
+                    selectedTeam: cell.selected_team_id,
+                    isSubmitted: true,
+                    isHidden: false,
+                  });
                 }
               }
             }
@@ -293,7 +312,8 @@ export function WallOfShamePage({
 
       if (reqGenRef.current !== currentGen) return;
 
-      if (gamesList.length === 0) {
+      // If matrix was not structurally complete, resolve canonical inputs
+      if (!isMatrixComplete) {
         const resolution = await resolveAuthoritativeSlate({
           supabase,
           activePoolId: targetPoolId,
@@ -305,16 +325,33 @@ export function WallOfShamePage({
 
         if (reqGenRef.current !== currentGen) return;
 
-        if (resolution.source !== 'FAILED_CLOSED' && Array.isArray(resolution.games) && resolution.games.length > 0) {
-          gamesList = resolution.games.map((g: any) => ({
-            id: String(g.id),
-            externalGameId: g.externalGameId ? String(g.externalGameId) : String(g.id),
-            homeTeam: g.homeTeamId,
-            awayTeam: g.awayTeamId,
-            spread: g.spread,
-            kickoffTime: g.kickoffTime,
+        if (resolution.source === 'FAILED_CLOSED' || !Array.isArray(resolution.games) || resolution.games.length === 0) {
+          setSnapshot((prev) => ({
+            ...prev,
+            userId: user?.id,
+            poolId: targetPoolId,
+            season: targetSeason,
+            seasonType: targetSeasonType,
+            week: targetWeek,
+            ladderData: [],
+            status: resolution.source === 'FAILED_CLOSED' ? 'ERROR' : 'EMPTY',
+            scoreStatus: 'STATUS_UNAVAILABLE',
+            isSettled: false,
+            errorMessage: resolution.error || `No active games found for Week ${targetWeek}.`,
+            observedAt: new Date().toISOString(),
+            isStale: false,
           }));
+          return;
         }
+
+        gamesList = resolution.games.map((g: any) => ({
+          id: String(g.id),
+          externalGameId: g.externalGameId ? String(g.externalGameId) : String(g.id),
+          homeTeam: g.homeTeamId,
+          awayTeam: g.awayTeamId,
+          spread: g.spread,
+          kickoffTime: g.kickoffTime,
+        }));
       }
 
       // 4. Official Settled Contract Verification (Finding 1 & 3)
@@ -574,7 +611,7 @@ export function WallOfShamePage({
           const tbJson = await tbRes.json();
           if (reqGenRef.current !== currentGen) return;
 
-          if (!tbJson || typeof tbJson !== 'object') {
+          if (!tbJson || typeof tbJson !== 'object' || Array.isArray(tbJson)) {
             setSnapshot({
               userId: user?.id,
               poolId: targetPoolId,
@@ -586,6 +623,30 @@ export function WallOfShamePage({
               scoreStatus: 'STATUS_UNAVAILABLE',
               isSettled: false,
               errorMessage: 'Malformed tiebreaker response received.',
+              observedAt: new Date().toISOString(),
+              isStale: false,
+            });
+            return;
+          }
+
+          // Validate known endpoint status and boolean offered flag consistently
+          const KNOWN_TB_STATUSES = ['DEFAULT', 'OVERRIDDEN', 'UNAVAILABLE', 'UNRESOLVED'];
+          if (
+            typeof tbJson.tiebreakerOffered !== 'boolean' ||
+            typeof tbJson.status !== 'string' ||
+            !KNOWN_TB_STATUSES.includes(tbJson.status)
+          ) {
+            setSnapshot({
+              userId: user?.id,
+              poolId: targetPoolId,
+              season: targetSeason,
+              seasonType: targetSeasonType,
+              week: targetWeek,
+              ladderData: [],
+              status: 'INCOMPLETE_TELEMETRY',
+              scoreStatus: 'STATUS_UNAVAILABLE',
+              isSettled: false,
+              errorMessage: 'Unknown or missing tiebreaker status/offered telemetry.',
               observedAt: new Date().toISOString(),
               isStale: false,
             });
@@ -610,7 +671,45 @@ export function WallOfShamePage({
             return;
           }
 
-          if (tbJson.tiebreakerOffered) {
+          if (tbJson.tiebreakerOffered === false) {
+            if (tbJson.status !== 'UNAVAILABLE') {
+              setSnapshot({
+                userId: user?.id,
+                poolId: targetPoolId,
+                season: targetSeason,
+                seasonType: targetSeasonType,
+                week: targetWeek,
+                ladderData: [],
+                status: 'INCOMPLETE_TELEMETRY',
+                scoreStatus: 'STATUS_UNAVAILABLE',
+                isSettled: false,
+                errorMessage: 'Inconsistent tiebreaker offering telemetry.',
+                observedAt: new Date().toISOString(),
+                isStale: false,
+              });
+              return;
+            }
+            tiebreakerData = undefined;
+          } else {
+            // tbJson.tiebreakerOffered === true
+            if (tbJson.status !== 'DEFAULT' && tbJson.status !== 'OVERRIDDEN') {
+              setSnapshot({
+                userId: user?.id,
+                poolId: targetPoolId,
+                season: targetSeason,
+                seasonType: targetSeasonType,
+                week: targetWeek,
+                ladderData: [],
+                status: 'INCOMPLETE_TELEMETRY',
+                scoreStatus: 'STATUS_UNAVAILABLE',
+                isSettled: false,
+                errorMessage: 'Active tiebreaker lacks valid designation status.',
+                observedAt: new Date().toISOString(),
+                isStale: false,
+              });
+              return;
+            }
+
             const designatedEventId = String(tbJson.eventId || tbJson.designatedGame?.id || '');
             if (!designatedEventId) {
               setSnapshot({
@@ -669,10 +768,119 @@ export function WallOfShamePage({
               return;
             }
 
-            // Verify member readiness coverage: every active member must be covered in readiness
-            const readinessUserIds = new Set(tbJson.readiness.map((r: any) => r?.userId).filter(Boolean));
-            const hasFullMemberCoverage = members.every((m: any) => readinessUserIds.has(m.user_id));
-            if (!hasFullMemberCoverage) {
+            // Verify unique exact active member readiness coverage
+            const activeMemberIdSet = new Set<string>(members.map((m: any) => m.user_id));
+            const seenMemberIds = new Set<string>();
+            const preds: Record<string, number> = {};
+
+            for (const item of tbJson.readiness) {
+              if (!item || typeof item !== 'object' || Array.isArray(item)) {
+                setSnapshot({
+                  userId: user?.id,
+                  poolId: targetPoolId,
+                  season: targetSeason,
+                  seasonType: targetSeasonType,
+                  week: targetWeek,
+                  ladderData: [],
+                  status: 'INCOMPLETE_TELEMETRY',
+                  scoreStatus: 'STATUS_UNAVAILABLE',
+                  isSettled: false,
+                  errorMessage: 'Malformed tiebreaker readiness record.',
+                  observedAt: new Date().toISOString(),
+                  isStale: false,
+                });
+                return;
+              }
+
+              const mUserId = item.userId;
+              if (typeof mUserId !== 'string' || !mUserId || !activeMemberIdSet.has(mUserId)) {
+                setSnapshot({
+                  userId: user?.id,
+                  poolId: targetPoolId,
+                  season: targetSeason,
+                  seasonType: targetSeasonType,
+                  week: targetWeek,
+                  ladderData: [],
+                  status: 'INCOMPLETE_TELEMETRY',
+                  scoreStatus: 'STATUS_UNAVAILABLE',
+                  isSettled: false,
+                  errorMessage: 'Tiebreaker readiness contains invalid or inactive user ID.',
+                  observedAt: new Date().toISOString(),
+                  isStale: false,
+                });
+                return;
+              }
+
+              // Reject duplicate member rows
+              if (seenMemberIds.has(mUserId)) {
+                setSnapshot({
+                  userId: user?.id,
+                  poolId: targetPoolId,
+                  season: targetSeason,
+                  seasonType: targetSeasonType,
+                  week: targetWeek,
+                  ladderData: [],
+                  status: 'INCOMPLETE_TELEMETRY',
+                  scoreStatus: 'STATUS_UNAVAILABLE',
+                  isSettled: false,
+                  errorMessage: 'Duplicate member row in tiebreaker readiness.',
+                  observedAt: new Date().toISOString(),
+                  isStale: false,
+                });
+                return;
+              }
+              seenMemberIds.add(mUserId);
+
+              // Require prediction property to be explicitly null or a valid finite number in [0, 999.99]
+              // Undefined, string, boolean, negative, NaN must fail closed
+              if (!('prediction' in item)) {
+                setSnapshot({
+                  userId: user?.id,
+                  poolId: targetPoolId,
+                  season: targetSeason,
+                  seasonType: targetSeasonType,
+                  week: targetWeek,
+                  ladderData: [],
+                  status: 'INCOMPLETE_TELEMETRY',
+                  scoreStatus: 'STATUS_UNAVAILABLE',
+                  isSettled: false,
+                  errorMessage: 'Tiebreaker readiness item missing prediction field.',
+                  observedAt: new Date().toISOString(),
+                  isStale: false,
+                });
+                return;
+              }
+
+              if (item.prediction === null) {
+                // Legitimate null prediction (not submitted)
+              } else if (
+                typeof item.prediction === 'number' &&
+                Number.isFinite(item.prediction) &&
+                item.prediction >= 0 &&
+                item.prediction <= 999.99
+              ) {
+                preds[mUserId] = item.prediction;
+              } else {
+                setSnapshot({
+                  userId: user?.id,
+                  poolId: targetPoolId,
+                  season: targetSeason,
+                  seasonType: targetSeasonType,
+                  week: targetWeek,
+                  ladderData: [],
+                  status: 'INCOMPLETE_TELEMETRY',
+                  scoreStatus: 'STATUS_UNAVAILABLE',
+                  isSettled: false,
+                  errorMessage: 'Malformed tiebreaker prediction value encountered.',
+                  observedAt: new Date().toISOString(),
+                  isStale: false,
+                });
+                return;
+              }
+            }
+
+            // Exact member coverage verification
+            if (seenMemberIds.size !== activeMemberIdSet.size) {
               setSnapshot({
                 userId: user?.id,
                 poolId: targetPoolId,
@@ -688,31 +896,6 @@ export function WallOfShamePage({
                 isStale: false,
               });
               return;
-            }
-
-            const preds: Record<string, number> = {};
-            for (const item of tbJson.readiness) {
-              if (item && item.userId && item.prediction !== null && item.prediction !== undefined) {
-                const pVal = Number(item.prediction);
-                if (!Number.isFinite(pVal) || pVal < 0 || pVal > 999.99) {
-                  setSnapshot({
-                    userId: user?.id,
-                    poolId: targetPoolId,
-                    season: targetSeason,
-                    seasonType: targetSeasonType,
-                    week: targetWeek,
-                    ladderData: [],
-                    status: 'INCOMPLETE_TELEMETRY',
-                    scoreStatus: 'STATUS_UNAVAILABLE',
-                    isSettled: false,
-                    errorMessage: 'Malformed tiebreaker prediction value encountered.',
-                    observedAt: new Date().toISOString(),
-                    isStale: false,
-                  });
-                  return;
-                }
-                preds[item.userId] = pVal;
-              }
             }
 
             let actualTotalScore: number | undefined = undefined;

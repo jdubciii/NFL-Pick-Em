@@ -27,9 +27,11 @@ import {
   evaluateSlateLockSummary,
 } from '../client/src/services/lockEnforcementService';
 
+let currentMockAuthUser: any = { id: 'u1', email: 'adambrickner@example.com', role: 'MEMBER' };
+
 vi.mock('../client/src/context/AuthContext', () => ({
   useAuth: () => ({
-    user: { id: 'u1', email: 'adambrickner@example.com', role: 'MEMBER' },
+    user: currentMockAuthUser,
     token: 'synthetic-jwt-1',
   }),
 }));
@@ -136,6 +138,20 @@ function setupMockDom() {
       return this.children.filter((c: any) => c.tagName === 'OPTION');
     }
 
+    querySelector(selector: string): MockElement | null {
+      const targetTag = selector.toUpperCase();
+      const find = (node: any): any => {
+        if (!node) return null;
+        if (node.tagName === targetTag) return node;
+        for (const child of node.children || []) {
+          const res = find(child);
+          if (res) return res;
+        }
+        return null;
+      };
+      return find(this);
+    }
+
     constructor(tag: string, doc: any) {
       super();
       this.tagName = tag.toUpperCase();
@@ -222,6 +238,7 @@ function setupMockDom() {
 function setupWallMocks(options: {
   members?: any[];
   membersError?: any;
+  membersDelayMs?: number;
   wrapup?: any;
   wrapupError?: any;
   matrixRows?: any[];
@@ -251,7 +268,15 @@ function setupWallMocks(options: {
   vi.spyOn(supabase, 'from').mockImplementation(((table: string) => {
     const filters: Record<string, any> = {};
     const builder: any = {
-      select: () => builder,
+      select: (cols?: string) => {
+        if (cols && table === 'pools' && cols.includes('lock_offset')) {
+          throw new Error(`UNSUPPORTED_COLUMN: 'lock_offset' does not exist on table 'pools'. Query cols: ${cols}`);
+        }
+        if (cols && table === 'pool_memberships' && cols.includes('pools(') && cols.includes('lock_offset')) {
+          throw new Error(`UNSUPPORTED_COLUMN: 'lock_offset' does not exist on joined table 'pools'. Query cols: ${cols}`);
+        }
+        return builder;
+      },
       eq: (col: string, val: any) => {
         filters[col] = val;
         return builder;
@@ -266,20 +291,28 @@ function setupWallMocks(options: {
           return { data: options.wrapup ?? null, error: options.wrapupError ?? null };
         }
         if (table === 'pool_memberships') {
+          if (options.membersDelayMs) {
+            await new Promise((r) => setTimeout(r, options.membersDelayMs));
+          }
           return {
             data: options.membersError ? null : { status: 'ACTIVE', user_id: 'u1', pool_id: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782' },
             error: options.membersError ?? null,
           };
         }
         if (table === 'weekly_slate_manifests') {
+          const reqWeek = Number(filters.week_number || filters.week || 6);
+          const rawEvents = (options.dbGames ?? options.matrixRows ?? [
+            { id: 'g1', game_id: 'g1', external_game_id: '401872995' },
+          ]).map((g: any) => String(g.external_game_id || g.externalGameId || g.id || g.game_id));
+          const eventIds = rawEvents.length > 0 ? rawEvents : ['401872995'];
           return {
             data: {
               season: 2026,
               season_type: 2,
-              week_number: 7,
+              week_number: reqWeek,
               revision: 1,
-              manifest_fingerprint: 'fp-mock-7',
-              event_ids: (options.dbGames ?? options.matrixRows ?? []).map((g: any) => g.external_game_id || g.externalGameId || g.id || g.game_id),
+              manifest_fingerprint: `fp-mock-${reqWeek}`,
+              event_ids: eventIds,
             },
             error: null,
           };
@@ -288,7 +321,6 @@ function setupWallMocks(options: {
           return {
             data: {
               id: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
-              lock_offset: 0,
               settings: { lock_offset: 0, lockOffset: 0 },
             },
             error: null,
@@ -296,22 +328,47 @@ function setupWallMocks(options: {
         }
         return { data: null, error: null };
       },
-      then: (resolve: Function) => {
+      then: async (resolve: Function) => {
         if (table === 'pool_memberships') {
+          if (options.membersDelayMs) {
+            await new Promise((r) => setTimeout(r, options.membersDelayMs));
+          }
           resolve({ data: options.membersError ? null : members, error: options.membersError ?? null });
         } else if (table === 'picks') {
           resolve({ data: options.picksError ? null : (options.picks ?? []), error: options.picksError ?? null });
         } else if (table === 'games') {
-          resolve({ data: options.dbGames ?? [], error: null });
+          const reqWeek = Number(filters.week || filters.week_number || 6);
+          const rawGames = (options.dbGames ?? options.matrixRows ?? [
+            { id: 'g1', game_id: 'g1', external_game_id: '401872995', home_team_id: 'DEN', away_team_id: 'SEA', kickoff_time: '2026-10-18T17:00:00Z' },
+          ]).map((r: any) => ({
+            id: String(r.game_id || r.id),
+            external_game_id: String(r.external_game_id || r.externalGameId || r.game_id || r.id),
+            home_team_id: r.home_team_id || 'DEN',
+            away_team_id: r.away_team_id || 'SEA',
+            kickoff_time: r.kickoff_time || '2026-10-18T17:00:00Z',
+            canonical_kickoff_time: r.canonical_kickoff_time || r.kickoff_time || '2026-10-18T17:00:00Z',
+            lock_effective_at: r.lock_effective_at || r.kickoff_time || '2026-10-18T17:00:00Z',
+            season: 2026,
+            season_type: 2,
+            week: reqWeek,
+            manifest_revision: 1,
+            status: r.status || 'SCHEDULED',
+          }));
+          resolve({ data: rawGames, error: null });
         } else if (table === 'weekly_slate_manifests') {
+          const reqWeek = Number(filters.week_number || filters.week || 6);
+          const rawEvents = (options.dbGames ?? options.matrixRows ?? [
+            { id: 'g1', game_id: 'g1', external_game_id: '401872995' },
+          ]).map((g: any) => String(g.external_game_id || g.externalGameId || g.id || g.game_id));
+          const eventIds = rawEvents.length > 0 ? rawEvents : ['401872995'];
           resolve({
             data: {
               season: 2026,
               season_type: 2,
-              week_number: 7,
+              week_number: reqWeek,
               revision: 1,
-              manifest_fingerprint: 'fp-mock-7',
-              event_ids: (options.dbGames ?? options.matrixRows ?? []).map((g: any) => g.external_game_id || g.externalGameId || g.id || g.game_id),
+              manifest_fingerprint: `fp-mock-${reqWeek}`,
+              event_ids: eventIds,
             },
             error: null,
           });
@@ -319,7 +376,6 @@ function setupWallMocks(options: {
           resolve({
             data: {
               id: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
-              lock_offset: 0,
               settings: { lock_offset: 0, lockOffset: 0 },
             },
             error: null,
@@ -344,6 +400,31 @@ function setupWallMocks(options: {
       const weekNum = weekMatch ? Number(weekMatch[1]) : 7;
       const poolMatch = url.match(/\/api\/pools\/([^/]+)\/matrix/);
       const poolId = poolMatch ? poolMatch[1] : '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+
+      let cells = options.matrixCells;
+      if (!cells && options.matrixRows) {
+        cells = {};
+        for (const row of options.matrixRows) {
+          const gId = String(row.game_id || row.id);
+          cells[gId] = {};
+          for (const m of members) {
+            const userPick = (options.picks || []).find((p: any) => p.user_id === m.user_id && String(p.game_id) === gId);
+            cells[gId][m.user_id] = {
+              pick_id: `pick-${gId}-${m.user_id}`,
+              selected_team_id: userPick ? userPick.selected_team : null,
+            };
+          }
+        }
+      }
+
+      const rows = (options.matrixRows ?? []).map((r: any) => ({
+        game_id: String(r.game_id || r.id),
+        external_game_id: String(r.external_game_id || r.externalGameId || r.game_id || r.id),
+        home_team_id: r.home_team_id || 'DEN',
+        away_team_id: r.away_team_id || 'SEA',
+        kickoff_time: r.kickoff_time || '2026-10-18T17:00:00Z',
+      }));
+
       return {
         ok: true,
         json: async () => ({
@@ -351,8 +432,8 @@ function setupWallMocks(options: {
             pool_id: poolId,
             week_number: weekNum,
           },
-          rows: options.matrixRows ?? [],
-          cells: options.matrixCells ?? {},
+          rows,
+          cells: cells ?? {},
           columns: options.matrixColumns ?? members.map((m: any) => ({ user_id: m.user_id })),
         }),
       } as any;
@@ -363,7 +444,12 @@ function setupWallMocks(options: {
       }
       return {
         ok: true,
-        json: async () => options.tiebreakerResponse ?? ({ tiebreakerOffered: false }),
+        json: async () =>
+          options.tiebreakerResponse ?? {
+            status: 'UNAVAILABLE',
+            tiebreakerOffered: false,
+            readiness: [],
+          },
       } as any;
     }
     return { ok: false, status: 404 } as any;
@@ -733,7 +819,12 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
           const filters: Record<string, any> = {};
 
           const queryBuilder = {
-            select: () => queryBuilder,
+            select: (cols?: string) => {
+              if (cols && cols.includes('lock_offset')) {
+                throw new Error(`UNSUPPORTED_COLUMN: 'lock_offset' queried in ${cols}`);
+              }
+              return queryBuilder;
+            },
             eq: (col: string, val: any) => {
               filters[col] = val;
               return queryBuilder;
@@ -1152,6 +1243,7 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
           { user_id: 'u2', game_id: 'g-uuid-1', selected_team: 'CHI' },
         ],
         tiebreakerResponse: {
+          status: 'DEFAULT',
           tiebreakerOffered: true,
           eventId: '401772648',
           readiness: [
@@ -1407,7 +1499,12 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       const mockSb = {
         from: (table: string) => {
           const builder: any = {
-            select: () => builder,
+            select: (cols?: string) => {
+              if (cols && cols.includes('lock_offset')) {
+                throw new Error(`UNSUPPORTED_COLUMN: 'lock_offset' queried in ${cols}`);
+              }
+              return builder;
+            },
             eq: () => builder,
             in: () => builder,
             order: () => builder,
@@ -1420,7 +1517,6 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
                     pools: {
                       id: 'p-1',
                       settings: { season: 2026, season_type: 2, current_week: 7, lockOffset: 15 },
-                      lock_offset: 0,
                     },
                   },
                   error: null,
@@ -1610,11 +1706,326 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       });
     });
 
-    it('WallOfShamePage resets isSettled and clears prior rows on refresh and error', async () => {
+    it('Profile resolveProfileReminderScope handles settings alias precedence and fails closed on missing settings', async () => {
+      // 1. Precedence: lock_offset takes precedence over lockOffset
+      const sbPrecedence = {
+        from: () => ({
+          select: (cols?: string) => {
+            if (cols && cols.includes('lock_offset')) throw new Error('UNSUPPORTED_COLUMN');
+            return sbPrecedence.from();
+          },
+          eq: () => sbPrecedence.from(),
+          in: () => sbPrecedence.from(),
+          order: () => sbPrecedence.from(),
+          maybeSingle: async () => ({
+            data: {
+              pool_id: 'p-1',
+              status: 'ACTIVE',
+              pools: { id: 'p-1', settings: { season: 2026, season_type: 2, current_week: 7, lock_offset: 20, lockOffset: 10 } },
+            },
+            error: null,
+          }),
+          then: (res: Function) => res({ data: [], error: null }),
+        }),
+      };
+      const resPrecedence = await resolveProfileReminderScope({
+        userId: 'u1',
+        propPoolId: 'p-1',
+        supabaseClient: sbPrecedence as any,
+      });
+      expect(resPrecedence.poolLockOffset).toBe(20);
+
+      // 2. Fallback to lockOffset alias when lock_offset absent
+      const sbAlias = {
+        from: () => ({
+          select: (cols?: string) => {
+            if (cols && cols.includes('lock_offset')) throw new Error('UNSUPPORTED_COLUMN');
+            return sbAlias.from();
+          },
+          eq: () => sbAlias.from(),
+          in: () => sbAlias.from(),
+          order: () => sbAlias.from(),
+          maybeSingle: async () => ({
+            data: {
+              pool_id: 'p-1',
+              status: 'ACTIVE',
+              pools: { id: 'p-1', settings: { season: 2026, season_type: 2, current_week: 7, lockOffset: 15 } },
+            },
+            error: null,
+          }),
+          then: (res: Function) => res({ data: [], error: null }),
+        }),
+      };
+      const resAlias = await resolveProfileReminderScope({
+        userId: 'u1',
+        propPoolId: 'p-1',
+        supabaseClient: sbAlias as any,
+      });
+      expect(resAlias.poolLockOffset).toBe(15);
+
+      // 3. Fails closed when pool settings is missing/corrupt (does NOT default to offset 0)
+      const sbMissingSettings = {
+        from: () => ({
+          select: (cols?: string) => {
+            if (cols && cols.includes('lock_offset')) throw new Error('UNSUPPORTED_COLUMN');
+            return sbMissingSettings.from();
+          },
+          eq: () => sbMissingSettings.from(),
+          in: () => sbMissingSettings.from(),
+          order: () => sbMissingSettings.from(),
+          maybeSingle: async () => ({
+            data: {
+              pool_id: 'p-1',
+              status: 'ACTIVE',
+              pools: { id: 'p-1', settings: null },
+            },
+            error: null,
+          }),
+          then: (res: Function) => res({ data: [], error: null }),
+        }),
+      };
+      const resMissing = await resolveProfileReminderScope({
+        userId: 'u1',
+        propPoolId: 'p-1',
+        supabaseClient: sbMissingSettings as any,
+      });
+      expect(resMissing.hasAcceptedSlate).toBe(false);
+      expect(resMissing.unavailabilityReason).toBe('POOL_SETTINGS_UNAVAILABLE');
+
+      // 4. Fails closed when lock offset is negative or NaN
+      const sbInvalidOffset = {
+        from: () => ({
+          select: (cols?: string) => {
+            if (cols && cols.includes('lock_offset')) throw new Error('UNSUPPORTED_COLUMN');
+            return sbInvalidOffset.from();
+          },
+          eq: () => sbInvalidOffset.from(),
+          in: () => sbInvalidOffset.from(),
+          order: () => sbInvalidOffset.from(),
+          maybeSingle: async () => ({
+            data: {
+              pool_id: 'p-1',
+              status: 'ACTIVE',
+              pools: { id: 'p-1', settings: { season: 2026, season_type: 2, current_week: 7, lock_offset: -10 } },
+            },
+            error: null,
+          }),
+          then: (res: Function) => res({ data: [], error: null }),
+        }),
+      };
+      const resInvalid = await resolveProfileReminderScope({
+        userId: 'u1',
+        propPoolId: 'p-1',
+        supabaseClient: sbInvalidOffset as any,
+      });
+      expect(resInvalid.hasAcceptedSlate).toBe(false);
+      expect(resInvalid.unavailabilityReason).toBe('INVALID_POOL_LOCK_OFFSET');
+    });
+
+    it('WallOfShamePage fails closed to INCOMPLETE_TELEMETRY on empty {} TB response and missing/invalid status', async () => {
       const { mockDoc } = setupMockDom();
       const container = mockDoc.createElement('div');
       const root = createRoot(container as any);
 
+      // 1. Empty object {}
+      setupWallMocks({
+        matrixRows: [
+          { game_id: 'g-uuid-1', external_game_id: '401772648', home_team_id: 'NE', away_team_id: 'CHI', kickoff_time: '2026-10-15T00:15:00Z' },
+        ],
+        liveScores: [
+          { id: '401772648', status: 'FINAL', homeTeam: { code: 'NE', score: '24' }, awayTeam: { code: 'CHI', score: '30' } },
+        ],
+        tiebreakerResponse: {},
+      });
+
+      await act(async () => {
+        root.render(
+          React.createElement(WallOfShamePage, {
+            poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            season: 2026,
+            seasonType: 2,
+            week: 7,
+          })
+        );
+      });
+
+      expect(container.textContent).toContain('INCOMPLETE GAME TELEMETRY');
+      expect(container.textContent).toContain('Unknown or missing tiebreaker status/offered telemetry.');
+
+      // 2. tiebreakerOffered false with missing/unknown status (bypassing validation attempt)
+      setupWallMocks({
+        matrixRows: [
+          { game_id: 'g-uuid-1', external_game_id: '401772648', home_team_id: 'NE', away_team_id: 'CHI', kickoff_time: '2026-10-15T00:15:00Z' },
+        ],
+        liveScores: [
+          { id: '401772648', status: 'FINAL', homeTeam: { code: 'NE', score: '24' }, awayTeam: { code: 'CHI', score: '30' } },
+        ],
+        tiebreakerResponse: { tiebreakerOffered: false, status: 'UNKNOWN' },
+      });
+
+      await act(async () => {
+        root.render(
+          React.createElement(WallOfShamePage, {
+            poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            season: 2026,
+            seasonType: 2,
+            week: 7,
+          })
+        );
+      });
+
+      expect(container.textContent).toContain('INCOMPLETE GAME TELEMETRY');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('WallOfShamePage fails closed on duplicate member rows or malformed prediction values', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      // 1. Duplicate member rows in readiness array
+      setupWallMocks({
+        matrixRows: [
+          { game_id: 'g-uuid-1', external_game_id: '401772648', home_team_id: 'NE', away_team_id: 'CHI', kickoff_time: '2026-10-15T00:15:00Z' },
+        ],
+        liveScores: [
+          { id: '401772648', status: 'FINAL', homeTeam: { code: 'NE', score: '24' }, awayTeam: { code: 'CHI', score: '30' } },
+        ],
+        tiebreakerResponse: {
+          status: 'DEFAULT',
+          tiebreakerOffered: true,
+          eventId: '401772648',
+          readiness: [
+            { userId: 'u1', prediction: 45 },
+            { userId: 'u1', prediction: 50 }, // Duplicate user row
+          ],
+        },
+      });
+
+      await act(async () => {
+        root.render(
+          React.createElement(WallOfShamePage, {
+            poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            season: 2026,
+            seasonType: 2,
+            week: 7,
+          })
+        );
+      });
+
+      expect(container.textContent).toContain('INCOMPLETE GAME TELEMETRY');
+      expect(container.textContent).toContain('Duplicate member row in tiebreaker readiness.');
+
+      await act(async () => {
+        root.unmount();
+      });
+
+      // 2. Malformed non-numeric prediction (e.g. string or boolean)
+      const container2 = mockDoc.createElement('div');
+      const root2 = createRoot(container2 as any);
+
+      setupWallMocks({
+        matrixRows: [
+          { game_id: 'g-uuid-1', external_game_id: '401772648', home_team_id: 'NE', away_team_id: 'CHI', kickoff_time: '2026-10-15T00:15:00Z' },
+        ],
+        liveScores: [
+          { id: '401772648', status: 'FINAL', homeTeam: { code: 'NE', score: '24' }, awayTeam: { code: 'CHI', score: '30' } },
+        ],
+        tiebreakerResponse: {
+          status: 'DEFAULT',
+          tiebreakerOffered: true,
+          eventId: '401772648',
+          readiness: [
+            { userId: 'u1', prediction: false }, // boolean false -> cannot coerce to 0
+            { userId: 'u2', prediction: 45 },
+          ],
+        },
+      });
+
+      await act(async () => {
+        root2.render(
+          React.createElement(WallOfShamePage, {
+            poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            season: 2026,
+            seasonType: 2,
+            week: 7,
+          })
+        );
+      });
+
+      expect(container2.textContent).toContain('INCOMPLETE GAME TELEMETRY');
+      expect(container2.textContent).toContain('Malformed tiebreaker prediction value encountered.');
+
+      await act(async () => {
+        root2.unmount();
+      });
+    });
+
+    it('WallOfShamePage rejects malformed matrix cell shapes and safely falls back to authoritative resolver + DB picks', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      // Producer cell is null: cannot manufacture zero-point safe standing; must fall back to authoritative resolver
+      setupWallMocks({
+        matrixRows: [
+          { game_id: 'g-uuid-1', external_game_id: '401772648', home_team_id: 'NE', away_team_id: 'CHI', kickoff_time: '2026-10-15T00:15:00Z' },
+        ],
+        matrixCells: {
+          'g-uuid-1': {
+            u1: null, // Malformed null cell
+            u2: { pick_id: 'p-2', selected_team_id: 'CHI' },
+          },
+        },
+        dbGames: [
+          {
+            id: 'g-uuid-1',
+            external_game_id: '401772648',
+            home_team_id: 'NE',
+            away_team_id: 'CHI',
+            kickoff_time: '2026-10-15T00:15:00Z',
+          },
+        ],
+        liveScores: [
+          { id: '401772648', status: 'FINAL', homeTeam: { code: 'NE', score: '24' }, awayTeam: { code: 'CHI', score: '30' } },
+        ],
+        picks: [
+          { user_id: 'u1', game_id: 'g-uuid-1', selected_team: 'NE' },
+          { user_id: 'u2', game_id: 'g-uuid-1', selected_team: 'CHI' },
+        ],
+      });
+
+      await act(async () => {
+        root.render(
+          React.createElement(WallOfShamePage, {
+            poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            season: 2026,
+            seasonType: 2,
+            week: 7,
+          })
+        );
+      });
+
+      const text = container.textContent;
+      // Authoritative fallback correctly loaded picks from DB: u2 selected CHI (winner), u1 selected NE
+      expect(text).toContain('adambrickner');
+      expect(text).toContain('smoke_test_runner');
+      expect(text).not.toContain('INCOMPLETE GAME TELEMETRY');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('WallOfShamePage same-instance retry/refresh immediately resets isSettled and clears prior official header', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      // 1. Initial settled state
       setupWallMocks({
         wrapup: {
           pool_id: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
@@ -1635,7 +2046,6 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       await act(async () => {
         root.render(
           React.createElement(WallOfShamePage, {
-            key: 'settled',
             poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
             season: 2026,
             seasonType: 2,
@@ -1646,25 +2056,140 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
 
       expect(container.textContent).toContain('OFFICIALLY SETTLED');
 
-      // Error during subsequent refresh
+      // 2. Refresh/retry on the SAME instance with controlled delayed membership error
       setupWallMocks({
-        membersError: new Error('Database connection failed'),
+        membersDelayMs: 60,
+        membersError: new Error('Simulated network failure'),
       });
 
+      // Update same instance (same React key / element structure) to trigger reload
+      let renderPromise: Promise<void>;
+      act(() => {
+        renderPromise = new Promise(async (resolve) => {
+          root.render(
+            React.createElement(WallOfShamePage, {
+              poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+              season: 2026,
+              seasonType: 2,
+              week: 7, // Week switch on same instance
+            })
+          );
+          resolve();
+        });
+      });
+
+      // Assert DURING loading (membership delay in-flight):
+      // Settled header must be cleared immediately, not retained
+      expect(container.textContent).not.toContain('OFFICIALLY SETTLED');
+
+      // Wait for delay and error publication
       await act(async () => {
-        root.render(
-          React.createElement(WallOfShamePage, {
-            key: 'error',
-            poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
-            season: 2026,
-            seasonType: 2,
-            week: 6,
-          })
-        );
+        await new Promise((r) => setTimeout(r, 80));
       });
 
       expect(container.textContent).not.toContain('OFFICIALLY SETTLED');
       expect(container.textContent).toContain('Failed to retrieve active pool memberships.');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('MatrixPage week switch gates AppHeader, phase, badge, and Gametrack stream during sync', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      // Initial week 7 mount (getCurrentNFLWeek() returns 7)
+      setupWallMocks({
+        matrixRows: [
+          { game_id: 'g-w7', home_team_id: 'KC', away_team_id: 'DEN', kickoff_time: '2026-10-18T17:00:00Z' },
+        ],
+        picks: [{ user_id: 'u1', game_id: 'g-w7', selected_team: 'KC' }],
+      });
+
+      await act(async () => {
+        root.render(React.createElement(MatrixPage, null));
+      });
+
+      // Verify Week 7 loaded state
+      expect(container.textContent).toContain('WEEK 7');
+
+      // Switch to Week 8 with delayed matrix fetch to test syncing wireframe gating
+      setupWallMocks({
+        matrixDelayMs: 60,
+        matrixRows: [
+          { game_id: 'g-w8', home_team_id: 'NE', away_team_id: 'CHI', kickoff_time: '2026-10-25T17:00:00Z' },
+        ],
+      });
+
+      // Find the week selector and dispatch change event to switch to Week 8
+      const selectNode = container.querySelector('select');
+      expect(selectNode).not.toBeNull();
+
+      act(() => {
+        const changeEvent = { target: { value: '8' } };
+        const reactPropsKey = Object.keys(selectNode!).find((k) => k.startsWith('__reactProps$'));
+        if (reactPropsKey && (selectNode as any)[reactPropsKey]?.onChange) {
+          (selectNode as any)[reactPropsKey].onChange(changeEvent);
+        }
+      });
+
+      // Assert immediately while Week 8 sync is pending:
+      // AppHeader scope shows SYNCING..., phase shows SYNCING, badge shows SYNCING
+      expect(container.textContent).toContain('SYNCING...');
+      expect(container.textContent).toContain('SYNCING');
+      expect(container.textContent).toContain('[ SYNCING SLATE ]');
+
+      // Allow async load to complete
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 80));
+      });
+
+      expect(container.textContent).not.toContain('SYNCING...');
+      expect(container.textContent).toContain('WEEK 8');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('ProfilePage identity change to null or new user immediately denies reminder text', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      currentMockAuthUser = { id: 'u1', email: 'jack.w.cone@gmail.com', role: 'ADMIN' };
+
+      // Mount with verified commissioner user
+      await act(async () => {
+        root.render(
+          React.createElement(ProfilePage, {
+            propPoolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            propWeek: 7,
+          })
+        );
+      });
+
+      expect(container.textContent).toContain('Next Kickoff Lock');
+
+      // Now switch user to null (logout)
+      currentMockAuthUser = null;
+      await act(async () => {
+        root.render(
+          React.createElement(ProfilePage, {
+            propPoolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            propWeek: 7,
+          })
+        );
+      });
+
+      // Identity mismatch / null user must immediately deny deadline text and hide commissioner room
+      expect(container.textContent).not.toContain('Next Kickoff Lock');
+      expect(container.textContent).toContain('No accepted weekly slate available');
+
+      // Reset mock user for remaining tests
+      currentMockAuthUser = { id: 'u1', email: 'adambrickner@example.com', role: 'MEMBER' };
 
       await act(async () => {
         root.unmount();
@@ -1682,13 +2207,20 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       });
 
       await act(async () => {
-        root.render(React.createElement(MatrixPage, { key: 'err' }));
+        root.render(React.createElement(MatrixPage, null));
       });
 
       expect(container.textContent).toContain('[ DATA UNAVAILABLE ]');
       expect(container.textContent).not.toContain('[ NO PICKS SUBMITTED ]');
 
+      await act(async () => {
+        root.unmount();
+      });
+
       // 2. Verified empty state (queries succeed, 0 picks submitted)
+      const container2 = mockDoc.createElement('div');
+      const root2 = createRoot(container2 as any);
+
       setupWallMocks({
         matrixRows: [],
         picks: [],
@@ -1699,22 +2231,25 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
             home_team_id: 'DEN',
             away_team_id: 'SEA',
             kickoff_time: '2026-10-18T17:00:00Z',
+            canonical_kickoff_time: '2026-10-18T17:00:00Z',
+            lock_effective_at: '2026-10-18T17:00:00Z',
             season: 2026,
             season_type: 2,
             week: 7,
             manifest_revision: 1,
+            status: 'SCHEDULED',
           },
         ],
       });
 
       await act(async () => {
-        root.render(React.createElement(MatrixPage, { key: 'empty' }));
+        root2.render(React.createElement(MatrixPage, null));
       });
 
-      expect(container.textContent).toContain('[ NO PICKS SUBMITTED ]');
+      expect(container2.textContent).toContain('[ NO PICKS SUBMITTED ]');
 
       await act(async () => {
-        root.unmount();
+        root2.unmount();
       });
     });
   });

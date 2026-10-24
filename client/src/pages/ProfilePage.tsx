@@ -71,7 +71,7 @@ export async function resolveProfileReminderScope(
   if (propPoolId) {
     const { data: specificMem, error: memErr } = await supabaseClient
       .from('pool_memberships')
-      .select('pool_id, status, pools(id, settings, lock_offset)')
+      .select('pool_id, status, pools(id, settings)')
       .eq('user_id', userId)
       .eq('pool_id', propPoolId)
       .eq('status', 'ACTIVE')
@@ -90,12 +90,35 @@ export async function resolveProfileReminderScope(
     }
     resolvedPoolId = specificMem.pool_id;
     poolSettings = specificMem.pools?.settings || null;
-    const rawOff = poolSettings?.lock_offset ?? poolSettings?.lockOffset ?? specificMem.pools?.lock_offset ?? 0;
-    poolLockOffset = Number(rawOff) || 0;
+    if (!poolSettings || typeof poolSettings !== 'object') {
+      return {
+        hasAcceptedSlate: false,
+        resolvedPoolId: null,
+        resolvedScope: null,
+        manifestRecord: null,
+        windowGames: [],
+        isSlateSubmitted: false,
+        unavailabilityReason: 'POOL_SETTINGS_UNAVAILABLE',
+      };
+    }
+    const rawOff = poolSettings.lock_offset ?? poolSettings.lockOffset ?? 0;
+    const numOff = Number(rawOff);
+    if (!Number.isFinite(numOff) || numOff < 0) {
+      return {
+        hasAcceptedSlate: false,
+        resolvedPoolId: null,
+        resolvedScope: null,
+        manifestRecord: null,
+        windowGames: [],
+        isSlateSubmitted: false,
+        unavailabilityReason: 'INVALID_POOL_LOCK_OFFSET',
+      };
+    }
+    poolLockOffset = numOff;
   } else {
     const { data: memberships, error: memErr } = await supabaseClient
       .from('pool_memberships')
-      .select('pool_id, status, pools(id, settings, lock_offset)')
+      .select('pool_id, status, pools(id, settings)')
       .eq('user_id', userId)
       .eq('status', 'ACTIVE');
 
@@ -112,8 +135,31 @@ export async function resolveProfileReminderScope(
     }
     resolvedPoolId = memberships[0].pool_id;
     poolSettings = memberships[0].pools?.settings || null;
-    const rawOff = poolSettings?.lock_offset ?? poolSettings?.lockOffset ?? memberships[0].pools?.lock_offset ?? 0;
-    poolLockOffset = Number(rawOff) || 0;
+    if (!poolSettings || typeof poolSettings !== 'object') {
+      return {
+        hasAcceptedSlate: false,
+        resolvedPoolId: null,
+        resolvedScope: null,
+        manifestRecord: null,
+        windowGames: [],
+        isSlateSubmitted: false,
+        unavailabilityReason: 'POOL_SETTINGS_UNAVAILABLE',
+      };
+    }
+    const rawOff = poolSettings.lock_offset ?? poolSettings.lockOffset ?? 0;
+    const numOff = Number(rawOff);
+    if (!Number.isFinite(numOff) || numOff < 0) {
+      return {
+        hasAcceptedSlate: false,
+        resolvedPoolId: null,
+        resolvedScope: null,
+        manifestRecord: null,
+        windowGames: [],
+        isSlateSubmitted: false,
+        unavailabilityReason: 'INVALID_POOL_LOCK_OFFSET',
+      };
+    }
+    poolLockOffset = numOff;
   }
 
   // 2. Resolve verified application context for season, season_type, and week.
@@ -157,6 +203,7 @@ export async function resolveProfileReminderScope(
       windowGames: [],
       isSlateSubmitted: false,
       unavailabilityReason: manifestErr ? 'MANIFEST_ACCESS_DENIED' : 'MISSING_ACCEPTED_MANIFEST',
+      poolLockOffset,
     };
   }
 
@@ -174,6 +221,7 @@ export async function resolveProfileReminderScope(
       windowGames: [],
       isSlateSubmitted: false,
       unavailabilityReason: 'UNBOUND_MANIFEST_EVENT_SET',
+      poolLockOffset,
     };
   }
 
@@ -549,6 +597,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     setTestNotificationBanner('All app-owned scheduled reminders cancelled.');
   };
 
+  const [renderedUserId, setRenderedUserId] = useState<string | null>(() => user?.id || null);
   const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null);
   const [activeScope, setActiveScope] = useState<{ season: number; seasonType: number; week: number } | null>(null);
   const [manifestGames, setManifestGames] = useState<DeadlineGameWindowInput[]>([]);
@@ -564,6 +613,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
   useEffect(() => {
     if (!user?.id) {
+      setRenderedUserId(null);
       setSelectedPoolId(null);
       setActiveScope(null);
       setManifestGames([]);
@@ -573,6 +623,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
       return;
     }
 
+    setRenderedUserId(null);
     let isMounted = true;
     async function loadMemberPoolAndSlate() {
       try {
@@ -587,6 +638,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
         if (!isMounted) return;
 
+        setRenderedUserId(user?.id || null);
         setSelectedPoolId(res.resolvedPoolId);
         setActiveScope(res.resolvedScope);
         setManifestGames(res.windowGames);
@@ -595,6 +647,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
         setPoolLockOffset(res.poolLockOffset || 0);
       } catch {
         if (isMounted) {
+          setRenderedUserId(user?.id || null);
           setSelectedPoolId(null);
           setActiveScope(null);
           setManifestGames([]);
@@ -658,17 +711,18 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   }, [selectedPoolId, propPoolId]);
 
   const isScopeMismatch =
-    Boolean(propPoolId && selectedPoolId !== propPoolId) ||
-    Boolean(propWeek !== undefined && activeScope?.week !== propWeek) ||
-    Boolean(propSeason && activeScope?.season !== propSeason) ||
-    Boolean(propSeasonType && activeScope?.seasonType !== propSeasonType);
+    (renderedUserId ?? null) !== (user?.id ?? null) ||
+    (propPoolId !== undefined && selectedPoolId !== propPoolId) ||
+    (propWeek !== undefined && activeScope?.week !== propWeek) ||
+    (propSeason !== undefined && activeScope?.season !== propSeason) ||
+    (propSeasonType !== undefined && activeScope?.seasonType !== propSeasonType);
 
   const nextKickoffLockText = useMemo(() => {
-    if (isScopeMismatch || !hasAcceptedSlate || !activeScope?.week) {
+    if (isScopeMismatch || !user?.id || !hasAcceptedSlate || !activeScope?.week) {
       return 'Unavailable';
     }
     return formatNextKickoffLock(manifestGames, activeScope.week, poolLockOffset, clockNow);
-  }, [isScopeMismatch, hasAcceptedSlate, manifestGames, activeScope?.week, poolLockOffset, clockNow]);
+  }, [isScopeMismatch, user?.id, hasAcceptedSlate, manifestGames, activeScope?.week, poolLockOffset, clockNow]);
 
   useEffect(() => {
     if (!user) return;
