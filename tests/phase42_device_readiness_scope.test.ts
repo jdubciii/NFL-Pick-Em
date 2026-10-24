@@ -3182,12 +3182,15 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       const container = mockDoc.createElement('div');
       const root = createRoot(container as any);
 
-      // Kickoff at 17:00:00Z. Lock offset = 15m.
-      // Effective lock deadline: 17:00 - 15m = 16:45:00Z.
+      // Kickoff at 17:00:00.000Z. Lock offset = 15m.
+      // Effective lock deadline: 17:00 - 15m = 16:45:00.000Z.
       const kickoffIso = '2026-10-25T17:00:00.000Z';
+      const exactDeadlineTime = new Date('2026-10-25T16:45:00.000Z').getTime();
 
-      // Set initial clock to 16:40:00Z (5 minutes before lock deadline)
-      vi.setSystemTime(new Date('2026-10-25T16:40:00.000Z'));
+      // Set initial clock to exactly 16:44:50.000Z (exactly 10 seconds before effective deadline)
+      // Since WeeklyPicks sets setInterval(..., 10000), mounting at 16:44:50.000Z ensures
+      // that advancing timers by 10000ms fires the interval at EXACTLY 16:45:00.000Z.
+      vi.setSystemTime(new Date('2026-10-25T16:44:50.000Z'));
 
       setupWallMocks({
         poolSettings: { lock_offset: 15 },
@@ -3199,35 +3202,40 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
 
       await act(async () => {
         root.render(React.createElement(WeeklyPicks, null));
-        await vi.advanceTimersByTimeAsync(60);
       });
 
-      // 1. Before deadline: game is open
+      // 1. Before deadline (16:44:50.000Z): clock is strictly before deadline
+      expect(Date.now()).toBe(new Date('2026-10-25T16:44:50.000Z').getTime());
+      expect(Date.now() < exactDeadlineTime).toBe(true);
+
       expect(container.textContent).toContain('PICKS OPEN: 1');
       const awayBtn = container.querySelectorAll('button').find((b: any) => b.textContent.includes('DEN'));
       expect(awayBtn).toBeDefined();
       expect(awayBtn!.disabled).toBe(false);
 
-      // Click succeeds and persists
+      // Click succeeds and persists pick before deadline
       await act(async () => {
         awayBtn!.click();
-        await vi.advanceTimersByTimeAsync(30);
       });
 
       expect(pickPersistenceTracker.upsertCalls.length).toBe(1);
       expect(pickPersistenceTracker.upsertCalls[0].payload.selected_team).toBe('DEN');
       expect(pickPersistenceTracker.apiProxyCalls.length).toBe(1);
 
-      // Reset persistence tracker before clock advancement
+      // Reset persistence tracker before advancing to exact deadline
       pickPersistenceTracker.reset();
 
-      // 2. Advance clock to exact effective deadline (16:45:00Z)
+      // 2. Advance controlled timer by exactly 10,000ms: fires interval at EXACT effective deadline (16:45:00.000Z)
       await act(async () => {
-        vi.setSystemTime(new Date('2026-10-25T16:45:00.000Z'));
-        await vi.advanceTimersByTimeAsync(10000); // triggers WeeklyPicks 10s setInterval
+        await vi.advanceTimersByTimeAsync(10000); // 16:44:50.000Z + 10s = 16:45:00.000Z
       });
 
-      // Header updates to ALL GAMES LOCKED and button is disabled
+      // Assert Date.now equals the EXACT effective deadline
+      expect(Date.now()).toBe(exactDeadlineTime);
+      expect(new Date().toISOString()).toBe('2026-10-25T16:45:00.000Z');
+
+      // Header updates to ALL GAMES LOCKED and button is disabled at exact boundary (now >= effectiveDeadline)
+      // A boundary mutation from >= to > would evaluate as open (PICKS OPEN) and fail here
       expect(container.textContent).toContain('ALL GAMES LOCKED');
       expect(container.textContent).not.toContain('PICKS OPEN');
       expect(awayBtn!.disabled).toBe(true);
@@ -3239,7 +3247,6 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
         if (reactPropsKey && (awayBtn as any)[reactPropsKey]?.onClick) {
           (awayBtn as any)[reactPropsKey].onClick({ type: 'click' });
         }
-        await vi.advanceTimersByTimeAsync(10);
       });
 
       expect(pickPersistenceTracker.upsertCalls.length).toBe(0);
@@ -3247,12 +3254,13 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       expect(pickPersistenceTracker.apiProxyCalls.length).toBe(0);
       expect(pickPersistenceTracker.localStoragePickWrites.length).toBe(0);
 
-      // 3. Advance clock past effective deadline to 16:50:00Z (still 10 min before kickoff)
+      // 3. Advance clock past effective deadline to 16:50:00.000Z (still 10 min before kickoff)
       await act(async () => {
-        vi.setSystemTime(new Date('2026-10-25T16:50:00.000Z'));
-        await vi.advanceTimersByTimeAsync(10000);
+        await vi.advanceTimersByTimeAsync(300_000); // 5 minutes = 300,000ms (30 interval cycles)
       });
 
+      expect(Date.now()).toBe(new Date('2026-10-25T16:50:00.000Z').getTime());
+      expect(new Date().toISOString()).toBe('2026-10-25T16:50:00.000Z');
       expect(container.textContent).toContain('ALL GAMES LOCKED');
       expect(awayBtn!.disabled).toBe(true);
 
@@ -3263,7 +3271,6 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
         if (reactPropsKey && (awayBtn as any)[reactPropsKey]?.onClick) {
           (awayBtn as any)[reactPropsKey].onClick({ type: 'click' });
         }
-        await vi.advanceTimersByTimeAsync(10);
       });
 
       expect(pickPersistenceTracker.upsertCalls.length).toBe(0);

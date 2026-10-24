@@ -6,9 +6,9 @@ Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
 
  RUN  v5.0.2 C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em
 
- ✓ tests/phase42_device_readiness_scope.test.ts (62 tests) 1814ms
+ ✓ tests/phase42_device_readiness_scope.test.ts (62 tests) 1767ms
 
  Test Files  1 passed (1)
       Tests  62 passed (62)
-   Start at  16:32:58
-   Duration  3.89s (tests 49%, import 31%, transform 19%, setup 1%)
+   Start at  16:43:49
+   Duration  3.80s (tests 49%, import 31%, transform 19%, setup 1%)

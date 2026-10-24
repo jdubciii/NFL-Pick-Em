@@ -44,10 +44,12 @@ This dossier certifies the complete remediation of **R1 (WeeklyPicks settings fa
    - **Successful Retry Interaction with Actual Entry Restoration**: Mounted actual `WeeklyPicks` in error state, asserted initial pick denial and 0 writes, reconfigured mock to valid settings (`lock_offset: 0`), triggered `[ RETRY TELEMETRY INTAKE ]`, verified error clears and header publishes `PICKS OPEN: 1`, verified button enabled, clicked button, and verified actual pick persistence to `supabase.from('picks').upsert` (`game_id: 'g-retry'`, `selected_team: 'DEN'`), `scopedExpressFetch('/api/picks')`, and `localStorage`.
    - **Mounted Server Zero Default (`poolSettings: {}`)**: Mounted actual `WeeklyPicks` with valid empty settings object. Verified zero default applied: header shows `PICKS OPEN: 1`, button is enabled, clicking button succeeds and persists pick.
    - **Mounted Nonzero Offset (`poolSettings: { lock_offset: 15 }`) & Controlled Clock Advance**:
-     - Used `vi.useFakeTimers()` with kickoff at 17:00:00Z and offset 15m (effective deadline 16:45:00Z).
-     - At 16:40:00Z (before deadline): verified `PICKS OPEN: 1`, button enabled, click succeeds and persists pick.
-     - Advanced clock to exact effective deadline (16:45:00Z): verified header updates to `ALL GAMES LOCKED`, button disabled, pick attempt denied, and 0 persistence writes across all 4 channels.
-     - Advanced clock past deadline to 16:50:00Z: verified game remains locked, button disabled, and 0 persistence writes.
+     - Used `vi.useFakeTimers()` with kickoff at `17:00:00.000Z` and offset 15m (exact effective lock deadline `16:45:00.000Z`).
+     - Set initial clock to exactly `16:44:50.000Z` (10s before deadline). Verified `Date.now() < exactDeadlineTime`, `PICKS OPEN: 1`, button enabled, click succeeds and persists pick.
+     - Advanced controlled timer by exactly `10,000ms` via `advanceTimersByTimeAsync(10000)`, firing the `WeeklyPicks` interval at `Date.now() === exactDeadlineTime` (`16:45:00.000Z`).
+     - Asserted `Date.now() === exactDeadlineTime` (`16:45:00.000Z`), header transitions to `ALL GAMES LOCKED`, button disabled (`disabled: true`), pick attempt denied, and 0 persistence writes across all 4 channels.
+     - Confirmed that an operational boundary mutation from `>=` to `>` evaluates as open and is caught by actual caller proof.
+     - Advanced clock by `300,000ms` (30 interval cycles) to `16:50:00.000Z` (past deadline, 10 min before kickoff): asserted `Date.now() === 16:50:00.000Z`, game remains locked, button disabled, and 0 persistence writes.
      - Cleaned up with `vi.useRealTimers()`.
 
 ---
