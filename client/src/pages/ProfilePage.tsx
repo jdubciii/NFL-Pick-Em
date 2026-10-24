@@ -11,6 +11,7 @@ import {
   DeadlineGameWindowInput,
   DeadlinePlannerResult,
 } from '../services/deadlineAlertPlanner';
+import { evaluateCanonicalGameLock } from '../services/lockEnforcementService';
 
 interface PendingApplicant {
   userId: string;
@@ -379,30 +380,38 @@ export async function resolveProfileReminderScope(
   };
 }
 
-export function formatNextKickoffLock(games: DeadlineGameWindowInput[], weekNumber?: number | null): string {
+export function formatNextKickoffLock(
+  games: DeadlineGameWindowInput[],
+  weekNumber?: number | null,
+  lockOffsetMinutes: number = 0,
+  referenceTime: Date | number = Date.now()
+): string {
   if (!weekNumber) {
     return 'Unavailable';
   }
   if (!games || games.length === 0) {
     return 'Unavailable';
   }
-  const now = Date.now();
+
   let allKnownLocked = true;
-  const upcoming: (DeadlineGameWindowInput & { kickoffIso: string })[] = [];
+  const upcoming: { game: DeadlineGameWindowInput; deadline: Date; lockTimeMs: number }[] = [];
 
   for (const g of games) {
-    if (!g.kickoffIso) {
+    const evalResult = evaluateCanonicalGameLock(
+      {
+        kickoffTime: g.kickoffIso,
+      },
+      lockOffsetMinutes,
+      referenceTime
+    );
+
+    if (evalResult.state === 'OPEN') {
       allKnownLocked = false;
-      continue;
-    }
-    const kickoffMs = new Date(g.kickoffIso).getTime();
-    if (isNaN(kickoffMs)) {
+      if (evalResult.effectiveDeadline && evalResult.lockTimeMs) {
+        upcoming.push({ game: g, deadline: evalResult.effectiveDeadline, lockTimeMs: evalResult.lockTimeMs });
+      }
+    } else if (evalResult.state === 'UNAVAILABLE') {
       allKnownLocked = false;
-      continue;
-    }
-    if (kickoffMs > now) {
-      allKnownLocked = false;
-      upcoming.push(g as DeadlineGameWindowInput & { kickoffIso: string });
     }
   }
 
@@ -413,10 +422,10 @@ export function formatNextKickoffLock(games: DeadlineGameWindowInput[], weekNumb
     return 'Unavailable';
   }
 
-  upcoming.sort((a, b) => new Date(a.kickoffIso).getTime() - new Date(b.kickoffIso).getTime());
-  const nextKickoff = new Date(upcoming[0].kickoffIso);
-  const dayStr = nextKickoff.toLocaleDateString('en-US', { weekday: 'short' });
-  const timeStr = nextKickoff.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  upcoming.sort((a, b) => a.lockTimeMs - b.lockTimeMs);
+  const nextKickoff = upcoming[0].deadline;
+  const dayStr = nextKickoff.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+  const timeStr = nextKickoff.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
   return `${dayStr} ${timeStr} (Week ${weekNumber})`;
 }
 

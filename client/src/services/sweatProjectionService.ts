@@ -86,10 +86,19 @@ export interface TelemetryValidationResult {
   reason?: string;
 }
 
+function isValidScore(val: any): boolean {
+  if (val === undefined || val === null) return false;
+  const s = String(val).trim();
+  if (!/^\d+$/.test(s)) return false;
+  const num = Number(s);
+  return Number.isFinite(num) && num >= 0;
+}
+
 /**
  * Validates coverage of telemetry scores before projection calculation.
  * Ensures in-progress and final games have confirmed, valid finite scores,
- * and confirms future games have scheduled state.
+ * confirms future games have scheduled state, detects duplicates, and derives progress
+ * strictly from matched canonical events.
  */
 export function validateTelemetryCoverage(
   games: readonly SlateGame[],
@@ -105,49 +114,79 @@ export function validateTelemetryCoverage(
     };
   }
 
+  // Validate that no slate game has missing or invalid IDs
+  for (const g of games) {
+    if (!g || !g.id || typeof g.id !== 'string' || g.id.trim() === '') {
+      return {
+        isReady: false,
+        isAllPregame: false,
+        isIncomplete: true,
+        missingGameIds: [],
+        reason: 'INVALID_SLATE_GAME_ID',
+      };
+    }
+  }
+
   const scoreMap = new Map<string, LiveGame>();
   if (Array.isArray(liveScores)) {
     for (const s of liveScores) {
-      if (s && s.id) {
-        scoreMap.set(String(s.id), s);
+      if (!s || !s.id) continue;
+      const sId = String(s.id);
+      if (scoreMap.has(sId)) {
+        return {
+          isReady: false,
+          isAllPregame: false,
+          isIncomplete: true,
+          missingGameIds: [sId],
+          reason: 'DUPLICATE_TELEMETRY_EVENT_ID',
+        };
       }
+      scoreMap.set(sId, s);
     }
   }
 
   const now = Date.now();
   let hasStartedGames = false;
-  let hasUncertainKickoff = false;
   const missingGameIds: string[] = [];
 
   for (const g of games) {
-    if (!g || !g.id) continue;
-    const live = scoreMap.get(String(g.id));
-    const kickoffMs = g.kickoffTime ? new Date(g.kickoffTime).getTime() : NaN;
-    const isPastKickoff = !isNaN(kickoffMs) && kickoffMs <= now;
+    const gId = String(g.id);
+    const live = scoreMap.get(gId);
 
     if (!live) {
-      if (isPastKickoff || isNaN(kickoffMs)) {
-        missingGameIds.push(g.id);
-        hasUncertainKickoff = true;
-      }
+      // Telemetry must be present for every game in the slate
+      missingGameIds.push(gId);
       continue;
     }
 
     const status = (live.status || '').toUpperCase();
-    if (status === 'IN_PROGRESS' || status === 'FINAL' || isPastKickoff) {
+    const kickoffMs = g.kickoffTime ? new Date(g.kickoffTime).getTime() : NaN;
+    const hasValidKickoff = !isNaN(kickoffMs) && kickoffMs > 0;
+    const isPastKickoff = hasValidKickoff && kickoffMs <= now;
+
+    if (status === 'SCHEDULED') {
+      // Scheduled game must have a confirmed future kickoff
+      if (isPastKickoff || !hasValidKickoff) {
+        missingGameIds.push(gId);
+        continue;
+      }
+    } else if (status === 'IN_PROGRESS' || status === 'FINAL') {
       hasStartedGames = true;
       const homeRaw = live.homeTeam?.score;
       const awayRaw = live.awayTeam?.score;
-      const homeScore = homeRaw != null ? parseInt(String(homeRaw), 10) : NaN;
-      const awayScore = awayRaw != null ? parseInt(String(awayRaw), 10) : NaN;
 
-      if (isNaN(homeScore) || isNaN(awayScore) || homeScore < 0 || awayScore < 0) {
-        missingGameIds.push(g.id);
+      if (!isValidScore(homeRaw) || !isValidScore(awayRaw)) {
+        missingGameIds.push(gId);
+        continue;
       }
+    } else {
+      // Unsupported status
+      missingGameIds.push(gId);
+      continue;
     }
   }
 
-  if (missingGameIds.length > 0 || hasUncertainKickoff) {
+  if (missingGameIds.length > 0) {
     return {
       isReady: false,
       isAllPregame: false,

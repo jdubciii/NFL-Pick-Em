@@ -11,8 +11,8 @@ import { WeeklyTiebreakerCard } from './picks/WeeklyTiebreakerCard';
 import { quickFillSafetyEngine, SlateGameItem } from '../services/QuickFillSafetyEngine';
 import { formatGameKickoff } from '../utils/dateUtils';
 import { triggerHaptic } from '../utils/haptics';
-import { isKickoffLocked } from '../services/lockEnforcementService';
-import { fetchLiveNFLScores } from '../services/liveScoreService';
+import { isKickoffLocked, evaluateCanonicalGameLock, evaluateSlateLockSummary } from '../services/lockEnforcementService';
+import { fetchLiveNFLScores, type LiveGame } from '../services/liveScoreService';
 import { getCurrentNFLWeek } from '../services/nflCalendarService';
 import { resolveCanonicalGameKickoff, areTeamIdentitiesEquivalent, normalizeTeamIdentity } from '../services/dependableInfoService';
 import {
@@ -64,6 +64,7 @@ export const WeeklyPicks: React.FC = () => {
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
 
   const [games, setGames] = useState<GameItem[]>([]);
+  const [liveScores, setLiveScores] = useState<LiveGame[]>([]);
   const [pool, setPool] = useState<PoolInfo | null>(DEFAULT_POOL);
   const [matrixData, setMatrixData] = useState<MatrixResponsePayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -161,11 +162,13 @@ export const WeeklyPicks: React.FC = () => {
 
     try {
       // Fetch live scores for enrichment
-      let liveScores: any[] = [];
+      let fetchedScores: LiveGame[] = [];
       try {
-        liveScores = await fetchLiveNFLScores(selectedWeek);
+        fetchedScores = await fetchLiveNFLScores(selectedWeek);
+        setLiveScores(fetchedScores);
       } catch (scoreErr) {
         console.warn('Live score enrichment warning:', scoreErr);
+        setLiveScores([]);
       }
 
       // 2. Authoritative Persisted Fetch using shared production resolver
@@ -175,12 +178,13 @@ export const WeeklyPicks: React.FC = () => {
         seasonYear: 2026,
         seasonType: 2,
         weekNumber: selectedWeek,
-        liveScores,
+        liveScores: fetchedScores,
       });
 
       if (resolution.source === 'FAILED_CLOSED' || resolution.games.length === 0) {
         // Honest empty slate when unimported or manifest missing/errored
         setGames([]);
+        setLiveScores([]);
         setLastUpdatedTime(null);
         setIsOffline(false);
         setLoading(false);
@@ -787,60 +791,25 @@ export const WeeklyPicks: React.FC = () => {
   };
 
   const isGameLocked = (game: GameItem): boolean => {
-    const isUnconfirmed =
-      (game as any).isKickoffConfirmed === false ||
-      (game as any).is_kickoff_confirmed === false ||
-      (game as any).canonical_kickoff_time === null ||
-      ((game as any).lock_effective_at && new Date((game as any).lock_effective_at).getTime() <= 0) ||
-      new Date(game.kickoffTime).getTime() <= 0;
-    if (isUnconfirmed) {
-      return true; // Deny writes / fail closed on unconfirmed TBD kickoff
-    }
-    if (game.status === 'IN_PROGRESS' || game.status === 'FINAL') {
-      return true;
-    }
-    const lockOffsetMinutes = pool?.lock_offset || 0;
-    const effectiveLockRaw = (game as any).lock_effective_at || (game as any).canonical_kickoff_time || game.kickoffTime;
-    const lockTime = new Date(new Date(effectiveLockRaw).getTime() - lockOffsetMinutes * 60 * 1000);
-    return now.getTime() >= lockTime.getTime();
+    return evaluateCanonicalGameLock(game as any, pool?.lock_offset || 0, now).isLocked;
   };
 
   const formatKickoff = (isoString: string) => formatGameKickoff(isoString);
 
-  const isGameKickoffLocked = (g: GameItem) => isKickoffLocked(g.kickoffTime || (g as any).kickoff_time, now);
-  const allLocked = games.length > 0 && games.every(g => isGameKickoffLocked(g));
-  const lockedCount = games.filter(g => isGameKickoffLocked(g)).length;
-  const openCount = games.length - lockedCount;
-  const allCompleted = games.length > 0 && games.every(g => g.status === 'FINAL' || g.gameStatus === 'FINAL');
-  const anyLive = games.some((g) => g.isLive || g.status === 'IN_PROGRESS' || g.gameStatus === 'LIVE' || (g as any).gameStatus === 'IN_PROGRESS');
-  const anyStartedOrFinal = games.some((g) => g.status === 'FINAL' || g.gameStatus === 'FINAL' || g.isLive || g.status === 'IN_PROGRESS' || isGameKickoffLocked(g));
-  const anyUpcoming = games.some((g) => !isGameKickoffLocked(g) && (g.status === 'SCHEDULED' || (g as any).gameStatus === 'SCHEDULED' || (!g.status && !(g as any).gameStatus)));
+  const isGameKickoffLocked = (g: GameItem) => isGameLocked(g);
 
-  let phaseLabel = 'Games not started';
-  if (games.length === 0) {
-    phaseLabel = 'Status unavailable';
-  } else if (allCompleted) {
-    phaseLabel = 'All games final';
-  } else if (anyLive) {
-    phaseLabel = 'Games live';
-  } else if (anyStartedOrFinal && anyUpcoming) {
-    phaseLabel = 'Week in progress';
-  } else if (!anyStartedOrFinal) {
-    phaseLabel = 'Games not started';
-  } else {
-    phaseLabel = 'Week in progress';
-  }
+  const slateSummary = evaluateSlateLockSummary(games, liveScores, pool?.lock_offset || 0, now);
+  const allLocked = slateSummary.allGamesLocked;
+  const lockedCount = slateSummary.lockedCount;
+  const openCount = slateSummary.openCount;
+  const allCompleted = slateSummary.allGamesFinal;
+  const anyLive = slateSummary.anyGameLive;
+  const anyStartedOrFinal = slateSummary.anyStartedOrFinal;
+  const anyUpcoming = slateSummary.anyUpcoming;
 
-  let lockBadgeText = 'ALL GAMES LOCKED';
-  let isBadgeOpen = false;
-  if (games.length === 0) {
-    lockBadgeText = 'UNAVAILABLE';
-  } else if (openCount > 0) {
-    lockBadgeText = `PICKS OPEN: ${openCount}`;
-    isBadgeOpen = true;
-  } else if (allLocked || allCompleted) {
-    lockBadgeText = 'ALL GAMES LOCKED';
-  }
+  const phaseLabel = slateSummary.phaseLabel;
+  const lockBadgeText = slateSummary.lockBadgeText;
+  const isBadgeOpen = slateSummary.isBadgeOpen;
 
   const setShowWeekModal = setIsWeekModalOpen;
   const viewMode = picksViewMode;

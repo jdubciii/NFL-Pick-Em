@@ -10,13 +10,27 @@ import {
 } from '../client/src/services/sweatProjectionService';
 import {
   WeeklyLadderView,
-  WeeklyLadderViewProps,
 } from '../client/src/components/shame/WeeklyLadderView';
 import {
   resolveProfileReminderScope,
   formatNextKickoffLock,
 } from '../client/src/pages/ProfilePage';
 import { LiveGame } from '../client/src/services/liveScoreService';
+import * as apiClient from '../client/src/lib/apiClient';
+import * as liveScoreService from '../client/src/services/liveScoreService';
+import { supabase } from '../client/src/lib/supabase';
+import { WallOfShamePage } from '../client/src/pages/WallOfShamePage';
+import {
+  evaluateCanonicalGameLock,
+  evaluateSlateLockSummary,
+} from '../client/src/services/lockEnforcementService';
+
+vi.mock('../client/src/context/AuthContext', () => ({
+  useAuth: () => ({
+    user: { id: 'u1', email: 'adambrickner@example.com', role: 'MEMBER' },
+    token: 'synthetic-jwt-1',
+  }),
+}));
 
 // Mock DOM container for React createRoot testing in jsdom/node
 function setupMockDom() {
@@ -147,6 +161,20 @@ function setupMockDom() {
         this.listeners[evt] = this.listeners[evt].filter(f => f !== fn);
       }
     }
+    click() {
+      if (this.disabled) return;
+      const event: any = { type: 'click', target: this, defaultPrevented: false };
+      const reactPropsKey = Object.keys(this).find(k => k.startsWith('__reactProps$'));
+      if (reactPropsKey && (this as any)[reactPropsKey]?.onClick) {
+        (this as any)[reactPropsKey].onClick(event);
+        return;
+      }
+      if (this.listeners['click']) {
+        for (const l of [...this.listeners['click']]) {
+          l.call(this, event);
+        }
+      }
+    }
   }
 
   class MockHTMLIFrameElement extends MockElement {}
@@ -185,6 +213,77 @@ function setupMockDom() {
   return { mockDoc, MockElement };
 }
 
+function setupWallMocks(options: {
+  members?: any[];
+  wrapup?: any;
+  matrixRows?: any[];
+  dbGames?: any[];
+  picks?: any[];
+  liveScores?: LiveGame[];
+  matrixDelayMs?: number;
+  matrixShouldFail?: boolean;
+}) {
+  const members = options.members ?? [
+    { user_id: 'u1', role: 'MEMBER', users: { id: 'u1', email: 'adambrickner@example.com', display_name: 'adambrickner' } },
+    { user_id: 'u2', role: 'MEMBER', users: { id: 'u2', email: 'smoketester@example.com', display_name: 'smoke_test_runner' } },
+  ];
+
+  vi.spyOn(supabase, 'from').mockImplementation(((table: string) => {
+    const filters: Record<string, any> = {};
+    const builder: any = {
+      select: () => builder,
+      eq: (col: string, val: any) => {
+        filters[col] = val;
+        return builder;
+      },
+      maybeSingle: async () => {
+        if (table === 'weekly_wrapups') {
+          return { data: options.wrapup ?? null, error: null };
+        }
+        return { data: null, error: null };
+      },
+      then: (resolve: Function) => {
+        if (table === 'pool_memberships') {
+          resolve({ data: members, error: null });
+        } else if (table === 'picks') {
+          resolve({ data: options.picks ?? [], error: null });
+        } else if (table === 'games') {
+          resolve({ data: options.dbGames ?? [], error: null });
+        } else {
+          resolve({ data: [], error: null });
+        }
+      },
+    };
+    return builder;
+  }) as any);
+
+  vi.spyOn(apiClient, 'scopedExpressFetch').mockImplementation((async (url: string) => {
+    if (url.includes('/matrix')) {
+      if (options.matrixDelayMs) {
+        await new Promise((r) => setTimeout(r, options.matrixDelayMs));
+      }
+      if (options.matrixShouldFail) {
+        return { ok: false, status: 500, json: async () => ({ error: 'FAILED' }) } as any;
+      }
+      return {
+        ok: true,
+        json: async () => ({ rows: options.matrixRows ?? [] }),
+      } as any;
+    }
+    if (url.includes('/tiebreaker')) {
+      return {
+        ok: true,
+        json: async () => ({ tiebreakerOffered: false }),
+      } as any;
+    }
+    return { ok: false, status: 404 } as any;
+  }) as any);
+
+  vi.spyOn(liveScoreService, 'fetchLiveNFLScores').mockImplementation((async () => {
+    return options.liveScores ?? [];
+  }) as any);
+}
+
 describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READINESS-SCOPE-2026-10-24-01)', () => {
   // =========================================================================
   // Case 1: Cold load, network rejection, empty/missing telemetry
@@ -202,8 +301,8 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
           id: 'g-future',
           name: 'GB vs CHI',
           shortName: 'GB vs CHI',
-          homeTeam: { code: 'GB', name: 'Packers', score: '0' },
-          awayTeam: { code: 'CHI', name: 'Bears', score: '0' },
+          homeTeam: { code: 'GB', name: 'Packers' },
+          awayTeam: { code: 'CHI', name: 'Bears' },
           status: 'SCHEDULED',
           clock: '0:00',
           period: 1,
@@ -218,18 +317,18 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
 
     it('rejects invalid or NaN score values on started games', () => {
       const games: SlateGame[] = [
-        { id: 'g-live', homeTeam: 'DET', awayTeam: 'MIN', kickoffTime: '2026-10-18T17:00:00Z' },
+        { id: 'g-started', homeTeam: 'DET', awayTeam: 'MIN', kickoffTime: '2026-10-18T17:00:00Z' },
       ];
 
       const liveScoresInvalid: LiveGame[] = [
         {
-          id: 'g-live',
+          id: 'g-started',
           name: 'DET vs MIN',
           shortName: 'DET vs MIN',
           homeTeam: { code: 'DET', name: 'Lions', score: 'NaN' },
-          awayTeam: { code: 'MIN', name: 'Vikings', score: '14' },
+          awayTeam: { code: 'MIN', name: 'Vikings', score: '10' },
           status: 'IN_PROGRESS',
-          clock: '5:00',
+          clock: '12:00',
           period: 2,
         },
       ];
@@ -237,59 +336,45 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       const validation = validateTelemetryCoverage(games, liveScoresInvalid);
       expect(validation.isReady).toBe(false);
       expect(validation.isIncomplete).toBe(true);
-      expect(validation.missingGameIds).toContain('g-live');
+      expect(validation.missingGameIds).toContain('g-started');
     });
 
-    it('mounts WeeklyLadderView in INCOMPLETE_TELEMETRY state and displays retry without SAFE claims', async () => {
+    it('rejects duplicate telemetry event IDs with DUPLICATE_TELEMETRY_EVENT_ID', () => {
+      const games: SlateGame[] = [
+        { id: 'g-1', homeTeam: 'DET', awayTeam: 'MIN', kickoffTime: '2026-10-25T17:00:00Z' },
+      ];
+
+      const duplicateScores: LiveGame[] = [
+        { id: 'g-1', name: 'DET vs MIN', shortName: 'DET vs MIN', homeTeam: { code: 'DET', name: 'Lions' }, awayTeam: { code: 'MIN', name: 'Vikings' }, status: 'SCHEDULED', clock: '0:00', period: 1 },
+        { id: 'g-1', name: 'DET vs MIN', shortName: 'DET vs MIN', homeTeam: { code: 'DET', name: 'Lions' }, awayTeam: { code: 'MIN', name: 'Vikings' }, status: 'SCHEDULED', clock: '0:00', period: 1 },
+      ];
+
+      const validation = validateTelemetryCoverage(games, duplicateScores);
+      expect(validation.isIncomplete).toBe(true);
+      expect(validation.reason).toBe('DUPLICATE_TELEMETRY_EVENT_ID');
+    });
+
+    it('mounts actual WallOfShamePage in INCOMPLETE_TELEMETRY state and displays retry without SAFE claims', async () => {
       const { mockDoc } = setupMockDom();
       const container = mockDoc.createElement('div');
       const root = createRoot(container as any);
 
-      const retryFn = vi.fn();
+      setupWallMocks({
+        matrixRows: [
+          { game_id: 'g-1', home_team_id: 'DET', away_team_id: 'MIN', kickoff_time: '2026-10-18T17:00:00Z' },
+        ],
+        liveScores: [], // Empty live scores
+      });
 
       await act(async () => {
-        root.render(
-          React.createElement(WeeklyLadderView, {
-            ladder: [],
-            status: 'INCOMPLETE_TELEMETRY',
-            weekNumber: 6,
-            isSettled: false,
-            onRetry: retryFn,
-          })
-        );
+        root.render(React.createElement(WallOfShamePage, { poolId: 'p-1', week: 6 }));
       });
 
       const text = container.textContent;
       expect(text).toContain('INCOMPLETE GAME TELEMETRY');
       expect(text).toContain('RETRY');
       expect(text).not.toContain('PROJECTED SAFE');
-      expect(text).not.toContain('0 shots');
-
-      await act(async () => {
-        root.unmount();
-      });
-    });
-
-    it('mounts WeeklyLadderView in LOADING state without child fallback or fake rank 1 SAFE claims', async () => {
-      const { mockDoc } = setupMockDom();
-      const container = mockDoc.createElement('div');
-      const root = createRoot(container as any);
-
-      await act(async () => {
-        root.render(
-          React.createElement(WeeklyLadderView, {
-            ladder: [],
-            status: 'LOADING',
-            weekNumber: 6,
-            isSettled: false,
-          })
-        );
-      });
-
-      const text = container.textContent;
-      expect(text).toContain('LOADING WEEK 6 LADDER');
-      expect(text).not.toContain('PROJECTED SAFE');
-      expect(text).not.toContain('SAFE HAVEN // 1ST PLACE');
+      expect(text).not.toContain('Safe Haven');
 
       await act(async () => {
         root.unmount();
@@ -303,30 +388,30 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
   describe('Case 2: Complete 0-0 scores, all-pregame state, and genuine shared ranks', () => {
     it('validates complete 0-0 scores as legitimate valid scoring telemetry', () => {
       const games: SlateGame[] = [
-        { id: 'g-1', homeTeam: 'DET', awayTeam: 'MIN', kickoffTime: '2026-10-18T17:00:00Z' },
+        { id: 'g-live-zero', homeTeam: 'DET', awayTeam: 'MIN', kickoffTime: '2026-10-18T17:00:00Z' },
       ];
 
-      const liveScores00: LiveGame[] = [
+      const liveScoresZero: LiveGame[] = [
         {
-          id: 'g-1',
+          id: 'g-live-zero',
           name: 'DET vs MIN',
           shortName: 'DET vs MIN',
           homeTeam: { code: 'DET', name: 'Lions', score: '0' },
           awayTeam: { code: 'MIN', name: 'Vikings', score: '0' },
           status: 'IN_PROGRESS',
-          clock: '15:00',
+          clock: '14:50',
           period: 1,
         },
       ];
 
-      const validation = validateTelemetryCoverage(games, liveScores00);
+      const validation = validateTelemetryCoverage(games, liveScoresZero);
       expect(validation.isReady).toBe(true);
       expect(validation.isIncomplete).toBe(false);
-      expect(validation.isAllPregame).toBe(false);
+      expect(validation.missingGameIds).toHaveLength(0);
     });
 
     it('identifies confirmed all-future scheduled games as all-pregame without numeric scores required', () => {
-      const futureTime = new Date(Date.now() + 86400000 * 3).toISOString();
+      const futureTime = new Date(Date.now() + 86400000).toISOString();
       const games: SlateGame[] = [
         { id: 'g-w7-1', homeTeam: 'DET', awayTeam: 'MIN', kickoffTime: futureTime },
         { id: 'g-w7-2', homeTeam: 'GB', awayTeam: 'CHI', kickoffTime: futureTime },
@@ -337,8 +422,8 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
           id: 'g-w7-1',
           name: 'DET vs MIN',
           shortName: 'DET vs MIN',
-          homeTeam: { code: 'DET', name: 'Lions', score: '0' },
-          awayTeam: { code: 'MIN', name: 'Vikings', score: '0' },
+          homeTeam: { code: 'DET', name: 'Lions' },
+          awayTeam: { code: 'MIN', name: 'Vikings' },
           status: 'SCHEDULED',
           clock: '0:00',
           period: 1,
@@ -347,8 +432,8 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
           id: 'g-w7-2',
           name: 'GB vs CHI',
           shortName: 'GB vs CHI',
-          homeTeam: { code: 'GB', name: 'Packers', score: '0' },
-          awayTeam: { code: 'CHI', name: 'Bears', score: '0' },
+          homeTeam: { code: 'GB', name: 'Packers' },
+          awayTeam: { code: 'CHI', name: 'Bears' },
           status: 'SCHEDULED',
           clock: '0:00',
           period: 1,
@@ -361,20 +446,32 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       expect(validation.isIncomplete).toBe(false);
     });
 
-    it('mounts WeeklyLadderView in GAMES_NOT_STARTED state with zero safety promise', async () => {
+    it('mounts actual WallOfShamePage in GAMES_NOT_STARTED state with zero safety promise', async () => {
       const { mockDoc } = setupMockDom();
       const container = mockDoc.createElement('div');
       const root = createRoot(container as any);
 
+      const futureTime = new Date(Date.now() + 86400000).toISOString();
+      setupWallMocks({
+        matrixRows: [
+          { game_id: 'g-w7-1', home_team_id: 'DET', away_team_id: 'MIN', kickoff_time: futureTime },
+        ],
+        liveScores: [
+          {
+            id: 'g-w7-1',
+            name: 'DET vs MIN',
+            shortName: 'DET vs MIN',
+            homeTeam: { code: 'DET', name: 'Lions' },
+            awayTeam: { code: 'MIN', name: 'Vikings' },
+            status: 'SCHEDULED',
+            clock: '0:00',
+            period: 1,
+          },
+        ],
+      });
+
       await act(async () => {
-        root.render(
-          React.createElement(WeeklyLadderView, {
-            ladder: [],
-            status: 'GAMES_NOT_STARTED',
-            weekNumber: 7,
-            isSettled: false,
-          })
-        );
+        root.render(React.createElement(WallOfShamePage, { poolId: 'p-1', week: 7 }));
       });
 
       const text = container.textContent;
@@ -407,7 +504,6 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
           period: 4,
         },
       ];
-      // Both users picked DET and have identical correct picks
       const picks: UserPickItem[] = [
         { userId: 'u1', gameId: 'g-1', selectedTeam: 'DET', isSubmitted: true },
         { userId: 'u2', gameId: 'g-1', selectedTeam: 'DET', isSubmitted: true },
@@ -428,29 +524,107 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
   // Case 3: Request generation isolation & stale response cancellation
   // =========================================================================
   describe('Case 3: Request generation isolation & stale response cancellation', () => {
-    it('proves only latest request generation publishes when slow earlier request completes late', async () => {
-      let generation = 0;
-      let publishedSnapshot: any = null;
+    it('proves rapid week switch on actual WallOfShamePage prevents slow earlier response from overwriting newer week', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
 
-      async function simulatedLoad(scopeWeek: number, delayMs: number) {
-        const thisGen = ++generation;
-        await new Promise((r) => setTimeout(r, delayMs));
-        // Stale generation check
-        if (thisGen !== generation) {
-          return; // Cancelled
+      let resolveWeek6Matrix: any;
+      const week6Promise = new Promise((r) => { resolveWeek6Matrix = r; });
+
+      vi.spyOn(supabase, 'from').mockImplementation(((table: string) => {
+        const builder: any = {
+          select: () => builder,
+          eq: () => builder,
+          maybeSingle: async () => ({ data: null, error: null }),
+          then: (resolve: Function) => {
+            if (table === 'pool_memberships') {
+              resolve({
+                data: [
+                  { user_id: 'u1', role: 'MEMBER', users: { display_name: 'adambrickner' } },
+                ],
+                error: null,
+              });
+            } else {
+              resolve({ data: [], error: null });
+            }
+          },
+        };
+        return builder;
+      }) as any);
+
+      vi.spyOn(apiClient, 'scopedExpressFetch').mockImplementation((async (url: string) => {
+        if (url.includes('week_no=6')) {
+          await week6Promise;
+          return {
+            ok: true,
+            json: async () => ({ rows: [{ game_id: 'g6', home_team_id: 'KC', away_team_id: 'DEN', kickoff_time: '2026-10-18T17:00:00Z' }] }),
+          } as any;
         }
-        publishedSnapshot = { week: scopeWeek, generation: thisGen };
-      }
+        if (url.includes('week_no=7')) {
+          return {
+            ok: true,
+            json: async () => ({ rows: [{ game_id: 'g7', home_team_id: 'PIT', away_team_id: 'NO', kickoff_time: '2026-10-25T17:00:00Z' }] }),
+          } as any;
+        }
+        return { ok: false } as any;
+      }) as any);
 
-      // Start slow earlier request for Week 6 (100ms)
-      const p1 = simulatedLoad(6, 100);
-      // Start fast later request for Week 7 (20ms)
-      const p2 = simulatedLoad(7, 20);
+      vi.spyOn(liveScoreService, 'fetchLiveNFLScores').mockImplementation((async (week: number) => {
+        if (week === 6) {
+          return [{ id: 'g6', homeTeam: { code: 'KC', name: 'Chiefs', score: '30' }, awayTeam: { code: 'DEN', name: 'Broncos', score: '10' }, status: 'FINAL' }] as any;
+        }
+        const futureTime = new Date(Date.now() + 86400000).toISOString();
+        return [{ id: 'g7', homeTeam: { code: 'PIT', name: 'Steelers' }, awayTeam: { code: 'NO', name: 'Saints' }, status: 'SCHEDULED', kickoffTime: futureTime }] as any;
+      }) as any);
 
-      await Promise.all([p1, p2]);
+      // Mount Week 6
+      await act(async () => {
+        root.render(React.createElement(WallOfShamePage, { poolId: 'p-main', week: 6 }));
+      });
 
-      // Only Week 7 generation published; Week 6 was discarded
-      expect(publishedSnapshot).toEqual({ week: 7, generation: 2 });
+      // Rapidly switch to Week 7 before Week 6 matrix finishes
+      await act(async () => {
+        root.render(React.createElement(WallOfShamePage, { poolId: 'p-main', week: 7 }));
+      });
+
+      // Let Week 6 resolve late
+      resolveWeek6Matrix();
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+
+      // Must display Week 7, not overwritten by Week 6
+      expect(container.textContent).toContain('WEEK 7');
+      expect(container.textContent).not.toContain('WEEK 6 ·');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('unmount cleanup invalidates in-flight requests and avoids state publications', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      setupWallMocks({
+        matrixDelayMs: 50,
+      });
+
+      await act(async () => {
+        root.render(React.createElement(WallOfShamePage, { poolId: 'p-main', week: 6 }));
+      });
+
+      // Unmount immediately while matrix query is in-flight
+      await act(async () => {
+        root.unmount();
+      });
+
+      // Wait past delay to confirm zero unhandled exceptions
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 70));
+      });
     });
   });
 
@@ -466,22 +640,15 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
     }) {
       return {
         from: (table: string) => {
-          let selectedCols = '*';
           const filters: Record<string, any> = {};
 
           const queryBuilder = {
-            select: (cols: string) => {
-              selectedCols = cols;
-              return queryBuilder;
-            },
+            select: () => queryBuilder,
             eq: (col: string, val: any) => {
               filters[col] = val;
               return queryBuilder;
             },
-            in: (col: string, val: any) => {
-              filters[col] = val;
-              return queryBuilder;
-            },
+            in: () => queryBuilder,
             order: () => queryBuilder,
             maybeSingle: async () => {
               if (table === 'pool_memberships') {
@@ -614,22 +781,80 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       expect(text).toContain('Week 7');
       expect(text).not.toContain('All Week 7 Games Locked');
     });
+
+    it('formatNextKickoffLock incorporates lockOffsetMinutes into deadline lock evaluation', () => {
+      const nowMs = new Date('2026-10-25T16:56:00Z').getTime();
+      const futureKickoff = '2026-10-25T17:00:00Z'; // 4 minutes away
+      const games = [{ id: 'g1', kickoffIso: futureKickoff, isPicked: false }];
+
+      // With 5 minute offset, deadline has already passed 1 minute ago
+      const lockedWithOffset = formatNextKickoffLock(games, 7, 5, nowMs);
+      expect(lockedWithOffset).toBe('All Week 7 Games Locked');
+
+      // With 0 minute offset, deadline is still upcoming
+      const openWithoutOffset = formatNextKickoffLock(games, 7, 0, nowMs);
+      expect(openWithoutOffset).toContain('Week 7');
+      expect(openWithoutOffset).not.toBe('All Week 7 Games Locked');
+    });
   });
 
   // =========================================================================
   // Case 5: Per-game lock and week in progress status
   // =========================================================================
   describe('Case 5: Per-game lock and week in progress status', () => {
-    it('verifies that a final Thursday game does not lock Sunday games', () => {
+    it('evaluates exact kickoff boundary correctly via evaluateCanonicalGameLock', () => {
+      const kickoffIso = '2026-10-25T17:00:00Z';
+      const kickoffMs = new Date(kickoffIso).getTime();
+
+      // Exactly at kickoff deadline -> LOCKED
+      const exactLock = evaluateCanonicalGameLock({ kickoffTime: kickoffIso }, 0, kickoffMs);
+      expect(exactLock.isLocked).toBe(true);
+      expect(exactLock.state).toBe('LOCKED');
+
+      // 1000ms before kickoff deadline -> OPEN
+      const beforeLock = evaluateCanonicalGameLock({ kickoffTime: kickoffIso }, 0, kickoffMs - 1000);
+      expect(beforeLock.isLocked).toBe(false);
+      expect(beforeLock.state).toBe('OPEN');
+
+      // 1000ms after kickoff deadline -> LOCKED
+      const afterLock = evaluateCanonicalGameLock({ kickoffTime: kickoffIso }, 0, kickoffMs + 1000);
+      expect(afterLock.isLocked).toBe(true);
+      expect(afterLock.state).toBe('LOCKED');
+    });
+
+    it('fails closed as UNAVAILABLE on unconfirmed or missing kickoff', () => {
+      const unconfirmed = evaluateCanonicalGameLock({ kickoffTime: null, isKickoffConfirmed: false });
+      expect(unconfirmed.state).toBe('UNAVAILABLE');
+      expect(unconfirmed.isLocked).toBe(true);
+      expect(unconfirmed.reason).toBe('UNVERIFIED_KICKOFF');
+    });
+
+    it('evaluates mixed slate with Thursday final and Sunday open into Week in progress', () => {
       const nowMs = new Date('2026-10-24T12:00:00Z').getTime(); // Saturday
-      const thursdayPast = new Date('2026-10-22T20:15:00Z').getTime();
-      const sundayFuture = new Date('2026-10-25T17:00:00Z').getTime();
+      const slateGames = [
+        { id: 'g-tnf', home_team_id: 'CHI', away_team_id: 'NE', kickoff_time: '2026-10-22T20:15:00Z', status: 'FINAL' },
+        { id: 'g-sun', home_team_id: 'PIT', away_team_id: 'NO', kickoff_time: '2026-10-25T17:00:00Z', status: 'SCHEDULED' },
+      ];
+      const liveScores: LiveGame[] = [
+        { id: 'g-tnf', name: 'NE @ CHI', shortName: 'NE @ CHI', homeTeam: { code: 'CHI', name: 'Bears', score: '30' }, awayTeam: { code: 'NE', name: 'Patriots', score: '24' }, status: 'FINAL', clock: 'FINAL', period: 4 },
+        { id: 'g-sun', name: 'PIT @ NO', shortName: 'PIT @ NO', homeTeam: { code: 'NO', name: 'Saints' }, awayTeam: { code: 'PIT', name: 'Steelers' }, status: 'SCHEDULED', clock: '0:00', period: 1 },
+      ];
 
-      const isThursdayLocked = nowMs >= thursdayPast;
-      const isSundayLocked = nowMs >= sundayFuture;
+      const summary = evaluateSlateLockSummary(slateGames, liveScores, 0, nowMs);
+      expect(summary.openCount).toBe(1);
+      expect(summary.lockedCount).toBe(1);
+      expect(summary.phaseLabel).toBe('Week in progress');
+      expect(summary.lockBadgeText).toBe('PICKS OPEN: 1');
+      expect(summary.isBadgeOpen).toBe(true);
+      expect(summary.allGamesFinal).toBe(false);
+    });
 
-      expect(isThursdayLocked).toBe(true);
-      expect(isSundayLocked).toBe(false);
+    it('evaluates empty slate safely as Status unavailable without inferring all games final', () => {
+      const summary = evaluateSlateLockSummary([], []);
+      expect(summary.total).toBe(0);
+      expect(summary.phaseLabel).toBe('Status unavailable');
+      expect(summary.lockBadgeText).toBe('UNAVAILABLE');
+      expect(summary.allGamesFinal).toBe(false);
     });
   });
 
@@ -637,39 +862,32 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
   // Case 6: Settlement separation from game outcome finality
   // =========================================================================
   describe('Case 6: Settlement separation from game outcome finality', () => {
-    it('mounts WeeklyLadderView with all final scores and unconfirmed settlement: shows settlement not confirmed badge', async () => {
+    it('mounts actual WallOfShamePage with all final scores and unconfirmed settlement: shows settlement not confirmed badge', async () => {
       const { mockDoc } = setupMockDom();
       const container = mockDoc.createElement('div');
       const root = createRoot(container as any);
 
-      const ladderMock = [
-        {
-          rank: 1,
-          displayRank: '#1',
-          userId: 'u1',
-          userName: 'adambrickner',
-          shots: '0.00 shots',
-          penaltyShots: 0,
-          status: 'PROJECTED SAFE',
-          fsmDisplayStatus: 'Safe Haven',
-          tier: 'SAFE HAVEN',
-        },
-      ];
+      setupWallMocks({
+        wrapup: null, // No authoritative weekly_wrapups settlement
+        matrixRows: [
+          { game_id: 'g1', home_team_id: 'KC', away_team_id: 'DEN', kickoff_time: '2026-10-18T17:00:00Z' },
+        ],
+        liveScores: [
+          { id: 'g1', name: 'KC vs DEN', shortName: 'KC vs DEN', homeTeam: { code: 'KC', name: 'Chiefs', score: '24' }, awayTeam: { code: 'DEN', name: 'Broncos', score: '10' }, status: 'FINAL', clock: 'FINAL', period: 4 },
+        ],
+        picks: [
+          { user_id: 'u1', game_id: 'g1', selected_team: 'KC', week: 6 },
+          { user_id: 'u2', game_id: 'g1', selected_team: 'DEN', week: 6 },
+        ],
+      });
 
       await act(async () => {
-        root.render(
-          React.createElement(WeeklyLadderView, {
-            ladder: ladderMock,
-            status: 'READY',
-            weekNumber: 6,
-            isSettled: false,
-            scoreStatus: 'ALL_GAMES_FINAL',
-          })
-        );
+        root.render(React.createElement(WallOfShamePage, { poolId: 'p-1', week: 6 }));
       });
 
       const text = container.textContent;
-      expect(text).toContain('WEEK 6 · PROVISIONAL PREVIEW — SETTLEMENT NOT CONFIRMED');
+      expect(text).toContain('WEEK 6 FINAL · SETTLEMENT NOT CONFIRMED');
+      expect(text).toContain('SETTLEMENT NOT CONFIRMED');
       expect(text).not.toContain('OFFICIAL SETTLED');
 
       await act(async () => {
@@ -677,7 +895,46 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       });
     });
 
-    it('mounts WeeklyLadderView with verified authoritative settlement: shows OFFICIAL SETTLED', async () => {
+    it('mounts actual WallOfShamePage with verified authoritative settlement summary: shows OFFICIAL SETTLED', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      setupWallMocks({
+        wrapup: {
+          pool_id: 'p-1',
+          week_number: 6,
+          completed_at: '2026-10-21T00:00:00Z',
+          summary: {
+            standings: [
+              { userId: 'u1', rank: 1, score: 10, shots: 0, isSafeHaven: true, isDeadPlace: false },
+              { userId: 'u2', rank: 2, score: 6, shots: 2.5, isSafeHaven: false, isDeadPlace: true },
+            ],
+          },
+        },
+      });
+
+      await act(async () => {
+        root.render(React.createElement(WallOfShamePage, { poolId: 'p-1', week: 6 }));
+      });
+
+      const text = container.textContent;
+      expect(text).toContain('OFFICIALLY SETTLED');
+      expect(text).toContain('WEEK 6 · OFFICIAL SETTLED');
+      expect(text).toContain('CLEARED (SAFE)');
+      expect(text).toContain('DEAD PLACE');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+  });
+
+  // =========================================================================
+  // Case 7: Visible stale snapshot banner & elimination of fake countdown
+  // =========================================================================
+  describe('Case 7: Visible stale snapshot banner & elimination of fake countdown', () => {
+    it('mounts WeeklyLadderView with isStale: true and displays visible warning banner with timestamp', async () => {
       const { mockDoc } = setupMockDom();
       const container = mockDoc.createElement('div');
       const root = createRoot(container as any);
@@ -702,59 +959,19 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
             ladder: ladderMock,
             status: 'READY',
             weekNumber: 6,
-            isSettled: true,
-            scoreStatus: 'ALL_GAMES_FINAL',
-          })
-        );
-      });
-
-      const text = container.textContent;
-      expect(text).toContain('WEEK 6 · OFFICIAL SETTLED');
-
-      await act(async () => {
-        root.unmount();
-      });
-    });
-  });
-
-  // =========================================================================
-  // Case 7: Visible stale snapshot banner & elimination of fake countdown
-  // =========================================================================
-  describe('Case 7: Visible stale snapshot banner & elimination of fake countdown', () => {
-    it('mounts WeeklyLadderView with isStale: true and displays visible warning banner with timestamp', async () => {
-      const { mockDoc } = setupMockDom();
-      const container = mockDoc.createElement('div');
-      const root = createRoot(container as any);
-
-      const ladderMock = [
-        {
-          rank: 1,
-          displayRank: '#1',
-          userId: 'u1',
-          userName: 'Player 1',
-          penaltyShots: 0,
-          status: 'Provisional',
-          fsmDisplayStatus: 'Provisional',
-          tier: 'SAFE HAVEN',
-        },
-      ];
-
-      await act(async () => {
-        root.render(
-          React.createElement(WeeklyLadderView, {
-            ladder: ladderMock,
-            status: 'READY',
-            weekNumber: 6,
             isSettled: false,
+            scoreStatus: 'ALL_GAMES_FINAL',
             isStale: true,
-            observedAt: '2026-10-24T12:00:00.000Z',
+            observedAt: '2026-10-24T18:00:00.000Z',
           })
         );
       });
 
       const text = container.textContent;
       expect(text).toContain('DISPLAYING STALE SNAPSHOT');
-      expect(text).not.toContain('TIME TO SUBMIT EVIDENCE (SUBMISSION DEADLINE)'); // Fake timer removed
+      expect(text).toContain('Recorded');
+      expect(text).not.toContain('3600*24');
+      expect(text).not.toContain('Time Remaining');
 
       await act(async () => {
         root.unmount();

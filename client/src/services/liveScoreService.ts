@@ -2,9 +2,10 @@ export interface LiveGame {
   id: string;
   name: string;
   shortName: string;
-  homeTeam: { code: string; name: string; score: string };
-  awayTeam: { code: string; name: string; score: string };
+  homeTeam: { code: string; name: string; score?: string };
+  awayTeam: { code: string; name: string; score?: string };
   status: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL';
+  kickoffTime?: string;
   clock: string;
   period: number;
   downDistanceText?: string;
@@ -55,21 +56,26 @@ export async function fetchLiveNFLScores(weekNumber: number = 5): Promise<LiveGa
       const homeCode = rawHomeCode === 'WSH' ? 'WAS' : rawHomeCode === 'JAC' ? 'JAX' : rawHomeCode;
       const awayCode = rawAwayCode === 'WSH' ? 'WAS' : rawAwayCode === 'JAC' ? 'JAX' : rawAwayCode;
 
+      const homeScore = home.score !== undefined && home.score !== null ? String(home.score) : undefined;
+      const awayScore = away.score !== undefined && away.score !== null ? String(away.score) : undefined;
+      const kickoffIso = event.date ? new Date(event.date).toISOString() : undefined;
+
       return {
-        id: event.id,
+        id: String(event.id),
         name: event.name,
         shortName: event.shortName,
         homeTeam: {
           code: homeCode,
           name: home.team?.displayName || 'Home',
-          score: home.score || '0'
+          score: homeScore,
         },
         awayTeam: {
           code: awayCode,
           name: away.team?.displayName || 'Away',
-          score: away.score || '0'
+          score: awayScore,
         },
         status: mappedStatus,
+        kickoffTime: kickoffIso,
         clock: displayClock,
         period: event.status?.period || (isHalftime ? 2 : 1),
         downDistanceText: competition?.situation?.downDistanceText || '',
@@ -99,4 +105,3 @@ export function processLiveScoreUpdate(existingGames: LiveGame[], newScores: Liv
   }
   return [...newScores];
 }
-

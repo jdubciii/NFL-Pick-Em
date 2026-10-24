@@ -19,7 +19,7 @@ import {
   deriveAutopilotProvenance,
   RawGameLine
 } from '../services/autopilotTopologyService';
-import { isKickoffLocked } from '../services/lockEnforcementService';
+import { isKickoffLocked, evaluateSlateLockSummary, evaluateCanonicalGameLock } from '../services/lockEnforcementService';
 import { evaluatePickVisibility } from '../services/openSlatePolicyService';
 import { getCurrentNFLWeek } from '../services/nflCalendarService';
 import { fetchLiveNFLScores, LiveGame } from '../services/liveScoreService';
@@ -45,6 +45,7 @@ export const MatrixPage: React.FC = () => {
   const [loadingGames, setLoadingGames] = useState<boolean>(true);
   const [poolMembers, setPoolMembers] = useState<{ userId: string; userName: string; isAutopilot: boolean }[]>([]);
   const [poolPicks, setPoolPicks] = useState<UserSubmittedPick[]>([]);
+  const [slateGames, setSlateGames] = useState<any[]>([]);
   const [gameReactions, setGameReactions] = useState<ReactionEntry[]>([]);
 
   const handleToggleGameReaction = (gameId: string, code: ReactionCode) => {
@@ -139,6 +140,17 @@ export const MatrixPage: React.FC = () => {
           setPoolMembers([{ userId: currentUserId, userName: `${currentUserName} (You)`, isAutopilot: false }]);
         }
 
+        // Query games for selectedWeek to evaluate exact kickoff locks
+        const { data: dbGames } = await supabase
+          .from('games')
+          .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, status')
+          .eq('season', 2026)
+          .eq('season_type', 2)
+          .eq('week', selectedWeek);
+
+        if (!isMounted) return;
+        setSlateGames(dbGames || []);
+
         // Query submitted picks for selectedWeek
         const { data: dbPicks } = await supabase
           .from('picks')
@@ -179,64 +191,14 @@ export const MatrixPage: React.FC = () => {
   const isCurrentOrFutureWeek = selectedWeek >= currentNFLWeek;
 
   const now = Date.now();
-  const gameLockStatus = useMemo(() => {
-    let lockedCount = 0;
-    let openCount = 0;
-    let unavailableCount = 0;
+  const slateSummary = useMemo(() => {
+    const gamesToEvaluate = slateGames.length > 0 ? slateGames : liveGames;
+    return evaluateSlateLockSummary(gamesToEvaluate, liveGames, 0, now);
+  }, [slateGames, liveGames, now]);
 
-    for (const g of liveGames) {
-      if (g.status === 'FINAL' || g.status === 'IN_PROGRESS') {
-        lockedCount++;
-        continue;
-      }
-      const kickoffIso = (g as any).kickoffTime || (g as any).kickoff_time;
-      if (!kickoffIso) {
-        unavailableCount++;
-        continue;
-      }
-      const kickoffMs = new Date(kickoffIso).getTime();
-      if (isNaN(kickoffMs) || kickoffMs <= 0) {
-        unavailableCount++;
-        continue;
-      }
-      if (now >= kickoffMs) {
-        lockedCount++;
-      } else {
-        openCount++;
-      }
-    }
-
-    return { lockedCount, openCount, unavailableCount, total: liveGames.length };
-  }, [liveGames, now]);
-
-  const allGamesFinal =
-    liveGames.length > 0
-      ? liveGames.every((g) => (g.status || '').toUpperCase() === 'FINAL')
-      : isPastWeek;
-
-  const anyGameLive = liveGames.some((g) => ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()));
-  const anyStartedOrFinal = liveGames.some((g) => (g.status || '').toUpperCase() === 'FINAL' || ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()));
-  const anyUpcoming = liveGames.some((g) => (g.status || '').toUpperCase() === 'SCHEDULED');
-
-  let matrixPhase = 'Games not started';
-  if (liveGames.length === 0) {
-    matrixPhase = isPastWeek ? 'All games final' : 'Status unavailable';
-  } else if (allGamesFinal) {
-    matrixPhase = 'All games final';
-  } else if (anyGameLive) {
-    matrixPhase = 'Games live';
-  } else if (anyStartedOrFinal && anyUpcoming) {
-    matrixPhase = 'Week in progress';
-  } else if (!anyStartedOrFinal) {
-    matrixPhase = 'Games not started';
-  } else {
-    matrixPhase = 'Week in progress';
-  }
-
-  const allGamesUpcoming =
-    liveGames.length > 0
-      ? liveGames.every((g) => g.status === 'SCHEDULED')
-      : (isCurrentOrFutureWeek && !allGamesFinal);
+  const allGamesFinal = slateSummary.allGamesFinal;
+  const matrixPhase = slateSummary.phaseLabel;
+  const allGamesUpcoming = slateSummary.openCount > 0 && !slateSummary.anyStartedOrFinal;
 
   const [activeTab, setActiveTab] = useState<'LEVERAGE' | 'GAMETRACK'>(
     allGamesUpcoming ? 'LEVERAGE' : 'GAMETRACK'
@@ -334,34 +296,28 @@ export const MatrixPage: React.FC = () => {
         scope={`WEEK ${selectedWeek}`}
         phase={matrixPhase}
         rightContent={
-          allGamesFinal ? (
-            <div className="flex items-center gap-1.5">
-              <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-zinc-700 bg-zinc-800 text-zinc-400">
-                WEEK {selectedWeek} FINAL
-              </div>
-            </div>
-          ) : liveGames.length === 0 ? (
+          slateSummary.total === 0 ? (
             <div className="flex items-center gap-1.5">
               <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-zinc-800 bg-zinc-900 text-zinc-500">
                 UNAVAILABLE
               </div>
             </div>
-          ) : gameLockStatus.openCount > 0 ? (
-            <div className="flex items-center gap-1.5">
-              <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-cyan-500/30 bg-cyan-500/15 text-cyan-400">
-                PICKS OPEN: {gameLockStatus.openCount}
-              </div>
-            </div>
-          ) : gameLockStatus.lockedCount === liveGames.length ? (
+          ) : slateSummary.allGamesFinal ? (
             <div className="flex items-center gap-1.5">
               <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-zinc-700 bg-zinc-800 text-zinc-400">
-                ALL GAMES LOCKED
+                WEEK {selectedWeek} FINAL
+              </div>
+            </div>
+          ) : slateSummary.isBadgeOpen ? (
+            <div className="flex items-center gap-1.5">
+              <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-cyan-500/30 bg-cyan-500/15 text-cyan-400">
+                {slateSummary.lockBadgeText}
               </div>
             </div>
           ) : (
             <div className="flex items-center gap-1.5">
               <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-zinc-700 bg-zinc-800 text-zinc-400">
-                SLATE LOCKED
+                {slateSummary.lockBadgeText}
               </div>
             </div>
           )

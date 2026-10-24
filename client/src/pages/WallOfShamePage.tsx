@@ -16,6 +16,7 @@ import {
   validateTelemetryCoverage,
 } from '../services/sweatProjectionService';
 import { scopedExpressFetch } from '../lib/apiClient';
+import { evaluateSlateLockSummary } from '../services/lockEnforcementService';
 
 export interface WallOfShamePageProps {
   poolId?: string;
@@ -48,19 +49,18 @@ export function WallOfShamePage({
   const [activeTab, setActiveTab] = useState<'reels' | 'ladder' | 'infamy'>('ladder');
   const [inspectSettledFixture, setInspectSettledFixture] = useState<boolean>(false);
 
-  const defaultPoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
-  const targetPoolId = propPoolId || defaultPoolId;
-  const targetSeason = propSeason || 2026;
-  const targetSeasonType = propSeasonType || 2;
-  const targetWeek = propWeek || 6;
-
   const reqGenRef = useRef(0);
 
+  const initialPoolId = propPoolId || '';
+  const initialSeason = propSeason || 2026;
+  const initialSeasonType = propSeasonType || 2;
+  const initialWeek = propWeek ?? 0;
+
   const [snapshot, setSnapshot] = useState<ScopedLadderSnapshot>({
-    poolId: targetPoolId,
-    season: targetSeason,
-    seasonType: targetSeasonType,
-    week: targetWeek,
+    poolId: initialPoolId,
+    season: initialSeason,
+    seasonType: initialSeasonType,
+    week: initialWeek,
     ladderData: [],
     status: 'LOADING',
     scoreStatus: 'STATUS_UNAVAILABLE',
@@ -72,29 +72,89 @@ export function WallOfShamePage({
   const loadScopedData = useCallback(async (isRefresh: boolean = false) => {
     const currentGen = ++reqGenRef.current;
 
-    if (!isRefresh) {
+    // Reset view state on refresh/retry to avoid leaving prior safe claims
+    if (isRefresh) {
       setSnapshot((prev) => ({
         ...prev,
-        poolId: targetPoolId,
-        season: targetSeason,
-        seasonType: targetSeasonType,
-        week: targetWeek,
         ladderData: [],
         status: 'LOADING',
         scoreStatus: 'STATUS_UNAVAILABLE',
-        errorMessage: undefined,
-        isStale: false,
-      }));
-    } else {
-      setSnapshot((prev) => ({
-        ...prev,
         isStale: true,
       }));
     }
 
     try {
-      // 1. Parallel authoritative data fetching for explicit scope
-      const [membersResult, wrapupResult, penaltiesResult, matrixResult, picksResult, liveScores] = await Promise.all([
+      // 1. Resolve active pool & scope without hardcoded fallbacks (Fail Closed: Decision #55)
+      let resolvedPoolId = propPoolId;
+      let resolvedSeason = propSeason;
+      let resolvedSeasonType = propSeasonType;
+      let resolvedWeek = propWeek;
+
+      if (!resolvedPoolId && user?.id) {
+        const { data: memberData } = await supabase
+          .from('pool_memberships')
+          .select('pool_id, pools(settings)')
+          .eq('user_id', user.id)
+          .eq('status', 'ACTIVE')
+          .maybeSingle();
+
+        if (reqGenRef.current !== currentGen) return;
+
+        if (memberData?.pool_id) {
+          resolvedPoolId = memberData.pool_id;
+          const settings = (memberData.pools as any)?.settings;
+          if (!resolvedSeason && settings?.season) resolvedSeason = Number(settings.season);
+          if (!resolvedSeasonType && settings?.season_type) resolvedSeasonType = Number(settings.season_type);
+          if (resolvedWeek === undefined && settings?.current_week !== undefined) {
+            resolvedWeek = Number(settings.current_week);
+          }
+        }
+      }
+
+      resolvedSeason = resolvedSeason || 2026;
+      resolvedSeasonType = resolvedSeasonType || 2;
+
+      // Fail closed when scope cannot be resolved
+      if (!resolvedPoolId || resolvedWeek === undefined || resolvedWeek === null || isNaN(resolvedWeek)) {
+        if (reqGenRef.current !== currentGen) return;
+        setSnapshot({
+          poolId: resolvedPoolId || '',
+          season: resolvedSeason,
+          seasonType: resolvedSeasonType,
+          week: resolvedWeek ?? 0,
+          ladderData: [],
+          status: 'EMPTY',
+          scoreStatus: 'STATUS_UNAVAILABLE',
+          isSettled: false,
+          observedAt: new Date().toISOString(),
+          isStale: false,
+          errorMessage: 'Active pool or week scope could not be resolved.',
+        });
+        return;
+      }
+
+      const targetPoolId = resolvedPoolId;
+      const targetSeason = resolvedSeason;
+      const targetSeasonType = resolvedSeasonType;
+      const targetWeek = resolvedWeek;
+
+      if (!isRefresh) {
+        setSnapshot((prev) => ({
+          ...prev,
+          poolId: targetPoolId,
+          season: targetSeason,
+          seasonType: targetSeasonType,
+          week: targetWeek,
+          ladderData: [],
+          status: 'LOADING',
+          scoreStatus: 'STATUS_UNAVAILABLE',
+          errorMessage: undefined,
+          isStale: false,
+        }));
+      }
+
+      // 2. Parallel authoritative data fetch for resolved scope
+      const [membersResult, wrapupResult, matrixResult, picksResult, liveScores] = await Promise.all([
         supabase
           .from('pool_memberships')
           .select('user_id, role, users(id, email, display_name)')
@@ -102,14 +162,10 @@ export function WallOfShamePage({
           .eq('status', 'ACTIVE'),
         supabase
           .from('weekly_wrapups')
-          .select('id, pool_id, week_number')
+          .select('pool_id, week_number, summary, completed_at')
           .eq('pool_id', targetPoolId)
           .eq('week_number', targetWeek)
           .maybeSingle(),
-        supabase
-          .from('penalty_ledger')
-          .select('*')
-          .eq('pool_id', targetPoolId),
         scopedExpressFetch(`/api/pools/${targetPoolId}/matrix?week_no=${targetWeek}`).catch(() => null),
         supabase
           .from('picks')
@@ -119,15 +175,14 @@ export function WallOfShamePage({
         fetchLiveNFLScores(targetWeek).catch(() => [] as LiveGame[]),
       ]);
 
-      // Guard against stale asynchronous resolution
-      if (reqGenRef.current !== currentGen) {
-        return;
-      }
+      if (reqGenRef.current !== currentGen) return;
 
-      // Check for participant load errors
+      // Check participant load error
       if (membersResult.error) {
         setSnapshot((prev) => ({
           ...prev,
+          poolId: targetPoolId,
+          week: targetWeek,
           status: 'ERROR',
           errorMessage: 'Failed to retrieve active pool memberships.',
           observedAt: new Date().toISOString(),
@@ -140,6 +195,8 @@ export function WallOfShamePage({
       if (members.length === 0) {
         setSnapshot((prev) => ({
           ...prev,
+          poolId: targetPoolId,
+          week: targetWeek,
           ladderData: [],
           status: 'EMPTY',
           scoreStatus: 'STATUS_UNAVAILABLE',
@@ -149,74 +206,52 @@ export function WallOfShamePage({
         return;
       }
 
-      // Check official settlement proof
-      const isOfficialSettled = Boolean(
-        wrapupResult.data &&
-        wrapupResult.data.pool_id === targetPoolId &&
-        Number(wrapupResult.data.week_number) === targetWeek
-      );
-
-      // Check penalty ledger for settled debts
-      const penalties = penaltiesResult.data || [];
-      const penaltiesByUser = new Map<string, any[]>();
-      let hasSettledPenalties = false;
-      for (const p of penalties) {
-        const list = penaltiesByUser.get(p.user_id) || [];
-        list.push(p);
-        penaltiesByUser.set(p.user_id, list);
-        if (Number(p.delta || 0) > 0) {
-          hasSettledPenalties = true;
-        }
+      // Check picks access error
+      if (picksResult.error) {
+        setSnapshot((prev) => ({
+          ...prev,
+          poolId: targetPoolId,
+          week: targetWeek,
+          status: 'ERROR',
+          errorMessage: 'Failed to retrieve member picks for this week.',
+          observedAt: new Date().toISOString(),
+          isStale: false,
+        }));
+        return;
       }
 
-      // PATH A: Authoritative Official Settlement
-      if (isOfficialSettled && hasSettledPenalties) {
-        const mappedLadder = members.map((m: any, idx: number) => {
-          const u = m.users;
-          let displayName = u?.display_name || (u?.email ? u.email.split('@')[0] : m.user_id);
-          if (m.role === 'COMMISSIONER' || m.role === 'ADMIN') {
+      // 3. Official Settled Contract Verification (Finding 1)
+      const wrapup = wrapupResult.data;
+      const isOfficialSettled = Boolean(
+        wrapup &&
+        wrapup.pool_id === targetPoolId &&
+        Number(wrapup.week_number) === targetWeek &&
+        (wrapup.completed_at || (wrapup.summary && Array.isArray((wrapup.summary as any).standings)))
+      );
+
+      if (isOfficialSettled && wrapup?.summary && Array.isArray((wrapup.summary as any).standings)) {
+        const settledStandings: any[] = (wrapup.summary as any).standings;
+        const userMap = new Map(members.map((m: any) => [m.user_id, m]));
+
+        const mappedLadder = settledStandings.map((s: any) => {
+          const m = userMap.get(s.userId);
+          let displayName = m?.users?.display_name || (m?.users?.email ? m.users.email.split('@')[0] : s.userId);
+          if (m?.role === 'COMMISSIONER' || m?.role === 'ADMIN') {
             displayName = `${displayName} (Commissioner)`;
           }
-
-          const userPenalties = penaltiesByUser.get(m.user_id) || [];
-          const totalDebt = userPenalties.reduce((sum, p) => sum + Number(p.delta || 0), 0);
-
-          if (totalDebt <= 0) {
-            return {
-              rank: 1,
-              displayRank: '#1',
-              userId: m.user_id,
-              userName: displayName,
-              name: displayName,
-              shots: '0 shots',
-              penaltyShots: 0,
-              status: 'CLEARED (SAFE)',
-              fsmDisplayStatus: 'Safe Haven',
-              tier: 'SAFE HAVEN',
-            };
-          }
-
-          let tier = 'DANGER_LOW';
-          let status = 'Settled';
-          if (totalDebt >= 2.5) {
-            tier = 'PIT';
-            status = 'Awaiting Video';
-          } else if (totalDebt >= 2.0) {
-            tier = 'DANGER_HIGH';
-            status = 'High Risk';
-          }
-
+          const shotsNum = Number(s.shots || 0);
           return {
-            rank: idx + 1,
-            displayRank: `#${idx + 1}`,
-            userId: m.user_id,
+            rank: s.rank,
+            displayRank: `#${s.rank}`,
+            userId: s.userId,
             userName: displayName,
             name: displayName,
-            shots: formatShotUnit(totalDebt),
-            penaltyShots: totalDebt,
-            status,
-            fsmDisplayStatus: status,
-            tier,
+            shots: formatShotUnit(shotsNum),
+            penaltyShots: shotsNum,
+            status: s.isSafeHaven ? 'CLEARED (SAFE)' : s.isDeadPlace ? 'DEAD PLACE' : 'Settled',
+            fsmDisplayStatus: s.isSafeHaven ? 'Safe Haven' : 'Settled',
+            tier: s.isSafeHaven ? 'SAFE HAVEN' : s.isDeadPlace ? 'PIT' : 'DANGER_LOW',
+            points: s.score || 0,
           };
         });
 
@@ -235,14 +270,16 @@ export function WallOfShamePage({
         return;
       }
 
-      // PATH B: Provisional Sweat Standings Path
+      // 4. Resolve Canonical Games List from Matrix or DB
       let gamesList: any[] = [];
       if (matrixResult && matrixResult.ok) {
         try {
           const matrix = await matrixResult.json();
+          if (reqGenRef.current !== currentGen) return;
           if (matrix && Array.isArray(matrix.rows)) {
             gamesList = matrix.rows.map((row: any) => ({
-              id: String(row.game_id),
+              id: String(row.game_id || row.external_game_id),
+              externalGameId: row.external_game_id ? String(row.external_game_id) : undefined,
               homeTeam: row.home_team_id,
               awayTeam: row.away_team_id,
               spread: row.spread,
@@ -252,18 +289,22 @@ export function WallOfShamePage({
         } catch (_) {}
       }
 
+      if (reqGenRef.current !== currentGen) return;
+
       if (gamesList.length === 0) {
-        // Fallback query to games table
-        const { data: dbGames } = await supabase
+        const { data: dbGames, error: dbGamesErr } = await supabase
           .from('games')
-          .select('id, home_team_id, away_team_id, kickoff_time')
+          .select('id, external_game_id, home_team_id, away_team_id, kickoff_time')
           .eq('season', targetSeason)
           .eq('season_type', targetSeasonType)
           .eq('week', targetWeek);
 
-        if (Array.isArray(dbGames) && dbGames.length > 0) {
-          gamesList = dbGames.map((g) => ({
-            id: String(g.id),
+        if (reqGenRef.current !== currentGen) return;
+
+        if (!dbGamesErr && Array.isArray(dbGames) && dbGames.length > 0) {
+          gamesList = dbGames.map((g: any) => ({
+            id: String(g.external_game_id || g.id),
+            externalGameId: g.external_game_id ? String(g.external_game_id) : undefined,
             homeTeam: g.home_team_id,
             awayTeam: g.away_team_id,
             kickoffTime: g.kickoff_time,
@@ -274,6 +315,8 @@ export function WallOfShamePage({
       if (gamesList.length === 0) {
         setSnapshot((prev) => ({
           ...prev,
+          poolId: targetPoolId,
+          week: targetWeek,
           ladderData: [],
           status: 'ERROR',
           errorMessage: `No active games found for Week ${targetWeek}.`,
@@ -283,19 +326,7 @@ export function WallOfShamePage({
         return;
       }
 
-      // Check picks access error
-      if (picksResult.error) {
-        setSnapshot((prev) => ({
-          ...prev,
-          status: 'ERROR',
-          errorMessage: 'Failed to retrieve member picks for this week.',
-          observedAt: new Date().toISOString(),
-          isStale: false,
-        }));
-        return;
-      }
-
-      // Validate telemetry coverage before calculation
+      // 5. Strict Telemetry Validation (Finding 3)
       const coverage = validateTelemetryCoverage(gamesList, liveScores);
 
       if (coverage.isIncomplete || !coverage.isReady) {
@@ -331,7 +362,36 @@ export function WallOfShamePage({
         return;
       }
 
-      // Map participant and pick inputs for sweat projection
+      // 6. Fetch Tiebreaker Inputs (Finding 4)
+      let tiebreakerData: { actualTotalScore?: number; userPredictions?: Record<string, number> } | undefined = undefined;
+      if (targetWeek !== 6) {
+        try {
+          const tbRes = await scopedExpressFetch(`/api/pools/${targetPoolId}/tiebreaker?week=${targetWeek}&season=${targetSeason}`);
+          if (reqGenRef.current !== currentGen) return;
+          if (tbRes && tbRes.ok) {
+            const tbJson = await tbRes.json();
+            if (reqGenRef.current !== currentGen) return;
+            if (tbJson && tbJson.tiebreakerOffered) {
+              const preds: Record<string, number> = {};
+              if (Array.isArray(tbJson.predictions)) {
+                for (const p of tbJson.predictions) {
+                  if (p.userId && p.prediction !== null && p.prediction !== undefined) {
+                    preds[p.userId] = Number(p.prediction);
+                  }
+                }
+              }
+              tiebreakerData = {
+                actualTotalScore: tbJson.designatedGameScore ?? undefined,
+                userPredictions: preds,
+              };
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (reqGenRef.current !== currentGen) return;
+
+      // 7. Calculate Provisional Standings
       const mappedMembers = members.map((m: any) => {
         const u = m.users;
         let displayName = u?.display_name || (u?.email ? u.email.split('@')[0] : m.user_id);
@@ -353,7 +413,8 @@ export function WallOfShamePage({
         mappedMembers,
         gamesList,
         liveScores,
-        userPicks
+        userPicks,
+        tiebreakerData
       );
 
       const mappedLadder = standings.map((entry) => {
@@ -396,18 +457,15 @@ export function WallOfShamePage({
         };
       });
 
-      // Derive score status
-      const allFinal = liveScores.length > 0 && liveScores.every((g) => (g.status || '').toUpperCase() === 'FINAL');
-      const anyLive = liveScores.some((g) => ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()));
-      const anyStarted = liveScores.some((g) => (g.status || '').toUpperCase() === 'FINAL' || ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()));
-      const anyUpcoming = liveScores.some((g) => (g.status || '').toUpperCase() === 'SCHEDULED');
+      // 8. Derive Truthful Slate Progress Status (Finding 5)
+      const slateSummary = evaluateSlateLockSummary(gamesList, liveScores, 0);
 
       let resolvedScoreStatus: ScopedLadderSnapshot['scoreStatus'] = 'GAMES_NOT_STARTED';
-      if (allFinal) {
+      if (slateSummary.allGamesFinal) {
         resolvedScoreStatus = 'ALL_GAMES_FINAL';
-      } else if (anyLive) {
+      } else if (slateSummary.anyGameLive) {
         resolvedScoreStatus = 'GAMES_LIVE';
-      } else if (anyStarted && anyUpcoming) {
+      } else if (slateSummary.anyStartedOrFinal && slateSummary.anyUpcoming) {
         resolvedScoreStatus = 'WEEK_IN_PROGRESS';
       }
 
@@ -434,19 +492,35 @@ export function WallOfShamePage({
         }));
       }
     }
-  }, [targetPoolId, targetSeason, targetSeasonType, targetWeek]);
+  }, [propPoolId, propSeason, propSeasonType, propWeek, user?.id]);
 
   useEffect(() => {
+    let isMounted = true;
     loadScopedData(false);
+    return () => {
+      isMounted = false;
+      reqGenRef.current += 1; // Invalidate any in-flight async operations on unmount
+    };
   }, [loadScopedData]);
 
   const currentUserId = user?.id || 'viewer';
+
+  // Prevent scope collision: render loading immediately if snapshot scope does not match requested scope (Finding 2)
+  const isScopeMismatch =
+    (propPoolId && snapshot.poolId !== propPoolId) ||
+    (propWeek !== undefined && snapshot.week !== propWeek);
+
+  const effectiveStatus: LadderViewStatus = isScopeMismatch ? 'LOADING' : snapshot.status;
+  const effectiveLadder = isScopeMismatch ? [] : snapshot.ladderData;
+  const effectiveScoreStatus = isScopeMismatch ? 'STATUS_UNAVAILABLE' : snapshot.scoreStatus;
+  const effectiveIsSettled = isScopeMismatch ? false : snapshot.isSettled;
+  const currentWeekDisplay = propWeek ?? snapshot.week;
 
   const demoRecords: AuthoritativeWeeklyStandingRow[] = useMemo(() => [
     {
       season: 2026,
       week: 5,
-      poolId: targetPoolId,
+      poolId: snapshot.poolId,
       userId: currentUserId,
       displayName: user?.email ? user.email.split('@')[0] : 'You',
       rank: 1,
@@ -459,32 +533,40 @@ export function WallOfShamePage({
       isOfficiallySettled: true,
       settlementRevision: '1 (Official)',
     },
-  ], [targetPoolId, currentUserId, user?.email]);
+  ], [snapshot.poolId, currentUserId, user?.email]);
 
   const seasonStory = useMemo(() => {
     return deriveSeasonStoryViewModel({
       isLoading: false,
-      season: targetSeason,
-      poolId: targetPoolId,
+      season: snapshot.season,
+      poolId: snapshot.poolId,
       viewerUserId: currentUserId,
       rawRecords: inspectSettledFixture ? demoRecords : [],
       currentOutstandingShotDebt: 0,
     });
-  }, [targetPoolId, targetSeason, currentUserId, inspectSettledFixture, demoRecords]);
+  }, [snapshot.poolId, snapshot.season, currentUserId, inspectSettledFixture, demoRecords]);
 
   // Unified phase label mapping per contract
   const headerPhase = useMemo(() => {
+    if (isScopeMismatch) return 'STATUS UNAVAILABLE';
     if (activeTab === 'infamy') return 'SETTLED';
-    if (snapshot.isSettled) return 'SETTLED';
-    if (snapshot.scoreStatus === 'ALL_GAMES_FINAL') return 'ALL GAMES FINAL';
-    if (snapshot.scoreStatus === 'GAMES_LIVE') return 'GAMES LIVE';
-    if (snapshot.scoreStatus === 'WEEK_IN_PROGRESS') return 'WEEK IN PROGRESS';
-    if (snapshot.scoreStatus === 'GAMES_NOT_STARTED') return 'GAMES NOT STARTED';
+    if (effectiveIsSettled) return 'SETTLED';
+    if (effectiveScoreStatus === 'ALL_GAMES_FINAL') return 'ALL GAMES FINAL';
+    if (effectiveScoreStatus === 'GAMES_LIVE') return 'GAMES LIVE';
+    if (effectiveScoreStatus === 'WEEK_IN_PROGRESS') return 'WEEK IN PROGRESS';
+    if (effectiveScoreStatus === 'GAMES_NOT_STARTED') return 'GAMES NOT STARTED';
     return 'STATUS UNAVAILABLE';
-  }, [activeTab, snapshot.isSettled, snapshot.scoreStatus]);
+  }, [isScopeMismatch, activeTab, effectiveIsSettled, effectiveScoreStatus]);
 
   // Unified right badge mapping per contract
   const headerRightBadge = useMemo(() => {
+    if (isScopeMismatch) {
+      return (
+        <div className="px-2 py-0.5 rounded-full border border-zinc-800 bg-zinc-900 text-zinc-500 font-bold text-[10px]">
+          <span>LOADING</span>
+        </div>
+      );
+    }
     if (activeTab === 'infamy') {
       return (
         <div className="px-2 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/15 text-amber-400 font-bold text-[10px]">
@@ -492,21 +574,21 @@ export function WallOfShamePage({
         </div>
       );
     }
-    if (snapshot.isSettled) {
+    if (effectiveIsSettled) {
       return (
         <div className="px-2 py-0.5 rounded-full border border-emerald-700 bg-emerald-900/60 text-emerald-300 font-bold text-[10px]">
           <span>OFFICIALLY SETTLED</span>
         </div>
       );
     }
-    if (snapshot.scoreStatus === 'ALL_GAMES_FINAL') {
+    if (effectiveScoreStatus === 'ALL_GAMES_FINAL') {
       return (
         <div className="px-2 py-0.5 rounded-full border border-zinc-700 bg-zinc-800 text-zinc-300 font-bold text-[10px]">
-          <span>WEEK {targetWeek} FINAL · PROVISIONAL</span>
+          <span>WEEK {currentWeekDisplay} FINAL · SETTLEMENT NOT CONFIRMED</span>
         </div>
       );
     }
-    if (snapshot.status === 'READY') {
+    if (effectiveStatus === 'READY') {
       return (
         <div className="px-2 py-0.5 rounded-full border border-cyan-500/30 bg-cyan-500/15 text-cyan-400 font-bold text-[10px]">
           <span>PROVISIONAL</span>
@@ -518,14 +600,14 @@ export function WallOfShamePage({
         <span>UNAVAILABLE</span>
       </div>
     );
-  }, [activeTab, snapshot.isSettled, snapshot.scoreStatus, snapshot.status, targetWeek]);
+  }, [isScopeMismatch, activeTab, effectiveIsSettled, effectiveScoreStatus, effectiveStatus, currentWeekDisplay]);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white pb-24">
       {/* Unified Top Branding Banner */}
       <AppHeader
         poolName="MAIN LEAGUE"
-        scope={activeTab === 'infamy' ? 'SEASON LEDGER' : `WEEK ${targetWeek}`}
+        scope={activeTab === 'infamy' ? 'SEASON LEDGER' : `WEEK ${currentWeekDisplay}`}
         phase={headerPhase}
         rightContent={headerRightBadge}
       />
@@ -543,7 +625,7 @@ export function WallOfShamePage({
             [ NO ACTIVE PENALTY REELS ]
           </div>
           <p className="text-slate-300 text-xs max-w-xs leading-relaxed mb-1">
-            Zero penalty shot videos have been uploaded for Week {targetWeek}.
+            Zero penalty shot videos have been uploaded for Week {currentWeekDisplay}.
           </p>
           <p className="text-slate-500 text-[11px] max-w-xs leading-relaxed mb-6 font-mono">
             Prior settled obligations: 0 outstanding penalty reels.
@@ -561,12 +643,12 @@ export function WallOfShamePage({
       {activeTab === 'ladder' && (
         <div className="flex-1 p-4">
           <WeeklyLadderView
-            ladder={snapshot.ladderData}
-            status={snapshot.status}
-            weekNumber={targetWeek}
-            isSettled={snapshot.isSettled}
-            scoreStatus={snapshot.scoreStatus}
-            errorMessage={snapshot.errorMessage}
+            ladder={effectiveLadder}
+            status={effectiveStatus}
+            weekNumber={currentWeekDisplay}
+            isSettled={effectiveIsSettled}
+            scoreStatus={effectiveScoreStatus}
+            errorMessage={isScopeMismatch ? undefined : snapshot.errorMessage}
             onRetry={() => loadScopedData(true)}
             observedAt={snapshot.observedAt}
             isStale={snapshot.isStale}
@@ -659,7 +741,7 @@ export function WallOfShamePage({
 
           {/* Weekly Recap Card Exporter Component */}
           <WeeklyRecapCardView
-            currentWeek={targetWeek}
+            currentWeek={currentWeekDisplay}
             liveParticipants={snapshot.ladderData.map((l, idx) => ({
               userId: l.userId || `u-${idx}`,
               displayName: l.displayName || `Player ${idx + 1}`,
