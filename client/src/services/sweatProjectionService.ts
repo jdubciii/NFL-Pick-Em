@@ -78,6 +78,102 @@ export interface ProvisionalStandingsResult extends Array<ProvisionalStanding> {
  * - Excludes unsubmitted (isSubmitted: false) and hidden (isHidden: true) picks.
  * - Guarantees zero mutation to underlying picks, games, timestamps, or records.
  */
+export interface TelemetryValidationResult {
+  isReady: boolean;
+  isAllPregame: boolean;
+  isIncomplete: boolean;
+  missingGameIds: string[];
+  reason?: string;
+}
+
+/**
+ * Validates coverage of telemetry scores before projection calculation.
+ * Ensures in-progress and final games have confirmed, valid finite scores,
+ * and confirms future games have scheduled state.
+ */
+export function validateTelemetryCoverage(
+  games: readonly SlateGame[],
+  liveScores: readonly LiveGame[] = []
+): TelemetryValidationResult {
+  if (!games || games.length === 0) {
+    return {
+      isReady: false,
+      isAllPregame: false,
+      isIncomplete: true,
+      missingGameIds: [],
+      reason: 'NO_GAMES_IN_SLATE',
+    };
+  }
+
+  const scoreMap = new Map<string, LiveGame>();
+  if (Array.isArray(liveScores)) {
+    for (const s of liveScores) {
+      if (s && s.id) {
+        scoreMap.set(String(s.id), s);
+      }
+    }
+  }
+
+  const now = Date.now();
+  let hasStartedGames = false;
+  let hasUncertainKickoff = false;
+  const missingGameIds: string[] = [];
+
+  for (const g of games) {
+    if (!g || !g.id) continue;
+    const live = scoreMap.get(String(g.id));
+    const kickoffMs = g.kickoffTime ? new Date(g.kickoffTime).getTime() : NaN;
+    const isPastKickoff = !isNaN(kickoffMs) && kickoffMs <= now;
+
+    if (!live) {
+      if (isPastKickoff || isNaN(kickoffMs)) {
+        missingGameIds.push(g.id);
+        hasUncertainKickoff = true;
+      }
+      continue;
+    }
+
+    const status = (live.status || '').toUpperCase();
+    if (status === 'IN_PROGRESS' || status === 'FINAL' || isPastKickoff) {
+      hasStartedGames = true;
+      const homeRaw = live.homeTeam?.score;
+      const awayRaw = live.awayTeam?.score;
+      const homeScore = homeRaw != null ? parseInt(String(homeRaw), 10) : NaN;
+      const awayScore = awayRaw != null ? parseInt(String(awayRaw), 10) : NaN;
+
+      if (isNaN(homeScore) || isNaN(awayScore) || homeScore < 0 || awayScore < 0) {
+        missingGameIds.push(g.id);
+      }
+    }
+  }
+
+  if (missingGameIds.length > 0 || hasUncertainKickoff) {
+    return {
+      isReady: false,
+      isAllPregame: false,
+      isIncomplete: true,
+      missingGameIds,
+      reason: 'INCOMPLETE_OR_INVALID_TELEMETRY',
+    };
+  }
+
+  if (!hasStartedGames) {
+    return {
+      isReady: true,
+      isAllPregame: true,
+      isIncomplete: false,
+      missingGameIds: [],
+    };
+  }
+
+  return {
+    isReady: true,
+    isAllPregame: false,
+    isIncomplete: false,
+    missingGameIds: [],
+  };
+}
+
 export function calculateProvisionalStandings(
   users: readonly UserStandingRef[],
   games: readonly SlateGame[],
@@ -86,7 +182,7 @@ export function calculateProvisionalStandings(
   tiebreakers?: TiebreakerData,
   previousSnapshot?: readonly PreviousSnapshotEntry[]
 ): ProvisionalStandingsResult {
-  if (!users || users.length === 0) {
+  if (!users || users.length === 0 || !games || games.length === 0) {
     const emptyResult = [] as unknown as ProvisionalStandingsResult;
     emptyResult.standings = [];
     emptyResult.swingGame = null;

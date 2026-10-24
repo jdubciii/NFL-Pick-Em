@@ -1,0 +1,2 @@
+npx tsc --noEmit
+Exit Code: 0 (Clean - 0 errors)

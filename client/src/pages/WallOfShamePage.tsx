@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { ShameSegmentedHeader } from '../components/shame/ShameSegmentedHeader';
-import { WeeklyLadderView } from '../components/shame/WeeklyLadderView';
+import { WeeklyLadderView, LadderViewStatus } from '../components/shame/WeeklyLadderView';
 import { AppHeader } from '../components/common/AppHeader';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
@@ -11,229 +11,442 @@ import {
 } from '../services/seasonStoryService';
 import { WeeklyRecapCardView } from '../components/shame/WeeklyRecapCardView';
 import { fetchLiveNFLScores, LiveGame } from '../services/liveScoreService';
-import { calculateProvisionalStandings } from '../services/sweatProjectionService';
+import {
+  calculateProvisionalStandings,
+  validateTelemetryCoverage,
+} from '../services/sweatProjectionService';
 import { scopedExpressFetch } from '../lib/apiClient';
 
-export function WallOfShamePage() {
+export interface WallOfShamePageProps {
+  poolId?: string;
+  season?: number;
+  seasonType?: number;
+  week?: number;
+}
+
+interface ScopedLadderSnapshot {
+  poolId: string;
+  season: number;
+  seasonType: number;
+  week: number;
+  ladderData: any[];
+  status: LadderViewStatus;
+  scoreStatus: 'STATUS_UNAVAILABLE' | 'GAMES_NOT_STARTED' | 'GAMES_LIVE' | 'WEEK_IN_PROGRESS' | 'ALL_GAMES_FINAL';
+  isSettled: boolean;
+  errorMessage?: string;
+  observedAt: string;
+  isStale: boolean;
+}
+
+export function WallOfShamePage({
+  poolId: propPoolId,
+  season: propSeason,
+  seasonType: propSeasonType,
+  week: propWeek,
+}: WallOfShamePageProps = {}) {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'reels' | 'ladder' | 'infamy'>('ladder');
-  const [dockets] = useState<any[]>([]);
-  const [ladderData, setLadderData] = useState<any[]>([]);
   const [inspectSettledFixture, setInspectSettledFixture] = useState<boolean>(false);
-  const [liveScores, setLiveScores] = useState<LiveGame[]>([]);
 
-  useEffect(() => {
-    let isMounted = true;
-    fetchLiveNFLScores(6)
-      .then((scores: LiveGame[]) => {
-        if (isMounted) setLiveScores(scores);
-      })
-      .catch(() => {});
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+  const defaultPoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+  const targetPoolId = propPoolId || defaultPoolId;
+  const targetSeason = propSeason || 2026;
+  const targetSeasonType = propSeasonType || 2;
+  const targetWeek = propWeek || 6;
 
-  useEffect(() => {
-    let isMounted = true;
-    const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+  const reqGenRef = useRef(0);
 
-    async function loadMembersAndPenalties() {
-      try {
-        // Query all ACTIVE members for activePoolId
-        const { data: members, error: membersErr } = await supabase
-          .from('pool_memberships')
-          .select('user_id, role, users(id, email, display_name)')
-          .eq('pool_id', activePoolId)
-          .eq('status', 'ACTIVE');
+  const [snapshot, setSnapshot] = useState<ScopedLadderSnapshot>({
+    poolId: targetPoolId,
+    season: targetSeason,
+    seasonType: targetSeasonType,
+    week: targetWeek,
+    ladderData: [],
+    status: 'LOADING',
+    scoreStatus: 'STATUS_UNAVAILABLE',
+    isSettled: false,
+    observedAt: new Date().toISOString(),
+    isStale: false,
+  });
 
-        if (membersErr) {
-          console.error('Error fetching pool members for ladder:', membersErr);
-          return;
-        }
+  const loadScopedData = useCallback(async (isRefresh: boolean = false) => {
+    const currentGen = ++reqGenRef.current;
 
-        // Query existing rows in penalty_ledger
-        const { data: penalties } = await supabase
-          .from('penalty_ledger')
-          .select('*')
-          .eq('pool_id', activePoolId);
-
-        const penaltiesByUser = new Map<string, any[]>();
-        let hasSettledPenalties = false;
-        if (penalties && penalties.length > 0) {
-          for (const p of penalties) {
-            const list = penaltiesByUser.get(p.user_id) || [];
-            list.push(p);
-            penaltiesByUser.set(p.user_id, list);
-            if (Number(p.delta || 0) > 0) {
-              hasSettledPenalties = true;
-            }
-          }
-        }
-
-        if (members && members.length > 0 && isMounted) {
-          if (hasSettledPenalties) {
-            const mappedLadder = members.map((m: any, idx: number) => {
-              const u = m.users;
-              let displayName = u?.display_name || (u?.email ? u.email.split('@')[0] : m.user_id);
-              if (m.role === 'COMMISSIONER' || m.role === 'ADMIN') {
-                displayName = `${displayName} (Commissioner)`;
-              }
-
-              const userPenalties = penaltiesByUser.get(m.user_id) || [];
-              const totalDebt = userPenalties.reduce((sum, p) => sum + Number(p.delta || 0), 0);
-
-              if (totalDebt <= 0) {
-                return {
-                  rank: 1,
-                  displayRank: '#1',
-                  userId: m.user_id,
-                  userName: displayName,
-                  name: displayName,
-                  shots: '0 shots',
-                  penaltyShots: 0,
-                  status: 'CLEARED (SAFE)',
-                  fsmDisplayStatus: 'Safe Haven',
-                  tier: 'SAFE HAVEN',
-                };
-              }
-
-              let tier = 'DANGER_LOW';
-              let status = 'Settled';
-              if (totalDebt >= 2.5) {
-                tier = 'PIT';
-                status = 'Awaiting Video';
-              } else if (totalDebt >= 2.0) {
-                tier = 'DANGER_HIGH';
-                status = 'High Risk';
-              }
-
-              return {
-                rank: idx + 1,
-                displayRank: `#${idx + 1}`,
-                userId: m.user_id,
-                userName: displayName,
-                name: displayName,
-                shots: formatShotUnit(totalDebt),
-                penaltyShots: totalDebt,
-                status,
-                fsmDisplayStatus: status,
-                tier,
-              };
-            });
-
-            setLadderData(mappedLadder);
-          } else {
-            // Live / provisional week: compute exact provisional sweat standings
-            const { data: dbPicks } = await supabase
-              .from('picks')
-              .select('user_id, matchup_id, game_id, selected_team, week')
-              .eq('pool_id', activePoolId)
-              .eq('week', 6);
-
-            let gamesList: any[] = [];
-            try {
-              const matrixRes = await scopedExpressFetch(`/api/pools/${activePoolId}/matrix?week_no=6`);
-              if (matrixRes.ok) {
-                const matrix = await matrixRes.json();
-                if (matrix.rows && matrix.rows.length > 0) {
-                  gamesList = matrix.rows.map((row: any) => ({
-                    id: row.game_id,
-                    homeTeam: row.home_team_id,
-                    awayTeam: row.away_team_id,
-                    spread: row.spread,
-                    kickoffTime: row.kickoff_time,
-                  }));
-                }
-              }
-            } catch (_) {}
-
-            const mappedMembers = members.map((m: any) => {
-              const u = m.users;
-              let displayName = u?.display_name || (u?.email ? u.email.split('@')[0] : m.user_id);
-              if (m.role === 'COMMISSIONER' || m.role === 'ADMIN') {
-                displayName = `${displayName} (Commissioner)`;
-              }
-              return { id: m.user_id, name: displayName };
-            });
-
-            const userPicks = (dbPicks || []).map((p: any) => ({
-              userId: p.user_id,
-              gameId: String(p.game_id || p.matchup_id),
-              selectedTeam: p.selected_team,
-              isSubmitted: true,
-              isHidden: false,
-            }));
-
-            const standings = calculateProvisionalStandings(
-              mappedMembers,
-              gamesList,
-              liveScores,
-              userPicks
-            );
-
-            const mappedLadder = standings.map((entry) => {
-              let tier = 'DANGER_LOW';
-              let status = `${entry.projectedPenalty.toFixed(2)} Shots`;
-              let fsmDisplayStatus = 'Provisional';
-
-              if (entry.tier === 'SAFE_HAVEN') {
-                tier = 'SAFE HAVEN';
-                status = 'PROJECTED SAFE';
-                fsmDisplayStatus = 'Safe Haven';
-              } else if (entry.tier === 'DANGER_ZONE') {
-                tier = 'DANGER_LOW';
-                status = 'Projected 1.00 Shot';
-                fsmDisplayStatus = 'Danger Zone';
-              } else if (entry.tier === 'THE_DROP') {
-                tier = 'DANGER_HIGH';
-                status = 'Projected 2.00 Shots';
-                fsmDisplayStatus = 'The Drop';
-              } else if (entry.tier === 'PIT') {
-                tier = 'PIT';
-                status = 'Projected Dead Place';
-                fsmDisplayStatus = 'Dead Place Monarch';
-              }
-
-              const rankStr = entry.isTied ? `T-#${entry.provisionalRank}` : `#${entry.provisionalRank}`;
-
-              return {
-                rank: entry.provisionalRank,
-                displayRank: rankStr,
-                userId: entry.userId,
-                userName: entry.userName,
-                name: entry.userName,
-                shots: `${entry.projectedPenalty.toFixed(2)} shots`,
-                penaltyShots: entry.projectedPenalty,
-                status,
-                fsmDisplayStatus,
-                tier,
-                points: entry.totalProvisionalPoints,
-              };
-            });
-
-            setLadderData(mappedLadder);
-          }
-        }
-      } catch (err) {
-        console.error('Failed to load ladder data:', err);
-      }
+    if (!isRefresh) {
+      setSnapshot((prev) => ({
+        ...prev,
+        poolId: targetPoolId,
+        season: targetSeason,
+        seasonType: targetSeasonType,
+        week: targetWeek,
+        ladderData: [],
+        status: 'LOADING',
+        scoreStatus: 'STATUS_UNAVAILABLE',
+        errorMessage: undefined,
+        isStale: false,
+      }));
+    } else {
+      setSnapshot((prev) => ({
+        ...prev,
+        isStale: true,
+      }));
     }
 
-    loadMembersAndPenalties();
-    return () => {
-      isMounted = false;
-    };
-  }, [liveScores]);
+    try {
+      // 1. Parallel authoritative data fetching for explicit scope
+      const [membersResult, wrapupResult, penaltiesResult, matrixResult, picksResult, liveScores] = await Promise.all([
+        supabase
+          .from('pool_memberships')
+          .select('user_id, role, users(id, email, display_name)')
+          .eq('pool_id', targetPoolId)
+          .eq('status', 'ACTIVE'),
+        supabase
+          .from('weekly_wrapups')
+          .select('id, pool_id, week_number')
+          .eq('pool_id', targetPoolId)
+          .eq('week_number', targetWeek)
+          .maybeSingle(),
+        supabase
+          .from('penalty_ledger')
+          .select('*')
+          .eq('pool_id', targetPoolId),
+        scopedExpressFetch(`/api/pools/${targetPoolId}/matrix?week_no=${targetWeek}`).catch(() => null),
+        supabase
+          .from('picks')
+          .select('user_id, matchup_id, game_id, selected_team, week')
+          .eq('pool_id', targetPoolId)
+          .eq('week', targetWeek),
+        fetchLiveNFLScores(targetWeek).catch(() => [] as LiveGame[]),
+      ]);
+
+      // Guard against stale asynchronous resolution
+      if (reqGenRef.current !== currentGen) {
+        return;
+      }
+
+      // Check for participant load errors
+      if (membersResult.error) {
+        setSnapshot((prev) => ({
+          ...prev,
+          status: 'ERROR',
+          errorMessage: 'Failed to retrieve active pool memberships.',
+          observedAt: new Date().toISOString(),
+          isStale: false,
+        }));
+        return;
+      }
+
+      const members = membersResult.data || [];
+      if (members.length === 0) {
+        setSnapshot((prev) => ({
+          ...prev,
+          ladderData: [],
+          status: 'EMPTY',
+          scoreStatus: 'STATUS_UNAVAILABLE',
+          observedAt: new Date().toISOString(),
+          isStale: false,
+        }));
+        return;
+      }
+
+      // Check official settlement proof
+      const isOfficialSettled = Boolean(
+        wrapupResult.data &&
+        wrapupResult.data.pool_id === targetPoolId &&
+        Number(wrapupResult.data.week_number) === targetWeek
+      );
+
+      // Check penalty ledger for settled debts
+      const penalties = penaltiesResult.data || [];
+      const penaltiesByUser = new Map<string, any[]>();
+      let hasSettledPenalties = false;
+      for (const p of penalties) {
+        const list = penaltiesByUser.get(p.user_id) || [];
+        list.push(p);
+        penaltiesByUser.set(p.user_id, list);
+        if (Number(p.delta || 0) > 0) {
+          hasSettledPenalties = true;
+        }
+      }
+
+      // PATH A: Authoritative Official Settlement
+      if (isOfficialSettled && hasSettledPenalties) {
+        const mappedLadder = members.map((m: any, idx: number) => {
+          const u = m.users;
+          let displayName = u?.display_name || (u?.email ? u.email.split('@')[0] : m.user_id);
+          if (m.role === 'COMMISSIONER' || m.role === 'ADMIN') {
+            displayName = `${displayName} (Commissioner)`;
+          }
+
+          const userPenalties = penaltiesByUser.get(m.user_id) || [];
+          const totalDebt = userPenalties.reduce((sum, p) => sum + Number(p.delta || 0), 0);
+
+          if (totalDebt <= 0) {
+            return {
+              rank: 1,
+              displayRank: '#1',
+              userId: m.user_id,
+              userName: displayName,
+              name: displayName,
+              shots: '0 shots',
+              penaltyShots: 0,
+              status: 'CLEARED (SAFE)',
+              fsmDisplayStatus: 'Safe Haven',
+              tier: 'SAFE HAVEN',
+            };
+          }
+
+          let tier = 'DANGER_LOW';
+          let status = 'Settled';
+          if (totalDebt >= 2.5) {
+            tier = 'PIT';
+            status = 'Awaiting Video';
+          } else if (totalDebt >= 2.0) {
+            tier = 'DANGER_HIGH';
+            status = 'High Risk';
+          }
+
+          return {
+            rank: idx + 1,
+            displayRank: `#${idx + 1}`,
+            userId: m.user_id,
+            userName: displayName,
+            name: displayName,
+            shots: formatShotUnit(totalDebt),
+            penaltyShots: totalDebt,
+            status,
+            fsmDisplayStatus: status,
+            tier,
+          };
+        });
+
+        setSnapshot({
+          poolId: targetPoolId,
+          season: targetSeason,
+          seasonType: targetSeasonType,
+          week: targetWeek,
+          ladderData: mappedLadder,
+          status: 'READY',
+          scoreStatus: 'ALL_GAMES_FINAL',
+          isSettled: true,
+          observedAt: new Date().toISOString(),
+          isStale: false,
+        });
+        return;
+      }
+
+      // PATH B: Provisional Sweat Standings Path
+      let gamesList: any[] = [];
+      if (matrixResult && matrixResult.ok) {
+        try {
+          const matrix = await matrixResult.json();
+          if (matrix && Array.isArray(matrix.rows)) {
+            gamesList = matrix.rows.map((row: any) => ({
+              id: String(row.game_id),
+              homeTeam: row.home_team_id,
+              awayTeam: row.away_team_id,
+              spread: row.spread,
+              kickoffTime: row.kickoff_time,
+            }));
+          }
+        } catch (_) {}
+      }
+
+      if (gamesList.length === 0) {
+        // Fallback query to games table
+        const { data: dbGames } = await supabase
+          .from('games')
+          .select('id, home_team_id, away_team_id, kickoff_time')
+          .eq('season', targetSeason)
+          .eq('season_type', targetSeasonType)
+          .eq('week', targetWeek);
+
+        if (Array.isArray(dbGames) && dbGames.length > 0) {
+          gamesList = dbGames.map((g) => ({
+            id: String(g.id),
+            homeTeam: g.home_team_id,
+            awayTeam: g.away_team_id,
+            kickoffTime: g.kickoff_time,
+          }));
+        }
+      }
+
+      if (gamesList.length === 0) {
+        setSnapshot((prev) => ({
+          ...prev,
+          ladderData: [],
+          status: 'ERROR',
+          errorMessage: `No active games found for Week ${targetWeek}.`,
+          observedAt: new Date().toISOString(),
+          isStale: false,
+        }));
+        return;
+      }
+
+      // Check picks access error
+      if (picksResult.error) {
+        setSnapshot((prev) => ({
+          ...prev,
+          status: 'ERROR',
+          errorMessage: 'Failed to retrieve member picks for this week.',
+          observedAt: new Date().toISOString(),
+          isStale: false,
+        }));
+        return;
+      }
+
+      // Validate telemetry coverage before calculation
+      const coverage = validateTelemetryCoverage(gamesList, liveScores);
+
+      if (coverage.isIncomplete || !coverage.isReady) {
+        setSnapshot({
+          poolId: targetPoolId,
+          season: targetSeason,
+          seasonType: targetSeasonType,
+          week: targetWeek,
+          ladderData: [],
+          status: 'INCOMPLETE_TELEMETRY',
+          scoreStatus: 'STATUS_UNAVAILABLE',
+          isSettled: false,
+          errorMessage: 'Authoritative telemetry for one or more scoring events is missing or invalid.',
+          observedAt: new Date().toISOString(),
+          isStale: false,
+        });
+        return;
+      }
+
+      if (coverage.isAllPregame) {
+        setSnapshot({
+          poolId: targetPoolId,
+          season: targetSeason,
+          seasonType: targetSeasonType,
+          week: targetWeek,
+          ladderData: [],
+          status: 'GAMES_NOT_STARTED',
+          scoreStatus: 'GAMES_NOT_STARTED',
+          isSettled: false,
+          observedAt: new Date().toISOString(),
+          isStale: false,
+        });
+        return;
+      }
+
+      // Map participant and pick inputs for sweat projection
+      const mappedMembers = members.map((m: any) => {
+        const u = m.users;
+        let displayName = u?.display_name || (u?.email ? u.email.split('@')[0] : m.user_id);
+        if (m.role === 'COMMISSIONER' || m.role === 'ADMIN') {
+          displayName = `${displayName} (Commissioner)`;
+        }
+        return { id: m.user_id, name: displayName };
+      });
+
+      const userPicks = (picksResult.data || []).map((p: any) => ({
+        userId: p.user_id,
+        gameId: String(p.game_id || p.matchup_id),
+        selectedTeam: p.selected_team,
+        isSubmitted: true,
+        isHidden: false,
+      }));
+
+      const standings = calculateProvisionalStandings(
+        mappedMembers,
+        gamesList,
+        liveScores,
+        userPicks
+      );
+
+      const mappedLadder = standings.map((entry) => {
+        let tier = 'DANGER_LOW';
+        let status = `${entry.projectedPenalty.toFixed(2)} Shots`;
+        let fsmDisplayStatus = 'Provisional';
+
+        if (entry.tier === 'SAFE_HAVEN') {
+          tier = 'SAFE HAVEN';
+          status = 'PROJECTED SAFE';
+          fsmDisplayStatus = 'Safe Haven';
+        } else if (entry.tier === 'DANGER_ZONE') {
+          tier = 'DANGER_LOW';
+          status = 'Projected 1.00 Shot';
+          fsmDisplayStatus = 'Danger Zone';
+        } else if (entry.tier === 'THE_DROP') {
+          tier = 'DANGER_HIGH';
+          status = 'Projected 2.00 Shots';
+          fsmDisplayStatus = 'The Drop';
+        } else if (entry.tier === 'PIT') {
+          tier = 'PIT';
+          status = 'Projected Dead Place';
+          fsmDisplayStatus = 'Dead Place Monarch';
+        }
+
+        const rankStr = entry.isTied ? `T-#${entry.provisionalRank}` : `#${entry.provisionalRank}`;
+
+        return {
+          rank: entry.provisionalRank,
+          displayRank: rankStr,
+          userId: entry.userId,
+          userName: entry.userName,
+          name: entry.userName,
+          shots: `${entry.projectedPenalty.toFixed(2)} shots`,
+          penaltyShots: entry.projectedPenalty,
+          status,
+          fsmDisplayStatus,
+          tier,
+          points: entry.totalProvisionalPoints,
+        };
+      });
+
+      // Derive score status
+      const allFinal = liveScores.length > 0 && liveScores.every((g) => (g.status || '').toUpperCase() === 'FINAL');
+      const anyLive = liveScores.some((g) => ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()));
+      const anyStarted = liveScores.some((g) => (g.status || '').toUpperCase() === 'FINAL' || ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()));
+      const anyUpcoming = liveScores.some((g) => (g.status || '').toUpperCase() === 'SCHEDULED');
+
+      let resolvedScoreStatus: ScopedLadderSnapshot['scoreStatus'] = 'GAMES_NOT_STARTED';
+      if (allFinal) {
+        resolvedScoreStatus = 'ALL_GAMES_FINAL';
+      } else if (anyLive) {
+        resolvedScoreStatus = 'GAMES_LIVE';
+      } else if (anyStarted && anyUpcoming) {
+        resolvedScoreStatus = 'WEEK_IN_PROGRESS';
+      }
+
+      setSnapshot({
+        poolId: targetPoolId,
+        season: targetSeason,
+        seasonType: targetSeasonType,
+        week: targetWeek,
+        ladderData: mappedLadder,
+        status: 'READY',
+        scoreStatus: resolvedScoreStatus,
+        isSettled: false,
+        observedAt: new Date().toISOString(),
+        isStale: false,
+      });
+    } catch (err: any) {
+      if (reqGenRef.current === currentGen) {
+        setSnapshot((prev) => ({
+          ...prev,
+          status: 'ERROR',
+          errorMessage: err?.message || 'Failed to load ladder data.',
+          observedAt: new Date().toISOString(),
+          isStale: false,
+        }));
+      }
+    }
+  }, [targetPoolId, targetSeason, targetSeasonType, targetWeek]);
+
+  useEffect(() => {
+    loadScopedData(false);
+  }, [loadScopedData]);
 
   const currentUserId = user?.id || 'viewer';
-  const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
 
   const demoRecords: AuthoritativeWeeklyStandingRow[] = useMemo(() => [
     {
       season: 2026,
       week: 5,
-      poolId: activePoolId,
+      poolId: targetPoolId,
       userId: currentUserId,
       displayName: user?.email ? user.email.split('@')[0] : 'You',
       rank: 1,
@@ -246,49 +459,75 @@ export function WallOfShamePage() {
       isOfficiallySettled: true,
       settlementRevision: '1 (Official)',
     },
-  ], [activePoolId, currentUserId, user?.email]);
+  ], [targetPoolId, currentUserId, user?.email]);
 
   const seasonStory = useMemo(() => {
     return deriveSeasonStoryViewModel({
       isLoading: false,
-      season: 2026,
-      poolId: activePoolId,
+      season: targetSeason,
+      poolId: targetPoolId,
       viewerUserId: currentUserId,
       rawRecords: inspectSettledFixture ? demoRecords : [],
       currentOutstandingShotDebt: 0,
     });
-  }, [activePoolId, currentUserId, inspectSettledFixture, demoRecords]);
+  }, [targetPoolId, targetSeason, currentUserId, inspectSettledFixture, demoRecords]);
+
+  // Unified phase label mapping per contract
+  const headerPhase = useMemo(() => {
+    if (activeTab === 'infamy') return 'SETTLED';
+    if (snapshot.isSettled) return 'SETTLED';
+    if (snapshot.scoreStatus === 'ALL_GAMES_FINAL') return 'ALL GAMES FINAL';
+    if (snapshot.scoreStatus === 'GAMES_LIVE') return 'GAMES LIVE';
+    if (snapshot.scoreStatus === 'WEEK_IN_PROGRESS') return 'WEEK IN PROGRESS';
+    if (snapshot.scoreStatus === 'GAMES_NOT_STARTED') return 'GAMES NOT STARTED';
+    return 'STATUS UNAVAILABLE';
+  }, [activeTab, snapshot.isSettled, snapshot.scoreStatus]);
+
+  // Unified right badge mapping per contract
+  const headerRightBadge = useMemo(() => {
+    if (activeTab === 'infamy') {
+      return (
+        <div className="px-2 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/15 text-amber-400 font-bold text-[10px]">
+          <span>AUDITED</span>
+        </div>
+      );
+    }
+    if (snapshot.isSettled) {
+      return (
+        <div className="px-2 py-0.5 rounded-full border border-emerald-700 bg-emerald-900/60 text-emerald-300 font-bold text-[10px]">
+          <span>OFFICIALLY SETTLED</span>
+        </div>
+      );
+    }
+    if (snapshot.scoreStatus === 'ALL_GAMES_FINAL') {
+      return (
+        <div className="px-2 py-0.5 rounded-full border border-zinc-700 bg-zinc-800 text-zinc-300 font-bold text-[10px]">
+          <span>WEEK {targetWeek} FINAL · PROVISIONAL</span>
+        </div>
+      );
+    }
+    if (snapshot.status === 'READY') {
+      return (
+        <div className="px-2 py-0.5 rounded-full border border-cyan-500/30 bg-cyan-500/15 text-cyan-400 font-bold text-[10px]">
+          <span>PROVISIONAL</span>
+        </div>
+      );
+    }
+    return (
+      <div className="px-2 py-0.5 rounded-full border border-zinc-800 bg-zinc-900 text-zinc-500 font-bold text-[10px]">
+        <span>UNAVAILABLE</span>
+      </div>
+    );
+  }, [activeTab, snapshot.isSettled, snapshot.scoreStatus, snapshot.status, targetWeek]);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white pb-24">
       {/* Unified Top Branding Banner */}
       <AppHeader
         poolName="MAIN LEAGUE"
-        scope={activeTab === 'infamy' ? 'SEASON LEDGER' : 'WEEK 6'}
-        phase={
-          activeTab === 'infamy'
-            ? 'SETTLED'
-            : liveScores.length > 0 && liveScores.every((g) => (g.status || '').toUpperCase() === 'FINAL')
-            ? 'SETTLED'
-            : liveScores.some((g) => ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()))
-            ? 'GAMES LIVE'
-            : 'PRE-KICKOFF'
-        }
-        rightContent={
-          activeTab === 'infamy' ? (
-            <div className="px-2 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/15 text-amber-400 font-bold text-[10px]">
-              <span>AUDITED</span>
-            </div>
-          ) : liveScores.length > 0 && liveScores.every((g) => (g.status || '').toUpperCase() === 'FINAL') ? (
-            <div className="px-2 py-0.5 rounded-full border border-zinc-700 bg-zinc-800 text-zinc-400 font-bold text-[10px]">
-              <span>WEEK 6 FINAL</span>
-            </div>
-          ) : (
-            <div className="px-2 py-0.5 rounded-full border border-cyan-500/30 bg-cyan-500/15 text-cyan-400 font-bold text-[10px]">
-              <span>PROVISIONAL</span>
-            </div>
-          )
-        }
+        scope={activeTab === 'infamy' ? 'SEASON LEDGER' : `WEEK ${targetWeek}`}
+        phase={headerPhase}
+        rightContent={headerRightBadge}
       />
 
       {/* Persistent 3-Tab Segmented Header */}
@@ -304,10 +543,10 @@ export function WallOfShamePage() {
             [ NO ACTIVE PENALTY REELS ]
           </div>
           <p className="text-slate-300 text-xs max-w-xs leading-relaxed mb-1">
-            Zero penalty shot videos have been uploaded for Week 6 (Pre-Kickoff).
+            Zero penalty shot videos have been uploaded for Week {targetWeek}.
           </p>
           <p className="text-slate-500 text-[11px] max-w-xs leading-relaxed mb-6 font-mono">
-            Prior settled obligations (Week 5): 0 outstanding penalty reels.
+            Prior settled obligations: 0 outstanding penalty reels.
           </p>
           <button 
             onClick={() => setActiveTab('ladder')}
@@ -318,13 +557,19 @@ export function WallOfShamePage() {
         </div>
       )}
 
-      {/* Tab 2: Live Shot Debt Ladder (Always Accessible) */}
+      {/* Tab 2: Live Shot Debt Ladder (Parent Owned Readiness & Scoped Snapshot) */}
       {activeTab === 'ladder' && (
         <div className="flex-1 p-4">
           <WeeklyLadderView
-            ladder={ladderData.length > 0 ? ladderData : undefined}
-            weekNumber={6}
-            isSettled={false}
+            ladder={snapshot.ladderData}
+            status={snapshot.status}
+            weekNumber={targetWeek}
+            isSettled={snapshot.isSettled}
+            scoreStatus={snapshot.scoreStatus}
+            errorMessage={snapshot.errorMessage}
+            onRetry={() => loadScopedData(true)}
+            observedAt={snapshot.observedAt}
+            isStale={snapshot.isStale}
           />
         </div>
       )}
@@ -414,8 +659,8 @@ export function WallOfShamePage() {
 
           {/* Weekly Recap Card Exporter Component */}
           <WeeklyRecapCardView
-            currentWeek={6}
-            liveParticipants={ladderData.map((l, idx) => ({
+            currentWeek={targetWeek}
+            liveParticipants={snapshot.ladderData.map((l, idx) => ({
               userId: l.userId || `u-${idx}`,
               displayName: l.displayName || `Player ${idx + 1}`,
               rank: l.rank || idx + 1,

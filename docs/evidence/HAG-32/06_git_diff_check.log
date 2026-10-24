@@ -1,0 +1,2 @@
+git diff --check
+Exit Code: 0 (Clean - 0 whitespace/formatting defects)

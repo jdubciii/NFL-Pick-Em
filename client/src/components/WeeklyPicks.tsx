@@ -812,11 +812,39 @@ export const WeeklyPicks: React.FC = () => {
   const lockedCount = games.filter(g => isGameKickoffLocked(g)).length;
   const openCount = games.length - lockedCount;
   const allCompleted = games.length > 0 && games.every(g => g.status === 'FINAL' || g.gameStatus === 'FINAL');
+  const anyLive = games.some((g) => g.isLive || g.status === 'IN_PROGRESS' || g.gameStatus === 'LIVE' || (g as any).gameStatus === 'IN_PROGRESS');
+  const anyStartedOrFinal = games.some((g) => g.status === 'FINAL' || g.gameStatus === 'FINAL' || g.isLive || g.status === 'IN_PROGRESS' || isGameKickoffLocked(g));
+  const anyUpcoming = games.some((g) => !isGameKickoffLocked(g) && (g.status === 'SCHEDULED' || (g as any).gameStatus === 'SCHEDULED' || (!g.status && !(g as any).gameStatus)));
+
+  let phaseLabel = 'Games not started';
+  if (games.length === 0) {
+    phaseLabel = 'Status unavailable';
+  } else if (allCompleted) {
+    phaseLabel = 'All games final';
+  } else if (anyLive) {
+    phaseLabel = 'Games live';
+  } else if (anyStartedOrFinal && anyUpcoming) {
+    phaseLabel = 'Week in progress';
+  } else if (!anyStartedOrFinal) {
+    phaseLabel = 'Games not started';
+  } else {
+    phaseLabel = 'Week in progress';
+  }
+
+  let lockBadgeText = 'ALL GAMES LOCKED';
+  let isBadgeOpen = false;
+  if (games.length === 0) {
+    lockBadgeText = 'UNAVAILABLE';
+  } else if (openCount > 0) {
+    lockBadgeText = `PICKS OPEN: ${openCount}`;
+    isBadgeOpen = true;
+  } else if (allLocked || allCompleted) {
+    lockBadgeText = 'ALL GAMES LOCKED';
+  }
 
   const setShowWeekModal = setIsWeekModalOpen;
   const viewMode = picksViewMode;
   const setViewMode = handleTogglePicksView;
-  const slateStatus: 'OPEN' | 'LOCKED' = (allLocked || allCompleted || games.length === 0) ? 'LOCKED' : (openCount > 0 ? 'OPEN' : 'LOCKED');
   const toastMessage = feedbackMessage?.text;
 
   return (
@@ -825,22 +853,16 @@ export const WeeklyPicks: React.FC = () => {
       <AppHeader
         poolName="MAIN LEAGUE"
         scope={`WEEK ${selectedWeek}`}
-        phase={
-          games.some((g) => g.isLive || g.status === 'IN_PROGRESS' || g.gameStatus === 'LIVE')
-            ? 'GAMES LIVE'
-            : allCompleted
-            ? 'SETTLED'
-            : 'PRE-KICKOFF'
-        }
+        phase={phaseLabel}
         rightContent={
           <div className="flex items-center gap-1.5 shrink-0">
             <div className={`px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-bold border flex items-center gap-1 ${
-              slateStatus === 'OPEN' 
+              isBadgeOpen
                 ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400' 
                 : 'bg-zinc-800 border-zinc-700 text-zinc-400'
             }`}>
-              {slateStatus === 'OPEN' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
-              <span>{slateStatus === 'OPEN' ? 'OPEN' : 'LOCKED'}</span>
+              {isBadgeOpen && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+              <span>{lockBadgeText}</span>
             </div>
 
             <button

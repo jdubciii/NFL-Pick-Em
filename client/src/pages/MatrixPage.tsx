@@ -178,17 +178,65 @@ export const MatrixPage: React.FC = () => {
   const isPastWeek = selectedWeek < currentNFLWeek;
   const isCurrentOrFutureWeek = selectedWeek >= currentNFLWeek;
 
+  const now = Date.now();
+  const gameLockStatus = useMemo(() => {
+    let lockedCount = 0;
+    let openCount = 0;
+    let unavailableCount = 0;
+
+    for (const g of liveGames) {
+      if (g.status === 'FINAL' || g.status === 'IN_PROGRESS') {
+        lockedCount++;
+        continue;
+      }
+      const kickoffIso = (g as any).kickoffTime || (g as any).kickoff_time;
+      if (!kickoffIso) {
+        unavailableCount++;
+        continue;
+      }
+      const kickoffMs = new Date(kickoffIso).getTime();
+      if (isNaN(kickoffMs) || kickoffMs <= 0) {
+        unavailableCount++;
+        continue;
+      }
+      if (now >= kickoffMs) {
+        lockedCount++;
+      } else {
+        openCount++;
+      }
+    }
+
+    return { lockedCount, openCount, unavailableCount, total: liveGames.length };
+  }, [liveGames, now]);
+
   const allGamesFinal =
     liveGames.length > 0
-      ? liveGames.every((g) => g.status === 'FINAL')
+      ? liveGames.every((g) => (g.status || '').toUpperCase() === 'FINAL')
       : isPastWeek;
+
+  const anyGameLive = liveGames.some((g) => ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()));
+  const anyStartedOrFinal = liveGames.some((g) => (g.status || '').toUpperCase() === 'FINAL' || ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()));
+  const anyUpcoming = liveGames.some((g) => (g.status || '').toUpperCase() === 'SCHEDULED');
+
+  let matrixPhase = 'Games not started';
+  if (liveGames.length === 0) {
+    matrixPhase = isPastWeek ? 'All games final' : 'Status unavailable';
+  } else if (allGamesFinal) {
+    matrixPhase = 'All games final';
+  } else if (anyGameLive) {
+    matrixPhase = 'Games live';
+  } else if (anyStartedOrFinal && anyUpcoming) {
+    matrixPhase = 'Week in progress';
+  } else if (!anyStartedOrFinal) {
+    matrixPhase = 'Games not started';
+  } else {
+    matrixPhase = 'Week in progress';
+  }
 
   const allGamesUpcoming =
     liveGames.length > 0
       ? liveGames.every((g) => g.status === 'SCHEDULED')
       : (isCurrentOrFutureWeek && !allGamesFinal);
-
-  const isSlateLocked = isPastWeek || (!allGamesUpcoming && liveGames.some((g) => g.status !== 'SCHEDULED'));
 
   const [activeTab, setActiveTab] = useState<'LEVERAGE' | 'GAMETRACK'>(
     allGamesUpcoming ? 'LEVERAGE' : 'GAMETRACK'
@@ -284,13 +332,7 @@ export const MatrixPage: React.FC = () => {
       <AppHeader
         poolName="MAIN LEAGUE"
         scope={`WEEK ${selectedWeek}`}
-        phase={
-          allGamesFinal
-            ? 'SETTLED'
-            : liveGames.some((g) => ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()))
-            ? 'GAMES LIVE'
-            : 'PRE-KICKOFF'
-        }
+        phase={matrixPhase}
         rightContent={
           allGamesFinal ? (
             <div className="flex items-center gap-1.5">
@@ -298,16 +340,28 @@ export const MatrixPage: React.FC = () => {
                 WEEK {selectedWeek} FINAL
               </div>
             </div>
-          ) : isSlateLocked ? (
+          ) : liveGames.length === 0 ? (
+            <div className="flex items-center gap-1.5">
+              <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-zinc-800 bg-zinc-900 text-zinc-500">
+                UNAVAILABLE
+              </div>
+            </div>
+          ) : gameLockStatus.openCount > 0 ? (
+            <div className="flex items-center gap-1.5">
+              <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-cyan-500/30 bg-cyan-500/15 text-cyan-400">
+                PICKS OPEN: {gameLockStatus.openCount}
+              </div>
+            </div>
+          ) : gameLockStatus.lockedCount === liveGames.length ? (
             <div className="flex items-center gap-1.5">
               <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-zinc-700 bg-zinc-800 text-zinc-400">
-                SLATE LOCKED
+                ALL GAMES LOCKED
               </div>
             </div>
           ) : (
             <div className="flex items-center gap-1.5">
-              <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-cyan-500/30 bg-cyan-500/15 text-cyan-400">
-                SLATE OPEN
+              <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-zinc-700 bg-zinc-800 text-zinc-400">
+                SLATE LOCKED
               </div>
             </div>
           )
@@ -394,8 +448,8 @@ export const MatrixPage: React.FC = () => {
         poolPicks.length === 0 ? (
           <EmptyStateWireframe
             header="[ AWAITING LEAGUE ACTION ]"
-            subtitle="[ VEGAS LINES FREEZING... ]"
-            contextDetail="Tuesday morning recalibration underway. Leverage board unlocks once picks are registered."
+            subtitle="[ NO PICKS SUBMITTED ]"
+            contextDetail="No pool picks have been submitted for this week yet. Leverage board unlocks once picks are registered."
           />
         ) : (
         <>

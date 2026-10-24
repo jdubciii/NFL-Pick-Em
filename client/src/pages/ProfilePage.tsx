@@ -379,19 +379,41 @@ export async function resolveProfileReminderScope(
   };
 }
 
-export function formatNextKickoffLock(games: DeadlineGameWindowInput[], weekNumber: number = 6): string {
+export function formatNextKickoffLock(games: DeadlineGameWindowInput[], weekNumber?: number | null): string {
+  if (!weekNumber) {
+    return 'Unavailable';
+  }
   if (!games || games.length === 0) {
-    return `Week ${weekNumber} Locked`;
+    return 'Unavailable';
   }
   const now = Date.now();
-  const upcoming = games
-    .filter((g): g is DeadlineGameWindowInput & { kickoffIso: string } => Boolean(g.kickoffIso && new Date(g.kickoffIso).getTime() > now))
-    .sort((a, b) => new Date(a.kickoffIso).getTime() - new Date(b.kickoffIso).getTime());
+  let allKnownLocked = true;
+  const upcoming: (DeadlineGameWindowInput & { kickoffIso: string })[] = [];
 
-  if (upcoming.length === 0) {
-    return `All Week ${weekNumber} Games Locked`;
+  for (const g of games) {
+    if (!g.kickoffIso) {
+      allKnownLocked = false;
+      continue;
+    }
+    const kickoffMs = new Date(g.kickoffIso).getTime();
+    if (isNaN(kickoffMs)) {
+      allKnownLocked = false;
+      continue;
+    }
+    if (kickoffMs > now) {
+      allKnownLocked = false;
+      upcoming.push(g as DeadlineGameWindowInput & { kickoffIso: string });
+    }
   }
 
+  if (upcoming.length === 0) {
+    if (allKnownLocked && games.length > 0) {
+      return `All Week ${weekNumber} Games Locked`;
+    }
+    return 'Unavailable';
+  }
+
+  upcoming.sort((a, b) => new Date(a.kickoffIso).getTime() - new Date(b.kickoffIso).getTime());
   const nextKickoff = new Date(upcoming[0].kickoffIso);
   const dayStr = nextKickoff.toLocaleDateString('en-US', { weekday: 'short' });
   const timeStr = nextKickoff.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -607,8 +629,11 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   }, [selectedPoolId, propPoolId]);
 
   const nextKickoffLockText = useMemo(() => {
-    return formatNextKickoffLock(manifestGames, activeScope?.week || propWeek || 6);
-  }, [manifestGames, activeScope?.week, propWeek]);
+    if (!hasAcceptedSlate || !activeScope?.week) {
+      return 'Unavailable';
+    }
+    return formatNextKickoffLock(manifestGames, activeScope.week);
+  }, [hasAcceptedSlate, manifestGames, activeScope?.week]);
 
   useEffect(() => {
     if (!user) return;
