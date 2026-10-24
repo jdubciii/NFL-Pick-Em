@@ -630,7 +630,13 @@ export function WallOfShamePage({
           }
 
           // Validate known endpoint status and boolean offered flag consistently
-          const KNOWN_TB_STATUSES = ['DEFAULT', 'OVERRIDDEN', 'UNAVAILABLE', 'UNRESOLVED'];
+          const KNOWN_TB_STATUSES = [
+            'DEFAULT_LIONS',
+            'COMMISSIONER_OVERRIDE',
+            'COMMISSIONER_SELECTION_REQUIRED',
+            'UNRESOLVED',
+            'UNAVAILABLE',
+          ];
           if (
             typeof tbJson.tiebreakerOffered !== 'boolean' ||
             typeof tbJson.status !== 'string' ||
@@ -671,6 +677,24 @@ export function WallOfShamePage({
             return;
           }
 
+          if (tbJson.status === 'COMMISSIONER_SELECTION_REQUIRED') {
+            setSnapshot({
+              userId: user?.id,
+              poolId: targetPoolId,
+              season: targetSeason,
+              seasonType: targetSeasonType,
+              week: targetWeek,
+              ladderData: [],
+              status: 'INCOMPLETE_TELEMETRY',
+              scoreStatus: 'STATUS_UNAVAILABLE',
+              isSettled: false,
+              errorMessage: 'Commissioner selection is required for this week tiebreaker.',
+              observedAt: new Date().toISOString(),
+              isStale: false,
+            });
+            return;
+          }
+
           if (tbJson.tiebreakerOffered === false) {
             if (tbJson.status !== 'UNAVAILABLE') {
               setSnapshot({
@@ -692,7 +716,7 @@ export function WallOfShamePage({
             tiebreakerData = undefined;
           } else {
             // tbJson.tiebreakerOffered === true
-            if (tbJson.status !== 'DEFAULT' && tbJson.status !== 'OVERRIDDEN') {
+            if (tbJson.status !== 'DEFAULT_LIONS' && tbJson.status !== 'COMMISSIONER_OVERRIDE') {
               setSnapshot({
                 userId: user?.id,
                 poolId: targetPoolId,

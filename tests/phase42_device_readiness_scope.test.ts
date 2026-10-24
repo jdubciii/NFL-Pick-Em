@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import type { DesignationStatus } from '../src/services/weeklyDesignationService';
 import {
   validateTelemetryCoverage,
   calculateProvisionalStandings,
@@ -49,6 +50,14 @@ function setupMockDom() {
     if (windowListeners[evt]) {
       windowListeners[evt] = windowListeners[evt].filter(f => f !== fn);
     }
+  };
+  (globalThis as any).dispatchEvent = (evt: any) => {
+    const handlers = windowListeners[evt?.type || ''] || [];
+    handlers.forEach(h => h(evt));
+    return true;
+  };
+  (globalThis as any).CustomEvent = class CustomEvent {
+    constructor(public type: string, public detail?: any) {}
   };
 
   class MockNode {
@@ -152,6 +161,20 @@ function setupMockDom() {
       return find(this);
     }
 
+    querySelectorAll(selector: string): MockElement[] {
+      const targetTag = selector.toUpperCase();
+      const results: MockElement[] = [];
+      const traverse = (node: any) => {
+        if (!node) return;
+        if (node.tagName === targetTag) results.push(node);
+        for (const child of node.children || []) {
+          traverse(child);
+        }
+      };
+      traverse(this);
+      return results;
+    }
+
     constructor(tag: string, doc: any) {
       super();
       this.tagName = tag.toUpperCase();
@@ -239,6 +262,9 @@ function setupWallMocks(options: {
   members?: any[];
   membersError?: any;
   membersDelayMs?: number;
+  poolSettings?: any;
+  poolError?: any;
+  poolDelayMs?: number;
   wrapup?: any;
   wrapupError?: any;
   matrixRows?: any[];
@@ -318,10 +344,16 @@ function setupWallMocks(options: {
           };
         }
         if (table === 'pools') {
+          if (options.poolDelayMs) {
+            await new Promise((r) => setTimeout(r, options.poolDelayMs));
+          }
+          if (options.poolError) {
+            return { data: null, error: options.poolError };
+          }
           return {
             data: {
               id: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
-              settings: { lock_offset: 0, lockOffset: 0 },
+              settings: options.poolSettings !== undefined ? options.poolSettings : { lock_offset: 0, lockOffset: 0 },
             },
             error: null,
           };
@@ -1243,7 +1275,7 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
           { user_id: 'u2', game_id: 'g-uuid-1', selected_team: 'CHI' },
         ],
         tiebreakerResponse: {
-          status: 'DEFAULT',
+          status: 'DEFAULT_LIONS',
           tiebreakerOffered: true,
           eventId: '401772648',
           readiness: [
@@ -1595,7 +1627,7 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
           { user_id: 'u2', game_id: 'g-uuid-1', selected_team: 'NE' },
         ],
         tiebreakerResponse: {
-          status: 'DEFAULT',
+          status: 'DEFAULT_LIONS',
           tiebreakerOffered: true,
           eventId: '401772648',
           readiness: [
@@ -1635,7 +1667,7 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
           { user_id: 'u2', game_id: 'g-uuid-1', selected_team: 'NE' },
         ],
         tiebreakerResponse: {
-          status: 'DEFAULT',
+          status: 'DEFAULT_LIONS',
           tiebreakerOffered: true,
           eventId: '401772648',
           readiness: [
@@ -1895,7 +1927,7 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
           { id: '401772648', status: 'FINAL', homeTeam: { code: 'NE', score: '24' }, awayTeam: { code: 'CHI', score: '30' } },
         ],
         tiebreakerResponse: {
-          status: 'DEFAULT',
+          status: 'DEFAULT_LIONS',
           tiebreakerOffered: true,
           eventId: '401772648',
           readiness: [
@@ -1935,7 +1967,7 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
           { id: '401772648', status: 'FINAL', homeTeam: { code: 'NE', score: '24' }, awayTeam: { code: 'CHI', score: '30' } },
         ],
         tiebreakerResponse: {
-          status: 'DEFAULT',
+          status: 'DEFAULT_LIONS',
           tiebreakerOffered: true,
           eventId: '401772648',
           readiness: [
@@ -2020,7 +2052,7 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       });
     });
 
-    it('WallOfShamePage same-instance retry/refresh immediately resets isSettled and clears prior official header', async () => {
+    it('WallOfShamePage scope transition (week 6 -> 7) on same mount clears settlement header immediately during loading and publishes error', async () => {
       const { mockDoc } = setupMockDom();
       const container = mockDoc.createElement('div');
       const root = createRoot(container as any);
@@ -2089,6 +2121,218 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
 
       expect(container.textContent).not.toContain('OFFICIALLY SETTLED');
       expect(container.textContent).toContain('Failed to retrieve active pool memberships.');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('WallOfShamePage same-scope retry recovery interaction recovers from error and renders valid ladder', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      // 1. Initial failed state on Week 7
+      setupWallMocks({
+        membersError: new Error('Network connection timeout'),
+      });
+
+      await act(async () => {
+        root.render(
+          React.createElement(WallOfShamePage, {
+            poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            season: 2026,
+            seasonType: 2,
+            week: 7,
+          })
+        );
+      });
+
+      expect(container.textContent).toContain('Failed to retrieve active pool memberships.');
+      expect(container.textContent).toContain('RETRY');
+
+      // 2. Recovery on same mount: reconfigure mocks to succeed
+      setupWallMocks({
+        matrixRows: [
+          { game_id: 'g-uuid-1', external_game_id: '401772648', home_team_id: 'NE', away_team_id: 'CHI', kickoff_time: '2026-10-15T00:15:00Z' },
+        ],
+        liveScores: [
+          { id: '401772648', status: 'FINAL', homeTeam: { code: 'NE', score: '24' }, awayTeam: { code: 'CHI', score: '30' } },
+        ],
+        picks: [
+          { user_id: 'u1', game_id: 'g-uuid-1', selected_team: 'CHI' },
+          { user_id: 'u2', game_id: 'g-uuid-1', selected_team: 'CHI' },
+        ],
+        tiebreakerResponse: {
+          status: 'DEFAULT_LIONS',
+          tiebreakerOffered: true,
+          eventId: '401772648',
+          readiness: [
+            { userId: 'u1', prediction: 54 },
+            { userId: 'u2', prediction: 40 },
+          ],
+        },
+      });
+
+      // Find retry button
+      const retryBtn = container.querySelectorAll('button').find((b: any) => b.textContent.includes('RETRY'));
+      expect(retryBtn).toBeDefined();
+      const reactPropsKey = Object.keys(retryBtn!).find((k) => k.startsWith('__reactProps$'));
+      expect(reactPropsKey).toBeDefined();
+
+      await act(async () => {
+        (retryBtn as any)[reactPropsKey!].onClick();
+      });
+
+      // After recovery, ladder renders with differentiated ranks
+      expect(container.textContent).not.toContain('Failed to retrieve active pool memberships.');
+      expect(container.textContent).toContain('adambrickner');
+      expect(container.textContent).toContain('#1');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('binds tiebreaker consumer status contract to authoritative DesignationStatus producer enum', () => {
+      const validProducerStatuses: DesignationStatus[] = [
+        'DEFAULT_LIONS',
+        'COMMISSIONER_OVERRIDE',
+        'COMMISSIONER_SELECTION_REQUIRED',
+        'UNRESOLVED',
+      ];
+      const validConsumerStatuses = [...validProducerStatuses, 'UNAVAILABLE'];
+
+      const inventedStatuses = ['DEFAULT', 'OVERRIDDEN', 'UNKNOWN', 'RESOLVED'];
+      inventedStatuses.forEach((status) => {
+        expect(validConsumerStatuses).not.toContain(status);
+      });
+    });
+
+    it('WallOfShamePage processes COMMISSIONER_OVERRIDE with verified readiness to differentiated ranked output', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      setupWallMocks({
+        matrixRows: [
+          { game_id: 'g-uuid-1', external_game_id: '401772648', home_team_id: 'NE', away_team_id: 'CHI', kickoff_time: '2026-10-15T00:15:00Z' },
+        ],
+        liveScores: [
+          { id: '401772648', status: 'FINAL', homeTeam: { code: 'NE', score: '24' }, awayTeam: { code: 'CHI', score: '30' } },
+        ],
+        picks: [
+          { user_id: 'u1', game_id: 'g-uuid-1', selected_team: 'CHI' },
+          { user_id: 'u2', game_id: 'g-uuid-1', selected_team: 'CHI' },
+        ],
+        tiebreakerResponse: {
+          status: 'COMMISSIONER_OVERRIDE',
+          tiebreakerOffered: true,
+          eventId: '401772648',
+          readiness: [
+            { userId: 'u1', prediction: 54 }, // exact match (distance 0)
+            { userId: 'u2', prediction: 40 }, // distance 14
+          ],
+        },
+      });
+
+      await act(async () => {
+        root.render(
+          React.createElement(WallOfShamePage, {
+            poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            season: 2026,
+            seasonType: 2,
+            week: 7,
+          })
+        );
+      });
+
+      const text = container.textContent;
+      expect(text).toContain('WEEK 7');
+      expect(text).toContain('adambrickner');
+      expect(text).toContain('#1');
+      expect(text).toContain('#2');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('WallOfShamePage fails closed when tiebreaker status is COMMISSIONER_SELECTION_REQUIRED', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      setupWallMocks({
+        matrixRows: [
+          { game_id: 'g-uuid-1', external_game_id: '401772648', home_team_id: 'NE', away_team_id: 'CHI', kickoff_time: '2026-10-15T00:15:00Z' },
+        ],
+        liveScores: [
+          { id: '401772648', status: 'FINAL', homeTeam: { code: 'NE', score: '24' }, awayTeam: { code: 'CHI', score: '30' } },
+        ],
+        tiebreakerResponse: {
+          status: 'COMMISSIONER_SELECTION_REQUIRED',
+          tiebreakerOffered: true,
+          eventId: null,
+          readiness: [],
+        },
+      });
+
+      await act(async () => {
+        root.render(
+          React.createElement(WallOfShamePage, {
+            poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            season: 2026,
+            seasonType: 2,
+            week: 7,
+          })
+        );
+      });
+
+      expect(container.textContent).toContain('INCOMPLETE GAME TELEMETRY');
+      expect(container.textContent).toContain('Commissioner selection is required for this week tiebreaker.');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('WallOfShamePage fails closed when tiebreaker status is invented legacy DEFAULT or OVERRIDDEN', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      setupWallMocks({
+        matrixRows: [
+          { game_id: 'g-uuid-1', external_game_id: '401772648', home_team_id: 'NE', away_team_id: 'CHI', kickoff_time: '2026-10-15T00:15:00Z' },
+        ],
+        liveScores: [
+          { id: '401772648', status: 'FINAL', homeTeam: { code: 'NE', score: '24' }, awayTeam: { code: 'CHI', score: '30' } },
+        ],
+        tiebreakerResponse: {
+          status: 'DEFAULT', // legacy invented value
+          tiebreakerOffered: true,
+          eventId: '401772648',
+          readiness: [
+            { userId: 'u1', prediction: 54 },
+            { userId: 'u2', prediction: 40 },
+          ],
+        },
+      });
+
+      await act(async () => {
+        root.render(
+          React.createElement(WallOfShamePage, {
+            poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+            season: 2026,
+            seasonType: 2,
+            week: 7,
+          })
+        );
+      });
+
+      expect(container.textContent).toContain('INCOMPLETE GAME TELEMETRY');
+      expect(container.textContent).toContain('Unknown or missing tiebreaker status/offered telemetry.');
 
       await act(async () => {
         root.unmount();
@@ -2250,6 +2494,134 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
 
       await act(async () => {
         root2.unmount();
+      });
+    });
+
+    it('MatrixPage gates open counts during delayed settings load, never claiming offset 0 open counts', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      // Kickoff is in 45 minutes.
+      // With offset 0: game is OPEN (45 min remaining).
+      // With offset 60: lock was 15 min ago (45 - 60 = -15 min), so game is LOCKED.
+      const kickoffIn45Min = new Date(Date.now() + 45 * 60 * 1000).toISOString();
+
+      setupWallMocks({
+        poolDelayMs: 60,
+        poolSettings: { lock_offset: 60 },
+        matrixRows: [
+          { game_id: 'g-upcoming', home_team_id: 'KC', away_team_id: 'DEN', kickoff_time: kickoffIn45Min },
+        ],
+        picks: [],
+      });
+
+      let renderPromise: Promise<void>;
+      act(() => {
+        renderPromise = new Promise(async (resolve) => {
+          root.render(React.createElement(MatrixPage, null));
+          resolve();
+        });
+      });
+
+      // While settings is delayed / in-flight:
+      // Header MUST show SYNCING, NOT offset 0 open counts (1 PICK OPEN)
+      expect(container.textContent).toContain('SYNCING');
+      expect(container.textContent).not.toContain('1 PICK OPEN');
+
+      // Allow settings to complete with lock_offset = 60
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 80));
+      });
+
+      // With offset 60 validated, kickoff in 45 min is LOCKED, not open!
+      expect(container.textContent).not.toContain('SYNCING...');
+      expect(container.textContent).not.toContain('1 PICK OPEN');
+      expect(container.textContent).toContain('ALL GAMES LOCKED');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('MatrixPage preserves settings error across week switch until successful retry interaction', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      // 1. Initial settings failure
+      setupWallMocks({
+        poolError: new Error('Settings database timeout'),
+        matrixRows: [
+          { game_id: 'g-w7', home_team_id: 'KC', away_team_id: 'DEN', kickoff_time: '2026-10-18T17:00:00Z' },
+        ],
+        picks: [],
+      });
+
+      await act(async () => {
+        root.render(React.createElement(MatrixPage, null));
+      });
+
+      // Header and content must fail closed to UNAVAILABLE
+      expect(container.textContent).toContain('STATUS_UNAVAILABLE');
+      expect(container.textContent).toContain('UNAVAILABLE');
+      expect(container.textContent).toContain('[ DATA UNAVAILABLE ]');
+      expect(container.textContent).not.toContain('1 PICK OPEN');
+
+      // 2. Switch to Week 8: settings error MUST NOT be erased by week switch
+      setupWallMocks({
+        poolError: new Error('Settings database timeout'),
+        matrixRows: [
+          { game_id: 'g-w8', home_team_id: 'NE', away_team_id: 'CHI', kickoff_time: '2026-10-25T17:00:00Z' },
+        ],
+        picks: [],
+      });
+
+      const selectNode = container.querySelector('select');
+      expect(selectNode).not.toBeNull();
+      act(() => {
+        const changeEvent = { target: { value: '8' } };
+        const reactPropsKey = Object.keys(selectNode!).find((k) => k.startsWith('__reactProps$'));
+        if (reactPropsKey && (selectNode as any)[reactPropsKey]?.onChange) {
+          (selectNode as any)[reactPropsKey].onChange(changeEvent);
+        }
+      });
+
+      // Allow Week 8 slate to load
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+
+      // Week 8 STILL preserves settings error state, never defaulting to offset 0
+      expect(container.textContent).toContain('WEEK 8');
+      expect(container.textContent).toContain('STATUS_UNAVAILABLE');
+      expect(container.textContent).toContain('UNAVAILABLE');
+      expect(container.textContent).toContain('[ DATA UNAVAILABLE ]');
+
+      // 3. Trigger successful retry
+      setupWallMocks({
+        poolError: null,
+        poolSettings: { lock_offset: 0 },
+        matrixRows: [
+          { game_id: 'g-w8', home_team_id: 'NE', away_team_id: 'CHI', kickoff_time: '2026-10-25T17:00:00Z' },
+        ],
+        picks: [],
+      });
+
+      const retryBtn = container.querySelectorAll('button').find((b: any) => b.textContent.includes('RETRY'));
+      expect(retryBtn).toBeDefined();
+      const reactPropsKey = Object.keys(retryBtn!).find((k) => k.startsWith('__reactProps$'));
+      expect(reactPropsKey).toBeDefined();
+
+      await act(async () => {
+        (retryBtn as any)[reactPropsKey!].onClick();
+      });
+
+      // Error clears and Matrix recovers
+      expect(container.textContent).not.toContain('[ DATA UNAVAILABLE ]');
+
+      await act(async () => {
+        root.unmount();
       });
     });
   });

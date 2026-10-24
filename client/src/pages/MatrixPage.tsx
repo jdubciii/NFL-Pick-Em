@@ -97,18 +97,37 @@ export const MatrixPage: React.FC = () => {
   };
 
   const [clockNow, setClockNow] = useState<number>(Date.now());
-  const [poolOffset, setPoolOffset] = useState<number>(0);
   const [renderedWeek, setRenderedWeek] = useState<number>(selectedWeek);
-  const [hasLoadError, setHasLoadError] = useState<boolean>(false);
+  const [settingsRetryGen, setSettingsRetryGen] = useState<number>(0);
+  const [slateRetryGen, setSlateRetryGen] = useState<number>(0);
+
+  const [settingsState, setSettingsState] = useState<{
+    poolId: string;
+    status: 'LOADING' | 'READY' | 'ERROR';
+    offset: number;
+    errorMessage?: string;
+  }>({
+    poolId: activePoolId,
+    status: 'LOADING',
+    offset: 0,
+  });
+
+  const [slateLoadError, setSlateLoadError] = useState<boolean>(false);
 
   useEffect(() => {
     const timer = setInterval(() => setClockNow(Date.now()), 10000);
     return () => clearInterval(timer);
   }, []);
 
-  // Fetch pool settings for offset
+  // Fetch pool settings for offset (owned state keyed to activePoolId)
   useEffect(() => {
     let isMounted = true;
+    setSettingsState({
+      poolId: activePoolId,
+      status: 'LOADING',
+      offset: 0,
+    });
+
     async function loadPoolSettings() {
       try {
         const { data, error } = await supabase
@@ -119,32 +138,53 @@ export const MatrixPage: React.FC = () => {
 
         if (!isMounted) return;
         if (error || !data || !data.settings || typeof data.settings !== 'object') {
-          setHasLoadError(true);
+          setSettingsState({
+            poolId: activePoolId,
+            status: 'ERROR',
+            offset: 0,
+            errorMessage: 'Failed to retrieve pool settings.',
+          });
           return;
         }
         const settings = (data.settings as any) || {};
         const rawOff = settings.lock_offset ?? settings.lockOffset ?? 0;
         const off = Number(rawOff);
         if (Number.isFinite(off) && off >= 0) {
-          setPoolOffset(off);
+          setSettingsState({
+            poolId: activePoolId,
+            status: 'READY',
+            offset: off,
+          });
         } else {
-          setHasLoadError(true);
+          setSettingsState({
+            poolId: activePoolId,
+            status: 'ERROR',
+            offset: 0,
+            errorMessage: 'Invalid pool lock offset configuration.',
+          });
         }
-      } catch {
-        if (isMounted) setHasLoadError(true);
+      } catch (err: any) {
+        if (isMounted) {
+          setSettingsState({
+            poolId: activePoolId,
+            status: 'ERROR',
+            offset: 0,
+            errorMessage: err?.message || 'Failed to retrieve pool settings.',
+          });
+        }
       }
     }
     loadPoolSettings();
     return () => {
       isMounted = false;
     };
-  }, [activePoolId]);
+  }, [activePoolId, settingsRetryGen]);
 
   // Load live scores, authoritative slate, and submitted picks
   useEffect(() => {
     let isMounted = true;
     setLoadingGames(true);
-    setHasLoadError(false);
+    setSlateLoadError(false);
     setLiveGames([]);
     setSlateGames([]);
     setPoolPicks([]);
@@ -164,7 +204,7 @@ export const MatrixPage: React.FC = () => {
 
         if (!isMounted) return;
         if (membersErr) {
-          setHasLoadError(true);
+          setSlateLoadError(true);
           return;
         }
 
@@ -200,7 +240,7 @@ export const MatrixPage: React.FC = () => {
         if (resolution.source === 'FAILED_CLOSED') {
           setSlateGames([]);
           setPoolPicks([]);
-          setHasLoadError(true);
+          setSlateLoadError(true);
           return;
         }
 
@@ -225,7 +265,7 @@ export const MatrixPage: React.FC = () => {
           if (!isMounted) return;
 
           if (picksErr) {
-            setHasLoadError(true);
+            setSlateLoadError(true);
             return;
           }
 
@@ -250,7 +290,7 @@ export const MatrixPage: React.FC = () => {
         }
       } catch (err) {
         console.error('Failed to query matrix data:', err);
-        if (isMounted) setHasLoadError(true);
+        if (isMounted) setSlateLoadError(true);
       } finally {
         if (isMounted) {
           setRenderedWeek(selectedWeek);
@@ -263,7 +303,16 @@ export const MatrixPage: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [selectedWeek, activePoolId, user?.id, currentUserId, currentUserName]);
+  }, [selectedWeek, activePoolId, user?.id, currentUserId, currentUserName, slateRetryGen]);
+
+  const isSettingsLoading = settingsState.status === 'LOADING' || settingsState.poolId !== activePoolId;
+  const isSettingsError = settingsState.status === 'ERROR' && settingsState.poolId === activePoolId;
+  const isSettingsReady = settingsState.status === 'READY' && settingsState.poolId === activePoolId;
+
+  const isSyncing = loadingGames || renderedWeek !== selectedWeek || isSettingsLoading;
+  const hasLoadError = isSettingsError || slateLoadError;
+
+  const poolOffset = isSettingsReady ? settingsState.offset : 0;
 
   const currentNFLWeek = getCurrentNFLWeek();
   const isPastWeek = selectedWeek < currentNFLWeek;
@@ -278,6 +327,11 @@ export const MatrixPage: React.FC = () => {
   const allGamesUpcoming = slateSummary.openCount > 0 && !slateSummary.anyStartedOrFinal;
 
   const shouldShowLeverage = hasLoadError || poolPicks.length === 0 || allGamesUpcoming;
+
+  const handleRetry = () => {
+    setSettingsRetryGen((g) => g + 1);
+    setSlateRetryGen((g) => g + 1);
+  };
 
   const [activeTab, setActiveTab] = useState<'LEVERAGE' | 'GAMETRACK'>(
     shouldShowLeverage ? 'LEVERAGE' : 'GAMETRACK'
@@ -367,20 +421,24 @@ export const MatrixPage: React.FC = () => {
     );
   }, [selectedRivalId, poolMembers, currentUserId, currentUserName, poolPicks, rawGames]);
 
-  const isSyncing = loadingGames || renderedWeek !== selectedWeek;
-
   return (
     <div className="min-h-screen bg-zinc-950 text-white pb-24">
       {/* Unified Top Branding Banner with Consolidated Status Pills */}
       <AppHeader
         poolName="MAIN LEAGUE"
         scope={isSyncing ? 'SYNCING...' : `WEEK ${selectedWeek}`}
-        phase={isSyncing ? 'SYNCING' : matrixPhase}
+        phase={isSyncing ? 'SYNCING' : hasLoadError ? 'STATUS_UNAVAILABLE' : matrixPhase}
         rightContent={
           isSyncing ? (
             <div className="flex items-center gap-1.5">
               <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-zinc-700 bg-zinc-800 text-zinc-400">
                 SYNCING
+              </div>
+            </div>
+          ) : hasLoadError ? (
+            <div className="flex items-center gap-1.5">
+              <div className="px-2 py-0.5 rounded-full text-[10px] font-bold border border-zinc-800 bg-zinc-900 text-zinc-500">
+                UNAVAILABLE
               </div>
             </div>
           ) : slateSummary.total === 0 ? (
@@ -489,6 +547,23 @@ export const MatrixPage: React.FC = () => {
             subtitle={`[ LOADING WEEK ${selectedWeek} ]`}
             contextDetail="Fetching authoritative slate games and league picks..."
           />
+        ) : hasLoadError ? (
+          <div className="space-y-4">
+            <EmptyStateWireframe
+              header="[ DATA UNAVAILABLE ]"
+              subtitle="[ LEAGUE DATA COULD NOT BE VERIFIED ]"
+              contextDetail="Failed to verify pool settings, memberships, or slate picks for this week. Please retry."
+            />
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={handleRetry}
+                className="px-4 py-2 bg-slate-900 border border-slate-700 hover:border-cyan-500 text-xs font-mono font-bold text-cyan-400 rounded-lg transition-colors cursor-pointer"
+              >
+                [ RETRY TELEMETRY INTAKE ]
+              </button>
+            </div>
+          </div>
         ) : (
           <LiveGametrackStream weekNumber={selectedWeek} />
         )
@@ -503,11 +578,22 @@ export const MatrixPage: React.FC = () => {
             contextDetail="Fetching authoritative slate games and league picks..."
           />
         ) : hasLoadError ? (
-          <EmptyStateWireframe
-            header="[ DATA UNAVAILABLE ]"
-            subtitle="[ LEAGUE DATA COULD NOT BE VERIFIED ]"
-            contextDetail="Failed to verify pool memberships or slate picks for this week. Please retry."
-          />
+          <div className="space-y-4">
+            <EmptyStateWireframe
+              header="[ DATA UNAVAILABLE ]"
+              subtitle="[ LEAGUE DATA COULD NOT BE VERIFIED ]"
+              contextDetail="Failed to verify pool settings, memberships, or slate picks for this week. Please retry."
+            />
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={handleRetry}
+                className="px-4 py-2 bg-slate-900 border border-slate-700 hover:border-cyan-500 text-xs font-mono font-bold text-cyan-400 rounded-lg transition-colors cursor-pointer"
+              >
+                [ RETRY TELEMETRY INTAKE ]
+              </button>
+            </div>
+          </div>
         ) : poolPicks.length === 0 ? (
           <EmptyStateWireframe
             header="[ AWAITING LEAGUE ACTION ]"
