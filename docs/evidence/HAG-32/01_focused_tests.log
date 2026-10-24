@@ -1,22 +1,14 @@
-node.exe : npm notice run nfl-pick-em@1.0.0 npx
-At line:1 char:1
-+ & "C:\Program Files\nodejs/node.exe" "C:\Users\kacone\AppData\Roaming ...
-+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (npm notice run nfl-pick-em@1.0.0 npx:String) [], RemoteException
-    + FullyQualifiedErrorId : NativeCommandError
-
+npm notice run nfl-pick-em@1.0.0 npx
 npm notice run vitest run tests/phase42_device_readiness_scope.test.ts --pool=threads
-[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future
-major version of Vite:
-  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest
-package.json
-Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
 
-[1m[30m[46m RUN [49m[39m[22m [36mv5.0.2 [39m[90mC:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em[39m
+ RUN  v5.0.2 C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em
 
- [32mΓ£ô[39m tests/phase42_device_readiness_scope.test.ts [2m([22m[2m59 tests[22m[2m)[22m[33m 1299[2mms[22m[39m
+ ✓ tests/phase42_device_readiness_scope.test.ts (62 tests) 1814ms
 
-[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
-[2m      Tests [22m [1m[32m59 passed[39m[22m[90m (59)[39m
-[2m   Start at [22m 16:07:49
-[2m   Duration [22m 3.45s[2m (tests 40%, import 36%, transform 22%, setup 2%)[22m
+ Test Files  1 passed (1)
+      Tests  62 passed (62)
+   Start at  16:32:58
+   Duration  3.89s (tests 49%, import 31%, transform 19%, setup 1%)

@@ -38,6 +38,28 @@ vi.mock('../client/src/context/AuthContext', () => ({
   }),
 }));
 
+// Pick persistence spy tracking across all local and backend persistence channels
+interface PickPersistenceTracker {
+  upsertCalls: Array<{ payload: any; options?: any }>;
+  deleteCalls: Array<{ filters: Record<string, any> }>;
+  apiProxyCalls: Array<{ url: string; init?: any }>;
+  localStoragePickWrites: Array<{ key: string; val: string }>;
+  reset(): void;
+}
+
+const pickPersistenceTracker: PickPersistenceTracker = {
+  upsertCalls: [],
+  deleteCalls: [],
+  apiProxyCalls: [],
+  localStoragePickWrites: [],
+  reset() {
+    this.upsertCalls = [];
+    this.deleteCalls = [];
+    this.apiProxyCalls = [];
+    this.localStoragePickWrites = [];
+  },
+};
+
 // Mock DOM container for React createRoot testing in jsdom/node
 function setupMockDom() {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -45,7 +67,12 @@ function setupMockDom() {
   const storageMap: Record<string, string> = {};
   (globalThis as any).localStorage = {
     getItem: (key: string) => storageMap[key] ?? null,
-    setItem: (key: string, val: string) => { storageMap[key] = String(val); },
+    setItem: (key: string, val: string) => {
+      storageMap[key] = String(val);
+      if (key.startsWith('picks_') && !key.includes('slate') && !key.includes('view') && !key.includes('preference')) {
+        pickPersistenceTracker.localStoragePickWrites.push({ key, val: String(val) });
+      }
+    },
     removeItem: (key: string) => { delete storageMap[key]; },
     clear: () => { Object.keys(storageMap).forEach(k => delete storageMap[k]); },
     get length() { return Object.keys(storageMap).length; },
@@ -316,6 +343,7 @@ function setupWallMocks(options: {
 
   vi.spyOn(supabase, 'from').mockImplementation(((table: string) => {
     const filters: Record<string, any> = {};
+    let isDeleteOp = false;
     const builder: any = {
       select: (cols?: string) => {
         if (cols && table === 'pools' && cols.includes('lock_offset')) {
@@ -335,6 +363,16 @@ function setupWallMocks(options: {
         return builder;
       },
       order: () => builder,
+      upsert: (payload: any, opt?: any) => {
+        if (table === 'picks') {
+          pickPersistenceTracker.upsertCalls.push({ payload, options: opt });
+        }
+        return Promise.resolve({ data: payload, error: null });
+      },
+      delete: () => {
+        isDeleteOp = true;
+        return builder;
+      },
       maybeSingle: async () => {
         if (table === 'weekly_wrapups') {
           return { data: options.wrapup ?? null, error: options.wrapupError ?? null };
@@ -387,6 +425,13 @@ function setupWallMocks(options: {
         return { data: null, error: null };
       },
       then: async (resolve: Function) => {
+        if (isDeleteOp) {
+          if (table === 'picks') {
+            pickPersistenceTracker.deleteCalls.push({ filters: { ...filters } });
+          }
+          resolve({ data: null, error: null });
+          return;
+        }
         if (table === 'pool_memberships') {
           if (options.membersDelayMs) {
             await new Promise((r) => setTimeout(r, options.membersDelayMs));
@@ -446,7 +491,11 @@ function setupWallMocks(options: {
     return builder;
   }) as any);
 
-  vi.spyOn(apiClient, 'scopedExpressFetch').mockImplementation((async (url: string) => {
+  vi.spyOn(apiClient, 'scopedExpressFetch').mockImplementation((async (url: string, init?: any) => {
+    if (url.includes('/api/picks')) {
+      pickPersistenceTracker.apiProxyCalls.push({ url, init });
+      return { ok: true, json: async () => ({ status: 'success' }) } as any;
+    }
     if (url.includes('/matrix')) {
       if (options.matrixDelayMs) {
         await new Promise((r) => setTimeout(r, options.matrixDelayMs));
@@ -2653,8 +2702,13 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
   });
 
   describe('P42 R1: WeeklyPicks Settings Readiness, Lock Gating & Retry Contract', () => {
-    it('WeeklyPicks gates open counts during delayed settings load, never claiming offset 0 open counts', async () => {
+    beforeEach(() => {
+      pickPersistenceTracker.reset();
+    });
+
+    it('WeeklyPicks gates open counts during delayed settings load, denies pick entry and writes no persistence until resolved', async () => {
       const { mockDoc } = setupMockDom();
+      localStorage.setItem('pickem_preferred_view_mode', 'list');
       const container = mockDoc.createElement('div');
       const root = createRoot(container as any);
 
@@ -2672,12 +2726,9 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
         picks: [],
       });
 
-      let renderPromise: Promise<void>;
-      act(() => {
-        renderPromise = new Promise(async (resolve) => {
-          root.render(React.createElement(WeeklyPicks, null));
-          resolve();
-        });
+      await act(async () => {
+        root.render(React.createElement(WeeklyPicks, null));
+        await new Promise((r) => setTimeout(r, 20));
       });
 
       // While settings is delayed / in-flight:
@@ -2685,6 +2736,26 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       expect(container.textContent).toContain('SYNCING');
       expect(container.textContent).not.toContain('PICKS OPEN');
       expect(container.textContent).not.toContain('1 PICK OPEN');
+
+      // Actual pick interaction attempt while pending
+      const awayBtn = container.querySelectorAll('button').find((b: any) => b.textContent.includes('DEN'));
+      expect(awayBtn).toBeDefined();
+      expect(awayBtn!.disabled).toBe(true);
+
+      await act(async () => {
+        awayBtn!.click();
+        const reactPropsKey = Object.keys(awayBtn!).find((k) => k.startsWith('__reactProps$'));
+        if (reactPropsKey && (awayBtn as any)[reactPropsKey]?.onClick) {
+          (awayBtn as any)[reactPropsKey].onClick({ type: 'click' });
+        }
+        await new Promise((r) => setTimeout(r, 10));
+      });
+
+      // Assert zero persistence across all channels while pending
+      expect(pickPersistenceTracker.upsertCalls.length).toBe(0);
+      expect(pickPersistenceTracker.deleteCalls.length).toBe(0);
+      expect(pickPersistenceTracker.apiProxyCalls.length).toBe(0);
+      expect(pickPersistenceTracker.localStoragePickWrites.length).toBe(0);
 
       // Allow settings to complete with lock_offset = 60
       await act(async () => {
@@ -2695,14 +2766,32 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       expect(container.textContent).not.toContain('SYNCING...');
       expect(container.textContent).not.toContain('PICKS OPEN');
       expect(container.textContent).toContain('ALL GAMES LOCKED');
+      expect(awayBtn!.disabled).toBe(true);
+
+      // Attempt pick interaction after offset-60 lock
+      await act(async () => {
+        awayBtn!.click();
+        const reactPropsKey = Object.keys(awayBtn!).find((k) => k.startsWith('__reactProps$'));
+        if (reactPropsKey && (awayBtn as any)[reactPropsKey]?.onClick) {
+          (awayBtn as any)[reactPropsKey].onClick({ type: 'click' });
+        }
+        await new Promise((r) => setTimeout(r, 10));
+      });
+
+      // Assert zero persistence maintained
+      expect(pickPersistenceTracker.upsertCalls.length).toBe(0);
+      expect(pickPersistenceTracker.deleteCalls.length).toBe(0);
+      expect(pickPersistenceTracker.apiProxyCalls.length).toBe(0);
+      expect(pickPersistenceTracker.localStoragePickWrites.length).toBe(0);
 
       await act(async () => {
         root.unmount();
       });
     });
 
-    it('WeeklyPicks fails closed when pool settings query fails, denying pick entry and displaying retry', async () => {
+    it('WeeklyPicks fails closed when pool settings query fails, denying pick entry and writing no persistence', async () => {
       const { mockDoc } = setupMockDom();
+      localStorage.setItem('pickem_preferred_view_mode', 'list');
       const container = mockDoc.createElement('div');
       const root = createRoot(container as any);
 
@@ -2718,6 +2807,7 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
 
       await act(async () => {
         root.render(React.createElement(WeeklyPicks, null));
+        await new Promise((r) => setTimeout(r, 20));
       });
 
       // Fails closed to UNAVAILABLE
@@ -2729,13 +2819,34 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       const retryBtn = container.querySelectorAll('button').find((b: any) => b.textContent.includes('RETRY'));
       expect(retryBtn).toBeDefined();
 
+      // Actual pick interaction attempt while in error
+      const awayBtn = container.querySelectorAll('button').find((b: any) => b.textContent.includes('DEN'));
+      expect(awayBtn).toBeDefined();
+      expect(awayBtn!.disabled).toBe(true);
+
+      await act(async () => {
+        awayBtn!.click();
+        const reactPropsKey = Object.keys(awayBtn!).find((k) => k.startsWith('__reactProps$'));
+        if (reactPropsKey && (awayBtn as any)[reactPropsKey]?.onClick) {
+          (awayBtn as any)[reactPropsKey].onClick({ type: 'click' });
+        }
+        await new Promise((r) => setTimeout(r, 10));
+      });
+
+      // Assert zero persistence across all channels
+      expect(pickPersistenceTracker.upsertCalls.length).toBe(0);
+      expect(pickPersistenceTracker.deleteCalls.length).toBe(0);
+      expect(pickPersistenceTracker.apiProxyCalls.length).toBe(0);
+      expect(pickPersistenceTracker.localStoragePickWrites.length).toBe(0);
+
       await act(async () => {
         root.unmount();
       });
     });
 
-    it('WeeklyPicks fails closed when pool settings is missing or null, denying open claims', async () => {
+    it('WeeklyPicks fails closed when pool settings is missing or null, denying entry and writing no persistence', async () => {
       const { mockDoc } = setupMockDom();
+      localStorage.setItem('pickem_preferred_view_mode', 'list');
       const container = mockDoc.createElement('div');
       const root = createRoot(container as any);
 
@@ -2751,6 +2862,7 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
 
       await act(async () => {
         root.render(React.createElement(WeeklyPicks, null));
+        await new Promise((r) => setTimeout(r, 20));
       });
 
       // Missing settings fails closed to UNAVAILABLE
@@ -2758,13 +2870,85 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       expect(container.textContent).toContain('[ DATA UNAVAILABLE ]');
       expect(container.textContent).not.toContain('PICKS OPEN');
 
+      // Actual pick interaction attempt while settings is null
+      const awayBtn = container.querySelectorAll('button').find((b: any) => b.textContent.includes('DEN'));
+      expect(awayBtn).toBeDefined();
+      expect(awayBtn!.disabled).toBe(true);
+
+      await act(async () => {
+        awayBtn!.click();
+        const reactPropsKey = Object.keys(awayBtn!).find((k) => k.startsWith('__reactProps$'));
+        if (reactPropsKey && (awayBtn as any)[reactPropsKey]?.onClick) {
+          (awayBtn as any)[reactPropsKey].onClick({ type: 'click' });
+        }
+        await new Promise((r) => setTimeout(r, 10));
+      });
+
+      // Assert zero persistence across all channels
+      expect(pickPersistenceTracker.upsertCalls.length).toBe(0);
+      expect(pickPersistenceTracker.deleteCalls.length).toBe(0);
+      expect(pickPersistenceTracker.apiProxyCalls.length).toBe(0);
+      expect(pickPersistenceTracker.localStoragePickWrites.length).toBe(0);
+
       await act(async () => {
         root.unmount();
       });
     });
 
-    it('WeeklyPicks fails closed on malformed lock_offset, never masking invalid values to offset 0', async () => {
+    it('WeeklyPicks fails closed when pool record is missing (poolData: null), denying entry and writing no persistence', async () => {
       const { mockDoc } = setupMockDom();
+      localStorage.setItem('pickem_preferred_view_mode', 'list');
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      const kickoffIn2Hours = new Date(Date.now() + 120 * 60 * 1000).toISOString();
+
+      setupWallMocks({
+        poolData: null, // pool record missing completely
+        dbGames: [
+          { game_id: 'g-future', home_team_id: 'KC', away_team_id: 'DEN', kickoff_time: kickoffIn2Hours },
+        ],
+        picks: [],
+      });
+
+      await act(async () => {
+        root.render(React.createElement(WeeklyPicks, null));
+        await new Promise((r) => setTimeout(r, 20));
+      });
+
+      // Missing pool row fails closed to UNAVAILABLE
+      expect(container.textContent).toContain('UNAVAILABLE');
+      expect(container.textContent).toContain('[ DATA UNAVAILABLE ]');
+      expect(container.textContent).not.toContain('PICKS OPEN');
+
+      // Actual pick interaction attempt while pool row is missing
+      const awayBtn = container.querySelectorAll('button').find((b: any) => b.textContent.includes('DEN'));
+      expect(awayBtn).toBeDefined();
+      expect(awayBtn!.disabled).toBe(true);
+
+      await act(async () => {
+        awayBtn!.click();
+        const reactPropsKey = Object.keys(awayBtn!).find((k) => k.startsWith('__reactProps$'));
+        if (reactPropsKey && (awayBtn as any)[reactPropsKey]?.onClick) {
+          (awayBtn as any)[reactPropsKey].onClick({ type: 'click' });
+        }
+        await new Promise((r) => setTimeout(r, 10));
+      });
+
+      // Assert zero persistence across all channels
+      expect(pickPersistenceTracker.upsertCalls.length).toBe(0);
+      expect(pickPersistenceTracker.deleteCalls.length).toBe(0);
+      expect(pickPersistenceTracker.apiProxyCalls.length).toBe(0);
+      expect(pickPersistenceTracker.localStoragePickWrites.length).toBe(0);
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('WeeklyPicks fails closed on malformed lock_offset, never masking invalid values to offset 0 and asserting zero persistence', async () => {
+      const { mockDoc } = setupMockDom();
+      localStorage.setItem('pickem_preferred_view_mode', 'list');
       const container = mockDoc.createElement('div');
       const root = createRoot(container as any);
 
@@ -2781,6 +2965,7 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
 
       await act(async () => {
         root.render(React.createElement(WeeklyPicks, null));
+        await new Promise((r) => setTimeout(r, 20));
       });
 
       // Must fail closed to UNAVAILABLE
@@ -2788,7 +2973,26 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       expect(container.textContent).toContain('[ DATA UNAVAILABLE ]');
       expect(container.textContent).not.toContain('PICKS OPEN');
 
+      const awayBtn = container.querySelectorAll('button').find((b: any) => b.textContent.includes('DEN'));
+      expect(awayBtn).toBeDefined();
+      expect(awayBtn!.disabled).toBe(true);
+
+      await act(async () => {
+        awayBtn!.click();
+        const reactPropsKey = Object.keys(awayBtn!).find((k) => k.startsWith('__reactProps$'));
+        if (reactPropsKey && (awayBtn as any)[reactPropsKey]?.onClick) {
+          (awayBtn as any)[reactPropsKey].onClick({ type: 'click' });
+        }
+        await new Promise((r) => setTimeout(r, 10));
+      });
+
+      expect(pickPersistenceTracker.upsertCalls.length).toBe(0);
+      expect(pickPersistenceTracker.deleteCalls.length).toBe(0);
+      expect(pickPersistenceTracker.apiProxyCalls.length).toBe(0);
+      expect(pickPersistenceTracker.localStoragePickWrites.length).toBe(0);
+
       // Negative offset should also fail closed
+      pickPersistenceTracker.reset();
       setupWallMocks({
         poolSettings: { lock_offset: -15 },
         dbGames: [
@@ -2802,11 +3006,30 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
 
       await act(async () => {
         root2.render(React.createElement(WeeklyPicks, null));
+        await new Promise((r) => setTimeout(r, 20));
       });
 
       expect(container2.textContent).toContain('UNAVAILABLE');
       expect(container2.textContent).toContain('[ DATA UNAVAILABLE ]');
       expect(container2.textContent).not.toContain('PICKS OPEN');
+
+      const awayBtn2 = container2.querySelectorAll('button').find((b: any) => b.textContent.includes('DEN'));
+      expect(awayBtn2).toBeDefined();
+      expect(awayBtn2!.disabled).toBe(true);
+
+      await act(async () => {
+        awayBtn2!.click();
+        const reactPropsKey = Object.keys(awayBtn2!).find((k) => k.startsWith('__reactProps$'));
+        if (reactPropsKey && (awayBtn2 as any)[reactPropsKey]?.onClick) {
+          (awayBtn2 as any)[reactPropsKey].onClick({ type: 'click' });
+        }
+        await new Promise((r) => setTimeout(r, 10));
+      });
+
+      expect(pickPersistenceTracker.upsertCalls.length).toBe(0);
+      expect(pickPersistenceTracker.deleteCalls.length).toBe(0);
+      expect(pickPersistenceTracker.apiProxyCalls.length).toBe(0);
+      expect(pickPersistenceTracker.localStoragePickWrites.length).toBe(0);
 
       await act(async () => {
         root.unmount();
@@ -2814,8 +3037,9 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       });
     });
 
-    it('WeeklyPicks successful retry interaction clears error and recovers valid open counts', async () => {
+    it('WeeklyPicks successful retry interaction clears error, restores eligible pick entry, and persists selected pick', async () => {
       const { mockDoc } = setupMockDom();
+      localStorage.setItem('pickem_preferred_view_mode', 'list');
       const container = mockDoc.createElement('div');
       const root = createRoot(container as any);
 
@@ -2832,10 +3056,27 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
 
       await act(async () => {
         root.render(React.createElement(WeeklyPicks, null));
+        await new Promise((r) => setTimeout(r, 20));
       });
 
       expect(container.textContent).toContain('UNAVAILABLE');
       expect(container.textContent).toContain('[ DATA UNAVAILABLE ]');
+
+      const initialAwayBtn = container.querySelectorAll('button').find((b: any) => b.textContent.includes('DEN'));
+      expect(initialAwayBtn).toBeDefined();
+      expect(initialAwayBtn!.disabled).toBe(true);
+
+      // Attempt pick interaction while failed -> denied
+      await act(async () => {
+        initialAwayBtn!.click();
+        const reactPropsKey = Object.keys(initialAwayBtn!).find((k) => k.startsWith('__reactProps$'));
+        if (reactPropsKey && (initialAwayBtn as any)[reactPropsKey]?.onClick) {
+          (initialAwayBtn as any)[reactPropsKey].onClick({ type: 'click' });
+        }
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      expect(pickPersistenceTracker.upsertCalls.length).toBe(0);
+      expect(pickPersistenceTracker.apiProxyCalls.length).toBe(0);
 
       // 2. Configure mock to succeed on retry
       setupWallMocks({
@@ -2858,19 +3099,186 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
 
       // Allow retry to complete
       await act(async () => {
-        await new Promise((r) => setTimeout(r, 40));
+        await new Promise((r) => setTimeout(r, 60));
       });
 
       // Error clears and valid open count publishes
       expect(container.textContent).not.toContain('[ DATA UNAVAILABLE ]');
       expect(container.textContent).toContain('PICKS OPEN: 1');
 
+      // Actual pick entry is restored: button is enabled
+      const restoredAwayBtn = container.querySelectorAll('button').find((b: any) => b.textContent.includes('DEN'));
+      expect(restoredAwayBtn).toBeDefined();
+      expect(restoredAwayBtn!.disabled).toBe(false);
+
+      // Clicking restored button persists pick to Supabase, API proxy, and localStorage
+      await act(async () => {
+        restoredAwayBtn!.click();
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      expect(pickPersistenceTracker.upsertCalls.length).toBe(1);
+      expect(pickPersistenceTracker.upsertCalls[0].payload.game_id).toBe('g-retry');
+      expect(pickPersistenceTracker.upsertCalls[0].payload.selected_team).toBe('DEN');
+      expect(pickPersistenceTracker.apiProxyCalls.length).toBe(1);
+      expect(pickPersistenceTracker.localStoragePickWrites.length).toBeGreaterThanOrEqual(1);
+
       await act(async () => {
         root.unmount();
       });
     });
 
-    it('enforces exact canonical lock deadline and verifies absent offset server zero default', () => {
+    it('WeeklyPicks mounts with valid empty settings object ({}) and enforces server zero default allowing pick entry and persistence', async () => {
+      const { mockDoc } = setupMockDom();
+      localStorage.setItem('pickem_preferred_view_mode', 'list');
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      const kickoffIn2Hours = new Date(Date.now() + 120 * 60 * 1000).toISOString();
+
+      setupWallMocks({
+        poolSettings: {}, // valid empty settings object -> server zero default
+        dbGames: [
+          { game_id: 'g-zero-default', home_team_id: 'KC', away_team_id: 'DEN', kickoff_time: kickoffIn2Hours },
+        ],
+        picks: [],
+      });
+
+      await act(async () => {
+        root.render(React.createElement(WeeklyPicks, null));
+        await new Promise((r) => setTimeout(r, 60));
+      });
+
+      // Header shows zero default open count
+      expect(container.textContent).toContain('PICKS OPEN: 1');
+
+      // Button is enabled
+      const awayBtn = container.querySelectorAll('button').find((b: any) => b.textContent.includes('DEN'));
+      expect(awayBtn).toBeDefined();
+      expect(awayBtn!.disabled).toBe(false);
+
+      // Click team button persists pick successfully
+      await act(async () => {
+        awayBtn!.click();
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      expect(pickPersistenceTracker.upsertCalls.length).toBe(1);
+      expect(pickPersistenceTracker.upsertCalls[0].payload.game_id).toBe('g-zero-default');
+      expect(pickPersistenceTracker.upsertCalls[0].payload.selected_team).toBe('DEN');
+      expect(pickPersistenceTracker.apiProxyCalls.length).toBe(1);
+      expect(pickPersistenceTracker.localStoragePickWrites.length).toBeGreaterThanOrEqual(1);
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('WeeklyPicks mounts with nonzero offset and advances controlled clock across before/exact effective deadline, gating entry and persistence', async () => {
+      vi.useFakeTimers();
+
+      const { mockDoc } = setupMockDom();
+      localStorage.setItem('pickem_preferred_view_mode', 'list');
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      // Kickoff at 17:00:00Z. Lock offset = 15m.
+      // Effective lock deadline: 17:00 - 15m = 16:45:00Z.
+      const kickoffIso = '2026-10-25T17:00:00.000Z';
+
+      // Set initial clock to 16:40:00Z (5 minutes before lock deadline)
+      vi.setSystemTime(new Date('2026-10-25T16:40:00.000Z'));
+
+      setupWallMocks({
+        poolSettings: { lock_offset: 15 },
+        dbGames: [
+          { game_id: 'g-offset-15', home_team_id: 'KC', away_team_id: 'DEN', kickoff_time: kickoffIso },
+        ],
+        picks: [],
+      });
+
+      await act(async () => {
+        root.render(React.createElement(WeeklyPicks, null));
+        await vi.advanceTimersByTimeAsync(60);
+      });
+
+      // 1. Before deadline: game is open
+      expect(container.textContent).toContain('PICKS OPEN: 1');
+      const awayBtn = container.querySelectorAll('button').find((b: any) => b.textContent.includes('DEN'));
+      expect(awayBtn).toBeDefined();
+      expect(awayBtn!.disabled).toBe(false);
+
+      // Click succeeds and persists
+      await act(async () => {
+        awayBtn!.click();
+        await vi.advanceTimersByTimeAsync(30);
+      });
+
+      expect(pickPersistenceTracker.upsertCalls.length).toBe(1);
+      expect(pickPersistenceTracker.upsertCalls[0].payload.selected_team).toBe('DEN');
+      expect(pickPersistenceTracker.apiProxyCalls.length).toBe(1);
+
+      // Reset persistence tracker before clock advancement
+      pickPersistenceTracker.reset();
+
+      // 2. Advance clock to exact effective deadline (16:45:00Z)
+      await act(async () => {
+        vi.setSystemTime(new Date('2026-10-25T16:45:00.000Z'));
+        await vi.advanceTimersByTimeAsync(10000); // triggers WeeklyPicks 10s setInterval
+      });
+
+      // Header updates to ALL GAMES LOCKED and button is disabled
+      expect(container.textContent).toContain('ALL GAMES LOCKED');
+      expect(container.textContent).not.toContain('PICKS OPEN');
+      expect(awayBtn!.disabled).toBe(true);
+
+      // Attempt pick interaction at exact deadline -> denied, zero writes
+      await act(async () => {
+        awayBtn!.click();
+        const reactPropsKey = Object.keys(awayBtn!).find((k) => k.startsWith('__reactProps$'));
+        if (reactPropsKey && (awayBtn as any)[reactPropsKey]?.onClick) {
+          (awayBtn as any)[reactPropsKey].onClick({ type: 'click' });
+        }
+        await vi.advanceTimersByTimeAsync(10);
+      });
+
+      expect(pickPersistenceTracker.upsertCalls.length).toBe(0);
+      expect(pickPersistenceTracker.deleteCalls.length).toBe(0);
+      expect(pickPersistenceTracker.apiProxyCalls.length).toBe(0);
+      expect(pickPersistenceTracker.localStoragePickWrites.length).toBe(0);
+
+      // 3. Advance clock past effective deadline to 16:50:00Z (still 10 min before kickoff)
+      await act(async () => {
+        vi.setSystemTime(new Date('2026-10-25T16:50:00.000Z'));
+        await vi.advanceTimersByTimeAsync(10000);
+      });
+
+      expect(container.textContent).toContain('ALL GAMES LOCKED');
+      expect(awayBtn!.disabled).toBe(true);
+
+      // Attempt pick interaction past deadline -> denied, zero writes
+      await act(async () => {
+        awayBtn!.click();
+        const reactPropsKey = Object.keys(awayBtn!).find((k) => k.startsWith('__reactProps$'));
+        if (reactPropsKey && (awayBtn as any)[reactPropsKey]?.onClick) {
+          (awayBtn as any)[reactPropsKey].onClick({ type: 'click' });
+        }
+        await vi.advanceTimersByTimeAsync(10);
+      });
+
+      expect(pickPersistenceTracker.upsertCalls.length).toBe(0);
+      expect(pickPersistenceTracker.deleteCalls.length).toBe(0);
+      expect(pickPersistenceTracker.apiProxyCalls.length).toBe(0);
+      expect(pickPersistenceTracker.localStoragePickWrites.length).toBe(0);
+
+      await act(async () => {
+        root.unmount();
+      });
+
+      vi.useRealTimers();
+    });
+
+    it('enforces exact canonical lock deadline and verifies absent offset server zero default at domain level', () => {
       const baseKickoff = new Date('2026-10-25T17:00:00.000Z');
 
       // Valid loaded settings with absent offset uses server zero default (deadline == kickoff)
