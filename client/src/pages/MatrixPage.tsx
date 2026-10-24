@@ -23,6 +23,7 @@ import { isKickoffLocked, evaluateSlateLockSummary, evaluateCanonicalGameLock } 
 import { evaluatePickVisibility } from '../services/openSlatePolicyService';
 import { getCurrentNFLWeek } from '../services/nflCalendarService';
 import { fetchLiveNFLScores, LiveGame } from '../services/liveScoreService';
+import { resolveAuthoritativeSlate } from '../services/authoritativeSlateClientService';
 import { classifyPickDistributionBadge } from '../services/dependableInfoService';
 import {
   executeExplicitReactionOperation,
@@ -95,25 +96,46 @@ export const MatrixPage: React.FC = () => {
     } catch {}
   };
 
+  const [clockNow, setClockNow] = useState<number>(Date.now());
+  const [poolOffset, setPoolOffset] = useState<number>(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => setClockNow(Date.now()), 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Fetch pool settings for offset
   useEffect(() => {
     let isMounted = true;
-    setLoadingGames(true);
-    fetchLiveNFLScores(selectedWeek).then((data) => {
-      if (isMounted) {
-        setLiveGames(data);
-        setLoadingGames(false);
-      }
-    });
+    supabase
+      .from('pools')
+      .select('id, lock_offset, settings')
+      .eq('id', activePoolId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!isMounted || !data) return;
+        const off = Number(data.lock_offset ?? (data.settings as any)?.lock_offset ?? 0);
+        if (Number.isFinite(off)) setPoolOffset(off);
+      });
     return () => {
       isMounted = false;
     };
-  }, [selectedWeek]);
+  }, [activePoolId]);
 
-  // Query live pool members and their picks for selectedWeek from Supabase
+  // Load live scores, authoritative slate, and submitted picks
   useEffect(() => {
     let isMounted = true;
-    const fetchPoolMatrixData = async () => {
+    setLoadingGames(true);
+    setLiveGames([]);
+    setSlateGames([]);
+    setPoolPicks([]);
+
+    const loadData = async () => {
       try {
+        const liveData = await fetchLiveNFLScores(selectedWeek).catch(() => [] as LiveGame[]);
+        if (!isMounted) return;
+        setLiveGames(liveData);
+
         // Query active members
         const { data: membersData } = await supabase
           .from('pool_memberships')
@@ -140,61 +162,77 @@ export const MatrixPage: React.FC = () => {
           setPoolMembers([{ userId: currentUserId, userName: `${currentUserName} (You)`, isAutopilot: false }]);
         }
 
-        // Query games for selectedWeek to evaluate exact kickoff locks
-        const { data: dbGames } = await supabase
-          .from('games')
-          .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, status')
-          .eq('season', 2026)
-          .eq('season_type', 2)
-          .eq('week', selectedWeek);
-
-        if (!isMounted) return;
-        setSlateGames(dbGames || []);
-
-        // Query submitted picks for selectedWeek
-        const { data: dbPicks } = await supabase
-          .from('picks')
-          .select('user_id, matchup_id, game_id, selected_team, week')
-          .eq('pool_id', activePoolId)
-          .eq('week', selectedWeek);
+        // Authoritative slate resolution (no raw unverified fallback)
+        const resolution = await resolveAuthoritativeSlate({
+          supabase,
+          activePoolId,
+          seasonYear: 2026,
+          seasonType: 2,
+          weekNumber: selectedWeek,
+          liveScores: liveData,
+        });
 
         if (!isMounted) return;
 
-        if (dbPicks && dbPicks.length > 0) {
-          const memberNameMap = new Map<string, string>();
-          membersList.forEach((m) => memberNameMap.set(m.userId, m.userName));
+        if (resolution.source !== 'FAILED_CLOSED' && resolution.games.length > 0) {
+          setSlateGames(resolution.games);
 
-          const mappedPicks: UserSubmittedPick[] = dbPicks.map((p: any) => ({
-            userId: p.user_id,
-            userName: memberNameMap.get(p.user_id) || (p.user_id === user?.id ? currentUserName : p.user_id.slice(0, 8)),
-            gameId: String(p.game_id || p.matchup_id),
-            selectedTeam: p.selected_team,
-            isAutopilot: false,
-          }));
-          setPoolPicks(mappedPicks);
+          // Query submitted picks for accepted games
+          const acceptedGameIds = Array.from(
+            new Set(
+              resolution.games
+                .flatMap((g: any) => [String(g.id), g.externalGameId ? String(g.externalGameId) : null])
+                .filter(Boolean)
+            )
+          );
+
+          const { data: dbPicks } = await supabase
+            .from('picks')
+            .select('user_id, game_id, selected_team')
+            .eq('pool_id', activePoolId)
+            .in('game_id', acceptedGameIds);
+
+          if (!isMounted) return;
+
+          if (dbPicks && dbPicks.length > 0) {
+            const memberNameMap = new Map<string, string>();
+            membersList.forEach((m) => memberNameMap.set(m.userId, m.userName));
+
+            const mappedPicks: UserSubmittedPick[] = dbPicks.map((p: any) => ({
+              userId: p.user_id,
+              userName: memberNameMap.get(p.user_id) || (p.user_id === user?.id ? currentUserName : p.user_id.slice(0, 8)),
+              gameId: String(p.game_id),
+              selectedTeam: p.selected_team,
+              isAutopilot: false,
+            }));
+            setPoolPicks(mappedPicks);
+          } else {
+            setPoolPicks([]);
+          }
         } else {
+          setSlateGames([]);
           setPoolPicks([]);
         }
       } catch (err) {
-        console.error('Failed to query matrix pool picks:', err);
+        console.error('Failed to query matrix data:', err);
+      } finally {
+        if (isMounted) setLoadingGames(false);
       }
     };
 
-    fetchPoolMatrixData();
+    loadData();
     return () => {
       isMounted = false;
     };
-  }, [selectedWeek, user?.id, currentUserId, currentUserName]);
+  }, [selectedWeek, activePoolId, user?.id, currentUserId, currentUserName]);
 
   const currentNFLWeek = getCurrentNFLWeek();
   const isPastWeek = selectedWeek < currentNFLWeek;
   const isCurrentOrFutureWeek = selectedWeek >= currentNFLWeek;
 
-  const now = Date.now();
   const slateSummary = useMemo(() => {
-    const gamesToEvaluate = slateGames.length > 0 ? slateGames : liveGames;
-    return evaluateSlateLockSummary(gamesToEvaluate, liveGames, 0, now);
-  }, [slateGames, liveGames, now]);
+    return evaluateSlateLockSummary(slateGames, liveGames, poolOffset, clockNow);
+  }, [slateGames, liveGames, poolOffset, clockNow]);
 
   const allGamesFinal = slateSummary.allGamesFinal;
   const matrixPhase = slateSummary.phaseLabel;

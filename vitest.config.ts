@@ -10,6 +10,7 @@ export default defineConfig({
     },
   },
   test: {
+    pool: 'threads',
     environment: 'node',
     testTimeout: 30000,
     hookTimeout: 30000,

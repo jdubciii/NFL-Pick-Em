@@ -1,3 +1,6 @@
-git diff --check output:
+$ git diff --check
 Exit code: 0
-No trailing whitespace, no carriage return anomalies.
+
+$ git diff --check 790cfc84b1c044fd8db8174b2593bf12269dc804..HEAD
+Exit code: 0
+Zero trailing whitespace or merge conflict markers detected.

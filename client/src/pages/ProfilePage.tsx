@@ -42,6 +42,7 @@ export interface ProfileScopeResolutionResult {
   manifestRecord: any | null;
   windowGames: DeadlineGameWindowInput[];
   isSlateSubmitted: boolean;
+  poolLockOffset?: number;
   unavailabilityReason?: string;
 }
 
@@ -66,10 +67,11 @@ export async function resolveProfileReminderScope(
   let resolvedPoolId: string | null = propPoolId || null;
   let poolSettings: any = null;
 
+  let poolLockOffset = 0;
   if (propPoolId) {
     const { data: specificMem, error: memErr } = await supabaseClient
       .from('pool_memberships')
-      .select('pool_id, status, pools(id, settings)')
+      .select('pool_id, status, pools(id, settings, lock_offset)')
       .eq('user_id', userId)
       .eq('pool_id', propPoolId)
       .eq('status', 'ACTIVE')
@@ -88,10 +90,12 @@ export async function resolveProfileReminderScope(
     }
     resolvedPoolId = specificMem.pool_id;
     poolSettings = specificMem.pools?.settings || null;
+    const rawOff = specificMem.pools?.lock_offset ?? poolSettings?.lock_offset ?? 0;
+    poolLockOffset = Number(rawOff) || 0;
   } else {
     const { data: memberships, error: memErr } = await supabaseClient
       .from('pool_memberships')
-      .select('pool_id, status, pools(id, settings)')
+      .select('pool_id, status, pools(id, settings, lock_offset)')
       .eq('user_id', userId)
       .eq('status', 'ACTIVE');
 
@@ -108,6 +112,8 @@ export async function resolveProfileReminderScope(
     }
     resolvedPoolId = memberships[0].pool_id;
     poolSettings = memberships[0].pools?.settings || null;
+    const rawOff = memberships[0].pools?.lock_offset ?? poolSettings?.lock_offset ?? 0;
+    poolLockOffset = Number(rawOff) || 0;
   }
 
   // 2. Resolve verified application context for season, season_type, and week.
@@ -365,6 +371,9 @@ export async function resolveProfileReminderScope(
       kickoffIso: g.kickoff_time || g.kickoffIso || '',
       status: g.status,
       isPicked: pickSet.has(canonicalExtId) || (g.id != null && pickSet.has(String(g.id))),
+      canonical_kickoff_time: g.canonical_kickoff_time,
+      lock_effective_at: g.lock_effective_at,
+      isKickoffConfirmed: g.isKickoffConfirmed ?? (g.canonical_kickoff_time !== null),
     };
   });
 
@@ -377,6 +386,7 @@ export async function resolveProfileReminderScope(
     manifestRecord,
     windowGames,
     isSlateSubmitted,
+    poolLockOffset,
   };
 }
 
@@ -386,19 +396,18 @@ export function formatNextKickoffLock(
   lockOffsetMinutes: number = 0,
   referenceTime: Date | number = Date.now()
 ): string {
-  if (!weekNumber) {
-    return 'Unavailable';
-  }
-  if (!games || games.length === 0) {
+  if (!weekNumber || !games || games.length === 0) {
     return 'Unavailable';
   }
 
   let allKnownLocked = true;
-  const upcoming: { game: DeadlineGameWindowInput; deadline: Date; lockTimeMs: number }[] = [];
+  let hasUnavailable = false;
+  const upcoming: { game: DeadlineGameWindowInput; lockDeadline: Date; lockTimeMs: number }[] = [];
 
   for (const g of games) {
     const evalResult = evaluateCanonicalGameLock(
       {
+        ...g,
         kickoffTime: g.kickoffIso,
       },
       lockOffsetMinutes,
@@ -407,25 +416,26 @@ export function formatNextKickoffLock(
 
     if (evalResult.state === 'OPEN') {
       allKnownLocked = false;
-      if (evalResult.effectiveDeadline && evalResult.lockTimeMs) {
-        upcoming.push({ game: g, deadline: evalResult.effectiveDeadline, lockTimeMs: evalResult.lockTimeMs });
+      if (evalResult.lockTimeMs) {
+        upcoming.push({ game: g, lockDeadline: new Date(evalResult.lockTimeMs), lockTimeMs: evalResult.lockTimeMs });
       }
     } else if (evalResult.state === 'UNAVAILABLE') {
       allKnownLocked = false;
+      hasUnavailable = true;
     }
   }
 
   if (upcoming.length === 0) {
-    if (allKnownLocked && games.length > 0) {
+    if (allKnownLocked && !hasUnavailable && games.length > 0) {
       return `All Week ${weekNumber} Games Locked`;
     }
     return 'Unavailable';
   }
 
   upcoming.sort((a, b) => a.lockTimeMs - b.lockTimeMs);
-  const nextKickoff = upcoming[0].deadline;
-  const dayStr = nextKickoff.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
-  const timeStr = nextKickoff.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+  const nextLockDeadline = upcoming[0].lockDeadline;
+  const dayStr = nextLockDeadline.toLocaleDateString('en-US', { weekday: 'short' });
+  const timeStr = nextLockDeadline.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   return `${dayStr} ${timeStr} (Week ${weekNumber})`;
 }
 
@@ -544,6 +554,13 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const [manifestGames, setManifestGames] = useState<DeadlineGameWindowInput[]>([]);
   const [isSlateSubmitted, setIsSlateSubmitted] = useState<boolean>(false);
   const [hasAcceptedSlate, setHasAcceptedSlate] = useState<boolean>(false);
+  const [poolLockOffset, setPoolLockOffset] = useState<number>(0);
+  const [clockNow, setClockNow] = useState<number>(Date.now());
+
+  useEffect(() => {
+    const t = setInterval(() => setClockNow(Date.now()), 10000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     if (!user?.id) {
@@ -552,6 +569,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
       setManifestGames([]);
       setHasAcceptedSlate(false);
       setIsSlateSubmitted(false);
+      setPoolLockOffset(0);
       return;
     }
 
@@ -574,6 +592,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
         setManifestGames(res.windowGames);
         setHasAcceptedSlate(res.hasAcceptedSlate);
         setIsSlateSubmitted(res.isSlateSubmitted);
+        setPoolLockOffset(res.poolLockOffset || 0);
       } catch {
         if (isMounted) {
           setSelectedPoolId(null);
@@ -581,6 +600,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
           setManifestGames([]);
           setHasAcceptedSlate(false);
           setIsSlateSubmitted(false);
+          setPoolLockOffset(0);
         }
       }
     }
@@ -641,8 +661,8 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     if (!hasAcceptedSlate || !activeScope?.week) {
       return 'Unavailable';
     }
-    return formatNextKickoffLock(manifestGames, activeScope.week);
-  }, [hasAcceptedSlate, manifestGames, activeScope?.week]);
+    return formatNextKickoffLock(manifestGames, activeScope.week, poolLockOffset, clockNow);
+  }, [hasAcceptedSlate, manifestGames, activeScope?.week, poolLockOffset, clockNow]);
 
   useEffect(() => {
     if (!user) return;

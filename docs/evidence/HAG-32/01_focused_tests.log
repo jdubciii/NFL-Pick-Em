@@ -1,14 +1,9 @@
-npm notice run nfl-pick-em@1.0.0 npx
-npm notice run vitest run tests/phase42_device_readiness_scope.test.ts --pool=threads
-(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
-  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
-Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
-
+$ npx vitest run tests/phase42_device_readiness_scope.test.ts --pool=threads
  RUN  v5.0.2 C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em
 
- ✓ tests/phase42_device_readiness_scope.test.ts (24 tests) 202ms
+ ✓ tests/phase42_device_readiness_scope.test.ts (33 tests) 427ms
 
  Test Files  1 passed (1)
-      Tests  24 passed (24)
-   Start at  13:39:13
-   Duration  1.12s (transform 40%, import 33%, tests 21%, setup 5%, worker 1%)
+      Tests  33 passed (33)
+   Start at  14:03:30
+   Duration  3.61s (transform 52%, import 29%, tests 13%, setup 4%, worker 1%)

@@ -1,48 +1,62 @@
-# HAG-32 Evidence Dossier: Device Correction & Readiness Scope Remediation
+# HAG-32 Evidence Dossier: Device Correction & Readiness Scope Remediation (HOLD 8f4d4b0 Remediation)
 
 **Contract ID**: `P42-DEVICE-READINESS-SCOPE-2026-10-24-01`
 **Work Item**: `HAG-32` (Resolves `HAG-30` Device Observations & Remediates `HAG-32 HOLD`)
 **Directive**: `god/HAG27-device-correction-directive-20261024.md`
-**Review Finding**: `god/HAG32-review-HOLD-1680534a.md`
-**Starting Base SHA**: `1680534a0bfe3d8dd63c60a31148ccdbc74dc61a`
-**Execution Timestamp**: 2026-10-24T20:41:00Z
+**Review Finding**: `god/HAG32-review-HOLD-8f4d4b0.md`
+**Starting Base SHA**: `8f4d4b075202508afb38e90bc3db70c28fb9649e`
+**Execution Timestamp**: 2026-10-24T21:07:00Z
 **Branch**: `feat/p37-shell-auth-openslate`
 **Parity Anchor (Decision #61)**: `750A519DF9E42FEBEEA802724077867F14CB2CB514F6117DDADF815C572C6E68`
 
 ---
 
-## 1. Executive Summary & HOLD Remediation
+## 1. Executive Summary & Remediation Scope
 
-This dossier certifies the implementation of binding contract `P42-DEVICE-READINESS-SCOPE-2026-10-24-01` and the complete remediation of all 7 findings raised in `god/HAG32-review-HOLD-1680534a.md`. All work is strictly local implementation, unit testing, client compilation, and documentation. No remote push, Render deploy, Android APK assembly/distribution, or production DB migrations/DDL have been executed.
+This dossier certifies the implementation of binding contract `P42-DEVICE-READINESS-SCOPE-2026-10-24-01` and the remediation of all 7 retained blockers raised in `god/HAG32-review-HOLD-8f4d4b0.md`.
 
-### 7 HOLD Findings Remediated:
-1. **WallOfShamePage Fabricated Official Ladder Purged (Finding 1)**:
-   - Purged the bogus fallback query against `penalty_ledger` that lacked season/week filters and fabricated official ranks by mapping 0 debt to rank 1 and array index to remaining ranks.
-   - When officially settled (`weekly_wrapups`), the page now truthfully unpacks authoritative standings from `wrapup.summary.standings` (`RankedMemberResult[]`), preserving exact tie handling, points, and ranks recorded by the settlement engine. If not settled, it falls through to validated provisional sweat projection; if telemetry is unavailable or invalid, it renders unavailable.
-2. **Request Generation, Unmount Invalidation & Scope Collision (Finding 2)**:
-   - Placed request generation validation (`if (reqGenRef.current !== currentGen) return;`) after every asynchronous operation (`Promise.all`, matrix json parse, games query, tiebreaker fetch).
-   - Added `useEffect` unmount cleanup that increments `reqGenRef.current += 1` to immediately cancel and discard in-flight async callbacks on unmount.
-   - Added `isScopeMismatch` check in render to immediately display `LOADING` and suppress prior READY/SAFE rows whenever `week` or `poolId` props change before the new snapshot resolves. Clears `ladderData` on retry/refresh.
-3. **Strict Telemetry Validation (Finding 3)**:
-   - In `liveScoreService.ts`, preserved score missingness (`undefined`, never coerces missing score to `'0'`) on scheduled games; maps `kickoffTime: event.date ? new Date(event.date).toISOString() : undefined`.
-   - In `sweatProjectionService.ts`, `validateTelemetryCoverage` enforces duplicate ID rejection (`DUPLICATE_TELEMETRY_EVENT_ID`), invalid slate ID rejection (`INVALID_SLATE_GAME_ID`), exact slate coverage, finite nonnegative score string validation (`/^\d+$/`), confirmed future kickoffs for scheduled games, and rejects post-deadline scheduled games as uncertain.
-4. **Scope Readiness, Manifest Mapping & Tiebreaker Inputs (Finding 4)**:
-   - Eliminated default test pool UUID (`9b893bef...`) and literal week 6 fallback; fails closed with truthful unavailable/loading states when pool or week cannot be resolved.
-   - Resolves games via manifest/matrix rows or scoped DB games.
-   - Reads tiebreaker endpoint `/api/pools/:pool_id/tiebreaker` (excluded on Week 6 per charter) and passes member predictions and designated game score to `calculateProvisionalStandings`.
-5. **Canonical Game Lock & Slate Summary Contract (Finding 5)**:
-   - Authored `evaluateCanonicalGameLock` (returning 3-way canonical state `'OPEN' | 'LOCKED' | 'UNAVAILABLE'`) and `evaluateSlateLockSummary` in `lockEnforcementService.ts`.
-   - Applied across `WeeklyPicks.tsx`, `MatrixPage.tsx`, and `ProfilePage.tsx`.
-   - `MatrixPage.tsx` displays `'PICKS OPEN: N'` when games remain open and renders date-agnostic empty-state copy when no picks exist.
-   - `ProfilePage.tsx` resolves canonical kickoff lock state via `evaluateCanonicalGameLock`, accounting for pool lock offset minutes.
-6. **Actual Consumer Mounting in Vitest (Finding 6)**:
-   - Authored 24 comprehensive consumer-mount tests in `tests/phase42_device_readiness_scope.test.ts` utilizing React `createRoot` and `act()`.
-   - Mounts actual `WallOfShamePage` with mock server responses, verifying rapid week transitions, unmount invalidation, settlement separation from live finality, and retry on incomplete telemetry.
-   - Verifies `formatNextKickoffLock` with pool lock offset and canonical game lock on mixed Thursday/Sunday slates.
-7. **Dossier Accuracy, Full Diff Check & Evidence Preparation (Finding 7)**:
-   - Eliminated all trailing whitespace across documentation.
-   - Recorded starting base SHA (`1680534a0bfe3d8dd63c60a31148ccdbc74dc61a`).
-   - Recorded full verification logs in `docs/evidence/HAG-32/`.
+All work is strictly confined to local implementation, unit testing, client compilation, and documentation. No remote push, Render deploy, Android APK assembly/distribution, production DB migrations/DDL, settlement, sweep, or import operations have been executed.
+
+### 7 Retained Blockers Remediated:
+
+1. **Producer/Consumer Identity Mapping & Authoritative Slate (Blocker 1)**:
+   - Aligned caller and producer contracts between `src/server.ts` (`game_id` = internal UUID, `external_game_id` = ESPN ID) and client services.
+   - In `sweatProjectionService.ts`, established a verified two-way 1-to-1 identity mapping (`gameByInternalId`, `gameByExternalId`, `internalToExternal`) across picks (keyed by internal UUID), games, and live score telemetry (keyed by ESPN ID).
+   - In `WallOfShamePage.tsx`, games are mapped with `id: String(row.game_id)` and `externalGameId: String(row.external_game_id || row.game_id)`. If matrix endpoint is unavailable, resolves slate via `resolveAuthoritativeSlate`.
+   - Queries user picks using `.in('game_id', acceptedGameIds)` against `pool_id/user_id/game_id`, eliminating assumed schema contracts on `picks.week/matchup_id`.
+   - In `sweatProjectionService.ts`, `validateTelemetryCoverage` enforces duplicate slate game ID rejection (`DUPLICATE_SLATE_GAME_ID`).
+
+2. **Real Tiebreaker Endpoint Consumer Alignment (Blocker 2)**:
+   - Adapted `WallOfShamePage.tsx` to consume the real DTO from `handleGetTiebreaker` (`src/routes/poolTiebreakerRoutes.ts`), which returns `{ tiebreakerOffered, designatedGame, eventId, readiness: [{ userId, prediction }] }` (and does not return `predictions` object or `designatedGameScore`).
+   - Maps `readiness` array to prediction values, preserving legitimate null prediction vs missing/unverified query.
+   - Derives the designated game score dynamically from validated live score telemetry using the authoritative `eventId`.
+   - Fails closed to `INCOMPLETE_TELEMETRY` on non-OK or failed tiebreaker reads on non-Week-6 slates (Week 6 exclusion preserved per charter).
+
+3. **Official Settlement Full Scope & Authoritative Validation (Blocker 3)**:
+   - In `WallOfShamePage.tsx`, verifies `!wrapupResult.error`, non-null `wrapup.completed_at`, and full scope match between `wrapup.summary` and requested scope:
+     `sum.poolId === targetPoolId && Number(sum.season) === 2026 && Number(sum.seasonType) === 2 && Number(sum.weekNumber) === targetWeek`.
+   - Requires non-empty standings array where every record has a valid string `userId`, finite numeric `score`, integer `rank >= 1`, finite nonnegative `shots >= 0`, and boolean flags `isSafeHaven` and `isDeadPlace`.
+   - Maps 2-shot tier to `DANGER_HIGH` (`2 SHOTS`) rather than classifying all non-safe/non-dead members as `DANGER_LOW`.
+   - Does not require a current picks read for immutable official standings. Evaluates `scoreStatus` from live scores rather than inferring all games final solely from settlement flag.
+
+4. **Full Scope & Identity Invalidation (Blocker 4)**:
+   - In `WallOfShamePage.tsx`, enforces full scope validation: requires `resolvedPoolId`, integer `1 <= week <= 18`, `season === 2026`, and `seasonType === 2`. Fails closed with truthful error snapshot if any scope parameter is missing, out-of-range, or unsupported.
+   - In `isScopeMismatch`, validates `userId`, `poolId`, `season`, `seasonType`, and `week`. Immediately renders `LOADING` and suppresses prior READY/SAFE/settled rows during scope transitions.
+   - Clears `ladderData` on retry/loading and resets `isSettled` so stale official headers cannot survive loading or error states.
+
+5. **Separation of Game Progress from Lock Truth (Blocker 5)**:
+   - In `lockEnforcementService.ts`, rewritten `evaluateSlateLockSummary` to separate actual game progress (`actualStartedOrFinalCount`: games marked `FINAL` or `IN_PROGRESS` or with verified kickoff in the past) from lock offset. A future game inside the pool lock offset window is locked for pick submission but does NOT mark the week in progress.
+   - `allGamesLocked` strictly requires all games known locked (`unavailableCount === 0`).
+   - If any game has unknown/unavailable lock status, `lockBadgeText` reports `'UNAVAILABLE'` rather than falsely claiming all games locked. An all-unavailable slate safely reports `'Status unavailable'`.
+   - In `evaluateCanonicalGameLock`, explicit canonical NULL (`canonicalKickoffTime === null`) enforces canonical unknown denial (`'UNAVAILABLE'`). Accounts for `lockEffectiveAt` / `lock_effective_at` precomputed offset once and does not subtract offset again.
+
+6. **Caller Integration (Matrix & Profile) (Blocker 6)**:
+   - In `MatrixPage.tsx`: Clears `liveGames`, `slateGames`, and `poolPicks` immediately on week change. Resolves slate via `resolveAuthoritativeSlate` without raw unverified fallback. Queries picks scoped by `acceptedGameIds`. Queries pool settings for `poolOffset` and includes a 10-second deadline clock. Passes `slateGames, liveGames, poolOffset, clockNow` to `evaluateSlateLockSummary`.
+   - In `ProfilePage.tsx`: `resolveProfileReminderScope` queries `lock_offset` from pool settings and returns `poolLockOffset`. Maps canonical kickoff metadata (`canonical_kickoff_time`, `lock_effective_at`, `isKickoffConfirmed`). `formatNextKickoffLock` formats using the user's established local timezone (not unlabeled UTC) and displays the actual lock deadline (`upcoming[0].lockDeadline`).
+
+7. **Contract Tests & Retained Dossier (Blocker 7)**:
+   - Authored Case 8 in `tests/phase42_device_readiness_scope.test.ts` containing 9 comprehensive contract tests exercising producer/consumer identity mapping, tiebreaker DTO handling, settlement scope validation, lock offset vs game progress separation, and canonical NULL denial.
+   - Retained evidence logs in `docs/evidence/HAG-32/` with exact test outputs, zero whitespace defects, and Decision #61 parity hashes.
 
 ---
 
@@ -50,26 +64,33 @@ This dossier certifies the implementation of binding contract `P42-DEVICE-READIN
 
 | File Path | Role & Remediation |
 | :--- | :--- |
-| `client/src/services/liveScoreService.ts` | Preserves score missingness on scheduled games; maps kickoff time from event date. |
-| `client/src/services/sweatProjectionService.ts` | Strict telemetry validation: duplicate ID detection, slate coverage, finite nonnegative score validation, post-deadline scheduled rejection. |
-| `client/src/services/lockEnforcementService.ts` | Authored `evaluateCanonicalGameLock` (3-way state) and `evaluateSlateLockSummary`. |
-| `client/src/pages/WallOfShamePage.tsx` | Purged bogus `penalty_ledger` official ladder; consumes `wrapup.summary.standings`; adds unmount cleanup and per-await generation guards; scope mismatch display protection. |
-| `client/src/components/WeeklyPicks.tsx` | Uses `evaluateSlateLockSummary` and `evaluateCanonicalGameLock`; maintains `liveScores` state. |
-| `client/src/pages/MatrixPage.tsx` | Evaluates per-game locks via `evaluateSlateLockSummary`; renders `'PICKS OPEN: N'` and date-agnostic empty copy. |
-| `client/src/pages/ProfilePage.tsx` | Resolves canonical lock via `evaluateCanonicalGameLock` with `lockOffsetMinutes`. |
-| `tests/phase42_device_readiness_scope.test.ts` | Authored 24 consumer mounting tests covering actual `WallOfShamePage` and lock enforcement. |
-| `docs/evidence/HAG-32/*` | Retained evidence logs and updated dossier without trailing whitespace. |
+| `client/src/services/sweatProjectionService.ts` | Added `externalGameId` support on `SlateGame`. Added `DUPLICATE_SLATE_GAME_ID` rejection. Established two-way 1-to-1 identity mapping (`internalToExternal`) bridging picks (UUID) to ESPN telemetry (numeric string). |
+| `client/src/services/lockEnforcementService.ts` | Fixed `evaluateSlateLockSummary`: game progress separated from lock offset; allGamesLocked requires zero unavailable; UNAVAILABLE badge if any game unknown. Fixed `evaluateCanonicalGameLock`: explicit canonical NULL denies to UNAVAILABLE; offset accounted for once. |
+| `client/src/pages/WallOfShamePage.tsx` | Mapped games with `id: game_id` and `externalGameId: external_game_id`. Queries picks via `acceptedGameIds`. Consumes real tiebreaker DTO (`readiness`, `eventId`) and derives designated score from live scores. Full scope settlement validation (`poolId`, `season`, `seasonType`, `weekNumber`) and DANGER_HIGH 2-shot mapping. Full scope invalidation (`isScopeMismatch`). |
+| `client/src/pages/MatrixPage.tsx` | Clears state on week switch. Resolves authoritative slate. Queries picks by `acceptedGameIds`. Queries `poolOffset` and maintains 10-second deadline clock. Passes real metadata to `evaluateSlateLockSummary`. |
+| `client/src/pages/ProfilePage.tsx` | Queries `lock_offset` in `resolveProfileReminderScope`. Passes `canonical_kickoff_time` and `lock_effective_at`. Formats deadline using user's established local timezone and actual deadline offset. |
+| `vitest.config.ts` | Added `pool: 'threads'` under `test` configuration to prevent Windows process spawn EPERM errors. |
+| `tests/phase42_device_readiness_scope.test.ts` | Updated settlement fixture with full scope; aligned tiebreaker assertion with `INCOMPLETE GAME TELEMETRY`; added Case 8 with 9 contract tests for HOLD remediation. |
 
 ---
 
 ## 3. Test & Verification Matrix
 
 ### 3.1 Focused Phase 42 Test Suite (`tests/phase42_device_readiness_scope.test.ts`)
-- **Total Tests**: 24
-- **Passed**: 24
+- **Total Tests**: 33
+- **Passed**: 33
 - **Failed**: 0
 - **Execution Command**: `npx vitest run tests/phase42_device_readiness_scope.test.ts --pool=threads`
-- **Execution Time**: 202ms
+- **Execution Duration**: 3.61s
+- **Cases Proven**:
+  - Case 1: Cold load, network rejection, empty/missing telemetry (4 tests)
+  - Case 2: Complete 0-0 scores, all-pregame state, and genuine shared ranks (4 tests)
+  - Case 3: Request generation isolation & stale response cancellation (2 tests)
+  - Case 4: Profile explicit vs configured scope precedence (7 tests)
+  - Case 5: Per-game lock and week in progress status (4 tests)
+  - Case 6: Settlement separation from game outcome finality (2 tests)
+  - Case 7: Visible stale snapshot banner & elimination of fake countdown (1 test)
+  - Case 8: Real Producer/Caller Contract Alignment (HOLD 8f4d4b0 Remediation) (9 tests)
 
 ### 3.2 Authoritative Regression Test Suites
 - `tests/sweatProjectionService.test.ts`: 5/5 PASSED
@@ -78,12 +99,13 @@ This dossier certifies the implementation of binding contract `P42-DEVICE-READIN
 - `tests/phase41_pick_validation.test.ts`: 10/10 PASSED
 - `tests/phase41_week7_tiebreaker.test.ts`: 82/82 PASSED
 - **Total Broader Tests**: 125/125 PASSED
-- **Combined Test Count Across Suites**: 149 / 149 PASSED
+- **Combined Test Count Across All Suites**: 158 / 158 PASSED
 
 ### 3.3 TypeScript & Production Build Verifications
 - `npx tsc --noEmit`: Exit code 0 (0 errors).
-- `npm --prefix client run build`: Exit code 0 (`tsc -b && vite build` built in 1.99s, 2,394 modules transformed).
+- `npm --prefix client run build`: Exit code 0 (`tsc -b && vite build` built in 4.06s, 2,394 modules transformed).
 - `git diff --check`: Exit code 0 (0 trailing whitespace or formatting defects).
+- `git diff --check 790cfc84b1c044fd8db8174b2593bf12269dc804..HEAD`: Exit code 0.
 
 ### 3.4 Decision #61 Bit-Identical Mirror Parity Verification
 ```text
@@ -98,27 +120,16 @@ Path      : client/src/services/tiebreakerRankingService.ts
 File byte lengths:
 src/services/tiebreakerRankingService.ts: 9011 bytes
 client/src/services/tiebreakerRankingService.ts: 9011 bytes
-Mirror parity: BIT-IDENTICAL PRESERVED
 ```
 
 ---
 
-## 4. Retained Evidence Logs
+## 4. Retained Evidence Log Reference
 
-The raw terminal output for all verifications is preserved in `docs/evidence/HAG-32/`:
-- `01_focused_tests.log`: Output of `npx vitest run tests/phase42_device_readiness_scope.test.ts --pool=threads` (24/24 passed).
-- `02_broader_tests.log`: Output of broader regression suites (125/125 passed).
-- `03_typecheck.log`: Output of `npx tsc --noEmit` (clean).
-- `04_client_build.log`: Output of `npm --prefix client run build` (built in 1.99s).
-- `05_mirror_parity.log`: SHA-256 and byte length parity verification of `tiebreakerRankingService.ts`.
-- `06_git_diff_check.log`: Output of `git diff --check` (exit code 0).
-
----
-
-## 5. Operational Boundary Attestation
-
-All remediation actions have been executed strictly within the local development workspace:
-- Remote push to origin: **NOT EXECUTED**
-- Render deploy webhook: **NOT EXECUTED**
-- Production database DDL / migrations / mutations: **NOT EXECUTED**
-- APK build / signing / release distribution: **NOT EXECUTED**
+All raw outputs have been recorded into `docs/evidence/HAG-32/`:
+- `01_focused_tests.log`: Verbatim 33/33 pass output for Phase 42 test suite.
+- `02_broader_tests.log`: Verbatim 125/125 pass output across 5 regression suites.
+- `03_typecheck.log`: Verbatim exit 0 root TypeScript check.
+- `04_client_build.log`: Verbatim exit 0 client Vite/TypeScript build.
+- `05_mirror_parity.log`: PowerShell SHA256 hash and byte length check.
+- `06_git_diff_check.log`: Verbatim exit 0 diff checks.

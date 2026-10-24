@@ -60,8 +60,13 @@ export function evaluateCanonicalGameLock(
     };
   }
 
-  // 2. Check kickoff confirmation
-  if (game.isKickoffConfirmed === false || game.is_kickoff_confirmed === false) {
+  // 2. Check kickoff confirmation and explicit canonical NULL denial
+  if (
+    game.isKickoffConfirmed === false ||
+    game.is_kickoff_confirmed === false ||
+    game.canonicalKickoffTime === null ||
+    game.canonical_kickoff_time === null
+  ) {
     return {
       state: 'UNAVAILABLE',
       isLocked: true,
@@ -72,6 +77,8 @@ export function evaluateCanonicalGameLock(
   }
 
   // 3. Resolve effective deadline
+  // If lockEffectiveAt / lock_effective_at is present, it ALREADY has lock offset applied under existing contract.
+  const hasPrecomputedLock = game.lockEffectiveAt != null || game.lock_effective_at != null;
   const rawDeadline =
     game.lockEffectiveAt ??
     game.lock_effective_at ??
@@ -126,7 +133,8 @@ export function evaluateCanonicalGameLock(
     };
   }
 
-  const lockTimeMs = deadlineMs - offsetNum * 60 * 1000;
+  // Apply offset once: if precomputed lockEffectiveAt was provided, offset is already incorporated
+  const lockTimeMs = hasPrecomputedLock ? deadlineMs : deadlineMs - offsetNum * 60 * 1000;
   if (nowMs >= lockTimeMs) {
     return {
       state: 'LOCKED',
@@ -198,6 +206,9 @@ export function evaluateSlateLockSummary(
   let unavailableCount = 0;
   let anyLive = false;
   let allFinal = true;
+  let actualStartedOrFinalCount = 0;
+
+  const nowMs = typeof referenceTime === 'number' ? referenceTime : new Date(referenceTime).getTime();
 
   for (const g of games) {
     if (!g) {
@@ -206,18 +217,29 @@ export function evaluateSlateLockSummary(
       continue;
     }
 
-    const gId = String(g.id || g.game_id || g.external_game_id || '');
-    const live = scoreMap.get(gId);
+    const gExtId = g.externalGameId || g.external_game_id;
+    const gId = String(g.id || g.game_id || '');
+    const live = (gExtId ? scoreMap.get(String(gExtId)) : undefined) || scoreMap.get(gId);
 
-    const mergedStatus = live?.status || g.status || g.gameStatus || '';
-    const rawStatus = String(mergedStatus).toUpperCase();
+    const mergedStatus = String(live?.status || g.status || g.gameStatus || '').toUpperCase();
+    const isLiveGame = mergedStatus === 'IN_PROGRESS' || mergedStatus === 'LIVE' || mergedStatus === 'HALFTIME';
+    const isFinalGame = mergedStatus === 'FINAL';
 
-    if (rawStatus === 'IN_PROGRESS' || rawStatus === 'LIVE' || rawStatus === 'HALFTIME') {
+    if (isLiveGame) {
       anyLive = true;
     }
 
-    if (rawStatus !== 'FINAL') {
+    if (!isFinalGame) {
       allFinal = false;
+    }
+
+    // Determine actual game progress independent of lock offset window
+    const rawKickoff = g.canonical_kickoff_time || g.canonicalKickoffTime || g.kickoff_time || g.kickoffTime;
+    const kickoffMs = rawKickoff ? new Date(rawKickoff).getTime() : NaN;
+    const isKickoffPassed = !isNaN(kickoffMs) && kickoffMs > 0 && nowMs >= kickoffMs;
+
+    if (isLiveGame || isFinalGame || isKickoffPassed) {
+      actualStartedOrFinalCount++;
     }
 
     const evalResult = evaluateCanonicalGameLock(
@@ -240,12 +262,12 @@ export function evaluateSlateLockSummary(
 
   const total = games.length;
   const allGamesFinal = total > 0 && allFinal;
-  const anyStartedOrFinal = lockedCount > 0 || anyLive || allGamesFinal;
+  const anyStartedOrFinal = actualStartedOrFinalCount > 0;
   const anyUpcoming = openCount > 0;
-  const allGamesLocked = total > 0 && openCount === 0 && unavailableCount === 0;
+  const allGamesLocked = total > 0 && lockedCount === total && openCount === 0 && unavailableCount === 0;
 
   let phaseLabel: 'Status unavailable' | 'Games not started' | 'Week in progress' | 'Games live' | 'All games final';
-  if (total === 0) {
+  if (total === 0 || unavailableCount === total) {
     phaseLabel = 'Status unavailable';
   } else if (allGamesFinal) {
     phaseLabel = 'All games final';
@@ -253,13 +275,15 @@ export function evaluateSlateLockSummary(
     phaseLabel = 'Games live';
   } else if (anyStartedOrFinal && anyUpcoming) {
     phaseLabel = 'Week in progress';
-  } else if (!anyStartedOrFinal) {
+  } else if (!anyStartedOrFinal && !anyLive && unavailableCount === 0) {
     phaseLabel = 'Games not started';
+  } else if (unavailableCount > 0 && !anyStartedOrFinal && !anyLive) {
+    phaseLabel = 'Status unavailable';
   } else {
     phaseLabel = 'Week in progress';
   }
 
-  let lockBadgeText = 'ALL GAMES LOCKED';
+  let lockBadgeText: string;
   let isBadgeOpen = false;
 
   if (total === 0 || unavailableCount === total) {
@@ -267,7 +291,7 @@ export function evaluateSlateLockSummary(
   } else if (openCount > 0) {
     lockBadgeText = `PICKS OPEN: ${openCount}`;
     isBadgeOpen = true;
-  } else if (allGamesLocked || lockedCount > 0) {
+  } else if (allGamesLocked) {
     lockBadgeText = 'ALL GAMES LOCKED';
   } else {
     lockBadgeText = 'UNAVAILABLE';

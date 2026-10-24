@@ -1,22 +1,13 @@
-npm notice run nfl-pick-em@1.0.0 npx
-npm notice run vitest run tests/sweatProjectionService.test.ts tests/phase41_runtime_mock_purge.test.ts tests/phase41_picks_tiebreaker_settlement.test.ts tests/phase41_pick_validation.test.ts tests/phase41_week7_tiebreaker.test.ts --pool=threads
-(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
-  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
-Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
-
+$ npx vitest run tests/sweatProjectionService.test.ts tests/phase41_runtime_mock_purge.test.ts tests/phase41_picks_tiebreaker_settlement.test.ts tests/phase41_pick_validation.test.ts tests/phase41_week7_tiebreaker.test.ts --pool=threads
  RUN  v5.0.2 C:/Users/kacone/Documents/AI and Tech/Antigravity/NFL Pick Em
 
- ✓ tests/phase41_picks_tiebreaker_settlement.test.ts (16 tests) 1440ms
-   ✓ Phase 41 Phase A: Picks, Tiebreaker and Settlement Contract (16)
-     ✓ Section 6: Member Prediction Entry & Validation (5)
-       ✓ accepts valid predictions from 0.00 to 999.99 with up to 2 decimal places 400ms
-       ✓ rejects negative, nonfinite, > 999.99, and excess decimal precision predictions 580ms
- ✓ tests/phase41_week7_tiebreaker.test.ts (82 tests) 1149ms
- ✓ tests/phase41_pick_validation.test.ts (10 tests) 215ms
+ ✓ tests/phase41_picks_tiebreaker_settlement.test.ts (16 tests) 2203ms
+ ✓ tests/phase41_week7_tiebreaker.test.ts (82 tests) 3474ms
+ ✓ tests/phase41_pick_validation.test.ts (10 tests) 212ms
  ✓ tests/phase41_runtime_mock_purge.test.ts (12 tests) 33ms
- ✓ tests/sweatProjectionService.test.ts (5 tests) 12ms
+ ✓ tests/sweatProjectionService.test.ts (5 tests) 10ms
 
  Test Files  5 passed (5)
       Tests  125 passed (125)
-   Start at  13:39:28
-   Duration  7.59s (tests 44%, import 30%, transform 21%, setup 5%, worker 1%)
+   Start at  14:03:47
+   Duration  10.76s (tests 60%, import 20%, transform 17%, setup 3%)

@@ -7,6 +7,8 @@ export interface UserStandingRef {
 
 export interface SlateGame {
   id: string;
+  externalGameId?: string;
+  external_game_id?: string;
   homeTeam: string;
   awayTeam: string;
   spread?: number;
@@ -114,7 +116,8 @@ export function validateTelemetryCoverage(
     };
   }
 
-  // Validate that no slate game has missing or invalid IDs
+  // Validate that no slate game has missing or invalid IDs, and detect duplicate slate IDs
+  const seenSlateIds = new Set<string>();
   for (const g of games) {
     if (!g || !g.id || typeof g.id !== 'string' || g.id.trim() === '') {
       return {
@@ -125,6 +128,19 @@ export function validateTelemetryCoverage(
         reason: 'INVALID_SLATE_GAME_ID',
       };
     }
+    const internalId = String(g.id);
+    const extId = g.externalGameId ? String(g.externalGameId) : (g as any).external_game_id ? String((g as any).external_game_id) : internalId;
+    if (seenSlateIds.has(internalId) || (extId !== internalId && seenSlateIds.has(extId))) {
+      return {
+        isReady: false,
+        isAllPregame: false,
+        isIncomplete: true,
+        missingGameIds: [internalId],
+        reason: 'DUPLICATE_SLATE_GAME_ID',
+      };
+    }
+    seenSlateIds.add(internalId);
+    if (extId !== internalId) seenSlateIds.add(extId);
   }
 
   const scoreMap = new Map<string, LiveGame>();
@@ -150,12 +166,13 @@ export function validateTelemetryCoverage(
   const missingGameIds: string[] = [];
 
   for (const g of games) {
-    const gId = String(g.id);
-    const live = scoreMap.get(gId);
+    const internalId = String(g.id);
+    const extId = g.externalGameId ? String(g.externalGameId) : (g as any).external_game_id ? String((g as any).external_game_id) : internalId;
+    const live = scoreMap.get(extId) || scoreMap.get(internalId);
 
     if (!live) {
       // Telemetry must be present for every game in the slate
-      missingGameIds.push(gId);
+      missingGameIds.push(extId);
       continue;
     }
 
@@ -167,7 +184,7 @@ export function validateTelemetryCoverage(
     if (status === 'SCHEDULED') {
       // Scheduled game must have a confirmed future kickoff
       if (isPastKickoff || !hasValidKickoff) {
-        missingGameIds.push(gId);
+        missingGameIds.push(extId);
         continue;
       }
     } else if (status === 'IN_PROGRESS' || status === 'FINAL') {
@@ -176,12 +193,12 @@ export function validateTelemetryCoverage(
       const awayRaw = live.awayTeam?.score;
 
       if (!isValidScore(homeRaw) || !isValidScore(awayRaw)) {
-        missingGameIds.push(gId);
+        missingGameIds.push(extId);
         continue;
       }
     } else {
       // Unsupported status
-      missingGameIds.push(gId);
+      missingGameIds.push(extId);
       continue;
     }
   }
@@ -240,10 +257,16 @@ export function calculateProvisionalStandings(
     }
   }
 
-  const gameMap = new Map<string, SlateGame>();
+  const gameByInternalId = new Map<string, SlateGame>();
+  const gameByExternalId = new Map<string, SlateGame>();
+  const internalToExternal = new Map<string, string>();
+
   for (const g of games) {
     if (g && g.id) {
-      gameMap.set(g.id, g);
+      gameByInternalId.set(String(g.id), g);
+      const ext = g.externalGameId ? String(g.externalGameId) : (g as any).external_game_id ? String((g as any).external_game_id) : String(g.id);
+      gameByExternalId.set(ext, g);
+      internalToExternal.set(String(g.id), ext);
     }
   }
 
@@ -276,8 +299,9 @@ export function calculateProvisionalStandings(
     );
 
     for (const pick of picks) {
-      const live = scoreMap.get(pick.gameId);
-      const gameDef = gameMap.get(pick.gameId);
+      const gameDef = gameByInternalId.get(pick.gameId) || gameByExternalId.get(pick.gameId);
+      const extId = gameDef?.externalGameId || (gameDef as any)?.external_game_id || internalToExternal.get(pick.gameId) || pick.gameId;
+      const live = scoreMap.get(extId) || scoreMap.get(pick.gameId);
 
       if (!live) {
         // Telemetry absent or scheduled: non-scoring
@@ -290,8 +314,12 @@ export function calculateProvisionalStandings(
       const homeScore = parseInt(live.homeTeam?.score || '0', 10);
       const awayScore = parseInt(live.awayTeam?.score || '0', 10);
 
-      const isHomePick = pick.selectedTeam.toUpperCase() === live.homeTeam.code.toUpperCase();
-      const isAwayPick = pick.selectedTeam.toUpperCase() === live.awayTeam.code.toUpperCase();
+      const homeCode = (live.homeTeam?.code || gameDef?.homeTeam || '').toUpperCase();
+      const awayCode = (live.awayTeam?.code || gameDef?.awayTeam || '').toUpperCase();
+      const pickTeam = pick.selectedTeam.toUpperCase();
+
+      const isHomePick = pickTeam === homeCode;
+      const isAwayPick = pickTeam === awayCode;
 
       if (live.status === 'FINAL') {
         if ((homeScore > awayScore && isHomePick) || (awayScore > homeScore && isAwayPick)) {
