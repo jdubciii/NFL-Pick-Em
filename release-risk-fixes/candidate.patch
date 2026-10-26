@@ -1,0 +1,110 @@
+diff --git a/src/services/LiveScoreboardService.ts b/src/services/LiveScoreboardService.ts
+--- a/src/services/LiveScoreboardService.ts
++++ b/src/services/LiveScoreboardService.ts
+@@ -1,5 +1,7 @@
+ export interface LiveGameStatus {
+   gameId: string;
++  season?: number;
++  weekNumber?: number;
+   awayTeam: string;
+   homeTeam: string;
+   awayScore: number;
+@@ -41,6 +43,8 @@
+ 
+         return {
+           gameId: event.id,
++          season: event.season?.year ?? data.season?.year,
++          weekNumber: event.week?.number ?? data.week?.number,
+           awayTeam: away?.team?.abbreviation || 'AWAY',
+           homeTeam: home?.team?.abbreviation || 'HOME',
+           awayScore: parseInt(away?.score || '0', 10),
+diff --git a/src/services/liveScorePoller.ts b/src/services/liveScorePoller.ts
+--- a/src/services/liveScorePoller.ts
++++ b/src/services/liveScorePoller.ts
+@@ -55,17 +55,27 @@
+           ? GameStatus.IN_PROGRESS
+           : GameStatus.SCHEDULED;
+ 
+-        // Re-read existing authoritative game record to prevent regressing FINAL games
++        // ESPN IDs and sync's canonical season/week IDs are distinct namespaces.
++        // Never infer an event from the team pairing alone (or reverse its orientation).
++        if (typeof game.gameId !== 'string' || !game.gameId.trim()) continue;
++        const normalize = (team: string) => {
++          const code = team.trim().toUpperCase();
++          return code === 'WSH' ? 'WAS' : code === 'JAC' ? 'JAX' : code;
++        };
++        const away = normalize(game.awayTeam);
++        const home = normalize(game.homeTeam);
++        const eventIds = [game.gameId, `espn_${game.gameId}`];
++        if (Number.isInteger(game.season) && Number.isInteger(game.weekNumber) &&
++            game.weekNumber! > 0 && game.weekNumber! <= 18) {
++          const canonical = `${game.season}_w${String(game.weekNumber).padStart(2, '0')}_${away}_${home}`;
++          eventIds.push(canonical, `${game.season}_w${String(game.weekNumber).padStart(2, '0')}_${away.toLowerCase()}_${home.toLowerCase()}`);
++        }
+         const existingGames = await tx.game.findMany({
+           where: {
+-            OR: [
+-              { awayTeamId: game.awayTeam, homeTeamId: game.homeTeam },
+-              { awayTeamId: game.homeTeam, homeTeamId: game.awayTeam },
+-              { awayTeamId: game.awayTeam.toUpperCase(), homeTeamId: game.homeTeam.toUpperCase() },
+-              { awayTeamId: game.homeTeam.toUpperCase(), homeTeamId: game.awayTeam.toUpperCase() },
+-            ],
++            externalGameId: { in: eventIds },
+           },
+         });
+ 
+         for (const eg of existingGames) {
++          if (normalize(eg.awayTeamId) !== away || normalize(eg.homeTeamId) !== home) continue;
+           // Invariant: Never overwrite or regress an already settled/FINAL game with stale live scores
+diff --git a/src/services/wrapUpEngine.ts b/src/services/wrapUpEngine.ts
+--- a/src/services/wrapUpEngine.ts
++++ b/src/services/wrapUpEngine.ts
+@@ -535,5 +535,5 @@
+     const manifest = await getAcceptedSlateManifest(tx, season, seasonType, weekNumber);
+     const allGames = await tx.game.findMany();
+-    let games = allGames;
++    let games: typeof allGames = [];
+ 
+     if (manifest && manifest.eventIds && manifest.eventIds.length > 0) {
+@@ -551,17 +551,24 @@
+       }
+     } else {
+       const taggedGames = allGames.filter((g: any) => g.week === weekNumber && (g.season === season || g.season === null));
+-      if (taggedGames.length > 0) {
+-        games = taggedGames;
+-        const poolPickGameIds: any[] = ((await tx.$queryRawUnsafe(
+-          `SELECT DISTINCT game_id FROM public.picks WHERE pool_id = $1::uuid AND (week = $2::int OR week IS NULL);`,
+-          poolId,
+-          weekNumber
+-        ).catch(() => [])) as any[]) || [];
+-        const validPickIds = poolPickGameIds.map((p: any) => p.game_id).filter(Boolean);
+-        if (validPickIds.length > 0) {
+-          const pickGameSet = new Set(validPickIds);
+-          games = allGames.filter((g: any) => pickGameSet.has(g.id) || pickGameSet.has(g.externalGameId));
+-        }
++      // Explicit requested-week picks are the fallback scope when ORM tags are absent.
++      // Null-week legacy rows cannot establish a requested week. Never use allGames.
++      const poolPickGameIds: any[] = (await tx.$queryRawUnsafe(
++        `SELECT DISTINCT game_id FROM public.picks WHERE pool_id = $1::uuid AND week = $2::int;`,
++        poolId,
++        weekNumber
++      )) as any[];
++      const pickGameSet = new Set(poolPickGameIds.map((p: any) => p.game_id).filter(Boolean));
++      const pickedGames = allGames.filter((g: any) =>
++        (pickGameSet.has(g.id) || pickGameSet.has(g.externalGameId)) &&
++        (g.week == null || g.week === weekNumber) &&
++        (g.season == null || g.season === season));
++      // Preserve unpicked tagged games and refuse unresolved intended identities.
++      const resolvedIds = new Set(pickedGames.flatMap((g: any) => [g.id, g.externalGameId]));
++      if ([...pickGameSet].some(id => !resolvedIds.has(id)) ||
++          (taggedGames.length === 0 && pickedGames.length === 0)) {
++        await cleanupIncompleteClaim();
++        return { applied: false, reason: 'AUTHORITATIVE_SLATE_UNAVAILABLE', poolId, season, weekNumber };
+       }
++      games = [...new Map([...taggedGames, ...pickedGames].map((g: any) => [g.id, g])).values()];
+     }
+@@ -653,3 +660,4 @@
+     const joinedCount = picks.filter((p: any) => p.home_team_id !== null && p.home_team_id !== undefined).length;
+     if (picks.length > 0 && joinedCount === 0) {
++      await cleanupIncompleteClaim();
+       return {

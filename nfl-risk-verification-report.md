@@ -84,3 +84,21 @@ env -i PATH=/home/codespace/nvm/current/bin:/usr/local/bin:/usr/bin:/bin TZ=UTC 
 ```
 
 Harness subprocess commands are exclusively local `git -C /workspaces/NFL-Pick-Em rev-parse HEAD` and `git -C /workspaces/NFL-Pick-Em show 790cfc84b1c044fd8db8174b2593bf12269dc804:<source path>`. No fetch/network command is used.
+
+## Remediation candidate — distinct from historical unsafe-behavior passes
+
+See `release-risk-fixes/README.md` and the remediation section in
+`nfl-release-settlement-report.md`. The new reviewable patch is pinned to
+`790cfc84b1c044fd8db8174b2593bf12269dc804`, not current `ea686fe…`; it is applied
+only to in-memory git-show source snapshots. No application files or commits changed.
+New isolated suite: **20 passed / 0 failed/skipped**, including original-source
+negative controls for all three defects, candidate source hashes, retry/dedupe,
+pending controls and rollback. These are not the historic 8 reproduction passes.
+
+The screenshot's `498–497` cleanup range is invalid: supported original range is
+**wrapUpEngine.ts:480–497**. Pending cleanup original `582–595` is retained;
+zero-join refusal original `653–661` now calls that helper (candidate `660–669`).
+Exact commands, original/candidate line ranges and SHA-256 values, and the
+in-memory/SQL/schema/metadata limitations are in the additive README. No database,
+network, startup, installs, ordinary project tests, deployment, Week8 approval,
+wipe/import, deletion, commit or push was performed.

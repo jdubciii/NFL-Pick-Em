@@ -123,3 +123,40 @@ Final integrity command (cwd repo):
 ```sh
 git status --short && git diff --exit-code && git diff --cached --exit-code && git rev-parse HEAD
 ```
+
+## Remediation candidate — separate from historical verification (2026-10-26)
+
+The 14 historic passes above reproduce original behavior; they are NOT fixed-source
+results. A new additive review candidate targets exactly `790cfc84b1c044fd8db8174b2593bf12269dc804`,
+not current checkout `ea686fe63b3df4767d66740062cc828102ca0b95`.
+Application files are unchanged; no commit or release approval occurred.
+
+See `release-risk-fixes/README.md` for full-file original/candidate SHA-256 hashes,
+exact commands, scope, source ranges, tests and limitations; `candidate.patch` is
+the reviewable pinned-release patch. `regression.test.cjs` reads pinned originals
+with git show, validates patch contexts/counts/positions, builds source snapshots
+in memory, and executes actual candidate bodies in isolated VMs.
+
+Final command (cwd repo):
+`env -i PATH=/home/codespace/nvm/current/bin:/usr/local/bin:/usr/bin:/bin TZ=UTC /home/codespace/nvm/current/bin/node --test release-risk-fixes/regression.test.cjs`
+exited 0: **20 passed, 0 failed/skipped**. An earlier candidate run had 19/19
+passes before additional controls. New safety assertions fail on original source
+for each of the three defects, caught as explicit negative controls.
+
+Changes: exact event identity plus away/home orientation (including minimal feed
+season/week metadata for the actual canonical ID convention); scoped no-manifest
+finality fallback preserving manifest and tagged unpicked pending controls; and
+cleanup before zero-join mapping refusal. Missing mapping -> zero claims/effects
+-> synthetic repair -> success -> dedupe, pending retry, completed-claim
+preservation, and after-effects rollback are covered.
+
+Range correction: the screenshot's **498–497** is invalid. Supported original
+cleanup helper is **wrapUpEngine.ts:480–497**, unchanged in the candidate. Original
+pending cleanup is `582–595` (candidate `589–602`); original mapping refusal is
+`653–661` (candidate `660–669`). Original scope is `535–567` (candidate `535–574`).
+Original poller risk is `59–83` (candidate identity/assignment `58–93`).
+
+No DB/network/environment loading, startup, installs, project tests, deployment,
+deletions, wipe/import, Week8 approval or commit/push. VM/double tests do not prove
+deployed schema, permissions, PostgreSQL behavior or release readiness. Legacy
+null-week scoring and unrelated risks were not fixed.
