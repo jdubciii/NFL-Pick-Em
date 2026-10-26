@@ -55,19 +55,29 @@ export async function tickLiveScorePoller(): Promise<{
           ? GameStatus.IN_PROGRESS
           : GameStatus.SCHEDULED;
 
-        // Re-read existing authoritative game record to prevent regressing FINAL games
+        // ESPN IDs and sync's canonical season/week IDs are distinct namespaces.
+        // Never infer an event from the team pairing alone (or reverse its orientation).
+        if (typeof game.gameId !== 'string' || !game.gameId.trim()) continue;
+        const normalize = (team: string) => {
+          const code = team.trim().toUpperCase();
+          return code === 'WSH' ? 'WAS' : code === 'JAC' ? 'JAX' : code;
+        };
+        const away = normalize(game.awayTeam);
+        const home = normalize(game.homeTeam);
+        const eventIds = [game.gameId, `espn_${game.gameId}`];
+        if (Number.isInteger(game.season) && Number.isInteger(game.weekNumber) &&
+            game.weekNumber! > 0 && game.weekNumber! <= 18) {
+          const canonical = `${game.season}_w${String(game.weekNumber).padStart(2, '0')}_${away}_${home}`;
+          eventIds.push(canonical, `${game.season}_w${String(game.weekNumber).padStart(2, '0')}_${away.toLowerCase()}_${home.toLowerCase()}`);
+        }
         const existingGames = await tx.game.findMany({
           where: {
-            OR: [
-              { awayTeamId: game.awayTeam, homeTeamId: game.homeTeam },
-              { awayTeamId: game.homeTeam, homeTeamId: game.awayTeam },
-              { awayTeamId: game.awayTeam.toUpperCase(), homeTeamId: game.homeTeam.toUpperCase() },
-              { awayTeamId: game.homeTeam.toUpperCase(), homeTeamId: game.awayTeam.toUpperCase() },
-            ],
+            externalGameId: { in: eventIds },
           },
         });
 
         for (const eg of existingGames) {
+          if (normalize(eg.awayTeamId) !== away || normalize(eg.homeTeamId) !== home) continue;
           // Invariant: Never overwrite or regress an already settled/FINAL game with stale live scores
           if (eg.status === GameStatus.FINAL && targetStatus !== GameStatus.FINAL) {
             continue;
