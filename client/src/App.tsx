@@ -10,6 +10,7 @@ import { MatrixPage } from './pages/MatrixPage';
 import { WallOfShamePage } from './pages/WallOfShamePage';
 import { ProfilePage } from './pages/ProfilePage';
 import { PicksPage } from './pages/PicksPage';
+import { getCurrentNFLWeek } from './services/nflCalendarService';
 
 export function resolveNavigationVisibility(session: any, membershipStatus: string | null): boolean {
   return Boolean(session && membershipStatus === 'ACTIVE');
@@ -107,7 +108,7 @@ export const App: React.FC = () => {
           onClose={() => setIsLoungeOpen(false)}
           poolId={activePoolId}
           season={2026}
-          week={6}
+          week={getCurrentNFLWeek()}
           currentUserId={user?.id || 'u1'}
           currentUserName={user?.email ? user.email.split('@')[0] : 'jack.w.cone'}
           membershipStatus={membershipStatus === 'ACTIVE' ? 'ACTIVE' : 'PENDING'}

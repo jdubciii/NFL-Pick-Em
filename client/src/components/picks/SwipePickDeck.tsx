@@ -22,6 +22,9 @@ export interface SwipeMatchup {
   startTime: string;
   kickoffTime?: string;
   spread?: string;
+  favoriteLine?: string | null;
+  awayRecord?: string | null;
+  homeRecord?: string | null;
   overUnder?: string;
   venue?: string;
   injuryNote?: string;
@@ -190,15 +193,15 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
             <span>MATCHUP {currentIndex + 1} OF {totalGames}</span>
           </div>
 
-          <div className="flex items-center space-x-1.5 text-[10px]">
+          <div className="flex items-center space-x-1.5 text-xs">
             <span className="text-emerald-400 font-bold">{pickedCount} Picked</span>
-            <span className="text-slate-500">·</span>
+            <span className="text-slate-300">·</span>
             <span className="text-slate-400">{totalGames - pickedCount} Left</span>
 
             {/* Clear All Action */}
             {onClearAllPicks && !isUserLocked && pickedCount > 0 && (
               <>
-                <span className="text-slate-500">·</span>
+                <span className="text-slate-300">·</span>
                 {!confirmClear ? (
                   <button
                     type="button"
@@ -215,7 +218,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
                       setConfirmClear(false);
                       triggerToast('All picks reset', 'CLEAR');
                     }}
-                    className="px-2 py-0.5 rounded bg-rose-600 text-white font-black text-[9px] animate-pulse shadow-md"
+                    className="px-2 py-0.5 rounded bg-rose-600 text-white font-black text-xs animate-pulse shadow-md"
                   >
                     Confirm?
                   </button>
@@ -243,9 +246,11 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
               const isAwayPicked = m.selectedTeam === m.awayTeam;
               const isHomePicked = m.selectedTeam === m.homeTeam;
 
+              // Home/away system, from the earlier Week 6 build: away = cyan, home = purple (indigo). Unpicked = slate.
+              // Rose is NOT used for home: rose already means loss in final cards.
               let segmentBg = 'bg-slate-800 hover:bg-slate-700';
               if (isAwayPicked) segmentBg = 'bg-cyan-400';
-              else if (isHomePicked) segmentBg = 'bg-rose-500';
+              else if (isHomePicked) segmentBg = 'bg-indigo-500';
 
               return (
                 <button
@@ -254,7 +259,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
                   onClick={() => setCurrentIndex(idx)}
                   className={`h-full w-full rounded transition-all ${segmentBg} ${
                     isCurrent
-                      ? 'ring-2 ring-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.9)] scale-110 z-10'
+                      ? 'ring-2 ring-white shadow-[0_0_8px_rgba(255,255,255,0.9)] scale-110 z-10'
                       : 'opacity-80 active:scale-95'
                   }`}
                   title={`Matchup ${idx + 1}`}
@@ -282,7 +287,7 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
             className="absolute w-[92%] h-[420px] bg-slate-950/80 border border-slate-800 rounded-3xl p-5 shadow-xl scale-95 translate-y-3 opacity-50 blur-[0.5px] pointer-events-none flex flex-col justify-between"
             style={{ willChange: 'transform, opacity' }}
           >
-            <div className="flex justify-between text-xs text-slate-500 font-bold">
+            <div className="flex justify-between text-xs text-slate-300 font-bold">
               <span>{nextUnderCard.startTime}</span>
               <span>UP NEXT</span>
             </div>
@@ -434,14 +439,14 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
                 </div>
 
                 <div className="p-3 bg-rose-950/30 rounded-xl border border-rose-900/50 space-y-1">
-                  <span className="text-[10px] text-rose-400 font-black uppercase block">Key Injury Intel</span>
+                  <span className="text-xs text-rose-400 font-black uppercase block">Key Injury Intel</span>
                   <span className="text-slate-300 text-[11px] leading-relaxed block">
                     {activeCard.injuryNote || 'Both starting QBs active. Away team starting CB ruled OUT (hamstring).'}
                   </span>
                 </div>
               </div>
 
-              <div className="text-[10px] text-slate-500 text-center uppercase tracking-wider shrink-0">
+              <div className="text-xs text-slate-300 text-center uppercase tracking-wider shrink-0">
                 ↓ Drag down or tap ✕ to close
               </div>
             </motion.div>
@@ -544,7 +549,7 @@ const SwipeCardItem: React.FC<{
 
           <motion.div
             style={{ opacity: homeOpacity }}
-            className="absolute top-6 right-5 px-3.5 py-1 rounded-2xl bg-cyan-950/95 border-2 border-cyan-400 text-cyan-300 font-black text-xs uppercase rotate-12 z-30 shadow-[0_0_15px_rgba(34,211,238,0.5)] pointer-events-none"
+            className="absolute top-6 right-5 px-3.5 py-1 rounded-2xl bg-indigo-950/95 border-2 border-indigo-400 text-indigo-300 font-black text-xs uppercase rotate-12 z-30 shadow-[0_0_15px_rgba(99,102,241,0.5)] pointer-events-none"
           >
             ▶ PICK {homeCode}
           </motion.div>
@@ -569,7 +574,7 @@ const SwipeCardItem: React.FC<{
       <div className="flex items-center justify-between border-b border-slate-800 pb-2.5 text-xs">
         {isFinal ? (
           <div className="flex items-center space-x-2">
-            <span className="px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400 font-bold text-[10px]">
+            <span className="px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400 font-bold text-xs">
               FINAL
             </span>
             <span className="font-mono text-zinc-200 text-xs font-bold">
@@ -578,7 +583,7 @@ const SwipeCardItem: React.FC<{
           </div>
         ) : (matchup.gameStatus === 'LIVE' || matchup.isLive) ? (
           <div className="flex items-center space-x-2">
-            <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-400 font-bold text-[10px] animate-pulse">
+            <span className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-400 font-bold text-xs animate-pulse">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
               <span>LIVE • {matchup.displayClock || 'LIVE'}</span>
             </span>
@@ -602,19 +607,16 @@ const SwipeCardItem: React.FC<{
             <span className="font-bold text-slate-300">{matchup.startTime}</span>
           </div>
         )}
-        <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-cyan-300 font-black text-[10px]">
-          {formatAttributedSpread({
-            spread: matchup.spread,
-            homeTeam: matchup.homeTeam,
-            awayTeam: matchup.awayTeam,
-            treatZeroAsUnavailable: true,
-          })}
-        </span>
+        {matchup.favoriteLine ? (
+          <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-cyan-300 font-black text-xs">
+            {matchup.favoriteLine}
+          </span>
+        ) : null}
       </div>
 
       {/* Team Confrontation Card */}
-      <div className="flex items-center justify-around my-1 py-3 px-2 bg-slate-950/60 rounded-2xl border border-slate-800/80">
-        <div className="flex flex-col items-center space-y-1.5 text-center">
+      <div className="flex items-center justify-around my-1 py-6 px-2 bg-slate-950/60 rounded-2xl border border-slate-800/80">
+        <div className="flex flex-col items-center space-y-2 text-center">
           <div className={`p-2 rounded-2xl bg-slate-900 border shadow-md ${
             awaySelected
               ? isFinal
@@ -628,20 +630,21 @@ const SwipeCardItem: React.FC<{
           }`}>
             <TeamLogo abbr={awayCode} size="lg" />
           </div>
-          <span className="text-lg font-black text-white">{awayCode}</span>
-          <span className="text-[10px] text-slate-400 font-bold">{awayMeta?.name || awayCode}</span>
+          <span className="text-2xl font-black text-white">{awayCode}</span>
+          <span className="text-sm text-slate-300 font-bold">{awayMeta?.name || awayCode}</span>
+          {matchup.awayRecord ? <span className="text-sm text-slate-200 font-bold">{matchup.awayRecord}</span> : null}
           {isFinal ? (
             awaySelected ? (
               awayIsWin ? (
-                <div className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-black">
+                <div className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-black">
                   ✔ WIN (+1)
                 </div>
               ) : awayIsLoss ? (
-                <div className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[9px] font-black">
+                <div className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-xs font-black">
                   ✘ LOSS
                 </div>
               ) : (
-                <div className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700 text-[9px] font-black">
+                <div className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700 text-xs font-black">
                   ✔ PICKED
                 </div>
               )
@@ -649,19 +652,19 @@ const SwipeCardItem: React.FC<{
               <div className="h-5" />
             )
           ) : !isCardLocked ? (
-            <div className={`px-2 py-0.5 rounded border text-[9px] font-black transition-all ${
+            <div className={`px-2 py-0.5 rounded border text-xs font-black transition-all ${
               awaySelected
                 ? isPicksProtected
                   ? 'bg-cyan-500/80 text-slate-950 border-cyan-400'
                   : 'bg-cyan-500 text-slate-950 border-cyan-400 font-black'
                 : isPicksProtected
-                ? 'bg-slate-950/80 border-slate-800 text-slate-500'
+                ? 'bg-slate-950/80 border-slate-800 text-slate-300'
                 : 'bg-cyan-950/80 border-cyan-800 text-cyan-400'
             }`}>
               {awaySelected ? '✔ SELECTED' : isPicksProtected ? 'PROTECTED' : 'SWIPE ◀'}
             </div>
           ) : awaySelected ? (
-            <div className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-black">
+            <div className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-black">
               ✔ LOCKED
             </div>
           ) : (
@@ -671,7 +674,7 @@ const SwipeCardItem: React.FC<{
 
         <span className="text-slate-600 font-black text-xs uppercase">VS</span>
 
-        <div className="flex flex-col items-center space-y-1.5 text-center">
+        <div className="flex flex-col items-center space-y-2 text-center">
           <div className={`p-2 rounded-2xl bg-slate-900 border shadow-md ${
             homeSelected
               ? isFinal
@@ -679,26 +682,27 @@ const SwipeCardItem: React.FC<{
                   ? 'border-emerald-500 ring-2 ring-emerald-500/50'
                   : homeIsLoss
                   ? 'border-rose-500 ring-2 ring-rose-500/50'
-                  : 'border-cyan-400 ring-2 ring-cyan-500/40'
-                : 'border-cyan-400 ring-2 ring-cyan-500/40'
+                  : 'border-indigo-400 ring-2 ring-indigo-500/40'
+                : 'border-indigo-400 ring-2 ring-indigo-500/40'
               : 'border-slate-700/80'
           }`}>
             <TeamLogo abbr={homeCode} size="lg" />
           </div>
-          <span className="text-lg font-black text-white">{homeCode}</span>
-          <span className="text-[10px] text-slate-400 font-bold">{homeMeta?.name || homeCode}</span>
+          <span className="text-2xl font-black text-white">{homeCode}</span>
+          <span className="text-sm text-slate-300 font-bold">{homeMeta?.name || homeCode}</span>
+          {matchup.homeRecord ? <span className="text-sm text-slate-200 font-bold">{matchup.homeRecord}</span> : null}
           {isFinal ? (
             homeSelected ? (
               homeIsWin ? (
-                <div className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-black">
+                <div className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-black">
                   ✔ WIN (+1)
                 </div>
               ) : homeIsLoss ? (
-                <div className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[9px] font-black">
+                <div className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-xs font-black">
                   ✘ LOSS
                 </div>
               ) : (
-                <div className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700 text-[9px] font-black">
+                <div className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700 text-xs font-black">
                   ✔ PICKED
                 </div>
               )
@@ -706,19 +710,19 @@ const SwipeCardItem: React.FC<{
               <div className="h-5" />
             )
           ) : !isCardLocked ? (
-            <div className={`px-2 py-0.5 rounded border text-[9px] font-black transition-all ${
+            <div className={`px-2 py-0.5 rounded border text-xs font-black transition-all ${
               homeSelected
                 ? isPicksProtected
-                  ? 'bg-cyan-500/80 text-slate-950 border-cyan-400'
-                  : 'bg-cyan-500 text-slate-950 border-cyan-400 font-black'
+                  ? 'bg-indigo-500/80 text-white border-indigo-400'
+                  : 'bg-indigo-500 text-white border-indigo-400 font-black'
                 : isPicksProtected
-                ? 'bg-slate-950/80 border-slate-800 text-slate-500'
+                ? 'bg-slate-950/80 border-slate-800 text-slate-300'
                 : 'bg-cyan-950/80 border-cyan-800 text-cyan-400'
             }`}>
               {homeSelected ? '✔ SELECTED' : isPicksProtected ? 'PROTECTED' : '▶ SWIPE'}
             </div>
           ) : homeSelected ? (
-            <div className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-black">
+            <div className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-black">
               ✔ LOCKED
             </div>
           ) : (

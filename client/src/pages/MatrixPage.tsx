@@ -565,7 +565,23 @@ export const MatrixPage: React.FC = () => {
             </div>
           </div>
         ) : (
-          <LiveGametrackStream weekNumber={selectedWeek} />
+          <>
+            {allGamesUpcoming && (
+              <div className="mb-3 p-3 rounded-xl bg-slate-900 border border-slate-800 font-mono">
+                <p className="text-xs font-bold text-white mb-1">PRE-KICKOFF BRIEFING - WEEK {selectedWeek}</p>
+                <p className="text-xs text-slate-300">
+                  Next kickoff: {(() => {
+                    const times = liveGames.map((g: any) => g.dateTime).filter(Boolean).map((s: string) => new Date(s).getTime()).filter((n: number) => !isNaN(n));
+                    if (times.length === 0) return 'TBD';
+                    return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Phoenix', weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date(Math.min(...times)));
+                  })()}
+                  {' '} - Picks in: {new Set(poolPicks.map((p: any) => p.userId)).size} of {poolMembers.length || 10} members, {poolPicks.length} picks total.
+                </p>
+                <p className="text-xs text-slate-400 mt-1">Live drive cards appear at kickoff. Check Leverage for pick splits before then.</p>
+              </div>
+            )}
+            <LiveGametrackStream weekNumber={selectedWeek} />
+          </>
         )
       )}
 
@@ -744,21 +760,21 @@ export const MatrixPage: React.FC = () => {
                     >
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-white">
-                            {game.awayTeam} @ {game.homeTeam}
+                          <span className="text-sm font-bold text-white">
+                            {game.awayTeam}{(() => { const lg = liveGames.find((g) => g.id === game.gameId); return lg?.awayTeam?.record ? ` ${lg.awayTeam.record}` : ''; })()} @ {game.homeTeam}{(() => { const lg = liveGames.find((g) => g.id === game.gameId); return lg?.homeTeam?.record ? ` ${lg.homeTeam.record}` : ''; })()}
                           </span>
-                          {game.spread && game.spread !== 0 ? (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 font-mono font-bold">
-                              {game.spread > 0 ? `+${game.spread}` : game.spread}
+                          {(() => { const lg = liveGames.find((g) => g.id === game.gameId); return lg?.favoriteLine ? (
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 font-mono font-bold">
+                              {lg.favoriteLine}
                             </span>
-                          ) : null}
+                          ) : null; })()}
                         </div>
                         {distBadge ? (
-                          <span className={`text-[9px] px-2 py-0.5 rounded border font-bold uppercase tracking-wider inline-flex items-center gap-1 ${distBadge.className}`}>
+                          <span className={`text-xs px-2 py-0.5 rounded border font-bold uppercase tracking-wider inline-flex items-center gap-1 ${distBadge.className}`}>
                             {distBadge.text}
                           </span>
                         ) : isConsensus ? (
-                          <span className="text-[9px] px-2 py-0.5 rounded bg-slate-800/90 text-cyan-300 border border-slate-700 font-bold">
+                          <span className="text-xs px-2 py-0.5 rounded bg-slate-800/90 text-cyan-300 border border-slate-700 font-bold">
                             {gameDist?.totalPicks} of {gameDist?.totalPicks} picked {gameDist?.consensusTeam}
                           </span>
                         ) : null}
@@ -773,13 +789,13 @@ export const MatrixPage: React.FC = () => {
                             const homePct = 100 - awayPct;
                             return (
                               <>
-                                <div className="flex justify-between text-[10px] font-mono font-bold mb-1">
+                                <div className="flex justify-between text-xs font-mono font-bold mb-1">
                                   <span className="text-cyan-400">{game.awayTeam} {awayPct}% ({awayCamp.length})</span>
-                                  <span className="text-amber-400">{homePct}% ({homeCamp.length}) {game.homeTeam}</span>
+                                  <span className="text-indigo-400">{homePct}% ({homeCamp.length}) {game.homeTeam}</span>
                                 </div>
                                 <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden flex border border-slate-800">
                                   <div style={{ width: `${awayPct}%` }} className="bg-cyan-500 h-full transition-all duration-500" />
-                                  <div style={{ width: `${homePct}%` }} className="bg-amber-500 h-full transition-all duration-500" />
+                                  <div style={{ width: `${homePct}%` }} className="bg-indigo-500 h-full transition-all duration-500" />
                                 </div>
                               </>
                             );
@@ -799,7 +815,7 @@ export const MatrixPage: React.FC = () => {
                           teamLabel={game.awayTeam}
                           isAway={true}
                         />
-                        <span className="text-[9px] text-slate-500 font-bold uppercase">
+                        <span className="text-xs text-slate-300 font-bold uppercase">
                           VS (TUG OF WAR)
                         </span>
                         <StackedAvatarCluster
@@ -838,7 +854,7 @@ export const MatrixPage: React.FC = () => {
                           <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex flex-col gap-1.5">
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-2">
-                                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">
+                                <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
                                   REACTIONS
                                 </span>
                                 <button
@@ -862,7 +878,7 @@ export const MatrixPage: React.FC = () => {
                                       })
                                     );
                                   }}
-                                  className="px-2 py-0.5 rounded bg-cyan-950/70 hover:bg-cyan-900/80 border border-cyan-700/60 text-cyan-300 text-[9px] font-mono font-bold flex items-center gap-1 transition active:scale-95"
+                                  className="px-2 py-0.5 rounded bg-cyan-950/70 hover:bg-cyan-900/80 border border-cyan-700/60 text-cyan-300 text-xs font-mono font-bold flex items-center gap-1 transition active:scale-95"
                                   title="Discuss this game in Pool Lounge"
                                 >
                                   <span>💬</span>
@@ -882,7 +898,7 @@ export const MatrixPage: React.FC = () => {
                                     e.stopPropagation();
                                     handleToggleGameReaction(game.gameId, chip.code);
                                   }}
-                                  className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold transition border flex items-center gap-1 ${
+                                  className={`px-2 py-0.5 rounded-md text-xs font-mono font-bold transition border flex items-center gap-1 ${
                                     chip.viewerSelected
                                       ? 'bg-cyan-950 border-cyan-400 text-cyan-300 shadow-sm'
                                       : 'bg-slate-950/80 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
@@ -891,7 +907,7 @@ export const MatrixPage: React.FC = () => {
                                   <span>{chip.emoji}</span>
                                   <span>{chip.label}</span>
                                   {chip.count > 0 && (
-                                    <span className="ml-0.5 px-1 py-0.1 rounded-full bg-slate-800 text-[9px] text-white">
+                                    <span className="ml-0.5 px-1 py-0.1 rounded-full bg-slate-800 text-xs text-white">
                                       {chip.count}
                                     </span>
                                   )}

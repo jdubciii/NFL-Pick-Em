@@ -666,7 +666,12 @@ export function buildPersonalRootingQueue(
 
       let priorityScore = isLive ? 50 : 10;
       let reasonBadge: 'DUEL SWING' | 'TIER ESCAPE' | 'SHARED ROOT' = 'SHARED ROOT';
-      let consequenceText = `Shared pick with ${rivalDisplayName} (${vPick}) — holds current margin`;
+      // Week 8 fix: a missing rival pick is pending, not shared. The old
+      // default claimed "Shared pick" even when rivalPick was null, which
+      // falsely reported shared picks in the Radar queue.
+      let consequenceText = rPick
+        ? `Shared pick with ${rivalDisplayName} (${vPick}) — holds current margin`
+        : `Rival pick pending - your pick is ${vPick}, duel margin not yet known`;
 
       const article = getTeamIndefiniteArticle(vPick);
       const postGap = currentViewerGap + 1;

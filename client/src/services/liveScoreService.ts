@@ -2,8 +2,8 @@ export interface LiveGame {
   id: string;
   name: string;
   shortName: string;
-  homeTeam: { code: string; name: string; score?: string };
-  awayTeam: { code: string; name: string; score?: string };
+  homeTeam: { code: string; name: string; score?: string; record?: string | null };
+  awayTeam: { code: string; name: string; score?: string; record?: string | null };
   status: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL';
   kickoffTime?: string;
   clock: string;
@@ -13,6 +13,8 @@ export interface LiveGame {
   state?: string;
   displayClock?: string;
   periodLabel?: string;
+  dateTime?: string;
+  favoriteLine?: string | null;
 }
 
 export async function fetchLiveNFLScores(weekNumber: number = 5): Promise<LiveGame[]> {
@@ -56,6 +58,22 @@ export async function fetchLiveNFLScores(weekNumber: number = 5): Promise<LiveGa
       const homeCode = rawHomeCode === 'WSH' ? 'WAS' : rawHomeCode === 'JAC' ? 'JAX' : rawHomeCode;
       const awayCode = rawAwayCode === 'WSH' ? 'WAS' : rawAwayCode === 'JAC' ? 'JAX' : rawAwayCode;
 
+      const getRecord = (c: any): string | null => {
+        const recs = Array.isArray(c?.records) ? c.records : [];
+        const total = recs.find((r: any) => r?.type === 'total') || recs[0];
+        return total?.summary || null;
+      };
+      // Spreads Jack provided for Week 8, and only these. No ESPN odds,
+      // no lines for any other game. Shown in favorites format:
+      // Jack's TEN +10.5 becomes CIN -10.5, IND +10.5 becomes JAX -10.5,
+      // ARI +7.5 becomes DAL -7.5.
+      const jackSpreads: Record<string, string> = {
+        'TEN@CIN': 'CIN -10.5',
+        'IND@JAX': 'JAX -10.5',
+        'ARI@DAL': 'DAL -7.5',
+      };
+      const favoriteLine = weekNumber === 8 ? (jackSpreads[`${awayCode}@${homeCode}`] || null) : null;
+
       const homeScore = home.score !== undefined && home.score !== null ? String(home.score) : undefined;
       const awayScore = away.score !== undefined && away.score !== null ? String(away.score) : undefined;
       const kickoffIso = event.date ? new Date(event.date).toISOString() : undefined;
@@ -68,11 +86,13 @@ export async function fetchLiveNFLScores(weekNumber: number = 5): Promise<LiveGa
           code: homeCode,
           name: home.team?.displayName || 'Home',
           score: homeScore,
+          record: getRecord(home),
         },
         awayTeam: {
           code: awayCode,
           name: away.team?.displayName || 'Away',
           score: awayScore,
+          record: getRecord(away),
         },
         status: mappedStatus,
         kickoffTime: kickoffIso,
@@ -83,6 +103,8 @@ export async function fetchLiveNFLScores(weekNumber: number = 5): Promise<LiveGa
         state,
         displayClock,
         periodLabel,
+        dateTime: event.date || undefined,
+        favoriteLine,
       };
     });
   } catch (err) {

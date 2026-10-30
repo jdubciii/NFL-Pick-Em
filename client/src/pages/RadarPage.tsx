@@ -177,13 +177,35 @@ export const RadarPage: React.FC = () => {
         if (!isMounted) return;
 
         if (dbPicks && dbPicks.length > 0) {
-          const mappedPicks: UserPickItem[] = dbPicks.map((p: any) => ({
-            userId: p.user_id,
-            gameId: String(p.game_id || p.matchup_id),
-            selectedTeam: p.selected_team,
-            isSubmitted: true,
-            isHidden: false,
-          }));
+          // Week 8 fix: same alias approach as Matrix. Picks may carry the
+          // DB UUID or the ESPN external id, while Radar games may carry
+          // either, depending on whether the backend matrix or ESPN
+          // telemetry wins. An alias copy only matches a game list using
+          // the other id system, so it never double counts a game.
+          let aliasMap = new Map<string, string>();
+          try {
+            const { data: gameRows } = await supabase
+              .from('games')
+              .select('id, external_game_id')
+              .eq('week', activeWeek);
+            (gameRows || []).forEach((g: any) => {
+              if (g.id && g.external_game_id) {
+                aliasMap.set(String(g.id), String(g.external_game_id));
+                aliasMap.set(String(g.external_game_id), String(g.id));
+              }
+            });
+          } catch (_) {}
+          const mappedPicks: UserPickItem[] = dbPicks.flatMap((p: any) => {
+            const base: UserPickItem = {
+              userId: p.user_id,
+              gameId: String(p.game_id || p.matchup_id),
+              selectedTeam: p.selected_team,
+              isSubmitted: true,
+              isHidden: false,
+            };
+            const alias = aliasMap.get(base.gameId);
+            return alias && alias !== base.gameId ? [base, { ...base, gameId: alias }] : [base];
+          });
           setPicks(mappedPicks);
         }
 

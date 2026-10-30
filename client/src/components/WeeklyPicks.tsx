@@ -331,6 +331,16 @@ export const WeeklyPicks: React.FC = () => {
               const gId = p.game_id || p.matchup_id;
               if (gId && p.selected_team) {
                 cloudMap[String(gId)] = p.selected_team;
+                // Week 8 fix: imported picks use the ESPN external id, while
+                // authoritative slate games are keyed by the DB UUID. Store
+                // both keys so userPicks[g.id] and merged userPick work
+                // regardless of which id a game carries.
+                const matched = (mappedGames || []).find((g: any) => String(g.id) === String(gId) || String((g as any).externalGameId || (g as any).external_game_id) === String(gId));
+                if (matched) {
+                  cloudMap[String((matched as any).id)] = p.selected_team;
+                  const ext = String((matched as any).externalGameId || (matched as any).external_game_id || '');
+                  if (ext) cloudMap[ext] = p.selected_team;
+                }
               }
             });
             userPicksMap = cloudMap;
@@ -356,7 +366,7 @@ export const WeeklyPicks: React.FC = () => {
       // Merge picks onto games
       const mergedGames = mappedGames.map((g) => ({
         ...g,
-        userPick: userPicksMap[g.id] || null,
+        userPick: userPicksMap[g.id] || userPicksMap[(g as any).externalGameId] || userPicksMap[(g as any).external_game_id] || null,
       }));
 
       // Strictly sort chronologically by kickoff timestamp (Decision #66)
@@ -1008,7 +1018,7 @@ export const WeeklyPicks: React.FC = () => {
       />
 
       {/* ROW 2 (Sub-navigation) */}
-      <div className="flex items-center justify-between px-4 py-2 bg-zinc-900/60 border-b border-zinc-800/50">
+      <div className="flex items-center justify-between px-4 py-1.5 bg-zinc-900/60 border-b border-zinc-800/50">
           {/* Week Selector Dropdown & Commissioner Controls */}
           <div className="flex items-center gap-2">
             <button onClick={() => setShowWeekModal(true)} className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-zinc-800/90 border border-zinc-700/80 text-white text-xs font-bold">
@@ -1041,17 +1051,6 @@ export const WeeklyPicks: React.FC = () => {
             <button onClick={() => setViewMode('list')} className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${viewMode === 'list' ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : 'text-zinc-400 hover:text-white'}`}>List</button>
           </div>
         </div>
-
-      {/* Authoritative ESPN Slate Status & Timestamp */}
-      {lastUpdatedTime && (
-        <div className="px-4 py-1 bg-zinc-950/80 border-b border-zinc-800/40 flex items-center justify-between text-[10px] text-zinc-400 font-mono">
-          <span className="flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-            Authoritative ESPN Sync
-          </span>
-          <span>Last updated: {lastUpdatedTime}</span>
-        </div>
-      )}
 
       {/* Accidental-Edit Guard Explanatory Sub-Banner */}
       {isPicksProtected && (
@@ -1163,12 +1162,17 @@ export const WeeklyPicks: React.FC = () => {
             </div>
           )}
 
-          {/* Inline Weekly Tiebreaker Card (Section 6) */}
-          <WeeklyTiebreakerCard
-            week={selectedWeek}
-            poolId={activePoolId}
-            hasPicksWithoutTiebreaker={Object.keys(userPicks).length > 0}
-          />
+          {/* Inline Weekly Tiebreaker Card (Section 6) - collapsed by default so the first game is visible without scrolling; tap to expand */}
+          <details className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+            <summary className="cursor-pointer text-xs font-bold text-zinc-200 font-mono">WEEK {selectedWeek} TIEBREAKER - tap to expand</summary>
+            <div className="pt-2">
+              <WeeklyTiebreakerCard
+                week={selectedWeek}
+                poolId={activePoolId}
+                hasPicksWithoutTiebreaker={Object.keys(userPicks).length > 0}
+              />
+            </div>
+          </details>
 
           {/* Quick-Fill Presets Toolbar */}
           <PickPresetControls
@@ -1202,6 +1206,9 @@ export const WeeklyPicks: React.FC = () => {
                 startTime: ((g as any).isKickoffConfirmed === false || (g as any).is_kickoff_confirmed === false || new Date(g.kickoffTime).getTime() <= 0) ? 'TBD · Kickoff Unconfirmed' : formatKickoff(g.kickoffTime),
                 kickoffTime: g.kickoffTime,
                 spread: typeof g.spread === 'number' ? `${g.spread}` : (typeof g.spread === 'string' ? g.spread : undefined),
+                favoriteLine: (g as any).favoriteLine ?? undefined,
+                awayRecord: (g as any).awayRecord ?? undefined,
+                homeRecord: (g as any).homeRecord ?? undefined,
                 selectedTeam: g.userPick,
                 isLocked: ((g as any).isKickoffConfirmed === false || (g as any).is_kickoff_confirmed === false || new Date(g.kickoffTime).getTime() <= 0) || isGameLocked(g) || isGameKickoffLocked(g),
               }))}
@@ -1228,6 +1235,9 @@ export const WeeklyPicks: React.FC = () => {
                 kickoffTime: ((g as any).isKickoffConfirmed === false || (g as any).is_kickoff_confirmed === false || new Date(g.kickoffTime).getTime() <= 0) ? 'TBD · Kickoff Unconfirmed' : formatKickoff(g.kickoffTime),
                 isLocked: ((g as any).isKickoffConfirmed === false || (g as any).is_kickoff_confirmed === false || new Date(g.kickoffTime).getTime() <= 0) || isGameLocked(g) || isGameKickoffLocked(g),
                 spread: typeof g.spread === 'number' ? `${g.spread}` : undefined,
+                favoriteLine: (g as any).favoriteLine ?? undefined,
+                awayRecord: (g as any).awayRecord ?? undefined,
+                homeRecord: (g as any).homeRecord ?? undefined,
                 gameStatus: (g.gameStatus === 'FINAL' || g.status === 'FINAL' ? 'FINAL' : g.gameStatus === 'LIVE' || g.status === 'IN_PROGRESS' || g.isLive ? 'LIVE' : 'SCHEDULED') as 'FINAL' | 'LIVE' | 'SCHEDULED',
                 homeScore: g.homeScore,
                 awayScore: g.awayScore,
@@ -1261,6 +1271,17 @@ export const WeeklyPicks: React.FC = () => {
           )}
         </div>
       )}
+
+          {/* Authoritative ESPN Slate Status & Timestamp - footer, not header, so it does not push games off screen */}
+          {lastUpdatedTime && (
+            <div className="px-4 py-1 flex items-center justify-between text-[10px] text-zinc-400 font-mono">
+              <span className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+                Authoritative ESPN Sync
+              </span>
+              <span>Last updated: {lastUpdatedTime}</span>
+            </div>
+          )}
 
       {/* 7-Second Undo Snackbar */}
       <UndoSnackbar

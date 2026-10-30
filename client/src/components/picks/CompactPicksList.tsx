@@ -9,6 +9,9 @@ export interface CompactGameRow {
   kickoffTime: string;
   isLocked: boolean;
   spread?: string;
+  favoriteLine?: string | null;
+  awayRecord?: string | null;
+  homeRecord?: string | null;
   gameStatus?: 'FINAL' | 'LIVE' | 'SCHEDULED';
   homeScore?: number | null;
   awayScore?: number | null;
@@ -80,14 +83,14 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
         return (
           <div
             key={g.gameId}
-            className="flex items-center justify-between p-3 bg-slate-900/90 border border-slate-800 rounded-xl shadow-sm text-xs font-mono"
+            className="flex items-center justify-between px-2 py-3 bg-slate-900/90 border border-slate-800 rounded-xl shadow-sm text-xs font-mono min-w-0"
           >
             {/* Away Team Select Button */}
             <button
               type="button"
               disabled={g.isLocked}
               onClick={handleAwayClick}
-              className={`flex-1 py-2 px-3 rounded-lg border font-black transition-all flex items-center justify-between ${
+              className={`flex-1 min-w-0 py-2 px-2 rounded-lg border font-black transition-all flex flex-col items-start justify-center ${
                 awaySelected
                   ? isFinal
                     ? awayIsWin
@@ -105,30 +108,35 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
                   : 'hover:border-slate-700'
               }`}
             >
-              <div className="flex items-center space-x-1.5">
-                <TeamLogo abbr={g.awayTeam} size="xs" />
-                <span>{g.awayTeam}</span>
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider ml-1">AWAY</span>
-              </div>
-              {awaySelected && (
-                <div>
-                  {isFinal ? (
-                    awayIsWin ? (
-                      <span className="text-[10px] text-emerald-400 font-bold whitespace-nowrap">✔ WIN (+1)</span>
-                    ) : awayIsLoss ? (
-                      <span className="text-[10px] text-rose-400 font-bold whitespace-nowrap">✘ LOSS</span>
-                    ) : (
-                      <span>✓</span>
-                    )
-                  ) : (
-                    <span>✓</span>
-                  )}
+              <div className="flex items-center justify-between w-full min-w-0">
+                <div className="flex items-center space-x-1.5 min-w-0">
+                  <TeamLogo abbr={g.awayTeam} size="xs" />
+                  <span>{g.awayTeam}</span>
                 </div>
-              )}
+                {awaySelected && (
+                  <div className="shrink-0">
+                    {isFinal ? (
+                      awayIsWin ? (
+                        <span className="text-xs text-emerald-400 font-bold whitespace-nowrap">✔ WIN (+1)</span>
+                      ) : awayIsLoss ? (
+                        <span className="text-xs text-rose-400 font-bold whitespace-nowrap">✘ LOSS</span>
+                      ) : (
+                        <span className="ml-2">✓</span>
+                      )
+                    ) : (
+                      <span className="ml-2">✓</span>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center space-x-1 whitespace-nowrap mt-0.5">
+                <span className="text-xs font-bold text-slate-100 uppercase tracking-wider">AWAY</span>
+                {g.awayRecord ? <span className="text-xs font-bold opacity-70 whitespace-nowrap shrink-0">{g.awayRecord}</span> : null}
+              </div>
             </button>
 
             {/* Center Status Column */}
-            <div className="px-3 flex flex-col items-center justify-center shrink-0 min-w-[95px] select-none text-center">
+            <div className="px-2 flex flex-col items-center justify-center shrink-0 min-w-[88px] select-none text-center">
               {isFinal ? (
                 <>
                   <span className="text-zinc-400 font-bold text-xs">FINAL</span>
@@ -147,16 +155,21 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
                 </>
               ) : (
                 <>
-                  <span className="text-slate-500 font-bold text-[10px]">@</span>
-                  <span className="text-slate-400 text-[10px] font-mono whitespace-nowrap">
+                  <span className="text-slate-200 font-bold text-xs">@</span>
+                  <span className="text-slate-100 text-xs font-mono font-bold whitespace-nowrap bg-zinc-800 px-1.5 py-0.5 rounded">
                     {g.kickoffTime}
                   </span>
+                  {g.favoriteLine ? (
+                    <span className="text-slate-300 text-xs font-mono font-bold whitespace-nowrap">
+                      {g.favoriteLine}
+                    </span>
+                  ) : null}
                   {g.isLocked ? (
-                    <span className="text-[9px] text-amber-400 font-semibold mt-0.5 whitespace-nowrap">
+                    <span className="text-xs text-amber-400 font-semibold mt-0.5 whitespace-nowrap">
                       🔒 Locked
                     </span>
                   ) : isPicksProtected ? (
-                    <span className="text-[9px] text-amber-400/80 font-semibold mt-0.5 whitespace-nowrap">
+                    <span className="text-xs text-amber-400/80 font-semibold mt-0.5 whitespace-nowrap">
                       🔒 Protected
                     </span>
                   ) : null}
@@ -169,15 +182,15 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
               type="button"
               disabled={g.isLocked}
               onClick={handleHomeClick}
-              className={`flex-1 py-2 px-3 rounded-lg border font-black transition-all flex items-center justify-between ${
+              className={`flex-1 min-w-0 py-2 px-2 rounded-lg border font-black transition-all flex flex-col items-start justify-center ${
                 homeSelected
                   ? isFinal
                     ? homeIsWin
                       ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300 shadow-md shadow-emerald-500/20 ring-1 ring-emerald-500/50'
                       : homeIsLoss
                       ? 'bg-rose-950/80 border-rose-500 text-rose-300 shadow-md shadow-rose-500/20 ring-1 ring-rose-500/50'
-                      : 'bg-cyan-500 border-cyan-400 text-slate-950 shadow-md shadow-cyan-500/20 ring-1 ring-cyan-400'
-                    : 'bg-cyan-500 border-cyan-400 text-slate-950 shadow-md shadow-cyan-500/20 ring-1 ring-cyan-400'
+                      : 'bg-indigo-500 border-indigo-400 text-white shadow-md shadow-indigo-500/20 ring-1 ring-indigo-400'
+                    : 'bg-indigo-500 border-indigo-400 text-white shadow-md shadow-indigo-500/20 ring-1 ring-indigo-400'
                   : 'bg-slate-950/80 border-slate-800 text-white'
               } ${
                 g.isLocked
@@ -187,26 +200,31 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
                   : 'hover:border-slate-700'
               }`}
             >
-              <div className="flex items-center space-x-1.5">
-                <TeamLogo abbr={g.homeTeam} size="xs" />
-                <span>{g.homeTeam}</span>
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider ml-1">HOME</span>
-              </div>
-              {homeSelected && (
-                <div>
-                  {isFinal ? (
-                    homeIsWin ? (
-                      <span className="text-[10px] text-emerald-400 font-bold whitespace-nowrap">✔ WIN (+1)</span>
-                    ) : homeIsLoss ? (
-                      <span className="text-[10px] text-rose-400 font-bold whitespace-nowrap">✘ LOSS</span>
-                    ) : (
-                      <span>✓</span>
-                    )
-                  ) : (
-                    <span>✓</span>
-                  )}
+              <div className="flex items-center justify-between w-full min-w-0">
+                <div className="flex items-center space-x-1.5 min-w-0">
+                  <TeamLogo abbr={g.homeTeam} size="xs" />
+                  <span>{g.homeTeam}</span>
                 </div>
-              )}
+                {homeSelected && (
+                  <div className="shrink-0">
+                    {isFinal ? (
+                      homeIsWin ? (
+                        <span className="text-xs text-emerald-400 font-bold whitespace-nowrap">✔ WIN (+1)</span>
+                      ) : homeIsLoss ? (
+                        <span className="text-xs text-rose-400 font-bold whitespace-nowrap">✘ LOSS</span>
+                      ) : (
+                        <span className="ml-2">✓</span>
+                      )
+                    ) : (
+                      <span className="ml-2">✓</span>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center space-x-1 whitespace-nowrap mt-0.5">
+                <span className="text-xs font-bold text-slate-100 uppercase tracking-wider">HOME</span>
+                {g.homeRecord ? <span className="text-xs font-bold opacity-70 whitespace-nowrap shrink-0">{g.homeRecord}</span> : null}
+              </div>
             </button>
           </div>
         );

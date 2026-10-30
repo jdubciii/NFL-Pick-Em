@@ -13,6 +13,7 @@ import {
   sanitizeChatDisplayHandle,
 } from '../../services/poolSocialService';
 import { scopedExpressFetch } from '../../lib/apiClient';
+import { getCurrentNFLWeek } from '../../services/nflCalendarService';
 
 interface PoolLoungeDrawerProps {
   isOpen: boolean;
@@ -31,7 +32,7 @@ export const PoolLoungeDrawer: React.FC<PoolLoungeDrawerProps> = ({
   onClose,
   poolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
   season = 2026,
-  week = 6,
+  week = getCurrentNFLWeek(),
   currentUserId,
   currentUserName,
   membershipStatus = 'ACTIVE',
