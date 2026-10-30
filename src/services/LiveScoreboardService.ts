@@ -1,5 +1,7 @@
 export interface LiveGameStatus {
   gameId: string;
+  season?: number;
+  weekNumber?: number;
   awayTeam: string;
   homeTeam: string;
   awayScore: number;
@@ -41,6 +43,8 @@ export class LiveScoreboardService {
 
         return {
           gameId: event.id,
+          season: event.season?.year ?? data.season?.year,
+          weekNumber: event.week?.number ?? data.week?.number,
           awayTeam: away?.team?.abbreviation || 'AWAY',
           homeTeam: home?.team?.abbreviation || 'HOME',
           awayScore: parseInt(away?.score || '0', 10),

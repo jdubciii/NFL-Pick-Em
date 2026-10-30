@@ -534,7 +534,7 @@ export async function executeWeeklyWrapUpForPool(
     // -------------------------------------------------------------------------
     const manifest = await getAcceptedSlateManifest(tx, season, seasonType, weekNumber);
     const allGames = await tx.game.findMany();
-    let games = allGames;
+    let games: typeof allGames = [];
 
     if (manifest && manifest.eventIds && manifest.eventIds.length > 0) {
       const eventSet = new Set(manifest.eventIds);
@@ -551,19 +551,26 @@ export async function executeWeeklyWrapUpForPool(
       }
     } else {
       const taggedGames = allGames.filter((g: any) => g.week === weekNumber && (g.season === season || g.season === null));
-      if (taggedGames.length > 0) {
-        games = taggedGames;
-        const poolPickGameIds: any[] = ((await tx.$queryRawUnsafe(
-          `SELECT DISTINCT game_id FROM public.picks WHERE pool_id = $1::uuid AND (week = $2::int OR week IS NULL);`,
-          poolId,
-          weekNumber
-        ).catch(() => [])) as any[]) || [];
-        const validPickIds = poolPickGameIds.map((p: any) => p.game_id).filter(Boolean);
-        if (validPickIds.length > 0) {
-          const pickGameSet = new Set(validPickIds);
-          games = allGames.filter((g: any) => pickGameSet.has(g.id) || pickGameSet.has(g.externalGameId));
-        }
+      // Explicit requested-week picks are the fallback scope when ORM tags are absent.
+      // Null-week legacy rows cannot establish a requested week. Never use allGames.
+      const poolPickGameIds: any[] = (await tx.$queryRawUnsafe(
+        `SELECT DISTINCT game_id FROM public.picks WHERE pool_id = $1::uuid AND week = $2::int;`,
+        poolId,
+        weekNumber
+      )) as any[];
+      const pickGameSet = new Set(poolPickGameIds.map((p: any) => p.game_id).filter(Boolean));
+      const pickedGames = allGames.filter((g: any) =>
+        (pickGameSet.has(g.id) || pickGameSet.has(g.externalGameId)) &&
+        (g.week == null || g.week === weekNumber) &&
+        (g.season == null || g.season === season));
+      // Preserve unpicked tagged games and refuse unresolved intended identities.
+      const resolvedIds = new Set(pickedGames.flatMap((g: any) => [g.id, g.externalGameId]));
+      if ([...pickGameSet].some(id => !resolvedIds.has(id)) ||
+          (taggedGames.length === 0 && pickedGames.length === 0)) {
+        await cleanupIncompleteClaim();
+        return { applied: false, reason: 'AUTHORITATIVE_SLATE_UNAVAILABLE', poolId, season, weekNumber };
       }
+      games = [...new Map([...taggedGames, ...pickedGames].map((g: any) => [g.id, g])).values()];
     }
     const nonExcludedGames = games.filter(
       (game: any) => !isGameInExcludedWindow(game.kickoffTime, excludedWindows)
@@ -652,6 +659,7 @@ export async function executeWeeklyWrapUpForPool(
 
     const joinedCount = picks.filter((p: any) => p.home_team_id !== null && p.home_team_id !== undefined).length;
     if (picks.length > 0 && joinedCount === 0) {
+      await cleanupIncompleteClaim();
       return {
         applied: false,
         reason: 'AUTHORITATIVE_SLATE_UNAVAILABLE',
