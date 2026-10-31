@@ -487,26 +487,64 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
       vi.spyOn(prisma.game, 'findFirst').mockResolvedValue(mockWasAtSfGame as any);
       vi.spyOn(prisma.pick, 'findUnique').mockResolvedValue(null);
 
-      const upsertMock = vi.fn().mockResolvedValue({
-        id: 'pick-admin-override',
-        poolId: POOL_ID,
-        userId: MEMBER_ID,
-        gameId: mockWasAtSfGame.id,
-        selectedTeamId: 'SF',
-        submittedById: ADMIN_ID,
-      });
-
       const auditMock = vi.fn().mockResolvedValue({ id: 'audit-log-1' });
+
+      vi.spyOn(prisma, '$queryRawUnsafe').mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM public.games')) {
+          return [{
+            id: mockWasAtSfGame.id,
+            external_game_id: mockWasAtSfGame.externalGameId,
+            home_team_id: mockWasAtSfGame.homeTeamId,
+            away_team_id: mockWasAtSfGame.awayTeamId,
+            kickoff_time: mockWasAtSfGame.kickoffTime.toISOString(),
+            canonical_kickoff_time: mockWasAtSfGame.canonicalKickoffTime.toISOString(),
+            lock_effective_at: mockWasAtSfGame.lockEffectiveAt.toISOString(),
+            status: mockWasAtSfGame.status,
+            season: 2026,
+            season_type: 2,
+            week: 6,
+          }];
+        }
+        return [];
+      });
 
       vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
         return cb({
-          game: { findUnique: vi.fn().mockResolvedValue(mockWasAtSfGame) },
-          pick: {
-            findMany: vi.fn().mockResolvedValue([]),
-            create: upsertMock,
-            update: upsertMock,
-            upsert: upsertMock,
+          pool: {
+            findUnique: vi.fn().mockResolvedValue({ settings: { lock_offset: 0 } }),
           },
+          $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+            if (sql.includes('FROM public.games')) {
+              return [{
+                id: mockWasAtSfGame.id,
+                external_game_id: mockWasAtSfGame.externalGameId,
+                home_team_id: mockWasAtSfGame.homeTeamId,
+                away_team_id: mockWasAtSfGame.awayTeamId,
+                kickoff_time: mockWasAtSfGame.kickoffTime.toISOString(),
+                canonical_kickoff_time: mockWasAtSfGame.canonicalKickoffTime.toISOString(),
+                lock_effective_at: mockWasAtSfGame.lockEffectiveAt.toISOString(),
+                status: mockWasAtSfGame.status,
+                season: 2026,
+                season_type: 2,
+                week: 6,
+              }];
+            }
+            if (sql.includes('pg_advisory_xact_lock')) return [];
+            if (sql.includes('FROM public.picks') && sql.includes('FOR UPDATE')) return [];
+            if (sql.includes('INSERT INTO public.picks') || sql.includes('UPDATE public.picks')) {
+              return [{
+                id: 'pick-admin-override',
+                pool_id: POOL_ID,
+                user_id: MEMBER_ID,
+                week: 6,
+                game_id: mockWasAtSfGame.id,
+                selected_team_id: 'SF',
+                submitted_by: ADMIN_ID,
+                created_at: new Date(),
+              }];
+            }
+            return [];
+          }),
           auditLog: { create: auditMock },
         });
       });
@@ -529,11 +567,8 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.message).toBe('Pick successfully updated by admin.');
-      expect(upsertMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          create: expect.objectContaining({ selectedTeamId: 'SF', submittedById: ADMIN_ID }),
-        })
-      );
+      expect(data.pick.selectedTeamId).toBe('SF');
+      expect(data.pick.submittedById).toBe(ADMIN_ID);
       expect(auditMock).toHaveBeenCalled();
     });
   });

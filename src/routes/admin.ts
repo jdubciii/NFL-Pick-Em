@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import prisma from '../db/client';
 import { requireAuth, requireAdmin, requirePoolCommissioner, getPrismaClient } from '../middleware/auth';
 import { normalizeTeamCode } from '../services/authoritativeSlateService';
-import { evaluateKickoffLock } from './picks';
+import { savePickAtomically, resolveGameWithCanonicalLock, SavedPickRecord } from './picks';
 
 export const adminRouter = Router();
 export const poolAdminRouter = Router({ mergeParams: true });
@@ -167,7 +167,7 @@ export const handleAdminPickOverride = async (req: Request, res: Response): Prom
   const poolId = pool.id;
 
   // Reject conflicting body/query pool IDs (derive authority strictly from path/req.pool)
-  const bodyPoolId = req.body?.pool_id || req.body?.poolId;
+  const bodyPoolId = req.body?.pool_id !== undefined ? req.body.pool_id : req.body?.poolId;
   if (bodyPoolId && String(bodyPoolId) !== poolId) {
     res.status(400).json({
       error: `POOL_MISMATCH: body pool_id '${bodyPoolId}' does not match path parameter pool_id '${poolId}'.`,
@@ -176,7 +176,7 @@ export const handleAdminPickOverride = async (req: Request, res: Response): Prom
     return;
   }
 
-  const queryPoolId = req.query?.pool_id || req.query?.poolId;
+  const queryPoolId = req.query?.pool_id !== undefined ? req.query.pool_id : req.query?.poolId;
   if (queryPoolId && String(queryPoolId) !== poolId) {
     res.status(400).json({
       error: `POOL_MISMATCH: query pool_id '${queryPoolId}' does not match path parameter pool_id '${poolId}'.`,
@@ -187,6 +187,8 @@ export const handleAdminPickOverride = async (req: Request, res: Response): Prom
 
   const userId = req.body?.user_id || req.body?.userId;
   const rawGameId = req.body?.game_id || req.body?.gameId;
+  const rawWeek = req.body?.week !== undefined ? req.body.week : req.body?.selectedWeek;
+
   const rawSelectedTeamId = req.body?.selected_team_id !== undefined
     ? req.body.selected_team_id
     : (req.body?.selectedTeamId !== undefined
@@ -215,26 +217,19 @@ export const handleAdminPickOverride = async (req: Request, res: Response): Prom
 
   try {
     const db = getPrismaClient();
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(gameId);
-    const initialGame = await db.game.findFirst({
-      where: isUuid
-        ? { OR: [{ id: gameId }, { externalGameId: gameId }] }
-        : { externalGameId: gameId },
-    });
 
+    // 1. Authoritative game resolution & ambiguous identity check before entering transaction
+    const initialGame = await resolveGameWithCanonicalLock(db, gameId);
     if (!initialGame) {
       res.status(404).json({ error: 'Game not found.' });
       return;
     }
 
-    const canonicalGameId = initialGame.id;
-
-    // 1. Validate team participant (fail-closed if team is not in game)
-    const normHome = normalizeTeamCode(initialGame.homeTeamId);
-    const normAway = normalizeTeamCode(initialGame.awayTeamId);
+    // 2. Early participant check
     const normSelected = selectedTeamId ? normalizeTeamCode(selectedTeamId) : null;
-
     if (normSelected) {
+      const normHome = normalizeTeamCode(initialGame.homeTeamId);
+      const normAway = normalizeTeamCode(initialGame.awayTeamId);
       if (normHome === 'UNK' || normAway === 'UNK') {
         res.status(400).json({ error: 'Game participants cannot be verified.' });
         return;
@@ -247,22 +242,7 @@ export const handleAdminPickOverride = async (req: Request, res: Response): Prom
       }
     }
 
-    // 2. Validate pool lock settings (strict numeric verification)
-    const poolSettings = (pool.settings as any) || {};
-    const rawOffset = poolSettings.lock_offset !== undefined
-      ? poolSettings.lock_offset
-      : (poolSettings.lock_offset_minutes !== undefined ? poolSettings.lock_offset_minutes : 0);
-
-    if (typeof rawOffset !== 'number' || !Number.isFinite(rawOffset) || isNaN(rawOffset)) {
-      res.status(403).json({
-        error: 'UNVERIFIED_KICKOFF: Authoritative pool lock settings are invalid or unverifiable. Zero writes.',
-        code: 'UNVERIFIED_KICKOFF',
-      });
-      return;
-    }
-    const lockOffsetMinutes = rawOffset;
-
-    // 3. Pre-transaction Kickoff & Status Lock Evaluation (Decision #66)
+    // 3. Early status check (Decision #66)
     if (initialGame.status === 'FINAL' || initialGame.status === 'IN_PROGRESS') {
       res.status(403).json({
         error: 'KICKOFF_PASSED: Cannot override pick for a game that has kicked off or finalized (Decision #66). Zero writes.',
@@ -271,133 +251,39 @@ export const handleAdminPickOverride = async (req: Request, res: Response): Prom
       return;
     }
 
-    const preLock = evaluateKickoffLock(initialGame, lockOffsetMinutes, new Date());
-    if (preLock.isLocked) {
-      res.status(403).json({
-        error: preLock.reason === 'UNVERIFIED_KICKOFF'
-          ? 'UNVERIFIED_KICKOFF: Authoritative matchup kickoff time is unconfirmed (TBD). Zero writes.'
-          : 'KICKOFF_PASSED: Matchup kickoff passed before write completed. Zero writes.',
-        code: preLock.reason,
-      });
-      return;
-    }
+    const canonicalGameId = initialGame.id;
+    const targetWeek = rawWeek !== undefined && rawWeek !== null ? Number(rawWeek) : (initialGame.week ?? undefined);
 
-    // 4. Interactive Transaction: Authoritative Reread, Write-Boundary Lock Enforcement, Row Identity Preservation & Audit
-    const result = await db.$transaction(async (tx: any) => {
-      // Re-read authoritative game inside transaction
-      const refreshedGame = await tx.game.findUnique({
-        where: { id: canonicalGameId },
-      });
-
-      if (!refreshedGame) {
-        const err: any = new Error('Game not found under authoritative reread.');
-        err.statusCode = 404;
-        throw err;
-      }
-
-      // Write-boundary kickoff and lock enforcement
-      if (refreshedGame.status === 'FINAL' || refreshedGame.status === 'IN_PROGRESS') {
-        const err: any = new Error('KICKOFF_PASSED: Matchup kickoff passed before write completed. Zero writes.');
-        err.statusCode = 403;
-        err.code = 'KICKOFF_PASSED';
-        throw err;
-      }
-
-      const boundaryLock = evaluateKickoffLock(refreshedGame, lockOffsetMinutes, new Date());
-      if (boundaryLock.isLocked) {
-        const err: any = new Error(
-          boundaryLock.reason === 'UNVERIFIED_KICKOFF'
-            ? 'UNVERIFIED_KICKOFF: Authoritative matchup kickoff is unconfirmed (TBD). Zero writes.'
-            : 'KICKOFF_PASSED: Matchup kickoff passed before write completed. Zero writes.'
-        );
-        err.statusCode = 403;
-        err.code = boundaryLock.reason;
-        throw err;
-      }
-
-      // Candidate game IDs for existing pick lookup (preserves existing alias or canonical row)
-      const candidateGameIds = [refreshedGame.id];
-      if (refreshedGame.externalGameId && !candidateGameIds.includes(refreshedGame.externalGameId)) {
-        candidateGameIds.push(refreshedGame.externalGameId);
-      }
-      if (initialGame.externalGameId && !candidateGameIds.includes(initialGame.externalGameId)) {
-        candidateGameIds.push(initialGame.externalGameId);
-      }
-      if (gameId && !candidateGameIds.includes(gameId)) {
-        candidateGameIds.push(gameId);
-      }
-
-      const matchingPicks = await tx.pick.findMany({
-        where: {
-          poolId,
-          userId,
-          gameId: { in: candidateGameIds },
-        },
-      });
-
-      if (matchingPicks.length > 1) {
-        const err: any = new Error('DUPLICATE_PICK_IDENTITY: Multiple stored picks found for this matchup. Zero writes.');
-        err.statusCode = 409;
-        err.code = 'DUPLICATE_PICK_IDENTITY';
-        throw err;
-      }
-
-      const existingPick = matchingPicks.length === 1 ? matchingPicks[0] : null;
-
-      // Handle unselect (null) on absent row: confirmed no-op with zero writes
-      if (!existingPick && !normSelected) {
-        return { pick: null, auditLog: null, noOp: true };
-      }
-
-      let savedPick: any;
-      if (existingPick) {
-        // Update selection in-place on existing row, preserving id, game_id, created_at, and target user
-        savedPick = await tx.pick.update({
-          where: { id: existingPick.id },
-          data: {
-            selectedTeamId: normSelected,
-            submittedById: adminId,
-          },
-        });
-      } else {
-        // Insert new row keyed to canonical game ID via atomic upsert
-        savedPick = await tx.pick.upsert({
-          where: {
-            poolId_userId_gameId: {
-              poolId,
-              userId,
-              gameId: canonicalGameId,
+    const result = await savePickAtomically(db, {
+      poolId,
+      userId,
+      gameId: canonicalGameId,
+      week: targetWeek,
+      selectedTeamId: normSelected,
+      submittedById: adminId,
+      externalGameId: initialGame.externalGameId || undefined,
+      validateParticipants: true,
+      onBeforeCommit: async (tx: any, savedPick: SavedPickRecord, existingRecord: any | null) => {
+        if (savedPick.id === 'noop') {
+          return null;
+        }
+        if (tx?.auditLog && typeof tx.auditLog.create === 'function') {
+          const auditLog = await tx.auditLog.create({
+            data: {
+              actorId: adminId,
+              action: 'ADMIN_OVERRIDE_PICK',
+              targetEntityId: savedPick.id,
+              oldValue: existingRecord ? JSON.parse(JSON.stringify(existingRecord)) : null,
+              newValue: JSON.parse(JSON.stringify(savedPick)),
             },
-          },
-          update: {
-            selectedTeamId: normSelected,
-            submittedById: adminId,
-          },
-          create: {
-            poolId,
-            userId,
-            gameId: canonicalGameId,
-            selectedTeamId: normSelected,
-            submittedById: adminId,
-          },
-        });
-      }
-
-      // Write audit log entry capturing state change
-      const auditLog = await tx.auditLog.create({
-        data: {
-          actorId: adminId,
-          action: 'ADMIN_OVERRIDE_PICK',
-          targetEntityId: savedPick.id,
-          oldValue: existingPick ? JSON.parse(JSON.stringify(existingPick)) : null,
-          newValue: JSON.parse(JSON.stringify(savedPick)),
-        },
-      });
-
-      return { pick: savedPick, auditLog, noOp: false };
+          });
+          return auditLog?.id || null;
+        }
+        return null;
+      },
     });
 
-    if (result.noOp) {
+    if (result.id === 'noop' || (result.selectedTeamId === null && result.id === 'noop')) {
       res.status(200).json({
         message: 'Pick unselect on unpicked game confirmed no-op.',
         pick: null,
@@ -408,8 +294,8 @@ export const handleAdminPickOverride = async (req: Request, res: Response): Prom
 
     res.status(200).json({
       message: 'Pick successfully updated by admin.',
-      pick: result.pick,
-      auditLogId: result.auditLog?.id,
+      pick: result,
+      auditLogId: result.auditLogId || null,
     });
   } catch (error: any) {
     console.error('Error during admin pick override:', error);

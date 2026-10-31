@@ -29,6 +29,7 @@ export interface SavedPickRecord {
   selectedTeamId: string | null;
   submittedById: string;
   createdAt?: Date | string;
+  auditLogId?: string | null;
 }
 
 let legacyGameAdapterForTesting: ((db: any, gameId: string) => Promise<GameWithCanonicalLock | null>) | null = null;
@@ -283,14 +284,21 @@ export async function executeSerializedPickMutation(
     poolId: string;
     userId: string;
     gameId: string;
-    week: number;
+    week?: number;
     selectedTeamId: string | null;
     externalGameId?: string | null;
     lockOffsetMinutes?: number;
     gameData?: any;
+    submittedById?: string;
+    validateParticipants?: boolean;
+    onBeforeCommit?: (tx: any, savedPick: SavedPickRecord, existingPick: any | null) => Promise<any>;
   }
 ): Promise<SavedPickRecord> {
-  const { poolId, userId, gameId, week, selectedTeamId, externalGameId } = params;
+  const { poolId, userId, gameId, selectedTeamId, externalGameId } = params;
+
+  const normSelected = selectedTeamId !== null && selectedTeamId !== undefined && String(selectedTeamId).trim().length > 0
+    ? normalizeTeamCode(selectedTeamId)
+    : null;
 
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(gameId);
 
@@ -356,10 +364,14 @@ export async function executeSerializedPickMutation(
     canonicalGameId = String((preLockGame as GameWithCanonicalLock).id || (preLockGame as any).gameId || gameId);
   }
 
+  const effectiveWeek = Number(params.week ?? (params.gameData?.week || 8));
+
+  const actorId = params.submittedById || userId;
+
   // 2. Acquire transaction advisory lock on canonical game key (BOTH UUID and alias contenders serialize here)
   await executor.$queryRawUnsafe(
     `SELECT pg_advisory_xact_lock(hashtext($1))`,
-    `${poolId}:${userId}:${week}:${canonicalGameId}`
+    `${poolId}:${userId}:${effectiveWeek}:${canonicalGameId}`
   );
 
   // 3. Authoritative game reread under acquired advisory lock (required for BOTH UUID and alias inputs)
@@ -423,6 +435,36 @@ export async function executeSerializedPickMutation(
     (lockErr as any).statusCode = 403;
     (lockErr as any).status = 403;
     throw lockErr;
+  }
+
+  // Validate game status under lock
+  if (refreshedGame.status === 'FINAL' || refreshedGame.status === 'IN_PROGRESS') {
+    const lockErr = new Error('KICKOFF_PASSED: Cannot modify pick for a game that has kicked off or finalized (Decision #66). Zero writes.');
+    (lockErr as any).code = 'KICKOFF_PASSED';
+    (lockErr as any).statusCode = 403;
+    (lockErr as any).status = 403;
+    throw lockErr;
+  }
+
+  // Validate participants against authoritative refreshedGame under advisory lock (when requested by caller, e.g. admin override)
+  if (normSelected && params.validateParticipants) {
+    const normHome = normalizeTeamCode(refreshedGame.homeTeamId);
+    const normAway = normalizeTeamCode(refreshedGame.awayTeamId);
+
+    if (normHome === 'UNK' || normAway === 'UNK') {
+      const partErr = new Error('UNVERIFIED_PARTICIPANTS: Game participants cannot be verified under authoritative reread.');
+      (partErr as any).code = 'UNVERIFIED_PARTICIPANTS';
+      (partErr as any).statusCode = 400;
+      (partErr as any).status = 400;
+      throw partErr;
+    }
+    if (normSelected !== normHome && normSelected !== normAway) {
+      const partErr = new Error(`UNVERIFIED_PARTICIPANTS: Selected team '${selectedTeamId}' is not a participant in this game (${normAway} @ ${normHome}).`);
+      (partErr as any).code = 'UNVERIFIED_PARTICIPANTS';
+      (partErr as any).statusCode = 400;
+      (partErr as any).status = 400;
+      throw partErr;
+    }
   }
 
   // Ensure both kickoffTime and canonicalKickoffTime are populated only if undefined (never overwrite explicit null)
@@ -510,11 +552,18 @@ export async function executeSerializedPickMutation(
 
   // Helper to enforce authoritative kickoff deadline at any write point
   const enforceWriteBoundaryLock = () => {
+    if (refreshedGame!.status === 'FINAL' || refreshedGame!.status === 'IN_PROGRESS') {
+      const lockErr = new Error('KICKOFF_PASSED: Matchup kickoff passed before write completed. Zero writes.');
+      (lockErr as any).code = 'KICKOFF_PASSED';
+      (lockErr as any).statusCode = 403;
+      (lockErr as any).status = 403;
+      throw lockErr;
+    }
     const writeLock = evaluateKickoffLock(refreshedGame!, effectiveLockOffset, new Date());
     if (writeLock.isLocked) {
       const lockErr = new Error(
         writeLock.reason === 'UNVERIFIED_KICKOFF'
-          ? 'UNVERIFIED_KICKOFF: Matchup kickoff is unconfirmed (TBD). Zero writes.'
+          ? 'UNVERIFIED_KICKOFF: Authoritative matchup kickoff time is unconfirmed (TBD). Zero writes.'
           : 'KICKOFF_PASSED: Matchup kickoff passed before write completed. Zero writes.'
       );
       (lockErr as any).code = writeLock.reason;
@@ -548,7 +597,7 @@ export async function executeSerializedPickMutation(
     WHERE pool_id = $1::uuid AND user_id = $2::uuid AND week = $3::int AND game_id IN (${placeholders})
     FOR UPDATE;
   `;
-  const lookupRows = await executor.$queryRawUnsafe(lookupSql, poolId, userId, week, ...candidateIds);
+  const lookupRows = await executor.$queryRawUnsafe(lookupSql, poolId, userId, effectiveWeek, ...candidateIds);
 
   if (lookupRows && lookupRows.length > 1) {
     console.error(
@@ -572,7 +621,7 @@ export async function executeSerializedPickMutation(
       WHERE id = $3::uuid AND clock_timestamp() < $4::timestamptz
       RETURNING id, pool_id, user_id, week, game_id, selected_team_id, submitted_by, created_at;
     `;
-    const updateRows = await executor.$queryRawUnsafe(updateSql, selectedTeamId, userId, existing.id, deadlineDate);
+    const updateRows = await executor.$queryRawUnsafe(updateSql, normSelected, actorId, existing.id, deadlineDate);
     if (!updateRows || !Array.isArray(updateRows) || updateRows.length === 0) {
       enforceWriteBoundaryLock();
       throw new Error('PICK_PERSISTENCE_FAILED: Database returned no row after atomic pick update.');
@@ -582,20 +631,31 @@ export async function executeSerializedPickMutation(
     enforceWriteBoundaryLock();
 
     const r = updateRows[0];
-    return {
+    const savedRecord: SavedPickRecord = {
       id: String(r.id),
       poolId: String(r.pool_id || r.poolId),
       userId: String(r.user_id || r.userId),
       gameId: String(r.game_id || r.gameId),
       week: Number(r.week),
       selectedTeamId: r.selected_team_id !== undefined ? r.selected_team_id : (r.selectedTeamId !== undefined ? r.selectedTeamId : null),
-      submittedById: String(r.submitted_by || r.submittedById || userId),
+      submittedById: String(r.submitted_by || r.submittedById || actorId),
       createdAt: r.created_at || r.createdAt,
+    };
+
+    let auditLogRecordId: string | null = null;
+    if (params.onBeforeCommit) {
+      auditLogRecordId = await params.onBeforeCommit(executor, savedRecord, existing);
+      enforceWriteBoundaryLock();
+    }
+
+    return {
+      ...savedRecord,
+      auditLogId: auditLogRecordId,
     };
   }
 
   // Zero matching rows found
-  if (selectedTeamId === null) {
+  if (normSelected === null) {
     // Unselect on zero matching rows: confirmed no-op, NO INSERT
     enforceWriteBoundaryLock();
     return {
@@ -603,9 +663,9 @@ export async function executeSerializedPickMutation(
       poolId,
       userId,
       gameId: canonicalGameId,
-      week,
+      week: effectiveWeek,
       selectedTeamId: null,
-      submittedById: userId,
+      submittedById: actorId,
       createdAt: new Date(),
     };
   }
@@ -636,10 +696,10 @@ export async function executeSerializedPickMutation(
     upsertSql,
     poolId,
     userId,
-    week,
+    effectiveWeek,
     canonicalGameId,
-    selectedTeamId,
-    userId,
+    normSelected,
+    actorId,
     deadlineDate
   );
 
@@ -652,15 +712,26 @@ export async function executeSerializedPickMutation(
   enforceWriteBoundaryLock();
 
   const r = rows[0];
-  return {
+  const savedRecord: SavedPickRecord = {
     id: String(r.id),
     poolId: String(r.pool_id || r.poolId),
     userId: String(r.user_id || r.userId),
     gameId: String(r.game_id || r.gameId),
     week: Number(r.week),
     selectedTeamId: r.selected_team_id !== undefined ? r.selected_team_id : (r.selectedTeamId !== undefined ? r.selectedTeamId : null),
-    submittedById: String(r.submitted_by || r.submittedById || userId),
+    submittedById: String(r.submitted_by || r.submittedById || actorId),
     createdAt: r.created_at || r.createdAt,
+  };
+
+  let auditLogRecordId: string | null = null;
+  if (params.onBeforeCommit) {
+    auditLogRecordId = await params.onBeforeCommit(executor, savedRecord, null);
+    enforceWriteBoundaryLock();
+  }
+
+  return {
+    ...savedRecord,
+    auditLogId: auditLogRecordId,
   };
 }
 
@@ -670,21 +741,24 @@ export async function savePickAtomically(
     poolId: string;
     userId: string;
     gameId: string;
-    week: number;
+    week?: number;
     selectedTeamId: string | null;
     externalGameId?: string | null;
     lockOffsetMinutes?: number;
     gameData?: any;
+    submittedById?: string;
+    validateParticipants?: boolean;
+    onBeforeCommit?: (tx: any, savedPick: SavedPickRecord, existingPick: any | null) => Promise<any>;
   }
 ): Promise<SavedPickRecord> {
   const { poolId, userId, gameId, week } = params;
 
-  if (week == null || isNaN(week) || week < 1 || week > 18) {
+  if (week != null && (isNaN(week) || week < 1 || week > 18)) {
     throw new Error(`INVALID_PICK_WEEK: Authoritative week ${week} is invalid or outside season bounds (1-18).`);
   }
 
   if (!poolId || !userId || !gameId) {
-    throw new Error('MISSING_KEY_ATTRIBUTES: poolId, userId, gameId, and week are required.');
+    throw new Error('MISSING_KEY_ATTRIBUTES: poolId, userId, and gameId are required.');
   }
 
   // In test environments where an explicit legacy save adapter is injected, use it directly
