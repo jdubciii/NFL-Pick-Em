@@ -15,6 +15,7 @@ declare global {
     interface Request {
       user?: AuthUserPayload;
       pool?: any;
+      membership?: any;
     }
   }
 }
@@ -43,9 +44,18 @@ export function createSyntheticSupabaseToken(
 }
 
 let testSupabaseAuthClient: SupabaseClient | null = null;
+let testPrismaClient: any = null;
 
 export function setSupabaseAuthClientForTesting(client: SupabaseClient | null): void {
   testSupabaseAuthClient = client;
+}
+
+export function setPrismaClientForTesting(client: any): void {
+  testPrismaClient = client;
+}
+
+export function getPrismaClient(): any {
+  return testPrismaClient || prisma;
 }
 
 export function validateProductionAuthConfig(envOverride?: Record<string, string | undefined>): void {
@@ -290,7 +300,7 @@ async function handlePoolCommissioner(
     rawPoolId = req.body?.[paramName] || (paramName === 'pool_id' ? req.body?.poolId : undefined);
   } else {
     // param (default)
-    rawPoolId = req.params[paramName] || (paramName === 'pool_id' ? (req.params.poolId || req.body?.pool_id || req.body?.poolId || req.query?.pool_id) : undefined);
+    rawPoolId = req.params[paramName] || (paramName === 'pool_id' ? req.params.poolId : undefined);
   }
 
   if (!rawPoolId || typeof rawPoolId !== 'string' || !UUID_REGEX.test(rawPoolId)) {
@@ -299,7 +309,8 @@ async function handlePoolCommissioner(
   }
 
   try {
-    const pool = await prisma.pool.findUnique({
+    const db = getPrismaClient();
+    const pool = await db.pool.findUnique({
       where: { id: rawPoolId },
     });
 
@@ -314,7 +325,23 @@ async function handlePoolCommissioner(
       return;
     }
 
+    // Require verified ACTIVE actor membership (including commissioner requests; unknown state denies)
+    const membership = await db.poolMembership.findUnique({
+      where: {
+        poolId_userId: {
+          poolId: pool.id,
+          userId: req.user.id,
+        },
+      },
+    });
+
+    if (!membership || membership.status !== 'ACTIVE') {
+      res.status(403).json({ error: 'Forbidden. Active pool membership required.' });
+      return;
+    }
+
     req.pool = pool;
+    req.membership = membership;
     next();
   } catch (error) {
     console.error('Error in requirePoolCommissioner:', error);
@@ -323,8 +350,9 @@ async function handlePoolCommissioner(
 }
 
 /**
- * Middleware to verify that the authenticated user is an ACTIVE member of the specified pool (or pool commissioner / global ADMIN).
+ * Middleware to verify that the authenticated user is an ACTIVE member of the specified pool.
  * Validates pool UUID format, checks pool existence (404), and verifies active membership (403).
+ * No commissioner bypass shortcut: verified ACTIVE actor membership is required for ALL users, including commissioner.
  */
 export async function requirePoolMember(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!req.user) {
@@ -332,14 +360,15 @@ export async function requirePoolMember(req: Request, res: Response, next: NextF
     return;
   }
 
-  const poolId = req.params.pool_id || req.params.poolId || req.body.pool_id || req.body.poolId || req.query.pool_id;
+  const poolId = req.params.pool_id || req.params.poolId;
   if (!poolId || !UUID_REGEX.test(String(poolId))) {
     res.status(400).json({ error: 'Invalid pool ID format. Must be a valid UUID.' });
     return;
   }
 
   try {
-    const pool = await prisma.pool.findUnique({
+    const db = getPrismaClient();
+    const pool = await db.pool.findUnique({
       where: { id: String(poolId) },
     });
 
@@ -348,14 +377,7 @@ export async function requirePoolMember(req: Request, res: Response, next: NextF
       return;
     }
 
-    const isCommissioner = pool.adminId === req.user.id;
-    if (isCommissioner) {
-      req.pool = pool;
-      next();
-      return;
-    }
-
-    const membership = await prisma.poolMembership.findUnique({
+    const membership = await db.poolMembership.findUnique({
       where: {
         poolId_userId: {
           poolId: String(poolId),
@@ -370,6 +392,7 @@ export async function requirePoolMember(req: Request, res: Response, next: NextF
     }
 
     req.pool = pool;
+    req.membership = membership;
     next();
   } catch (error) {
     console.error('Error in requirePoolMember:', error);

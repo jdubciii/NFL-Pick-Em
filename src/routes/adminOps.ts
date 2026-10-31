@@ -155,99 +155,16 @@ adminOpsRouter.get('/wrap-up/preview', (_req: Request, res: Response): void => {
 
 /**
  * POST /api/admin/ops/slate/refresh
- * Controlled commissioner refresh workflow for authoritative weekly slate.
- * Fetches and validates ESPN observations before persisting accepted revision atomically.
- * Protected by requireAuth & requireAdmin.
+ * RETIRED: Legacy unscoped pool admin entry point (Invariant #20).
+ * Returns state-free HTTP 410 Gone with 0 database reads.
+ * Canonical pool-scoped route: POST /api/pools/:pool_id/slate/refresh (or /:pool_id/ops/slate/refresh)
  */
-adminOpsRouter.post('/slate/refresh', requireAuth, async (req: Request, res: Response): Promise<void> => {
-  // Separate route availability from refresh execution authorization (P41 Section 6)
-  if (process.env.SLATE_REFRESH_ENABLED !== 'true') {
-    res.status(403).json({
-      error: 'REFRESH_EXECUTION_DISABLED: Authoritative slate refresh execution is currently disabled by operational controls.',
-    });
-    return;
-  }
-
-  const { poolId, season, seasonType, weekNumber, weekId } = req.body || {};
-  if (!poolId || typeof poolId !== 'string') {
-    res.status(400).json({ error: 'poolId is required.' });
-    return;
-  }
-
-  const actorId = req.user!.id;
-
-  // 1. Authenticated actor already verified by requireAuth (req.user)
-  // 2. Verify requested pool exists
-  const pool = await prisma.pool.findUnique({
-    where: { id: poolId },
+adminOpsRouter.post('/slate/refresh', (_req: Request, res: Response): void => {
+  res.status(410).json({
+    error: 'ENDPOINT_RETIRED: Legacy unscoped admin slate refresh endpoint has been retired. Use canonical pool-scoped route POST /api/pools/:pool_id/slate/refresh instead (Invariant #20).',
+    code: 'ENDPOINT_RETIRED',
+    retired: true,
   });
-  if (!pool) {
-    res.status(404).json({ error: 'Pool not found.' });
-    return;
-  }
-
-  // 3. Verify ACTIVE pool membership
-  const membership = await prisma.poolMembership.findUnique({
-    where: {
-      poolId_userId: {
-        poolId,
-        userId: actorId,
-      },
-    },
-  });
-  if (!membership || membership.status !== 'ACTIVE') {
-    res.status(403).json({ error: 'FORBIDDEN_ACTIVE_MEMBERSHIP_REQUIRED: Must be an ACTIVE member of the requested pool.' });
-    return;
-  }
-
-  // 4. Verify commissioner authority (pool.adminId === actorId).
-  // A global ADMIN role does not provide ambient authority over an unrelated pool.
-  if (pool.adminId !== actorId) {
-    res.status(403).json({ error: 'FORBIDDEN_COMMISSIONER_REQUIRED: Only the pool commissioner may refresh the authoritative slate.' });
-    return;
-  }
-
-  if (weekNumber === undefined && weekId === undefined) {
-    res.status(400).json({ error: 'EXPLICIT_WEEK_REQUIRED: weekNumber is required. Silent default to week 1 is prohibited.' });
-    return;
-  }
-
-  const targetWeek = Number(weekNumber !== undefined ? weekNumber : weekId);
-  if (isNaN(targetWeek) || targetWeek < 1 || targetWeek > 18) {
-    res.status(400).json({ error: 'INVALID_WEEK: weekNumber must be an integer between 1 and 18.' });
-    return;
-  }
-  const targetSeason = season !== undefined ? Number(season) : 2026;
-  const targetSeasonType = seasonType !== undefined ? Number(seasonType) : 2;
-
-  try {
-    const result = await refreshWeeklySlateInDb(prisma, {
-      poolId,
-      seasonYear: targetSeason,
-      seasonType: targetSeasonType,
-      weekNumber: targetWeek,
-      operatorId: actorId,
-    });
-
-    if (!result.success) {
-      res.status(422).json({
-        error: 'Authoritative slate refresh rejected',
-        reason: result.reason,
-      });
-      return;
-    }
-
-    res.status(200).json({
-      message: 'Weekly slate refreshed successfully',
-      result,
-    });
-  } catch (error: any) {
-    console.error('Error refreshing weekly slate:', error);
-    res.status(500).json({
-      error: 'Failed to refresh weekly slate',
-      details: error.message,
-    });
-  }
 });
 
 /**

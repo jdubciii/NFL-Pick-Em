@@ -447,6 +447,11 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
   describe('POST /api/admin/picks/override - Commissioner Override Participant Validation', () => {
     it('rejects commissioner override pick when selected team is NOT in the game', async () => {
       vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: ADMIN_ID,
+        status: 'ACTIVE',
+      } as any);
       vi.spyOn(prisma.game, 'findFirst').mockResolvedValue(mockWasAtSfGame as any);
 
       const token = createAuthToken(ADMIN_ID, 'ADMIN');
@@ -471,6 +476,11 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
 
     it('accepts commissioner override pick for valid participant and writes audit log', async () => {
       vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: ADMIN_ID,
+        status: 'ACTIVE',
+      } as any);
       vi.spyOn(prisma.game, 'findFirst').mockResolvedValue(mockWasAtSfGame as any);
       vi.spyOn(prisma.pick, 'findUnique').mockResolvedValue(null);
 
