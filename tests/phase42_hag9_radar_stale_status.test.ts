@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   calculateProvisionalStandings,
   isFinalStatus,
+  resolveRadarGameScoreAndStatus,
   UserStandingRef,
   SlateGame,
   UserPickItem,
@@ -277,32 +278,25 @@ describe('HAG-9: Authoritative FINAL Status Priority Over Stale Live Feed', () =
     });
   });
 
-  describe('Radar Swing Game Card display rendering logic', () => {
-    it('renders FINAL status with final score (CAR 19 @ GB 27) when authoritative game is FINAL and live feed is SCHEDULED', () => {
-      // Replicate the exact display resolution logic implemented in RadarPage
-      const activeSwingGame = {
-        gameId: 'game-car-gb',
-        matchup: 'CAR @ GB',
-        userPick: 'GB',
-        gameStatus: 'SCHEDULED', // even if stale
+  describe('Production Radar Score & Status Resolution Helper', () => {
+    it('prefers authoritative game score (CAR 19 @ GB 27) over stale live feed 0-0 and sets FINAL status', () => {
+      // The exact defect scenario from d0bc1c0:
+      // Authoritative database game has status FINAL and scores 19-27.
+      const authoritativeDbGame: SlateGame = {
+        id: 'game-car-gb',
+        homeTeam: 'GB',
+        awayTeam: 'CAR',
+        status: 'FINAL',
+        homeScore: 27,
+        awayScore: 19,
       };
 
-      const games: SlateGame[] = [
-        {
-          id: 'game-car-gb',
-          homeTeam: 'GB',
-          awayTeam: 'CAR',
-          status: 'FINAL',
-          homeScore: 27,
-          awayScore: 19,
-        },
-      ];
-
-      const swingLiveMatch: LiveGame = {
+      // Live feed is stale: reports SCHEDULED with 0-0 scores.
+      const staleLiveFeed: LiveGame = {
         id: 'game-car-gb',
         name: 'CAR @ GB',
         shortName: 'CAR @ GB',
-        status: 'SCHEDULED', // stale live feed
+        status: 'SCHEDULED',
         clock: '00:00',
         period: 0,
         isRedZone: false,
@@ -311,28 +305,101 @@ describe('HAG-9: Authoritative FINAL Status Priority Over Stale Live Feed', () =
         awayTeam: { code: 'CAR', name: 'Carolina Panthers', score: '0' },
       };
 
-      const matchingGame = games.find((g) => g.id === activeSwingGame.gameId);
-      const isFinal = isFinalStatus(activeSwingGame.gameStatus) || isFinalStatus((matchingGame as any)?.status) || isFinalStatus(swingLiveMatch?.status);
+      // Call the actual production helper used by RadarPage swing card and RivalryShowdown shared-picks
+      const resolution = resolveRadarGameScoreAndStatus(
+        authoritativeDbGame,
+        staleLiveFeed,
+        'SCHEDULED'
+      );
 
-      expect(isFinal).toBe(true);
+      // Status must be FINAL, never SCHEDULED
+      expect(resolution.isFinal).toBe(true);
+      expect(resolution.status).toBe('FINAL');
+      expect(resolution.status).not.toBe('SCHEDULED');
 
-      // Score resolution
-      const awayCode = swingLiveMatch?.awayTeam?.code || matchingGame?.awayTeam || '';
-      const homeCode = swingLiveMatch?.homeTeam?.code || matchingGame?.homeTeam || '';
+      // Individual scores must match authoritative database (19 and 27), NOT stale live (0 and 0)
+      expect(resolution.awayScore).toBe('19');
+      expect(resolution.homeScore).toBe('27');
+      expect(resolution.awayScore).not.toBe('0');
+      expect(resolution.homeScore).not.toBe('0');
 
-      const awayScore = matchingGame?.awayScore !== undefined
-        ? String(matchingGame.awayScore)
-        : swingLiveMatch?.awayTeam?.score;
-      const homeScore = matchingGame?.homeScore !== undefined
-        ? String(matchingGame.homeScore)
-        : swingLiveMatch?.homeTeam?.score;
+      // Matchup score line must be CAR 19 @ GB 27, NOT CAR 0 @ GB 0
+      expect(resolution.scoreText).toBe('CAR 19 @ GB 27');
+      expect(resolution.scoreText).not.toBe('CAR 0 @ GB 0');
+    });
 
-      const scoreText = `${awayCode} ${awayScore} @ ${homeCode} ${homeScore}`;
-      const statusText = isFinal ? 'FINAL' : 'SCHEDULED';
+    it('falls back to live score when authoritative game scores are null or undefined', () => {
+      const dbGameWithoutScores: SlateGame = {
+        id: 'game-car-gb',
+        homeTeam: 'GB',
+        awayTeam: 'CAR',
+        status: 'FINAL',
+      };
 
-      expect(statusText).toBe('FINAL');
-      expect(statusText).not.toBe('SCHEDULED');
-      expect(scoreText).toBe('CAR 19 @ GB 27');
+      const liveFeedWithScores: LiveGame = {
+        id: 'game-car-gb',
+        name: 'CAR @ GB',
+        shortName: 'CAR @ GB',
+        status: 'FINAL',
+        clock: '00:00',
+        period: 4,
+        isRedZone: false,
+        downDistanceText: '',
+        homeTeam: { code: 'GB', name: 'Green Bay Packers', score: '27' },
+        awayTeam: { code: 'CAR', name: 'Carolina Panthers', score: '19' },
+      };
+
+      const resolution = resolveRadarGameScoreAndStatus(
+        dbGameWithoutScores,
+        liveFeedWithScores,
+        'FINAL'
+      );
+
+      expect(resolution.isFinal).toBe(true);
+      expect(resolution.status).toBe('FINAL');
+      expect(resolution.awayScore).toBe('19');
+      expect(resolution.homeScore).toBe('27');
+      expect(resolution.scoreText).toBe('CAR 19 @ GB 27');
+    });
+
+    it('formats shared-picks display with final score when game is settled FINAL', () => {
+      const authoritativeDbGame: SlateGame = {
+        id: 'game-car-gb',
+        homeTeam: 'GB',
+        awayTeam: 'CAR',
+        status: 'FINAL',
+        homeScore: 27,
+        awayScore: 19,
+      };
+
+      const staleLiveFeed: LiveGame = {
+        id: 'game-car-gb',
+        name: 'CAR @ GB',
+        shortName: 'CAR @ GB',
+        status: 'SCHEDULED',
+        clock: '00:00',
+        period: 0,
+        isRedZone: false,
+        downDistanceText: '',
+        homeTeam: { code: 'GB', name: 'Green Bay Packers', score: '0' },
+        awayTeam: { code: 'CAR', name: 'Carolina Panthers', score: '0' },
+      };
+
+      const resolution = resolveRadarGameScoreAndStatus(
+        authoritativeDbGame,
+        staleLiveFeed,
+        'FINAL'
+      );
+
+      const scoreSuffix = resolution.isFinal && resolution.hasScores
+        ? ` · ${resolution.awayCode} ${resolution.awayScore} @ ${resolution.homeCode} ${resolution.homeScore}`
+        : '';
+      const displayStatus = `${resolution.status}${scoreSuffix}`;
+
+      // Must display FINAL with score CAR 19 @ GB 27
+      expect(displayStatus).toBe('FINAL · CAR 19 @ GB 27');
+      expect(displayStatus).not.toContain('SCHEDULED');
+      expect(displayStatus).not.toContain('0 @ GB 0');
     });
   });
 });

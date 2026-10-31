@@ -24,6 +24,126 @@ export function isFinalStatus(status?: string | null): boolean {
   return s === 'FINAL' || s === 'F' || s === 'COMPLETED' || s === 'SETTLED' || s === 'STATUS_FINAL';
 }
 
+export interface RadarGameScoreResolution {
+  status: string;
+  isFinal: boolean;
+  scoreText: string;
+  awayCode: string;
+  homeCode: string;
+  awayScore?: string;
+  homeScore?: string;
+  hasScores: boolean;
+}
+
+export function resolveRadarGameScoreAndStatus(
+  game?: {
+    id?: string;
+    status?: string | null;
+    homeTeam?: string;
+    awayTeam?: string;
+    homeScore?: number | null;
+    awayScore?: number | null;
+    externalGameId?: string | null;
+  } | null,
+  live?: LiveGame | null,
+  activeGameStatus?: string | null
+): RadarGameScoreResolution {
+  const isGameFinal = isFinalStatus(game?.status);
+  const isLiveFinal = isFinalStatus(live?.status);
+  const isCardFinal = isFinalStatus(activeGameStatus);
+  const isFinal = isCardFinal || isGameFinal || isLiveFinal;
+
+  const awayCode = live?.awayTeam?.code || game?.awayTeam || '';
+  const homeCode = live?.homeTeam?.code || game?.homeTeam || '';
+
+  // Crucial: Authoritative game scores MUST take precedence whenever the game is FINAL.
+  // Fall back to live only when authoritative scores are unavailable.
+  let awayScore: string | undefined;
+  let homeScore: string | undefined;
+
+  if (isFinal) {
+    if (game?.awayScore !== undefined && game?.awayScore !== null) {
+      awayScore = String(game.awayScore);
+    } else if (live?.awayTeam?.score !== undefined && live?.awayTeam?.score !== null) {
+      awayScore = String(live.awayTeam.score);
+    }
+
+    if (game?.homeScore !== undefined && game?.homeScore !== null) {
+      homeScore = String(game.homeScore);
+    } else if (live?.homeTeam?.score !== undefined && live?.homeTeam?.score !== null) {
+      homeScore = String(live.homeTeam.score);
+    }
+  } else {
+    // Game is not final: prefer live in-progress telemetry
+    if (live?.awayTeam?.score !== undefined && live?.awayTeam?.score !== null) {
+      awayScore = String(live.awayTeam.score);
+    } else if (game?.awayScore !== undefined && game?.awayScore !== null) {
+      awayScore = String(game.awayScore);
+    }
+
+    if (live?.homeTeam?.score !== undefined && live?.homeTeam?.score !== null) {
+      homeScore = String(live.homeTeam.score);
+    } else if (game?.homeScore !== undefined && game?.homeScore !== null) {
+      homeScore = String(game.homeScore);
+    }
+  }
+
+  const hasScores = awayScore !== undefined && homeScore !== undefined;
+
+  // Status text resolution
+  let status: string;
+  if (isFinal) {
+    status = 'FINAL';
+  } else {
+    const isLive = Boolean(
+      live && ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((live.status || '').toUpperCase())
+    );
+    if (live && isLive) {
+      status = (live.status as string) === 'HALFTIME'
+        ? 'HALFTIME'
+        : `${(live.period && live.period >= 5) ? 'OT' : (live.period ? `Q${live.period}` : 'LIVE')} ${live.clock || ''}`.trim();
+    } else {
+      status = (activeGameStatus && !isFinalStatus(activeGameStatus) && activeGameStatus !== 'SCHEDULED')
+        ? activeGameStatus
+        : (game?.status || live?.status || 'SCHEDULED');
+    }
+  }
+
+  // Score matchup line (e.g. "CAR 19 @ GB 27")
+  let scoreText: string;
+  if (isFinal) {
+    if (hasScores && awayCode && homeCode) {
+      scoreText = `${awayCode} ${awayScore} @ ${homeCode} ${homeScore}`;
+    } else if (awayCode && homeCode) {
+      scoreText = `${awayCode} @ ${homeCode}`;
+    } else {
+      scoreText = 'FINAL';
+    }
+  } else {
+    const isLive = Boolean(
+      live && ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((live.status || '').toUpperCase())
+    );
+    if (live && isLive && hasScores && awayCode && homeCode) {
+      scoreText = `${awayCode} ${awayScore} @ ${homeCode} ${homeScore}`;
+    } else if (awayCode && homeCode) {
+      scoreText = `${awayCode} @ ${homeCode}`;
+    } else {
+      scoreText = (awayCode && homeCode) ? `${awayCode} @ ${homeCode}` : 'AWAITING KICKOFF';
+    }
+  }
+
+  return {
+    status,
+    isFinal,
+    scoreText,
+    awayCode,
+    homeCode,
+    awayScore,
+    homeScore,
+    hasScores,
+  };
+}
+
 export interface UserPickItem {
   userId: string;
   gameId: string;

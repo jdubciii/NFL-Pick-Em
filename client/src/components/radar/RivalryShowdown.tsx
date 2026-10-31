@@ -11,6 +11,7 @@ import {
   UserPickItem,
   ProvisionalStanding,
   isFinalStatus,
+  resolveRadarGameScoreAndStatus,
 } from '../../services/sweatProjectionService';
 import { summarizeNemesisRecord } from '../../services/dependableInfoService';
 import type { SessionSweatReceipt } from '../../services/sweatReceiptService';
@@ -390,8 +391,12 @@ export const RivalryShowdown: React.FC<RivalryShowdownProps> = ({
           <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-900 space-y-1 text-xs">
             {sharedPicks.map((sp) => {
               const matchingGame = games.find((g) => g.id === sp.gameId || (g as any)?.externalGameId === sp.gameId);
-              const isFinal = isFinalStatus(sp.status) || isFinalStatus((matchingGame as any)?.status);
-              const displayStatus = isFinal ? 'FINAL' : sp.status;
+              const live = liveScores.find((ls) => ls.id === sp.gameId || (matchingGame && (ls.id === matchingGame.id || ls.id === (matchingGame as any)?.externalGameId)));
+              const resolution = resolveRadarGameScoreAndStatus(matchingGame, live, sp.status);
+              const scoreSuffix = resolution.isFinal && resolution.hasScores
+                ? ` · ${resolution.awayCode} ${resolution.awayScore} @ ${resolution.homeCode} ${resolution.homeScore}`
+                : '';
+              const displayStatus = `${resolution.status}${scoreSuffix}`;
               return (
                 <div key={sp.gameId} className="flex items-center justify-between text-slate-400 text-[11px]">
                   <span>{sp.matchup}</span>

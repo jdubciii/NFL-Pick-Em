@@ -13,6 +13,7 @@ import {
   UserPickItem,
   TiebreakerData,
   isFinalStatus,
+  resolveRadarGameScoreAndStatus,
 } from '../services/sweatProjectionService';
 import { RivalryShowdown } from '../components/radar/RivalryShowdown';
 import { WatchPartyBigBoardModal } from '../components/radar/WatchPartyBigBoardModal';
@@ -767,37 +768,8 @@ export const RadarPage: React.FC = () => {
                     <span className="text-xs font-mono font-bold text-cyan-400">
                       {(() => {
                         const matchingGame = games.find((g) => g.id === activeSwingGame.gameId || (g as any)?.externalGameId === activeSwingGame.gameId);
-                        const isFinal = isFinalStatus(activeSwingGame.gameStatus) || isFinalStatus((matchingGame as any)?.status) || isFinalStatus(swingLiveMatch?.status);
-
-                        const awayCode = swingLiveMatch?.awayTeam?.code || matchingGame?.awayTeam || '';
-                        const homeCode = swingLiveMatch?.homeTeam?.code || matchingGame?.homeTeam || '';
-
-                        const awayScore = swingLiveMatch?.awayTeam?.score !== undefined
-                          ? swingLiveMatch.awayTeam.score
-                          : (matchingGame?.awayScore !== undefined ? String(matchingGame.awayScore) : undefined);
-                        const homeScore = swingLiveMatch?.homeTeam?.score !== undefined
-                          ? swingLiveMatch.homeTeam.score
-                          : (matchingGame?.homeScore !== undefined ? String(matchingGame.homeScore) : undefined);
-
-                        const hasScores = awayScore !== undefined && homeScore !== undefined;
-
-                        if (isFinal) {
-                          if (hasScores && awayCode && homeCode) {
-                            return `${awayCode} ${awayScore} @ ${homeCode} ${homeScore}`;
-                          }
-                          return activeSwingGame.matchup || (awayCode && homeCode ? `${awayCode} @ ${homeCode}` : 'FINAL');
-                        }
-
-                        const isLive = Boolean(
-                          swingLiveMatch && ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((swingLiveMatch.status || '').toUpperCase())
-                        );
-                        if (swingLiveMatch && isLive && hasScores) {
-                          return `${awayCode} ${awayScore} @ ${homeCode} ${homeScore}`;
-                        }
-                        if (swingLiveMatch && awayCode && homeCode) {
-                          return `${awayCode} @ ${homeCode}`;
-                        }
-                        return activeSwingGame.matchup || 'AWAITING KICKOFF';
+                        const resolution = resolveRadarGameScoreAndStatus(matchingGame, swingLiveMatch, activeSwingGame.gameStatus);
+                        return resolution.scoreText || activeSwingGame.matchup || 'AWAITING KICKOFF';
                       })()}
                     </span>
                   </div>
@@ -807,23 +779,8 @@ export const RadarPage: React.FC = () => {
                       <strong className="text-slate-200">
                         {(() => {
                           const matchingGame = games.find((g) => g.id === activeSwingGame.gameId || (g as any)?.externalGameId === activeSwingGame.gameId);
-                          const isFinal = isFinalStatus(activeSwingGame.gameStatus) || isFinalStatus((matchingGame as any)?.status) || isFinalStatus(swingLiveMatch?.status);
-
-                          if (isFinal) {
-                            return 'FINAL';
-                          }
-
-                          const isLive = Boolean(
-                            swingLiveMatch && ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((swingLiveMatch.status || '').toUpperCase())
-                          );
-                          if (swingLiveMatch && isLive) {
-                            return (swingLiveMatch.status as string) === 'HALFTIME'
-                              ? 'HALFTIME'
-                              : `${(swingLiveMatch.period && swingLiveMatch.period >= 5) ? 'OT' : (swingLiveMatch.period ? `Q${swingLiveMatch.period}` : 'LIVE')} ${swingLiveMatch.clock || ''}`.trim();
-                          }
-                          return (activeSwingGame.gameStatus && !isFinalStatus(activeSwingGame.gameStatus) && activeSwingGame.gameStatus !== 'SCHEDULED')
-                            ? activeSwingGame.gameStatus
-                            : ((matchingGame as any)?.status || swingLiveMatch?.status || 'SCHEDULED');
+                          const resolution = resolveRadarGameScoreAndStatus(matchingGame, swingLiveMatch, activeSwingGame.gameStatus);
+                          return resolution.status;
                         })()}
                       </strong>
                     </span>
