@@ -47,6 +47,14 @@ app.use(express.json());
 
 // Routes
 app.use('/api/pools/:pool_id/picks', picksRouter);
+
+// Retire legacy unscoped mutation writes with state-free 410 (HAG2-IDENTITY-2026-10-31-03)
+app.post(['/api/picks', '/api/picks/batch'], (_req, res) => {
+  res.status(410).json({
+    error: 'ENDPOINT_RETIRED: Legacy /api/picks mutation endpoints are retired. Use tenant-scoped /api/pools/:pool_id/picks.',
+    code: 'ENDPOINT_RETIRED',
+  });
+});
 app.use('/api/picks', picksRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/admin/ops', adminOpsRouter);

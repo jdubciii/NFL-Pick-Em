@@ -132,6 +132,7 @@ export const WeeklyPicks: React.FC = () => {
   const [lastBulkSnapshot, setLastBulkSnapshot] = useState<Record<string, string> | null>(null);
 
   const [userPicks, setUserPicks] = useState<Record<string, string>>({});
+  const [conflictedGameIds, setConflictedGameIds] = useState<Set<string>>(new Set());
   const [, setPickMutationStatus] = useState<Record<string, 'SAVING' | 'CONFIRMED' | 'FAILED'>>({});
 
   const getUniquePickedCount = useCallback((gameList: GameItem[], picksMap: Record<string, string>) => {
@@ -353,33 +354,40 @@ export const WeeklyPicks: React.FC = () => {
               canonicalRowsMap.get(canonicalId)!.push(p);
             });
 
-            // Visibly flag duplicate ambiguity
+            // Visibly flag duplicate ambiguity and track explicit per-matchup conflict state
             canonicalRowsMap.forEach((rows, canonicalId) => {
               if (rows.length > 1) {
                 ambiguousGameIds.add(canonicalId);
-                console.warn(`DUPLICATE_PICKS_DETECTED: Found ${rows.length} conflicting stored picks for matchup ${canonicalId}.`);
+                const matched = (mappedGames || []).find((g: any) => String(g.id) === canonicalId);
+                const ext = matched ? String((matched as any).externalGameId || (matched as any).external_game_id || '') : '';
+                if (ext) ambiguousGameIds.add(ext);
+                console.warn(`DUPLICATE_PICKS_DETECTED: Found ${rows.length} duplicate/conflicting stored picks for matchup ${canonicalId}.`);
               }
             });
 
             if (ambiguousGameIds.size > 0) {
+              setConflictedGameIds(new Set(ambiguousGameIds));
               setFeedbackMessage({
-                text: `Ambiguous pick records detected: ${ambiguousGameIds.size} matchup(s) have duplicate rows in database. Please review your picks.`,
+                text: `Ambiguous pick records detected: ${ambiguousGameIds.size} matchup(s) have duplicate rows in database. Conflict state preserved; ordinary save disabled pending resolution.`,
                 type: 'error',
               });
+            } else {
+              setConflictedGameIds(new Set());
             }
 
-            // Build cloudMap without silent last-row-wins overwrite
+            // Build cloudMap: Exclude ambiguous duplicate matchups entirely (do NOT select any winner!)
             canonicalRowsMap.forEach((rows, canonicalId) => {
-              const nonNullRows = rows.filter((r) => r.selected_team);
               const matched = (mappedGames || []).find((g: any) => String(g.id) === canonicalId);
               const ext = matched ? String((matched as any).externalGameId || (matched as any).external_game_id || '') : '';
 
-              if (rows.length > 1 && nonNullRows.length > 1) {
-                console.error(`CONFLICTING_DUPLICATE_PICKS: Conflicting selections for matchup ${canonicalId}:`, nonNullRows);
-                const chosen = nonNullRows[0].selected_team;
-                cloudMap[canonicalId] = chosen;
-                if (ext) cloudMap[ext] = chosen;
-              } else if (nonNullRows.length > 0) {
+              if (rows.length > 1) {
+                // Ruling -03: Do not select any winner. Preserve explicit conflict state, exclude ambiguous selection
+                // from confirmed state/counts and prevent ordinary save success until separately authorized resolution. No row cleanup.
+                return;
+              }
+
+              const nonNullRows = rows.filter((r) => r.selected_team);
+              if (nonNullRows.length > 0) {
                 const chosen = nonNullRows[0].selected_team;
                 cloudMap[canonicalId] = chosen;
                 if (ext) cloudMap[ext] = chosen;
@@ -571,6 +579,16 @@ export const WeeklyPicks: React.FC = () => {
       return false;
     }
 
+    const gameExt = String((game as any).externalGameId || (game as any).external_game_id || '');
+    if (conflictedGameIds.has(String(game.id)) || (gameExt && conflictedGameIds.has(gameExt))) {
+      setFeedbackMessage({
+        text: 'DUPLICATE_CONFLICT: Matchup has conflicting duplicate database records. Ordinary save disabled pending resolution.',
+        type: 'error',
+      });
+      setTimeout(() => setFeedbackMessage(null), 3500);
+      return false;
+    }
+
     setSavingPickForGameId(game.id);
     setPickMutationStatus((prev) => ({ ...prev, [game.id]: 'SAVING' }));
 
@@ -714,8 +732,18 @@ export const WeeklyPicks: React.FC = () => {
         throw new Error(`Clear picks failed: server status ${res.status}`);
       }
 
-      const batchData = await res.json().catch(() => ({}));
-      const results: any[] = batchData.results || [];
+      let batchData: any;
+      try {
+        batchData = await res.json();
+      } catch {
+        throw new Error('MALFORMED_RESPONSE: Unable to parse server response as JSON.');
+      }
+
+      if (!batchData || !Array.isArray(batchData.results)) {
+        throw new Error('INVALID_BATCH_RESPONSE: Server response lacks valid results array.');
+      }
+
+      const results: any[] = batchData.results;
       const savedGameIds = new Set<string>();
       results.filter((r) => r.status === 'SAVED').forEach((r) => {
         const rawId = String(r.gameId);
@@ -724,16 +752,16 @@ export const WeeklyPicks: React.FC = () => {
         );
         savedGameIds.add(match ? String(match.id) : rawId);
       });
-      const failures = results.filter((r) => r.status !== 'SAVED');
+
+      const confirmedClearedGames = unlockedPickedGames.filter((g) => savedGameIds.has(String(g.id)));
+      const failedGames = unlockedPickedGames.filter((g) => !savedGameIds.has(String(g.id)));
 
       // Update state ONLY for games that were confirmed cleared (SAVED)
       const nextUserPicks = { ...userPicks };
-      unlockedPickedGames.forEach((g) => {
-        if (savedGameIds.has(String(g.id))) {
-          delete nextUserPicks[g.id];
-          const ext = String((g as any).externalGameId || (g as any).external_game_id || '');
-          if (ext) delete nextUserPicks[ext];
-        }
+      confirmedClearedGames.forEach((g) => {
+        delete nextUserPicks[g.id];
+        const ext = String((g as any).externalGameId || (g as any).external_game_id || '');
+        if (ext) delete nextUserPicks[ext];
       });
       setUserPicks(nextUserPicks);
       setGames((prev) =>
@@ -745,9 +773,9 @@ export const WeeklyPicks: React.FC = () => {
         console.warn('localStorage clear warning:', e);
       }
 
-      if (failures.length > 0) {
+      if (failedGames.length > 0) {
         setFeedbackMessage({
-          text: `Cleared ${savedGameIds.size} picks. ${failures.length} matchup(s) locked or conflicted.`,
+          text: `Cleared ${confirmedClearedGames.length} picks. ${failedGames.length} matchup(s) failed or locked.`,
           type: 'error',
         });
         setTimeout(() => setFeedbackMessage(null), 4000);
@@ -850,7 +878,7 @@ export const WeeklyPicks: React.FC = () => {
             confirmedEditablePicks[gameId] = selectedTeamId;
           }
 
-          const entries = Object.entries(confirmedEditablePicks);
+          const entries = Object.entries(confirmedEditablePicks).filter(([gid]) => !conflictedGameIds.has(gid));
           const batchPayload = entries.map(([gameId, selectedTeamId]) => ({
             game_id: gameId,
             selected_team_id: selectedTeamId,
@@ -884,7 +912,17 @@ export const WeeklyPicks: React.FC = () => {
             });
 
             if (batchRes.ok) {
-              const batchData = await batchRes.json().catch(() => ({}));
+              let batchData: any;
+              try {
+                batchData = await batchRes.json();
+              } catch {
+                throw new Error('MALFORMED_RESPONSE: Unable to parse server response as JSON.');
+              }
+
+              if (!batchData || !Array.isArray(batchData.results)) {
+                throw new Error('INVALID_BATCH_RESPONSE: Server response lacks valid results array.');
+              }
+
               const confirmedPicksList: any[] = batchData.picks || [];
               const confirmedPicksMap: Record<string, string> = {};
               confirmedPicksList.forEach((p: any) => {
@@ -901,7 +939,9 @@ export const WeeklyPicks: React.FC = () => {
                 }
               });
 
-              const failures = (batchData.results || []).filter((r: any) => r.status !== 'SAVED');
+              const savedResults = (batchData.results || []).filter((r: any) => r.status === 'SAVED');
+              const explicitFailures = (batchData.results || []).filter((r: any) => r.status !== 'SAVED');
+              const failedCount = Math.max(explicitFailures.length, batchPayload.length - savedResults.length);
 
               // Apply ONLY confirmed picks on top of current picks
               const finalPicksMap = { ...currentPicksMap, ...confirmedPicksMap };
@@ -918,9 +958,9 @@ export const WeeklyPicks: React.FC = () => {
                 console.warn('localStorage preset save warning:', e);
               }
 
-              if (failures.length > 0) {
+              if (failedCount > 0) {
                 setFeedbackMessage({
-                  text: `Saved ${confirmedPicksList.length} picks. ${failures.length} matchup(s) failed or locked.`,
+                  text: `Saved ${savedResults.length} picks. ${failedCount} matchup(s) failed or locked.`,
                   type: 'error',
                 });
                 setTimeout(() => setFeedbackMessage(null), 4000);
@@ -930,7 +970,10 @@ export const WeeklyPicks: React.FC = () => {
               }
               triggerHaptic('selection');
             } else {
-              const errData = await batchRes.json().catch(() => ({}));
+              let errData: any = {};
+              try {
+                errData = await batchRes.json();
+              } catch (_) {}
               throw new Error(errData.error || `Server error (${batchRes.status})`);
             }
           } catch (netErr: any) {
@@ -1084,8 +1127,18 @@ export const WeeklyPicks: React.FC = () => {
         throw new Error(`Restore picks failed: server status ${res.status}`);
       }
 
-      const batchData = await res.json().catch(() => ({}));
-      const results: any[] = batchData.results || [];
+      let batchData: any;
+      try {
+        batchData = await res.json();
+      } catch {
+        throw new Error('MALFORMED_RESPONSE: Unable to parse server response as JSON.');
+      }
+
+      if (!batchData || !Array.isArray(batchData.results)) {
+        throw new Error('INVALID_BATCH_RESPONSE: Server response lacks valid results array.');
+      }
+
+      const results: any[] = batchData.results;
       const savedGameIds = new Set<string>();
       results.filter((r) => r.status === 'SAVED').forEach((r) => {
         const rawId = String(r.gameId);
@@ -1094,17 +1147,26 @@ export const WeeklyPicks: React.FC = () => {
         );
         savedGameIds.add(match ? String(match.id) : rawId);
       });
-      const failures = results.filter((r) => r.status !== 'SAVED');
+
+      const confirmedRestoredGames = gamesToRestore.filter((item) => savedGameIds.has(String(item.gameId)));
+      const failedRestoreGames = gamesToRestore.filter((item) => !savedGameIds.has(String(item.gameId)));
 
       // Update state ONLY for games confirmed restored (SAVED)
+      // Synchronize/remove BOTH canonical UUID and alias keys for confirmed selection/null (Ruling -03)
       const nextUserPicks = { ...userPicks };
-      gamesToRestore.forEach((item) => {
-        if (savedGameIds.has(String(item.gameId))) {
-          if (item.team) {
-            nextUserPicks[item.gameId] = item.team;
-          } else {
-            delete nextUserPicks[item.gameId];
-          }
+      confirmedRestoredGames.forEach((item) => {
+        const matched = games.find(
+          (g) => String(g.id) === String(item.gameId) || String((g as any).externalGameId || (g as any).external_game_id) === String(item.gameId)
+        );
+        const canonicalId = matched ? String(matched.id) : String(item.gameId);
+        const extId = matched ? String((matched as any).externalGameId || (matched as any).external_game_id || '') : '';
+
+        if (item.team) {
+          nextUserPicks[canonicalId] = item.team;
+          if (extId) nextUserPicks[extId] = item.team;
+        } else {
+          delete nextUserPicks[canonicalId];
+          if (extId) delete nextUserPicks[extId];
         }
       });
 
@@ -1118,9 +1180,9 @@ export const WeeklyPicks: React.FC = () => {
 
       triggerHaptic('impactMedium');
 
-      if (failures.length > 0) {
+      if (failedRestoreGames.length > 0) {
         setFeedbackMessage({
-          text: `Restored ${savedGameIds.size} picks. ${failures.length} matchup(s) locked or conflicted.`,
+          text: `Restored ${confirmedRestoredGames.length} picks. ${failedRestoreGames.length} matchup(s) failed or locked.`,
           type: 'error',
         });
         setTimeout(() => setFeedbackMessage(null), 4000);

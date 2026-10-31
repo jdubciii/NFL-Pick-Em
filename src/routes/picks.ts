@@ -33,6 +33,8 @@ export interface SavedPickRecord {
 
 let legacyGameAdapterForTesting: ((db: any, gameId: string) => Promise<GameWithCanonicalLock | null>) | null = null;
 let legacyPickSaveAdapterForTesting: ((db: any, params: any) => Promise<SavedPickRecord>) | null = null;
+let explicitNonTransactionTestAdapter: ((db: any, params: any) => Promise<SavedPickRecord>) | null = null;
+let allowLegacyUnscopedPicksRouteForTesting = false;
 
 export function setLegacyGameAdapterForTesting(
   adapter: ((db: any, gameId: string) => Promise<GameWithCanonicalLock | null>) | null
@@ -44,6 +46,16 @@ export function setLegacyPickSaveAdapterForTesting(
   adapter: ((db: any, params: any) => Promise<SavedPickRecord>) | null
 ): void {
   legacyPickSaveAdapterForTesting = adapter;
+}
+
+export function setExplicitNonTransactionTestAdapter(
+  adapter: ((db: any, params: any) => Promise<SavedPickRecord>) | null
+): void {
+  explicitNonTransactionTestAdapter = adapter;
+}
+
+export function setAllowLegacyUnscopedPicksRouteForTesting(allow: boolean): void {
+  allowLegacyUnscopedPicksRouteForTesting = allow;
 }
 
 export async function resolveGameWithCanonicalLock(db: any, gameId: string): Promise<GameWithCanonicalLock | null> {
@@ -218,7 +230,7 @@ export class DuplicatePickIdentityError extends Error {
   }
 }
 
-async function executeSerializedPickMutation(
+export async function executeSerializedPickMutation(
   executor: any,
   params: {
     poolId: string;
@@ -233,10 +245,45 @@ async function executeSerializedPickMutation(
 ): Promise<SavedPickRecord> {
   const { poolId, userId, gameId, week, selectedTeamId, externalGameId, lockOffsetMinutes, gameData } = params;
 
-  // Authoritative kickoff lock validation at write boundary post-wait
-  if (gameData) {
-    const lockOffset = Number(lockOffsetMinutes ?? 0);
-    const writeLock = evaluateKickoffLock(gameData, lockOffset, new Date());
+  let effectiveGame = gameData;
+  let effectiveLockOffset = Number(lockOffsetMinutes ?? 0);
+
+  // Authoritative game & settings reread under advisory lock inside transaction
+  if (executor && typeof executor.$queryRawUnsafe === 'function' && executor.pool && typeof executor.pool.findUnique === 'function') {
+    try {
+      const refreshed = await resolveGameWithCanonicalLock(executor, gameId);
+      if (refreshed) {
+        effectiveGame = refreshed;
+      }
+    } catch (refreshErr: any) {
+      if (refreshErr.message?.includes('AMBIGUOUS_GAME_IDENTITY') || refreshErr.message?.includes('INVALID_')) {
+        throw refreshErr;
+      }
+    }
+
+    try {
+      const poolRecord = await executor.pool.findUnique({
+        where: { id: poolId },
+        select: { settings: true },
+      });
+      if (poolRecord) {
+        const s = (poolRecord.settings as PoolSettings) || {};
+        if (s.lock_offset !== undefined || s.lockOffset !== undefined) {
+          effectiveLockOffset = Number(s.lock_offset ?? s.lockOffset ?? 0);
+        }
+      } else {
+        throw new Error('UNKNOWN_POOL_SETTINGS: Authoritative pool settings could not be verified under lock.');
+      }
+    } catch (poolErr: any) {
+      if (poolErr.message?.includes('UNKNOWN_POOL_SETTINGS')) {
+        throw poolErr;
+      }
+    }
+  }
+
+  // Authoritative kickoff lock validation at write boundary post-wait (required, fail closed)
+  if (effectiveGame) {
+    const writeLock = evaluateKickoffLock(effectiveGame, effectiveLockOffset, new Date());
     if (writeLock.isLocked) {
       const lockErr = new Error(
         writeLock.reason === 'UNVERIFIED_KICKOFF'
@@ -248,6 +295,13 @@ async function executeSerializedPickMutation(
       (lockErr as any).status = 403;
       throw lockErr;
     }
+  } else if (params.gameData === null || executor?.pool) {
+    // Fail closed if running with database client or explicit null metadata and game cannot be authoritatively resolved
+    const missingErr = new Error('UNVERIFIED_KICKOFF: Authoritative matchup metadata is required at write boundary.');
+    (missingErr as any).code = 'UNVERIFIED_KICKOFF';
+    (missingErr as any).statusCode = 403;
+    (missingErr as any).status = 403;
+    throw missingErr;
   }
 
   // Candidate game IDs for identity resolution: canonical UUID and external alias
@@ -393,11 +447,7 @@ export async function savePickAtomically(
     return await legacyPickSaveAdapterForTesting(db, params);
   }
 
-  if (!db || (typeof db.$transaction !== 'function' && typeof db.$queryRawUnsafe !== 'function')) {
-    throw new Error('TRANSACTION_UNAVAILABLE: Database client lacks transaction and advisory locking capability.');
-  }
-
-  if (typeof db.$transaction === 'function') {
+  if (typeof db?.$transaction === 'function') {
     return await db.$transaction(async (tx: any) => {
       // Serialize concurrent mutations on the same logical matchup using advisory xact lock (fail-closed)
       await tx.$queryRawUnsafe(
@@ -408,32 +458,40 @@ export async function savePickAtomically(
     });
   }
 
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('TRANSACTION_UNAVAILABLE: Production database client must support interactive transactions.');
+  // Restrict nontransaction execution strictly to explicit injected test adapter, never general non-production fallback
+  if (explicitNonTransactionTestAdapter) {
+    return await explicitNonTransactionTestAdapter(db, params);
   }
 
-  // Non-production fallback for direct execution environments where db is a mock or query executor
-  return await executeSerializedPickMutation(db, params);
+  throw new Error('TRANSACTION_UNAVAILABLE: Database client lacks transaction and advisory locking capability.');
 }
 
 /**
- * POST /api/picks
+ * POST /api/picks or /api/pools/:pool_id/picks
  * Protected route for users to submit or update their game pick.
  * Accepts: pool_id, game_id, selected_team_id (optional), week (optional for validation)
  * Enforces verified actor, applicable ACTIVE pool membership, correct pool,
  * participant validation, kickoff locks, and 4-column atomic persistence with TEXT game identity.
  */
 picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<void> => {
-  const poolId = req.params.pool_id || req.body.pool_id || req.body.poolId;
-  const rawGameId = req.body.game_id || req.body.gameId;
+  const pathPoolId = req.params.pool_id;
+  const bodyPoolId = req.body.pool_id || req.body.poolId;
 
-  if (req.params.pool_id && (req.body.pool_id || req.body.poolId)) {
-    const bodyPoolId = req.body.pool_id || req.body.poolId;
-    if (bodyPoolId !== req.params.pool_id) {
-      res.status(400).json({ error: 'POOL_MISMATCH: Request body pool_id does not match route path pool_id.' });
+  if (!pathPoolId) {
+    if (!allowLegacyUnscopedPicksRouteForTesting) {
+      res.status(410).json({
+        error: 'ENDPOINT_RETIRED: Legacy un-scoped pick mutations are retired. Use tenant-scoped /api/pools/:pool_id/picks.',
+        code: 'ENDPOINT_RETIRED',
+      });
       return;
     }
+  } else if (bodyPoolId && bodyPoolId !== pathPoolId) {
+    res.status(400).json({ error: 'POOL_MISMATCH: Request body pool_id does not match route path pool_id.' });
+    return;
   }
+
+  const poolId = pathPoolId || bodyPoolId;
+  const rawGameId = req.body.game_id || req.body.gameId;
 
   const rawSelectedTeamId = req.body.selected_team_id !== undefined
     ? req.body.selected_team_id
@@ -594,16 +652,24 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
  * Enforces atomic 4-column persistence with TEXT game identity.
  */
 picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Promise<void> => {
-  const poolId = req.params.pool_id || req.body.pool_id || req.body.poolId;
-  const picksList = req.body.picks || [];
+  const pathPoolId = req.params.pool_id;
+  const bodyPoolId = req.body.pool_id || req.body.poolId;
 
-  if (req.params.pool_id && (req.body.pool_id || req.body.poolId)) {
-    const bodyPoolId = req.body.pool_id || req.body.poolId;
-    if (bodyPoolId !== req.params.pool_id) {
-      res.status(400).json({ error: 'POOL_MISMATCH: Request body pool_id does not match route path pool_id.' });
+  if (!pathPoolId) {
+    if (!allowLegacyUnscopedPicksRouteForTesting) {
+      res.status(410).json({
+        error: 'ENDPOINT_RETIRED: Legacy un-scoped batch pick mutations are retired. Use tenant-scoped /api/pools/:pool_id/picks/batch.',
+        code: 'ENDPOINT_RETIRED',
+      });
       return;
     }
+  } else if (bodyPoolId && bodyPoolId !== pathPoolId) {
+    res.status(400).json({ error: 'POOL_MISMATCH: Request body pool_id does not match route path pool_id.' });
+    return;
   }
+
+  const poolId = pathPoolId || bodyPoolId;
+  const picksList = req.body.picks || [];
 
   if (!poolId || !Array.isArray(picksList)) {
     res.status(400).json({ error: 'pool_id and picks array are required.' });
@@ -654,62 +720,62 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
       }
       const gameId = String(rawGameId).trim();
 
-      const rawSelected = item.selected_team_id !== undefined
-        ? item.selected_team_id
-        : (item.selectedTeamId !== undefined
-          ? item.selectedTeamId
-          : (item.selected_team !== undefined
-            ? item.selected_team
-            : (item.selectedTeam !== undefined
-              ? item.selectedTeam
-              : (item.team_id !== undefined
-                ? item.team_id
-                : (item.teamId !== undefined
-                  ? item.teamId
-                  : item.team)))));
-      const selectedTeamId = rawSelected !== undefined && rawSelected !== null && String(rawSelected).trim().length > 0
-        ? String(rawSelected).trim()
-        : null;
-
-      const game = await resolveGameWithCanonicalLock(prisma, gameId);
-      if (!game) {
-        results.push({ gameId, status: 'ERROR', error: 'Game not found.' });
-        continue;
-      }
-
-      // Validate requested week vs game week
-      const requestedWeek = item.week !== undefined ? item.week : (item.selectedWeek !== undefined ? item.selectedWeek : req.body.week);
-      if (requestedWeek !== undefined && requestedWeek !== null && game.week !== undefined && game.week !== null) {
-        if (Number(requestedWeek) !== Number(game.week)) {
-          results.push({ gameId, status: 'MISMATCH', error: `Requested week does not match game week (${game.week}).` });
-          continue;
-        }
-      }
-
-      const targetWeek = game.week ?? (requestedWeek !== undefined && requestedWeek !== null ? Number(requestedWeek) : null);
-      if (targetWeek == null || isNaN(targetWeek) || targetWeek < 1 || targetWeek > 18) {
-        results.push({ gameId, status: 'ERROR', error: 'Missing authoritative week metadata.' });
-        continue;
-      }
-
-      const lockResult = evaluateKickoffLock(game, lockOffsetMinutes, new Date());
-      if (lockResult.isLocked) {
-        results.push({ gameId, status: 'LOCKED', error: 'Game is locked.' });
-        continue;
-      }
-
-      const normHome = normalizeTeamCode(game.homeTeamId);
-      const normAway = normalizeTeamCode(game.awayTeamId);
-      const normSelected = selectedTeamId ? normalizeTeamCode(selectedTeamId) : null;
-
-      if (normSelected) {
-        if (normHome === 'UNK' || normAway === 'UNK' || (normSelected !== normHome && normSelected !== normAway)) {
-          results.push({ gameId, status: 'ERROR', error: 'Selected team is not a participant in this game.' });
-          continue;
-        }
-      }
-
       try {
+        const rawSelected = item.selected_team_id !== undefined
+          ? item.selected_team_id
+          : (item.selectedTeamId !== undefined
+            ? item.selectedTeamId
+            : (item.selected_team !== undefined
+              ? item.selected_team
+              : (item.selectedTeam !== undefined
+                ? item.selectedTeam
+                : (item.team_id !== undefined
+                  ? item.team_id
+                  : (item.teamId !== undefined
+                    ? item.teamId
+                    : item.team)))));
+        const selectedTeamId = rawSelected !== undefined && rawSelected !== null && String(rawSelected).trim().length > 0
+          ? String(rawSelected).trim()
+          : null;
+
+        const game = await resolveGameWithCanonicalLock(prisma, gameId);
+        if (!game) {
+          results.push({ gameId, status: 'ERROR', error: 'Game not found.' });
+          continue;
+        }
+
+        // Validate requested week vs game week
+        const requestedWeek = item.week !== undefined ? item.week : (item.selectedWeek !== undefined ? item.selectedWeek : req.body.week);
+        if (requestedWeek !== undefined && requestedWeek !== null && game.week !== undefined && game.week !== null) {
+          if (Number(requestedWeek) !== Number(game.week)) {
+            results.push({ gameId, status: 'MISMATCH', error: `Requested week does not match game week (${game.week}).` });
+            continue;
+          }
+        }
+
+        const targetWeek = game.week ?? (requestedWeek !== undefined && requestedWeek !== null ? Number(requestedWeek) : null);
+        if (targetWeek == null || isNaN(targetWeek) || targetWeek < 1 || targetWeek > 18) {
+          results.push({ gameId, status: 'ERROR', error: 'Missing authoritative week metadata.' });
+          continue;
+        }
+
+        const lockResult = evaluateKickoffLock(game, lockOffsetMinutes, new Date());
+        if (lockResult.isLocked) {
+          results.push({ gameId, status: 'LOCKED', error: 'Game is locked.' });
+          continue;
+        }
+
+        const normHome = normalizeTeamCode(game.homeTeamId);
+        const normAway = normalizeTeamCode(game.awayTeamId);
+        const normSelected = selectedTeamId ? normalizeTeamCode(selectedTeamId) : null;
+
+        if (normSelected) {
+          if (normHome === 'UNK' || normAway === 'UNK' || (normSelected !== normHome && normSelected !== normAway)) {
+            results.push({ gameId, status: 'ERROR', error: 'Selected team is not a participant in this game.' });
+            continue;
+          }
+        }
+
         const savedPick = await savePickAtomically(prisma, {
           poolId,
           userId,
@@ -726,14 +792,14 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
       } catch (err: any) {
         if (err.code === 'DUPLICATE_PICK_IDENTITY' || err.statusCode === 409) {
           results.push({
-            gameId: String(game.id),
+            gameId,
             status: 'CONFLICT',
             code: 'DUPLICATE_PICK_IDENTITY',
             error: err.message,
           });
         } else if (err.code === 'KICKOFF_PASSED' || err.code === 'UNVERIFIED_KICKOFF' || err.statusCode === 403) {
           results.push({
-            gameId: String(game.id),
+            gameId,
             status: 'LOCKED',
             code: err.code || 'KICKOFF_PASSED',
             error: err.message,
@@ -742,14 +808,23 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
           // If earlier items in this batch already committed, do not abort the response and lose their committed outcomes!
           if (savedPicks.length > 0) {
             results.push({
-              gameId: String(game.id),
+              gameId,
               status: 'ERROR',
-              code: err.code || 'PERSISTENCE_ERROR',
+              code: err.code || 'RESOLUTION_OR_PERSISTENCE_ERROR',
               error: err.message,
             });
           } else {
             // Truthfully propagate database persistence failure with HTTP 500 when zero items committed
-            throw err;
+            if (err.message?.includes('AMBIGUOUS_GAME_IDENTITY') || err.message?.includes('INVALID_KICKOFF_METADATA') || err.message?.includes('CANONICAL_GAME_QUERY_FAILED')) {
+              results.push({
+                gameId,
+                status: 'ERROR',
+                code: 'GAME_RESOLUTION_ERROR',
+                error: err.message,
+              });
+            } else {
+              throw err;
+            }
           }
         }
       }
