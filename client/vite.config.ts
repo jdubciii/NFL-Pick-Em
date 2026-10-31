@@ -23,9 +23,7 @@ export default defineConfig(({ mode }) => ({
     __APP_COMMIT_HASH__: JSON.stringify(gitCommit),
     __APP_BUILD_TIME__: JSON.stringify(buildTime),
   },
-  esbuild: {
-    drop: mode === 'production' ? ['console', 'debugger'] : [],
-  },
+  esbuild: mode === 'production' ? ({ drop: ['console', 'debugger'] } as any) : undefined,
   server: {
     port: 5173,
     proxy: {

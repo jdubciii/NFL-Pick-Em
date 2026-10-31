@@ -404,10 +404,10 @@ export function WallOfShamePage({
 
       if (isOfficialSettled && wrapup?.summary) {
         const settledStandings: any[] = (wrapup.summary as any).standings;
-        const userMap = new Map(members.map((m: any) => [m.user_id, m]));
+        const userMap = new Map<string, any>(members.map((m: any) => [m.user_id, m]));
 
         const mappedLadder = settledStandings.map((s: any) => {
-          const m = userMap.get(s.userId);
+          const m: any = userMap.get(s.userId);
           let displayName = m?.users?.display_name || (m?.users?.email ? m.users.email.split('@')[0] : s.userId);
           if (m?.role === 'COMMISSIONER' || m?.role === 'ADMIN') {
             displayName = `${displayName} (Commissioner)`;
