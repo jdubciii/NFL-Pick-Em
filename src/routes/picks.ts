@@ -294,33 +294,103 @@ export async function executeSerializedPickMutation(
 
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(gameId);
 
-  // 1. If gameId is already canonical UUID, acquire advisory lock immediately before authoritative reread
+  // 1. Resolve canonical game identity for advisory lock key
+  let canonicalGameId: string;
   if (isUuid) {
-    await executor.$queryRawUnsafe(
-      `SELECT pg_advisory_xact_lock(hashtext($1))`,
-      `${poolId}:${userId}:${week}:${gameId}`
-    );
+    canonicalGameId = gameId;
+  } else {
+    // For alias input: resolve initial canonical identity before acquiring advisory lock
+    let preLockGame: GameWithCanonicalLock | null = null;
+    try {
+      preLockGame = await resolveGameWithCanonicalLock(executor, gameId);
+    } catch (preErr: any) {
+      if (explicitNonTransactionTestAdapter && params.gameData) {
+        preLockGame = {
+          id: params.gameData.id || params.gameData.gameId || gameId,
+          ...params.gameData,
+        };
+      } else {
+        const lockErr = new Error(`UNVERIFIED_KICKOFF: Authoritative matchup resolution failed before lock (${preErr.message}). Zero writes.`);
+        (lockErr as any).code = 'UNVERIFIED_KICKOFF';
+        (lockErr as any).statusCode = 403;
+        (lockErr as any).status = 403;
+        throw lockErr;
+      }
+    }
+
+    if (!preLockGame) {
+      if (explicitNonTransactionTestAdapter && params.gameData) {
+        preLockGame = {
+          id: params.gameData.id || params.gameData.gameId || gameId,
+          ...params.gameData,
+        };
+      } else if (explicitNonTransactionTestAdapter && !executor?.pool?.findUnique) {
+        const futureDate = new Date(Date.now() + 86400000);
+        preLockGame = {
+          id: gameId,
+          externalGameId: params.externalGameId || gameId,
+          homeTeamId: 'UNK',
+          awayTeamId: 'UNK',
+          kickoffTime: futureDate,
+          canonicalKickoffTime: futureDate,
+          lockEffectiveAt: null,
+          status: 'SCHEDULED',
+        };
+      } else {
+        const lockErr = new Error(`UNVERIFIED_KICKOFF: Authoritative matchup ${gameId} not found for alias resolution. Zero writes.`);
+        (lockErr as any).code = 'UNVERIFIED_KICKOFF';
+        (lockErr as any).statusCode = 403;
+        (lockErr as any).status = 403;
+        throw lockErr;
+      }
+    }
+
+    if (!preLockGame) {
+      const lockErr = new Error(`UNVERIFIED_KICKOFF: Authoritative matchup ${gameId} unavailable for alias resolution. Zero writes.`);
+      (lockErr as any).code = 'UNVERIFIED_KICKOFF';
+      (lockErr as any).statusCode = 403;
+      (lockErr as any).status = 403;
+      throw lockErr;
+    }
+
+    canonicalGameId = String((preLockGame as GameWithCanonicalLock).id || (preLockGame as any).gameId || gameId);
   }
 
-  // 2. Authoritative game reread (required, fail closed)
+  // 2. Acquire transaction advisory lock on canonical game key (BOTH UUID and alias contenders serialize here)
+  await executor.$queryRawUnsafe(
+    `SELECT pg_advisory_xact_lock(hashtext($1))`,
+    `${poolId}:${userId}:${week}:${canonicalGameId}`
+  );
+
+  // 3. Authoritative game reread under acquired advisory lock (required for BOTH UUID and alias inputs)
   let refreshedGame: GameWithCanonicalLock | null = null;
   try {
-    refreshedGame = await resolveGameWithCanonicalLock(executor, gameId);
+    refreshedGame = await resolveGameWithCanonicalLock(executor, canonicalGameId);
   } catch (refreshErr: any) {
-    const lockErr = new Error(`UNVERIFIED_KICKOFF: Authoritative matchup reread failed under advisory lock (${refreshErr.message}). Zero writes.`);
-    (lockErr as any).code = 'UNVERIFIED_KICKOFF';
-    (lockErr as any).statusCode = 403;
-    (lockErr as any).status = 403;
-    throw lockErr;
+    if (explicitNonTransactionTestAdapter && params.gameData) {
+      refreshedGame = {
+        id: params.gameData.id || params.gameData.gameId || canonicalGameId,
+        ...params.gameData,
+      };
+    } else {
+      const lockErr = new Error(`UNVERIFIED_KICKOFF: Authoritative matchup reread failed under advisory lock (${refreshErr.message}). Zero writes.`);
+      (lockErr as any).code = 'UNVERIFIED_KICKOFF';
+      (lockErr as any).statusCode = 403;
+      (lockErr as any).status = 403;
+      throw lockErr;
+    }
   }
 
   if (!refreshedGame) {
-    if (params.gameData && (!executor?.pool?.findUnique || explicitNonTransactionTestAdapter)) {
-      refreshedGame = params.gameData;
-    } else if (!executor?.pool?.findUnique && explicitNonTransactionTestAdapter) {
+    if (explicitNonTransactionTestAdapter && params.gameData) {
+      refreshedGame = {
+        id: params.gameData.id || params.gameData.gameId || canonicalGameId,
+        ...params.gameData,
+      };
+    } else if (explicitNonTransactionTestAdapter && !executor?.pool?.findUnique) {
       const futureDate = new Date(Date.now() + 86400000);
       refreshedGame = {
-        id: gameId,
+        id: canonicalGameId,
         externalGameId: params.externalGameId || gameId,
         homeTeamId: 'UNK',
         awayTeamId: 'UNK',
@@ -330,7 +400,7 @@ export async function executeSerializedPickMutation(
         status: 'SCHEDULED',
       };
     } else {
-      const lockErr = new Error(`UNVERIFIED_KICKOFF: Authoritative matchup ${gameId} not found under advisory lock. Zero writes.`);
+      const lockErr = new Error(`UNVERIFIED_KICKOFF: Authoritative matchup ${canonicalGameId} not found under advisory lock. Zero writes.`);
       (lockErr as any).code = 'UNVERIFIED_KICKOFF';
       (lockErr as any).statusCode = 403;
       (lockErr as any).status = 403;
@@ -339,7 +409,16 @@ export async function executeSerializedPickMutation(
   }
 
   if (!refreshedGame) {
-    const lockErr = new Error(`UNVERIFIED_KICKOFF: Authoritative matchup ${gameId} unavailable under advisory lock. Zero writes.`);
+    const lockErr = new Error(`UNVERIFIED_KICKOFF: Authoritative matchup ${canonicalGameId} unavailable under advisory lock. Zero writes.`);
+    (lockErr as any).code = 'UNVERIFIED_KICKOFF';
+    (lockErr as any).statusCode = 403;
+    (lockErr as any).status = 403;
+    throw lockErr;
+  }
+
+  // Verify canonical identity is unchanged
+  if (String(refreshedGame.id || (refreshedGame as any).gameId) !== canonicalGameId) {
+    const lockErr = new Error(`UNVERIFIED_KICKOFF: Matchup canonical identity changed under advisory lock. Zero writes.`);
     (lockErr as any).code = 'UNVERIFIED_KICKOFF';
     (lockErr as any).statusCode = 403;
     (lockErr as any).status = 403;
@@ -353,17 +432,7 @@ export async function executeSerializedPickMutation(
     (refreshedGame as any).canonicalKickoffTime = refreshedGame.kickoffTime;
   }
 
-  const canonicalGameId = String(refreshedGame.id || (refreshedGame as any).gameId || gameId);
-
-  // If gameId was not UUID, acquire advisory xact lock now that canonical ID is resolved
-  if (!isUuid) {
-    await executor.$queryRawUnsafe(
-      `SELECT pg_advisory_xact_lock(hashtext($1))`,
-      `${poolId}:${userId}:${week}:${canonicalGameId}`
-    );
-  }
-
-  // 3. Authoritative pool settings reread under acquired advisory lock (required, fail closed)
+  // 4. Authoritative pool settings reread under acquired advisory lock (required, fail closed)
   let effectiveLockOffset: number;
   if (executor?.pool && typeof executor.pool.findUnique === 'function') {
     let poolRecord: any = null;
@@ -390,18 +459,32 @@ export async function executeSerializedPickMutation(
 
     const s = (poolRecord.settings as PoolSettings) || {};
     const offsetVal = s.lock_offset !== undefined ? s.lock_offset : s.lockOffset;
-    if (offsetVal === undefined || offsetVal === null || isNaN(Number(offsetVal))) {
-      const lockErr = new Error('UNVERIFIED_KICKOFF: Pool settings lack authoritative lock_offset metadata. Zero writes.');
+    if (
+      offsetVal === undefined ||
+      offsetVal === null ||
+      typeof offsetVal !== 'number' ||
+      !Number.isFinite(offsetVal) ||
+      isNaN(offsetVal)
+    ) {
+      const lockErr = new Error('UNVERIFIED_KICKOFF: Pool settings lack valid numeric lock_offset metadata. Zero writes.');
       (lockErr as any).code = 'UNVERIFIED_KICKOFF';
       (lockErr as any).statusCode = 403;
       (lockErr as any).status = 403;
       throw lockErr;
     }
-    effectiveLockOffset = Number(offsetVal);
-  } else if (params.lockOffsetMinutes !== undefined && params.lockOffsetMinutes !== null && !isNaN(Number(params.lockOffsetMinutes))) {
-    effectiveLockOffset = Number(params.lockOffsetMinutes);
-  } else if (explicitNonTransactionTestAdapter || !executor?.pool?.findUnique) {
-    effectiveLockOffset = 0;
+    effectiveLockOffset = offsetVal;
+  } else if (explicitNonTransactionTestAdapter) {
+    if (
+      params.lockOffsetMinutes !== undefined &&
+      params.lockOffsetMinutes !== null &&
+      typeof params.lockOffsetMinutes === 'number' &&
+      Number.isFinite(params.lockOffsetMinutes) &&
+      !isNaN(params.lockOffsetMinutes)
+    ) {
+      effectiveLockOffset = params.lockOffsetMinutes;
+    } else {
+      effectiveLockOffset = 0;
+    }
   } else {
     const lockErr = new Error('UNVERIFIED_KICKOFF: Authoritative pool settings query unavailable under lock. Zero writes.');
     (lockErr as any).code = 'UNVERIFIED_KICKOFF';
@@ -494,6 +577,10 @@ export async function executeSerializedPickMutation(
       enforceWriteBoundaryLock();
       throw new Error('PICK_PERSISTENCE_FAILED: Database returned no row after atomic pick update.');
     }
+
+    // Post-awaited-write deadline check (throws to roll back late UPDATE transaction if wait crossed deadline)
+    enforceWriteBoundaryLock();
+
     const r = updateRows[0];
     return {
       id: String(r.id),
@@ -510,6 +597,7 @@ export async function executeSerializedPickMutation(
   // Zero matching rows found
   if (selectedTeamId === null) {
     // Unselect on zero matching rows: confirmed no-op, NO INSERT
+    enforceWriteBoundaryLock();
     return {
       id: 'noop',
       poolId,
@@ -559,6 +647,9 @@ export async function executeSerializedPickMutation(
     enforceWriteBoundaryLock();
     throw new Error('PICK_PERSISTENCE_FAILED: Database returned no row after atomic pick save.');
   }
+
+  // Post-awaited-write deadline check (throws to roll back late INSERT if wait crossed deadline)
+  enforceWriteBoundaryLock();
 
   const r = rows[0];
   return {

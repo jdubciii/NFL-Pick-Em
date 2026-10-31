@@ -209,17 +209,66 @@ export function validateBatchOutcomes(
 
     const singleResult = itemResults[0];
     if (singleResult.status === 'SAVED') {
-      let appliedTeam = req.expectedTeam ?? null;
-      if (singleResult.pick) {
-        const pickTeam = singleResult.pick.selectedTeamId !== undefined
+      // 1. Nested pick object MUST be present
+      if (!singleResult.pick || typeof singleResult.pick !== 'object') {
+        outcome.failedCanonicalIds.add(canonicalId);
+        outcome.errorMessages.push(`Missing nested pick object in SAVED outcome for matchup ${canonicalId}.`);
+        continue;
+      }
+
+      // 2. Validate nested pick game ID matches canonical game identity
+      const rawPickGid = String(singleResult.pick.gameId ?? singleResult.pick.game_id ?? '');
+      if (!rawPickGid) {
+        outcome.failedCanonicalIds.add(canonicalId);
+        outcome.errorMessages.push(`Missing gameId in nested pick object for matchup ${canonicalId}.`);
+        continue;
+      }
+      const pickMatch = games.find(
+        (g) => String(g.id) === rawPickGid || String((g as any).externalGameId || (g as any).external_game_id) === rawPickGid
+      );
+      const pickCanonicalId = pickMatch ? String(pickMatch.id) : rawPickGid;
+      if (pickCanonicalId !== canonicalId) {
+        outcome.failedCanonicalIds.add(canonicalId);
+        outcome.errorMessages.push(
+          `Mismatched nested pick game identity: result gameId ${canonicalId} does not match pick gameId ${rawPickGid}.`
+        );
+        continue;
+      }
+
+      // 3. Explicit selection/null field in pick object (never synthesize from requested value)
+      const hasSelectedProp =
+        'selectedTeamId' in singleResult.pick ||
+        'selected_team_id' in singleResult.pick ||
+        'selectedTeam' in singleResult.pick ||
+        'selected_team' in singleResult.pick;
+      const pickTeamRaw =
+        singleResult.pick.selectedTeamId !== undefined
           ? singleResult.pick.selectedTeamId
-          : singleResult.pick.selected_team_id;
-        if (req.expectedTeam !== undefined && pickTeam !== undefined && pickTeam !== req.expectedTeam) {
+          : singleResult.pick.selected_team_id !== undefined
+          ? singleResult.pick.selected_team_id
+          : singleResult.pick.selectedTeam !== undefined
+          ? singleResult.pick.selectedTeam
+          : singleResult.pick.selected_team;
+
+      if (!hasSelectedProp || (pickTeamRaw === undefined && singleResult.pick.selectedTeamId === undefined)) {
+        outcome.failedCanonicalIds.add(canonicalId);
+        outcome.errorMessages.push(`Missing explicit selection field in nested pick object for matchup ${canonicalId}.`);
+        continue;
+      }
+
+      const appliedTeam = pickTeamRaw !== undefined ? pickTeamRaw : null;
+
+      // 4. Verify applied pick matches expected request when an expectation was provided
+      if (req.expectedTeam !== undefined) {
+        const normalizedExpected = req.expectedTeam === null ? null : String(req.expectedTeam).trim();
+        const normalizedApplied = appliedTeam === null ? null : String(appliedTeam).trim();
+        if (normalizedApplied !== normalizedExpected) {
           outcome.failedCanonicalIds.add(canonicalId);
-          outcome.errorMessages.push(`Applied pick mismatch for matchup ${canonicalId}: expected ${req.expectedTeam}, got ${pickTeam}.`);
+          outcome.errorMessages.push(
+            `Applied pick mismatch for matchup ${canonicalId}: expected ${req.expectedTeam}, got ${appliedTeam}.`
+          );
           continue;
         }
-        appliedTeam = pickTeam !== undefined ? pickTeam : appliedTeam;
       }
 
       outcome.confirmedSavedCanonicalIds.add(canonicalId);

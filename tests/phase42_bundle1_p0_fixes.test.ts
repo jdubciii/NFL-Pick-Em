@@ -2043,8 +2043,8 @@ describe('Bundle 1 — Eight P0 Fixes & Architect Ruling Verification Suite', ()
       ];
       const incompleteBatch = {
         results: [
-          { gameId: 'g1', status: 'SAVED', pick: { selectedTeamId: 'KC' } },
-          { gameId: 'g2', status: 'SAVED', pick: { selectedTeamId: 'DET' } },
+          { gameId: 'g1', status: 'SAVED', pick: { gameId: 'g1', selectedTeamId: 'KC' } },
+          { gameId: 'g2', status: 'SAVED', pick: { gameId: 'g2', selectedTeamId: 'DET' } },
         ],
       };
       const val1 = validateBatchOutcomes(requested, incompleteBatch, games);
@@ -2056,8 +2056,8 @@ describe('Bundle 1 — Eight P0 Fixes & Architect Ruling Verification Suite', ()
       // 2. Duplicate / contradictory outcomes for same game
       const duplicateBatch = {
         results: [
-          { gameId: 'g1', status: 'SAVED', pick: { selectedTeamId: 'KC' } },
-          { gameId: 'ext-1', status: 'SAVED', pick: { selectedTeamId: 'DEN' } }, // Contradictory outcome!
+          { gameId: 'g1', status: 'SAVED', pick: { gameId: 'g1', selectedTeamId: 'KC' } },
+          { gameId: 'ext-1', status: 'SAVED', pick: { gameId: 'ext-1', selectedTeamId: 'DEN' } }, // Contradictory outcome!
         ],
       };
       const val2 = validateBatchOutcomes([{ gameId: 'g1', expectedTeam: 'KC' }], duplicateBatch, games);
@@ -2068,8 +2068,8 @@ describe('Bundle 1 — Eight P0 Fixes & Architect Ruling Verification Suite', ()
       // 3. Unrequested identity in batch response
       const unrequestedBatch = {
         results: [
-          { gameId: 'g1', status: 'SAVED', pick: { selectedTeamId: 'KC' } },
-          { gameId: 'unrequested-game-99', status: 'SAVED' },
+          { gameId: 'g1', status: 'SAVED', pick: { gameId: 'g1', selectedTeamId: 'KC' } },
+          { gameId: 'unrequested-game-99', status: 'SAVED', pick: { gameId: 'unrequested-game-99', selectedTeamId: 'DET' } },
         ],
       };
       const val3 = validateBatchOutcomes([{ gameId: 'g1', expectedTeam: 'KC' }], unrequestedBatch, games);
@@ -2079,7 +2079,7 @@ describe('Bundle 1 — Eight P0 Fixes & Architect Ruling Verification Suite', ()
       // 4. Mismatched applied pick
       const mismatchBatch = {
         results: [
-          { gameId: 'g1', status: 'SAVED', pick: { selectedTeamId: 'DEN' } },
+          { gameId: 'g1', status: 'SAVED', pick: { gameId: 'g1', selectedTeamId: 'DEN' } },
         ],
       };
       const val4 = validateBatchOutcomes([{ gameId: 'g1', expectedTeam: 'KC' }], mismatchBatch, games);
@@ -2185,7 +2185,15 @@ describe('Bundle 1 — Eight P0 Fixes & Architect Ruling Verification Suite', ()
 
       const batchData = {
         results: [
-          { gameId: 'c032a900-1111-2222-3333-444455556666', status: 'SAVED' },
+          {
+            gameId: 'c032a900-1111-2222-3333-444455556666',
+            status: 'SAVED',
+            pick: {
+              id: 'restored-pick-1',
+              gameId: 'c032a900-1111-2222-3333-444455556666',
+              selectedTeamId: null,
+            },
+          },
         ],
       };
 
@@ -2257,6 +2265,392 @@ describe('Bundle 1 — Eight P0 Fixes & Architect Ruling Verification Suite', ()
         ).rejects.toThrow('TRANSACTION_UNAVAILABLE');
       } finally {
         // Reset test adapters
+        setExplicitNonTransactionTestAdapter(executeSerializedPickMutation);
+        setAllowLegacyUnscopedPicksRouteForTesting(true);
+      }
+    });
+  });
+
+  describe('Architect Binding Ruling HAG2-IDENTITY-2026-10-31-05 Behavioral & Invariant Suite', () => {
+    it('Correction 1: Alias contender rereads authoritative game under canonical advisory lock and fails closed when authority changes during wait', async () => {
+      const CANONICAL_ID = 'c032a900-1111-2222-3333-444455556666';
+      const ALIAS_ID = '401671800';
+
+      let contender1HoldsLock = true;
+      let contender2LockAcquired = false;
+      let contender2RereadExecuted = false;
+      let canonicalKickoffTime = new Date(Date.now() + 86400000); // Initially scheduled tomorrow
+
+      const mockDbContender2 = {
+        $transaction: async (cb: any) => {
+          const tx = {
+            pool: {
+              findUnique: vi.fn().mockResolvedValue({ settings: { lock_offset: 0 } }),
+            },
+            $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
+              if (sql.includes('SELECT id, external_game_id') && sql.includes('FROM public.games')) {
+                // If called with canonical ID, mark reread executed
+                if (params[0] === CANONICAL_ID) {
+                  contender2RereadExecuted = true;
+                }
+                return [{
+                  id: CANONICAL_ID,
+                  external_game_id: ALIAS_ID,
+                  home_team_id: 'KC',
+                  away_team_id: 'DEN',
+                  kickoff_time: canonicalKickoffTime.toISOString(),
+                  canonical_kickoff_time: canonicalKickoffTime.toISOString(),
+                  lock_effective_at: canonicalKickoffTime.toISOString(),
+                  status: 'SCHEDULED',
+                  season: 2026,
+                  season_type: 2,
+                  week: 8,
+                }];
+              }
+              if (sql.includes('pg_advisory_xact_lock')) {
+                // Contender 2 attempts advisory lock on canonical key
+                expect(params[0]).toBe(`pool-uuid-1:user-uuid-1:8:${CANONICAL_ID}`);
+                // Simulate wait while Contender 1 holds lock
+                if (contender1HoldsLock) {
+                  // During lock wait, kickoff passes in the database!
+                  canonicalKickoffTime = new Date(Date.now() - 3600000); // Moved 1 hour in the past!
+                  contender1HoldsLock = false; // Lock released to contender 2
+                }
+                contender2LockAcquired = true;
+                return [];
+              }
+              if (sql.includes('UPDATE') || sql.includes('INSERT') || sql.includes('DELETE')) {
+                throw new Error('VIOLATION: Zero writes allowed when kickoff passed during lock wait');
+              }
+              return [];
+            }),
+          };
+          return await cb(tx);
+        },
+      };
+
+      try {
+        await savePickAtomically(mockDbContender2, {
+          poolId: 'pool-uuid-1',
+          userId: 'user-uuid-1',
+          gameId: ALIAS_ID, // Contender 2 passes alias!
+          week: 8,
+          selectedTeamId: 'KC',
+        });
+        expect.fail('Should have failed closed after lock-wait authority change');
+      } catch (err: any) {
+        expect(err.code).toBe('KICKOFF_PASSED');
+        expect(err.statusCode).toBe(403);
+      }
+
+      expect(contender2LockAcquired).toBe(true);
+      expect(contender2RereadExecuted).toBe(true);
+    });
+
+    it('Correction 2: Aborted-conflict wait during concurrent INSERT rolls back late mutation and commits zero rows', async () => {
+      const persistedTable: any[] = [];
+      const CANONICAL_ID = 'c032a900-1111-2222-3333-444455556666';
+
+      // Simulate contender 2 transaction that waits on competitor's uncommitted row, then competitor rolls back, but deadline passes
+      const createAbortedConflictDb = () => {
+        let uncommittedInsertedRow: any = null;
+
+        return {
+          getPersistedCount: () => persistedTable.length,
+          $transaction: async (cb: any) => {
+            try {
+              const tx = {
+                pool: {
+                  findUnique: vi.fn().mockResolvedValue({ settings: { lock_offset: 0 } }),
+                },
+                $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
+                  if (sql.includes('SELECT id, external_game_id') && sql.includes('FROM public.games')) {
+                    const kickoff = new Date(Date.now() + 500);
+                    return [{
+                      id: CANONICAL_ID,
+                      external_game_id: '401671800',
+                      home_team_id: 'KC',
+                      away_team_id: 'DEN',
+                      kickoff_time: kickoff.toISOString(),
+                      canonical_kickoff_time: kickoff.toISOString(),
+                      lock_effective_at: kickoff.toISOString(),
+                      status: 'SCHEDULED',
+                      season: 2026,
+                      season_type: 2,
+                      week: 8,
+                    }];
+                  }
+                  if (sql.includes('pg_advisory_xact_lock')) return [];
+                  if (sql.includes('SELECT id, game_id') && sql.includes('FOR UPDATE')) {
+                    return []; // 0 existing rows
+                  }
+                  if (sql.includes('INSERT INTO public.picks')) {
+                    // Simulated conflict wait: competitor rolls back, but during the wait, 1000ms elapses (kickoff passes!)
+                    vi.advanceTimersByTime(1000);
+                    uncommittedInsertedRow = {
+                      id: 'row-late-insert',
+                      pool_id: params[0],
+                      user_id: params[1],
+                      week: params[2],
+                      game_id: params[3],
+                      selected_team_id: params[4],
+                    };
+                    return [uncommittedInsertedRow];
+                  }
+                  return [];
+                }),
+              };
+              const result = await cb(tx);
+              if (uncommittedInsertedRow) {
+                persistedTable.push(uncommittedInsertedRow);
+              }
+              return result;
+            } catch (txErr) {
+              // Rollback: uncommitted rows are discarded
+              uncommittedInsertedRow = null;
+              throw txErr;
+            }
+          },
+        };
+      };
+
+      vi.useFakeTimers();
+      try {
+        const db = createAbortedConflictDb();
+        try {
+          await savePickAtomically(db, {
+            poolId: 'pool-uuid-1',
+            userId: 'user-uuid-1',
+            gameId: CANONICAL_ID,
+            week: 8,
+            selectedTeamId: 'KC',
+          });
+          expect.fail('Should have thrown KICKOFF_PASSED and rolled back');
+        } catch (err: any) {
+          expect(err.code).toBe('KICKOFF_PASSED');
+          expect(err.statusCode).toBe(403);
+        }
+
+        // Assert database state: zero rows persisted due to transaction rollback
+        expect(db.getPersistedCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('Correction 3: validateBatchOutcomes rejects absent pick, absent selection, and mismatched nested game ID across clear/preset/restore', () => {
+      const games: any[] = [
+        { id: 'uuid-1', externalGameId: 'alias-1' },
+        { id: 'uuid-2', externalGameId: 'alias-2' },
+      ];
+
+      // 1. Absent nested pick object in SAVED result
+      const absentPickBatch = {
+        results: [
+          { gameId: 'uuid-1', status: 'SAVED' }, // Missing pick object!
+        ],
+      };
+      const v1 = validateBatchOutcomes([{ gameId: 'uuid-1', expectedTeam: 'KC' }], absentPickBatch, games);
+      expect(v1.isValid).toBe(false);
+      expect(v1.failedCanonicalIds.has('uuid-1')).toBe(true);
+      expect(v1.confirmedSavedCanonicalIds.has('uuid-1')).toBe(false);
+      expect(v1.errorMessages.some((msg) => msg.includes('Missing nested pick object'))).toBe(true);
+
+      // 2. Absent selectedTeamId / selection field in nested pick object
+      const absentSelectionBatch = {
+        results: [
+          {
+            gameId: 'uuid-1',
+            status: 'SAVED',
+            pick: { id: 'p1', gameId: 'uuid-1' }, // Missing selectedTeamId!
+          },
+        ],
+      };
+      const v2 = validateBatchOutcomes([{ gameId: 'uuid-1', expectedTeam: 'KC' }], absentSelectionBatch, games);
+      expect(v2.isValid).toBe(false);
+      expect(v2.failedCanonicalIds.has('uuid-1')).toBe(true);
+      expect(v2.errorMessages.some((msg) => msg.includes('Missing explicit selection field'))).toBe(true);
+
+      // 3. Mismatched nested game ID (result gameId=uuid-1, pick.gameId=uuid-2)
+      const mismatchedNestedIdBatch = {
+        results: [
+          {
+            gameId: 'uuid-1',
+            status: 'SAVED',
+            pick: { id: 'p1', gameId: 'uuid-2', selectedTeamId: 'KC' }, // Mismatched gameId!
+          },
+        ],
+      };
+      const v3 = validateBatchOutcomes([{ gameId: 'uuid-1', expectedTeam: 'KC' }], mismatchedNestedIdBatch, games);
+      expect(v3.isValid).toBe(false);
+      expect(v3.failedCanonicalIds.has('uuid-1')).toBe(true);
+      expect(v3.errorMessages.some((msg) => msg.includes('Mismatched nested pick game identity'))).toBe(true);
+
+      // 4. Clear flow validation: expectedTeam is null, but returned pick has selection
+      const clearMismatchBatch = {
+        results: [
+          {
+            gameId: 'uuid-1',
+            status: 'SAVED',
+            pick: { id: 'p1', gameId: 'uuid-1', selectedTeamId: 'KC' },
+          },
+        ],
+      };
+      const vClear = validateBatchOutcomes([{ gameId: 'uuid-1', expectedTeam: null }], clearMismatchBatch, games);
+      expect(vClear.isValid).toBe(false);
+      expect(vClear.failedCanonicalIds.has('uuid-1')).toBe(true);
+      expect(vClear.errorMessages.some((msg) => msg.includes('Applied pick mismatch'))).toBe(true);
+
+      // 5. Restore flow validation: expectedTeam is 'KC', but returned pick has null
+      const restoreMismatchBatch = {
+        results: [
+          {
+            gameId: 'uuid-1',
+            status: 'SAVED',
+            pick: { id: 'p1', gameId: 'uuid-1', selectedTeamId: null },
+          },
+        ],
+      };
+      const vRestore = validateBatchOutcomes([{ gameId: 'uuid-1', expectedTeam: 'KC' }], restoreMismatchBatch, games);
+      expect(vRestore.isValid).toBe(false);
+      expect(vRestore.failedCanonicalIds.has('uuid-1')).toBe(true);
+
+      // 6. Valid exact match confirms without synthesizing
+      const validBatch = {
+        results: [
+          {
+            gameId: 'uuid-1',
+            status: 'SAVED',
+            pick: { id: 'p1', gameId: 'uuid-1', selectedTeamId: 'KC' },
+          },
+        ],
+      };
+      const vValid = validateBatchOutcomes([{ gameId: 'uuid-1', expectedTeam: 'KC' }], validBatch, games);
+      expect(vValid.isValid).toBe(true);
+      expect(vValid.confirmedSavedCanonicalIds.has('uuid-1')).toBe(true);
+      expect(vValid.confirmedSavedPicks['uuid-1']).toBe('KC');
+    });
+
+    it('Correction 1: Production handlers with ALL test bypasses disabled enforce fail-closed on missing pool reader, reread failure, and non-numeric offset', async () => {
+      setExplicitNonTransactionTestAdapter(null);
+      setAllowLegacyUnscopedPicksRouteForTesting(false);
+
+      try {
+        const CANONICAL_ID = 'c032a900-1111-2222-3333-444455556666';
+
+        // Case A: Missing pool reader under transaction fails closed even if caller supplies gameData & offset
+        const missingPoolReaderDb = {
+          $transaction: async (cb: any) => {
+            const tx = {
+              $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+                if (sql.includes('SELECT id, external_game_id') && sql.includes('FROM public.games')) {
+                  return [{
+                    id: CANONICAL_ID,
+                    external_game_id: '401671800',
+                    home_team_id: 'KC',
+                    away_team_id: 'DEN',
+                    kickoff_time: new Date(Date.now() + 86400000).toISOString(),
+                    canonical_kickoff_time: new Date(Date.now() + 86400000).toISOString(),
+                    lock_effective_at: new Date(Date.now() + 86400000).toISOString(),
+                    status: 'SCHEDULED',
+                    season: 2026,
+                    season_type: 2,
+                    week: 8,
+                  }];
+                }
+                if (sql.includes('pg_advisory_xact_lock')) return [];
+                return [];
+              }),
+            };
+            return await cb(tx);
+          },
+        };
+
+        await expect(
+          savePickAtomically(missingPoolReaderDb, {
+            poolId: 'pool-uuid-1',
+            userId: 'user-uuid-1',
+            gameId: CANONICAL_ID,
+            week: 8,
+            selectedTeamId: 'KC',
+            lockOffsetMinutes: 10,
+            gameData: { id: CANONICAL_ID, kickoffTime: new Date(Date.now() + 86400000) },
+          })
+        ).rejects.toThrow('UNVERIFIED_KICKOFF: Authoritative pool settings query unavailable under lock');
+
+        // Case B: Authoritative game reread returns null under lock fails closed even if caller supplies gameData
+        const nullRereadDb = {
+          $transaction: async (cb: any) => {
+            const tx = {
+              pool: {
+                findUnique: vi.fn().mockResolvedValue({ settings: { lock_offset: 0 } }),
+              },
+              $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+                if (sql.includes('SELECT id, external_game_id') && sql.includes('FROM public.games')) {
+                  return []; // Null / missing matchup in database!
+                }
+                if (sql.includes('pg_advisory_xact_lock')) return [];
+                return [];
+              }),
+            };
+            return await cb(tx);
+          },
+        };
+
+        await expect(
+          savePickAtomically(nullRereadDb, {
+            poolId: 'pool-uuid-1',
+            userId: 'user-uuid-1',
+            gameId: CANONICAL_ID,
+            week: 8,
+            selectedTeamId: 'KC',
+            gameData: { id: CANONICAL_ID, kickoffTime: new Date(Date.now() + 86400000) },
+          })
+        ).rejects.toThrow('UNVERIFIED_KICKOFF: Authoritative matchup');
+
+        // Case C: Non-numeric lock_offset in pool settings (e.g. boolean, empty string) fails closed
+        for (const badOffset of [true, false, '', '   ']) {
+          const badOffsetDb = {
+            $transaction: async (cb: any) => {
+              const tx = {
+                pool: {
+                  findUnique: vi.fn().mockResolvedValue({ settings: { lock_offset: badOffset } }),
+                },
+                $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+                  if (sql.includes('SELECT id, external_game_id') && sql.includes('FROM public.games')) {
+                    return [{
+                      id: CANONICAL_ID,
+                      external_game_id: '401671800',
+                      home_team_id: 'KC',
+                      away_team_id: 'DEN',
+                      kickoff_time: new Date(Date.now() + 86400000).toISOString(),
+                      canonical_kickoff_time: new Date(Date.now() + 86400000).toISOString(),
+                      lock_effective_at: new Date(Date.now() + 86400000).toISOString(),
+                      status: 'SCHEDULED',
+                      season: 2026,
+                      season_type: 2,
+                      week: 8,
+                    }];
+                  }
+                  if (sql.includes('pg_advisory_xact_lock')) return [];
+                  return [];
+                }),
+              };
+              return await cb(tx);
+            },
+          };
+
+          await expect(
+            savePickAtomically(badOffsetDb, {
+              poolId: 'pool-uuid-1',
+              userId: 'user-uuid-1',
+              gameId: CANONICAL_ID,
+              week: 8,
+              selectedTeamId: 'KC',
+            })
+          ).rejects.toThrow('UNVERIFIED_KICKOFF: Pool settings lack valid numeric lock_offset metadata');
+        }
+      } finally {
         setExplicitNonTransactionTestAdapter(executeSerializedPickMutation);
         setAllowLegacyUnscopedPicksRouteForTesting(true);
       }
