@@ -46,10 +46,6 @@ export const App: React.FC = () => {
         setMembershipStatus('NONE');
         return;
       }
-      if (user.role === 'ADMIN' || user.email === 'jack.w.cone@gmail.com') {
-        setMembershipStatus('ACTIVE');
-        return;
-      }
       try {
         const { data, error } = await supabase
           .from('pool_memberships')

@@ -12,9 +12,7 @@ export const BottomNavigation: React.FC = () => {
   const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
 
   const isCommissioner = Boolean(
-    user?.role === 'ADMIN' || 
-    user?.email === 'jack.w.cone@gmail.com' || 
-    user?.email === 'jack@nflpickem.com'
+    user?.role === 'ADMIN'
   );
 
   const fetchPendingCount = useCallback(async () => {

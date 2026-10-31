@@ -482,8 +482,8 @@ export function formatNextKickoffLock(
 
   upcoming.sort((a, b) => a.lockTimeMs - b.lockTimeMs);
   const nextLockDeadline = upcoming[0].lockDeadline;
-  const dayStr = nextLockDeadline.toLocaleDateString('en-US', { weekday: 'short' });
-  const timeStr = nextLockDeadline.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const dayStr = nextLockDeadline.toLocaleDateString('en-US', { timeZone: 'America/Phoenix', weekday: 'short' });
+  const timeStr = nextLockDeadline.toLocaleTimeString('en-US', { timeZone: 'America/Phoenix', hour: 'numeric', minute: '2-digit' });
   return `${dayStr} ${timeStr} (Week ${weekNumber})`;
 }
 
@@ -682,9 +682,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
   const isCommissioner = Boolean(
     role === 'ADMIN' || 
-    user?.role === 'ADMIN' || 
-    user?.email === 'jack.w.cone@gmail.com' || 
-    user?.email === 'jack@nflpickem.com'
+    user?.role === 'ADMIN'
   );
 
   const [activeMembersCount, setActiveMembersCount] = useState<number>(10);
@@ -1092,7 +1090,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                       {new Date(item.kickoffIso).toLocaleTimeString('en-US', {
                         hour: 'numeric',
                         minute: '2-digit',
-                        timeZone: 'America/Los_Angeles',
+                        timeZone: 'America/Phoenix',
                       })}
                     </span>
                   </div>

@@ -124,6 +124,7 @@ export const WeeklyPicks: React.FC = () => {
     type: 'PRESET' | 'CLEAR';
     description: string;
     updatedPicks?: Record<string, string | null>;
+    presetType?: any;
     editableCount: number;
     lockedCount: number;
   }
@@ -131,6 +132,14 @@ export const WeeklyPicks: React.FC = () => {
   const [lastBulkSnapshot, setLastBulkSnapshot] = useState<Record<string, string> | null>(null);
 
   const [userPicks, setUserPicks] = useState<Record<string, string>>({});
+  const [, setPickMutationStatus] = useState<Record<string, 'SAVING' | 'CONFIRMED' | 'FAILED'>>({});
+
+  const getUniquePickedCount = useCallback((gameList: GameItem[], picksMap: Record<string, string>) => {
+    return gameList.filter((g) => {
+      const ext = String((g as any).externalGameId || (g as any).external_game_id || '');
+      return Boolean(picksMap[g.id] || (ext && picksMap[ext]) || g.userPick);
+    }).length;
+  }, []);
 
   // Dedicated pool settings readiness effect with current-pool/request generation ownership
   useEffect(() => {
@@ -240,7 +249,7 @@ export const WeeklyPicks: React.FC = () => {
   useEffect(() => {
     const saved = localStorage.getItem('pickem_preferred_view_mode') || localStorage.getItem('picks_view_preference');
     if (!saved && games.length > 0) {
-      const pickedCount = Object.keys(userPicks).filter((k) => Boolean(userPicks[k])).length;
+      const pickedCount = getUniquePickedCount(games, userPicks);
       if (pickedCount === games.length) {
         setPicksViewMode('list');
       } else {
@@ -327,19 +336,23 @@ export const WeeklyPicks: React.FC = () => {
 
           if (dbPicks && Array.isArray(dbPicks) && dbPicks.length > 0) {
             const cloudMap: Record<string, string> = {};
+            const seenGameUuids = new Set<string>();
             dbPicks.forEach((p: any) => {
               const gId = p.game_id || p.matchup_id;
               if (gId && p.selected_team) {
-                cloudMap[String(gId)] = p.selected_team;
-                // Week 8 fix: imported picks use the ESPN external id, while
-                // authoritative slate games are keyed by the DB UUID. Store
-                // both keys so userPicks[g.id] and merged userPick work
-                // regardless of which id a game carries.
+                // Identity resolution: match by DB UUID or external ESPN ID
                 const matched = (mappedGames || []).find((g: any) => String(g.id) === String(gId) || String((g as any).externalGameId || (g as any).external_game_id) === String(gId));
                 if (matched) {
-                  cloudMap[String((matched as any).id)] = p.selected_team;
+                  const canonicalId = String((matched as any).id);
                   const ext = String((matched as any).externalGameId || (matched as any).external_game_id || '');
+                  if (seenGameUuids.has(canonicalId)) {
+                    console.warn(`DUPLICATE_PICKS_DETECTED: Found duplicate stored pick for game ${canonicalId} / ${ext}. Using pick: ${p.selected_team}`);
+                  }
+                  seenGameUuids.add(canonicalId);
+                  cloudMap[canonicalId] = p.selected_team;
                   if (ext) cloudMap[ext] = p.selected_team;
+                } else {
+                  cloudMap[String(gId)] = p.selected_team;
                 }
               }
             });
@@ -502,7 +515,7 @@ export const WeeklyPicks: React.FC = () => {
     fetchGames();
   };
 
-  const handlePick = async (game: GameItem, selectedTeamId: string) => {
+  const handlePick = async (game: GameItem, selectedTeamId: string): Promise<boolean> => {
     if (isPicksProtected) {
       setFeedbackMessage({
         text: 'Picks are protected against accidental edits. Tap PICKS PROTECTED at the top to unlock.',
@@ -510,34 +523,43 @@ export const WeeklyPicks: React.FC = () => {
       });
       setTimeout(() => setFeedbackMessage(null), 3500);
       triggerHaptic('impactHeavy');
-      return;
+      return false;
     }
-    if (!pool) return;
+    if (!pool) return false;
     if (!isSettingsReady) {
       setFeedbackMessage({
         text: 'Pool settings unavailable. Picks locked.',
         type: 'error'
       });
       setTimeout(() => setFeedbackMessage(null), 3500);
-      return;
+      return false;
     }
     if (isGameLocked(game) || isKickoffLocked(game.kickoffTime, now)) {
       const formattedTime = formatKickoff(game.kickoffTime);
       setFeedbackMessage({ text: `Matchup locked: Kickoff passed on ${formattedTime}.`, type: 'error' });
       setTimeout(() => setFeedbackMessage(null), 3500);
-      return;
+      return false;
     }
 
     setSavingPickForGameId(game.id);
+    setPickMutationStatus((prev) => ({ ...prev, [game.id]: 'SAVING' }));
+
     const isUnselecting = areTeamIdentitiesEquivalent(userPicks[game.id] || game.userPick, selectedTeamId);
     const teamToSend = isUnselecting ? null : selectedTeamId;
 
-    // 1. Optimistically update local state
+    // Snapshot previous state for rollback on persistence failure
+    const prevUserPicks = { ...userPicks };
+    const prevGames = [...games];
+
+    // Optimistically update local state
     const updatedUserPicks = { ...userPicks };
+    const ext = String((game as any).externalGameId || (game as any).external_game_id || '');
     if (teamToSend) {
       updatedUserPicks[game.id] = teamToSend;
+      if (ext) updatedUserPicks[ext] = teamToSend;
     } else {
       delete updatedUserPicks[game.id];
+      if (ext) delete updatedUserPicks[ext];
     }
     setUserPicks(updatedUserPicks);
 
@@ -545,18 +567,38 @@ export const WeeklyPicks: React.FC = () => {
       prev.map((g) => (g.id === game.id ? { ...g, userPick: teamToSend } : g))
     );
 
-    // 2. Persist to localStorage
-    try {
-      localStorage.setItem(userPicksCacheKey, JSON.stringify(updatedUserPicks));
-    } catch (e) {
-      console.warn('localStorage save warning:', e);
-    }
+    let saveSuccess = false;
+    let saveError: any = null;
 
-    // 3. Persist directly to Supabase cloud
-    if (user?.id) {
+    // Single mutation contract: Primary via Express backend when authenticated with token
+    if (token) {
+      try {
+        const res = await scopedExpressFetch('/api/picks', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            pool_id: pool.id,
+            game_id: game.id,
+            selected_team_id: teamToSend,
+            week: selectedWeek,
+          }),
+        });
+        if (res.ok) {
+          saveSuccess = true;
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          saveError = new Error(errData.error || `Server error (${res.status})`);
+        }
+      } catch (err) {
+        saveError = err;
+      }
+    } else if (user?.id) {
+      // Fallback via Supabase direct when no backend proxy token is active
       try {
         if (teamToSend) {
-          const { error } = await supabase.from('picks').upsert({
+          const { error: sbErr } = await supabase.from('picks').upsert({
             pool_id: activePoolId,
             user_id: user.id,
             week: selectedWeek,
@@ -566,39 +608,71 @@ export const WeeklyPicks: React.FC = () => {
           }, {
             onConflict: 'pool_id,user_id,week,game_id'
           });
-          if (error) console.error('Failed to persist pick to Supabase:', error);
+          if (sbErr) {
+            saveError = sbErr;
+          } else {
+            saveSuccess = true;
+            // Clean up any legacy external id row if present
+            if (ext && ext !== String(game.id)) {
+              await supabase.from('picks').delete().match({
+                pool_id: activePoolId,
+                user_id: user.id,
+                week: selectedWeek,
+                game_id: ext,
+              });
+            }
+          }
         } else {
-          const { error } = await supabase.from('picks').delete().match({
+          // Deleting: remove both UUID and external id rows so no orphan remains
+          const { error: sbErr } = await supabase.from('picks').delete().match({
             pool_id: activePoolId,
             user_id: user.id,
             week: selectedWeek,
             game_id: String(game.id),
           });
-          if (error) console.warn('Supabase pick delete warning:', error);
+          if (ext && ext !== String(game.id)) {
+            await supabase.from('picks').delete().match({
+              pool_id: activePoolId,
+              user_id: user.id,
+              week: selectedWeek,
+              game_id: ext,
+            });
+          }
+          if (sbErr) saveError = sbErr;
+          else saveSuccess = true;
         }
       } catch (sbErr) {
-        console.warn('Supabase pick persist warning:', sbErr);
+        saveError = sbErr;
       }
     }
 
-    // 4. Background notification to backend API if configured
-    if (token) {
-      scopedExpressFetch('/api/picks', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          pool_id: pool.id,
-          game_id: game.id,
-          selected_team_id: teamToSend,
-          week: selectedWeek,
-        }),
-      }).catch((err) => console.warn('Backend proxy save warning:', err));
-    }
-
-    triggerHaptic('impactLight');
     setSavingPickForGameId(null);
+
+    if (saveSuccess) {
+      setPickMutationStatus((prev) => ({ ...prev, [game.id]: 'CONFIRMED' }));
+      try {
+        localStorage.setItem(userPicksCacheKey, JSON.stringify(updatedUserPicks));
+      } catch (e) {
+        console.warn('localStorage save warning:', e);
+      }
+      triggerHaptic('impactLight');
+      return true;
+    } else {
+      // Rollback optimistic state and present user-facing failure state with retry
+      setUserPicks(prevUserPicks);
+      setGames(prevGames);
+      try {
+        localStorage.setItem(userPicksCacheKey, JSON.stringify(prevUserPicks));
+      } catch (_) {}
+      setPickMutationStatus((prev) => ({ ...prev, [game.id]: 'FAILED' }));
+      triggerHaptic('impactHeavy');
+      setFeedbackMessage({
+        text: `Failed to save pick: ${saveError?.message || 'Network error'}. Tap pick to retry.`,
+        type: 'error'
+      });
+      setTimeout(() => setFeedbackMessage(null), 4000);
+      return false;
+    }
   };
 
   /**
@@ -696,7 +770,11 @@ export const WeeklyPicks: React.FC = () => {
   /**
    * Applies quick-fill presets through the QuickFillSafetyEngine with a 7-second undo grace period.
    */
-  const performApplyPreset = (updatedPicks: Record<string, string | null>, presetDescription: string) => {
+  const performApplyPreset = (
+    updatedPicks: Record<string, string | null>,
+    presetDescription: string,
+    presetType?: any
+  ) => {
     if (isPicksProtected || !pool || !isSettingsReady) return;
 
     const slateItems: SlateGameItem[] = games.map((g) => ({
@@ -712,7 +790,7 @@ export const WeeklyPicks: React.FC = () => {
       if (g.userPick) currentPicksMap[g.id] = g.userPick;
     }
 
-    // 1. Optimistically update local state
+    // 1. Optimistically update local state (only unlocked games)
     setGames((prev) =>
       prev.map((game) => {
         if (!isGameLocked(game) && !isGameKickoffLocked(game) && Object.prototype.hasOwnProperty.call(updatedPicks, game.id)) {
@@ -728,18 +806,31 @@ export const WeeklyPicks: React.FC = () => {
       message: `${presetDescription}. Tap Undo to revert.`
     });
 
-    // 3. Stage in safety engine with commit callback
+    // 3. Stage in safety engine with commit callback, passing actual preset type and confirmed updatedPicks
     quickFillSafetyEngine.stagePreset(
       slateItems,
       currentPicksMap,
-      'FAVORITES',
-      async (finalPicks) => {
+      presetType || 'CUSTOM',
+      async (_enginePicks) => {
         try {
+          // Persist the confirmed updatedPicks, strictly excluding locked games
+          const confirmedEditablePicks: Record<string, string> = {};
+          for (const [gameId, selectedTeamId] of Object.entries(updatedPicks)) {
+            if (!selectedTeamId) continue;
+            const matchingGame = games.find(
+              (g) => String(g.id) === String(gameId) || String((g as any).externalGameId || (g as any).external_game_id) === String(gameId)
+            );
+            if (matchingGame && (isGameLocked(matchingGame) || isGameKickoffLocked(matchingGame))) {
+              continue; // Exclude locked games from upsert (locked picks immutable)
+            }
+            confirmedEditablePicks[gameId] = selectedTeamId;
+          }
+
           // Persist to localStorage
           try {
             const savedMap = JSON.parse(localStorage.getItem(userPicksCacheKey) || '{}');
-            Object.assign(savedMap, finalPicks);
-            setUserPicks(savedMap);
+            Object.assign(savedMap, confirmedEditablePicks);
+            setUserPicks((prev) => ({ ...prev, ...confirmedEditablePicks }));
             localStorage.setItem(userPicksCacheKey, JSON.stringify(savedMap));
           } catch (e) {
             console.warn('localStorage preset save warning:', e);
@@ -748,7 +839,7 @@ export const WeeklyPicks: React.FC = () => {
           // Persist to Supabase
           if (user?.id) {
             try {
-              const upsertRows = Object.entries(finalPicks).map(([gameId, selectedTeamId]) => ({
+              const upsertRows = Object.entries(confirmedEditablePicks).map(([gameId, selectedTeamId]) => ({
                 pool_id: activePoolId,
                 user_id: user.id,
                 week: selectedWeek,
@@ -756,7 +847,9 @@ export const WeeklyPicks: React.FC = () => {
                 selected_team: selectedTeamId,
                 updated_at: new Date().toISOString(),
               }));
-              await supabase.from('picks').upsert(upsertRows, { onConflict: 'pool_id,user_id,week,game_id' });
+              if (upsertRows.length > 0) {
+                await supabase.from('picks').upsert(upsertRows, { onConflict: 'pool_id,user_id,week,game_id' });
+              }
             } catch (sbErr) {
               console.warn('Supabase preset save warning:', sbErr);
             }
@@ -764,43 +857,45 @@ export const WeeklyPicks: React.FC = () => {
 
           // Backend proxy if configured
           if (token) {
-            const entries = Object.entries(finalPicks);
+            const entries = Object.entries(confirmedEditablePicks);
             const batchPayload = entries.map(([gameId, selectedTeamId]) => ({
               game_id: gameId,
               selected_team_id: selectedTeamId,
             }));
 
-            try {
-              const batchRes = await scopedExpressFetch('/api/picks/batch', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  pool_id: pool.id,
-                  picks: batchPayload,
-                }),
-              });
+            if (batchPayload.length > 0) {
+              try {
+                const batchRes = await scopedExpressFetch('/api/picks/batch', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    pool_id: pool.id,
+                    picks: batchPayload,
+                  }),
+                });
 
-              if (!batchRes.ok) {
-                await Promise.all(
-                  entries.map(([gameId, selectedTeamId]) =>
-                    scopedExpressFetch('/api/picks', {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                      },
-                      body: JSON.stringify({
-                        pool_id: pool.id,
-                        game_id: gameId,
-                        selected_team_id: selectedTeamId,
-                      }),
-                    })
-                  )
-                );
+                if (!batchRes.ok) {
+                  await Promise.all(
+                    entries.map(([gameId, selectedTeamId]) =>
+                      scopedExpressFetch('/api/picks', {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                          pool_id: pool.id,
+                          game_id: gameId,
+                          selected_team_id: selectedTeamId,
+                        }),
+                      })
+                    )
+                  );
+                }
+              } catch (proxyErr) {
+                console.warn('Backend proxy batch warning:', proxyErr);
               }
-            } catch (proxyErr) {
-              console.warn('Backend proxy batch warning:', proxyErr);
             }
           }
 
@@ -808,11 +903,16 @@ export const WeeklyPicks: React.FC = () => {
         } catch (err: any) {
           console.error('Error auto-saving preset:', err);
         }
-      }
+      },
+      updatedPicks
     );
   };
 
-  const handleApplyPreset = (updatedPicks: Record<string, string | null>, presetDescription: string) => {
+  const handleApplyPreset = (
+    updatedPicks: Record<string, string | null>,
+    presetDescription: string,
+    presetType?: any
+  ) => {
     if (!isSettingsReady) {
       setFeedbackMessage({ text: 'Pool settings unavailable. Picks locked.', type: 'error' });
       setTimeout(() => setFeedbackMessage(null), 3500);
@@ -834,6 +934,7 @@ export const WeeklyPicks: React.FC = () => {
       type: isClear ? 'CLEAR' : 'PRESET',
       description: presetDescription,
       updatedPicks,
+      presetType,
       editableCount: editableGames.length,
       lockedCount,
     });
@@ -852,7 +953,7 @@ export const WeeklyPicks: React.FC = () => {
     if (action.type === 'CLEAR') {
       await performClearAllPicks();
     } else if (action.type === 'PRESET' && action.updatedPicks) {
-      performApplyPreset(action.updatedPicks, action.description);
+      performApplyPreset(action.updatedPicks, action.description, action.presetType);
     }
     setPendingBulkAction(null);
   };
@@ -999,7 +1100,7 @@ export const WeeklyPicks: React.FC = () => {
               title={
                 isPicksProtected
                   ? 'SUBMITTED · EDIT LOCKED (TAP TO EDIT)'
-                  : games.length > 0 && Object.keys(userPicks).filter((k) => Boolean(userPicks[k])).length >= games.length
+                  : games.length > 0 && getUniquePickedCount(games, userPicks) >= games.length
                   ? 'SUBMITTED · EDITABLE'
                   : 'DRAFT · UNSUBMITTED'
               }
@@ -1008,7 +1109,7 @@ export const WeeklyPicks: React.FC = () => {
               <span className="hidden xs:inline">
                 {isPicksProtected
                   ? 'LOCKED'
-                  : games.length > 0 && Object.keys(userPicks).filter((k) => Boolean(userPicks[k])).length >= games.length
+                  : games.length > 0 && getUniquePickedCount(games, userPicks) >= games.length
                   ? 'SUBMITTED'
                   : 'DRAFT'}
               </span>
@@ -1056,7 +1157,7 @@ export const WeeklyPicks: React.FC = () => {
       {isPicksProtected && (
         <div className="mx-4 mt-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-200 text-xs font-mono flex items-center justify-between gap-3 shadow-md">
           <div className="flex items-center gap-2">
-            <span>🛡️ Accidental-Edit Guard Active: Your {Object.keys(userPicks).filter((k) => Boolean(userPicks[k])).length || games.length} submitted picks are counted in the pool. Tap 'Unlock to Edit' to change any game whose official kickoff has not passed ({games.filter((g) => isKickoffLocked(g.kickoffTime)).length} of {games.length} kickoff-locked).</span>
+            <span>🛡️ Accidental-Edit Guard Active: Your {getUniquePickedCount(games, userPicks) || games.length} submitted picks are counted in the pool. Tap 'Unlock to Edit' to change any game whose official kickoff has not passed ({games.filter((g) => isKickoffLocked(g.kickoffTime)).length} of {games.length} kickoff-locked).</span>
           </div>
           <button
             onClick={togglePicksProtection}
@@ -1212,14 +1313,12 @@ export const WeeklyPicks: React.FC = () => {
                 selectedTeam: g.userPick,
                 isLocked: ((g as any).isKickoffConfirmed === false || (g as any).is_kickoff_confirmed === false || new Date(g.kickoffTime).getTime() <= 0) || isGameLocked(g) || isGameKickoffLocked(g),
               }))}
-              onSelectPick={(gameId, team) => {
+              onSelectPick={async (gameId, team) => {
                 const targetGame = games.find((g) => g.id === gameId);
-                if (targetGame) handlePick(targetGame, team);
-                try {
-                  if ((window as any).Capacitor?.isPluginAvailable('Haptics')) {
-                    (window as any).Capacitor.Plugins.Haptics.impact({ style: 'LIGHT' });
-                  }
-                } catch (_) {}
+                if (targetGame) {
+                  return await handlePick(targetGame, team);
+                }
+                return false;
               }}
               onClearAllPicks={handleClearAllPicks}
               isUserLocked={isPicksProtected}

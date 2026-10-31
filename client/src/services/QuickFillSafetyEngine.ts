@@ -6,7 +6,17 @@ export interface SlateGameItem {
   isLocked: boolean; // Enforces Decision #65
 }
 
-export type PresetType = 'FAVORITES' | 'UNDERDOGS' | 'HOME' | 'AWAY';
+export type PresetType =
+  | 'FAVORITES'
+  | 'UNDERDOGS'
+  | 'HOME'
+  | 'AWAY'
+  | 'ALL_HOME'
+  | 'ALL_AWAY'
+  | 'CONTRARIAN'
+  | 'MIRROR'
+  | 'CLEAR'
+  | 'CUSTOM';
 
 export class QuickFillSafetyEngine {
   private previousSnapshot: Record<string, string> = {};
@@ -18,7 +28,8 @@ export class QuickFillSafetyEngine {
   applyPreset(
     games: SlateGameItem[],
     currentPicks: Record<string, string>,
-    preset: PresetType
+    preset: PresetType | string,
+    explicitPicks?: Record<string, string | null>
   ): { updatedPicks: Record<string, string>; affectedCount: number } {
     const updated = { ...currentPicks };
     let affectedCount = 0;
@@ -26,24 +37,33 @@ export class QuickFillSafetyEngine {
     for (const g of games) {
       if (g.isLocked) continue; // Decision #65 Guard: Never touch locked games
 
-      let selection = '';
-      switch (preset) {
-        case 'FAVORITES':
-          selection = g.favorite;
-          break;
-        case 'UNDERDOGS':
-          selection = g.favorite === g.homeTeam ? g.awayTeam : g.homeTeam;
-          break;
-        case 'HOME':
-          selection = g.homeTeam;
-          break;
-        case 'AWAY':
-          selection = g.awayTeam;
-          break;
+      let selection: string | null = '';
+      if (explicitPicks && Object.prototype.hasOwnProperty.call(explicitPicks, g.gameId)) {
+        selection = explicitPicks[g.gameId];
+      } else {
+        switch (preset) {
+          case 'FAVORITES':
+            selection = g.favorite;
+            break;
+          case 'UNDERDOGS':
+            selection = g.favorite === g.homeTeam ? g.awayTeam : g.homeTeam;
+            break;
+          case 'HOME':
+          case 'ALL_HOME':
+            selection = g.homeTeam;
+            break;
+          case 'AWAY':
+          case 'ALL_AWAY':
+            selection = g.awayTeam;
+            break;
+        }
       }
 
       if (selection) {
         updated[g.gameId] = selection;
+        affectedCount++;
+      } else if (selection === null && Object.prototype.hasOwnProperty.call(updated, g.gameId)) {
+        delete updated[g.gameId];
         affectedCount++;
       }
     }
@@ -54,13 +74,14 @@ export class QuickFillSafetyEngine {
   stagePreset(
     games: SlateGameItem[],
     currentPicks: Record<string, string>,
-    preset: PresetType,
-    onCommit?: (picks: Record<string, string>) => void
+    preset: PresetType | string,
+    onCommit?: (picks: Record<string, string>) => void,
+    explicitPicks?: Record<string, string | null>
   ): { updatedPicks: Record<string, string>; affectedCount: number } {
     if (this.timer) clearTimeout(this.timer);
 
     this.previousSnapshot = { ...currentPicks };
-    const { updatedPicks, affectedCount } = this.applyPreset(games, currentPicks, preset);
+    const { updatedPicks, affectedCount } = this.applyPreset(games, currentPicks, preset, explicitPicks);
     this.stagedPicks = { ...updatedPicks };
     this.commitFn = onCommit || null;
     this.isPending = true;

@@ -80,6 +80,9 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
           }
         };
 
+        const awayIsCyan = awaySelected && (!isFinal || (!awayIsWin && !awayIsLoss));
+        const homeIsPurple = homeSelected && (!isFinal || (!homeIsWin && !homeIsLoss));
+
         return (
           <div
             key={g.gameId}
@@ -121,17 +124,23 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
                       ) : awayIsLoss ? (
                         <span className="text-xs text-rose-400 font-bold whitespace-nowrap">✘ LOSS</span>
                       ) : (
-                        <span className="ml-2">✓</span>
+                        <span className={`ml-2 font-bold ${awayIsCyan ? 'text-slate-950' : 'text-slate-100'}`}>✓</span>
                       )
                     ) : (
-                      <span className="ml-2">✓</span>
+                      <span className={`ml-2 font-bold ${awayIsCyan ? 'text-slate-950' : 'text-slate-100'}`}>✓</span>
                     )}
                   </div>
                 )}
               </div>
               <div className="flex items-center space-x-1 whitespace-nowrap mt-0.5">
-                <span className="text-xs font-bold text-slate-100 uppercase tracking-wider">AWAY</span>
-                {g.awayRecord ? <span className="text-xs font-bold opacity-70 whitespace-nowrap shrink-0">{g.awayRecord}</span> : null}
+                <span className={`text-xs uppercase tracking-wider ${awayIsCyan ? 'text-slate-950 font-black' : 'text-slate-300 font-bold'}`}>
+                  AWAY
+                </span>
+                {g.awayRecord ? (
+                  <span className={`text-xs whitespace-nowrap shrink-0 ${awayIsCyan ? 'text-slate-950 font-bold' : 'text-slate-300 opacity-70'}`}>
+                    {g.awayRecord}
+                  </span>
+                ) : null}
               </div>
             </button>
 
@@ -189,8 +198,8 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
                       ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300 shadow-md shadow-emerald-500/20 ring-1 ring-emerald-500/50'
                       : homeIsLoss
                       ? 'bg-rose-950/80 border-rose-500 text-rose-300 shadow-md shadow-rose-500/20 ring-1 ring-rose-500/50'
-                      : 'bg-indigo-500 border-indigo-400 text-white shadow-md shadow-indigo-500/20 ring-1 ring-indigo-400'
-                    : 'bg-indigo-500 border-indigo-400 text-white shadow-md shadow-indigo-500/20 ring-1 ring-indigo-400'
+                      : 'bg-purple-600 border-purple-500 text-white shadow-md shadow-purple-500/20 ring-1 ring-purple-400'
+                    : 'bg-purple-600 border-purple-500 text-white shadow-md shadow-purple-500/20 ring-1 ring-purple-400'
                   : 'bg-slate-950/80 border-slate-800 text-white'
               } ${
                 g.isLocked
@@ -213,17 +222,23 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
                       ) : homeIsLoss ? (
                         <span className="text-xs text-rose-400 font-bold whitespace-nowrap">✘ LOSS</span>
                       ) : (
-                        <span className="ml-2">✓</span>
+                        <span className="ml-2 font-bold text-white">✓</span>
                       )
                     ) : (
-                      <span className="ml-2">✓</span>
+                      <span className="ml-2 font-bold text-white">✓</span>
                     )}
                   </div>
                 )}
               </div>
               <div className="flex items-center space-x-1 whitespace-nowrap mt-0.5">
-                <span className="text-xs font-bold text-slate-100 uppercase tracking-wider">HOME</span>
-                {g.homeRecord ? <span className="text-xs font-bold opacity-70 whitespace-nowrap shrink-0">{g.homeRecord}</span> : null}
+                <span className={`text-xs uppercase tracking-wider ${homeIsPurple ? 'text-white font-bold' : 'text-slate-300 font-bold'}`}>
+                  HOME
+                </span>
+                {g.homeRecord ? (
+                  <span className={`text-xs whitespace-nowrap shrink-0 ${homeIsPurple ? 'text-purple-200 font-bold' : 'text-slate-300 opacity-70'}`}>
+                    {g.homeRecord}
+                  </span>
+                ) : null}
               </div>
             </button>
           </div>

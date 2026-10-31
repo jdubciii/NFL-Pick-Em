@@ -68,7 +68,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const authUser: User = {
             id: currentSession.user.id,
             email: currentSession.user.email || '',
-            role: (currentSession.user.user_metadata?.role as 'ADMIN' | 'USER') || 'USER'
+            role: (currentSession.user.app_metadata?.role as 'ADMIN' | 'USER') || 'USER'
           };
           setUser(authUser);
           setToken(currentSession.access_token);
@@ -92,7 +92,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const authUser: User = {
           id: newSession.user.id,
           email: newSession.user.email || '',
-          role: (newSession.user.user_metadata?.role as 'ADMIN' | 'USER') || 'USER'
+          role: (newSession.user.app_metadata?.role as 'ADMIN' | 'USER') || 'USER'
         };
         setUser(authUser);
         setToken(newSession.access_token);

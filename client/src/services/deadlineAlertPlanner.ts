@@ -174,6 +174,7 @@ export function planDeadlineReminders(params: {
 
     const koDate = new Date(kickoffIso);
     const koTimeFormatted = koDate.toLocaleTimeString('en-US', {
+      timeZone: 'America/Phoenix',
       hour: 'numeric',
       minute: '2-digit',
       timeZoneName: 'short',

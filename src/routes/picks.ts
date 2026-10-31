@@ -216,9 +216,10 @@ export async function savePickAtomically(
     gameId: string;
     week: number;
     selectedTeamId: string | null;
+    externalGameId?: string | null;
   }
 ): Promise<SavedPickRecord> {
-  const { poolId, userId, gameId, week, selectedTeamId } = params;
+  const { poolId, userId, gameId, week, selectedTeamId, externalGameId } = params;
 
   if (week == null || isNaN(week) || week < 1 || week > 18) {
     throw new Error(`INVALID_PICK_WEEK: Authoritative week ${week} is invalid or outside season bounds (1-18).`);
@@ -230,6 +231,33 @@ export async function savePickAtomically(
   }
 
   if (typeof db.$queryRawUnsafe === 'function') {
+    // Identity resolution across UUID and external ESPN ID when an alias is present
+    if (externalGameId && String(externalGameId) !== String(gameId)) {
+      try {
+        const dupCheckSql = `
+          SELECT id, game_id FROM public.picks
+          WHERE pool_id = $1::uuid AND user_id = $2::uuid AND week = $3::int AND game_id IN ($4::text, $5::text)
+        `;
+        const dupRows = await db.$queryRawUnsafe(dupCheckSql, poolId, userId, week, String(gameId), String(externalGameId));
+        if (dupRows && dupRows.length > 1) {
+          console.warn(
+            `DUPLICATE_PICKS_DETECTED: Found duplicate picks for game ${gameId} and ${externalGameId}. Consolidating to canonical UUID.`
+          );
+          const extraIds = dupRows.filter((r: any) => String(r.game_id) === String(externalGameId)).map((r: any) => r.id);
+          if (extraIds.length > 0) {
+            await db.$queryRawUnsafe(`DELETE FROM public.picks WHERE id = ANY($1::uuid[])`, extraIds);
+          }
+        } else if (dupRows && dupRows.length === 1 && String(dupRows[0].game_id) === String(externalGameId)) {
+          // Convert existing externalGameId row to canonical gameId so the upsert updates the existing row in place
+          await db.$queryRawUnsafe(
+            `UPDATE public.picks SET game_id = $1::text WHERE id = $2::uuid`,
+            String(gameId),
+            dupRows[0].id
+          );
+        }
+      } catch (_) {}
+    }
+
     const upsertSql = `
       INSERT INTO public.picks (
         id, pool_id, user_id, week, game_id, selected_team_id, submitted_by, created_at
@@ -405,6 +433,7 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
       gameId: String(game.id),
       week: targetWeek,
       selectedTeamId: normSelected,
+      externalGameId: game.externalGameId ? String(game.externalGameId) : null,
     });
 
     res.status(200).json({
@@ -521,6 +550,7 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
         gameId: String(game.id),
         week: targetWeek,
         selectedTeamId: normSelected,
+        externalGameId: game.externalGameId ? String(game.externalGameId) : null,
       });
 
       savedPicks.push(savedPick);

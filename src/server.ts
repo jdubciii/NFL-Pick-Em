@@ -1143,13 +1143,27 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
       }
     }
 
-    const gameIds = games.map((g: any) => g.id);
+    // Collect all valid IDs for each game (both DB UUID and externalGameId)
+    const allGameIds = new Set<string>();
+    const gameAliasToUuid = new Map<string, string>();
+    for (const g of games) {
+      if (g.id) {
+        const idStr = String(g.id);
+        allGameIds.add(idStr);
+        gameAliasToUuid.set(idStr, idStr);
+      }
+      if (g.externalGameId) {
+        const extStr = String(g.externalGameId);
+        allGameIds.add(extStr);
+        if (g.id) gameAliasToUuid.set(extStr, String(g.id));
+      }
+    }
 
     // 3. Fetch all picks for this pool and these games, including finalized results
     const picks = await db.pick.findMany({
       where: {
         poolId: pool.id,
-        gameId: { in: gameIds },
+        gameId: { in: Array.from(allGameIds) },
       },
       include: {
         result: true,
@@ -1199,6 +1213,9 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
     // 7. Build 2D cells map: game_id -> user_id -> MatrixPickCell
     const pickLookup = new Map<string, any>();
     for (const pick of picks) {
+      const canonicalGameId = gameAliasToUuid.get(String(pick.gameId)) || String(pick.gameId);
+      // Index by canonical UUID and by stored gameId
+      pickLookup.set(`${canonicalGameId}_${pick.userId}`, pick);
       pickLookup.set(`${pick.gameId}_${pick.userId}`, pick);
     }
 
@@ -1207,7 +1224,9 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
       cells[game.id] = {};
       for (const membership of pool.memberships) {
         const userId = membership.userId;
-        const pick = pickLookup.get(`${game.id}_${userId}`);
+        const pick =
+          pickLookup.get(`${game.id}_${userId}`) ||
+          (game.externalGameId ? pickLookup.get(`${game.externalGameId}_${userId}`) : null);
 
         if (pick) {
           cells[game.id][userId] = {

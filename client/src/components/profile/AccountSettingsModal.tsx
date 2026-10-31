@@ -10,7 +10,7 @@ interface PendingApplicant {
 
 export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
   const { user, signOut } = useAuth();
-  const [isAdmin, setIsAdmin] = useState(() => user?.role === 'ADMIN' || user?.email === 'jack.w.cone@gmail.com');
+  const [isAdmin, setIsAdmin] = useState(() => user?.role === 'ADMIN');
   const [pendingMembers, setPendingMembers] = useState<PendingApplicant[]>([]);
   const [pendingCount, setPendingCount] = useState<number>(0);
   const [adjudicatingId, setAdjudicatingId] = useState<string | null>(null);
@@ -27,7 +27,7 @@ export const AccountSettingsModal: React.FC<{ isOpen: boolean; onClose: () => vo
       .eq('id', user?.id)
       .maybeSingle();
 
-    const adminRole = userData?.role === 'ADMIN' || user?.role === 'ADMIN' || user?.email === 'jack.w.cone@gmail.com';
+    const adminRole = userData?.role === 'ADMIN' || user?.role === 'ADMIN';
     setIsAdmin(adminRole);
 
     if (adminRole) {

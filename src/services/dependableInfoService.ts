@@ -941,7 +941,7 @@ export function formatCanonicalKickoffDisplay(isoString: string): string {
   const d = new Date(isoString);
   if (isNaN(d.getTime())) return 'Unavailable';
   const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Los_Angeles',
+    timeZone: 'America/Phoenix',
     weekday: 'short',
     hour: 'numeric',
     minute: '2-digit',

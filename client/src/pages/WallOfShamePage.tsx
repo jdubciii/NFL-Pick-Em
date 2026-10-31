@@ -279,7 +279,13 @@ export function WallOfShamePage({
               });
             });
 
-          if (hasValidMetadata && hasValidRows && hasAllMemberColumns && hasAllValidCells) {
+          // Require that cells are not entirely null; all-null matrix falls through to authoritative fallback
+          const hasAnyPick = matrix.rows.some((row: any) => {
+            const gCells = matrix.cells[row.game_id] || (row.external_game_id ? matrix.cells[row.external_game_id] : undefined);
+            return members.some((m: any) => Boolean(gCells?.[m.user_id]?.selected_team_id));
+          });
+
+          if (hasValidMetadata && hasValidRows && hasAllMemberColumns && hasAllValidCells && hasAnyPick) {
             isMatrixComplete = true;
             gamesList = matrix.rows.map((row: any) => ({
               id: String(row.game_id),
@@ -292,7 +298,9 @@ export function WallOfShamePage({
 
             for (const row of matrix.rows) {
               const gId = String(row.game_id);
-              const gCells = matrix.cells[gId];
+              const extId = row.external_game_id ? String(row.external_game_id) : null;
+              const gCells = matrix.cells[gId] || (extId ? matrix.cells[extId] : undefined);
+              if (!gCells) continue;
               for (const m of members) {
                 const cell = gCells[m.user_id];
                 if (cell && cell.selected_team_id) {

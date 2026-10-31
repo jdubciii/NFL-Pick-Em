@@ -41,7 +41,7 @@ interface ToastState {
 
 interface SwipePickDeckProps {
   matchups: SwipeMatchup[];
-  onSelectPick: (gameId: string, team: string) => void;
+  onSelectPick: (gameId: string, team: string) => Promise<boolean | void> | boolean | void;
   onClearAllPicks?: () => void;
   isUserLocked?: boolean;
   isPicksProtected?: boolean;
@@ -104,10 +104,27 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
       } else if (isPicksProtected) {
         triggerToast('Picks are protected against accidental edits. Tap PICKS PROTECTED at the top to unlock.', 'SKIP');
       } else {
-        if (activeCard.selectedTeam !== activeCard.awayTeam) {
-          onSelectPick(activeCard.gameId, activeCard.awayTeam);
+        const team = activeCard.awayTeam;
+        if (activeCard.selectedTeam !== team) {
+          const res = onSelectPick(activeCard.gameId, team);
+          if (res && typeof (res as any).then === 'function') {
+            (res as Promise<any>).then((success) => {
+              if (success === false) {
+                triggerToast('Save failed — tap to retry', 'SKIP');
+              } else {
+                triggerToast(`Picked ${team}`, 'AWAY', team);
+              }
+            }).catch(() => {
+              triggerToast('Save failed — tap to retry', 'SKIP');
+            });
+          } else if (res === false) {
+            triggerToast('Save failed — tap to retry', 'SKIP');
+          } else {
+            triggerToast(`Picked ${team}`, 'AWAY', team);
+          }
+        } else {
+          triggerToast(`Picked ${team}`, 'AWAY', team);
         }
-        triggerToast(`Picked ${activeCard.awayTeam}`, 'AWAY', activeCard.awayTeam);
       }
       // Clamp navigation to totalGames - 1 (never bleed into next week)
       setCurrentIndex(prev => Math.min(prev + 1, totalGames - 1));
@@ -117,10 +134,27 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
       } else if (isPicksProtected) {
         triggerToast('Picks are protected against accidental edits. Tap PICKS PROTECTED at the top to unlock.', 'SKIP');
       } else {
-        if (activeCard.selectedTeam !== activeCard.homeTeam) {
-          onSelectPick(activeCard.gameId, activeCard.homeTeam);
+        const team = activeCard.homeTeam;
+        if (activeCard.selectedTeam !== team) {
+          const res = onSelectPick(activeCard.gameId, team);
+          if (res && typeof (res as any).then === 'function') {
+            (res as Promise<any>).then((success) => {
+              if (success === false) {
+                triggerToast('Save failed — tap to retry', 'SKIP');
+              } else {
+                triggerToast(`Picked ${team}`, 'HOME', team);
+              }
+            }).catch(() => {
+              triggerToast('Save failed — tap to retry', 'SKIP');
+            });
+          } else if (res === false) {
+            triggerToast('Save failed — tap to retry', 'SKIP');
+          } else {
+            triggerToast(`Picked ${team}`, 'HOME', team);
+          }
+        } else {
+          triggerToast(`Picked ${team}`, 'HOME', team);
         }
-        triggerToast(`Picked ${activeCard.homeTeam}`, 'HOME', activeCard.homeTeam);
       }
       // Clamp navigation to totalGames - 1 (never bleed into next week)
       setCurrentIndex(prev => Math.min(prev + 1, totalGames - 1));

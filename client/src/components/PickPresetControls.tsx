@@ -31,7 +31,7 @@ export interface MatrixCellData {
 export interface PickPresetControlsProps {
   games: GameItem[];
   isGameLocked: (game: GameItem) => boolean;
-  onApplyPreset: (updatedPicks: Record<string, string | null>, presetName: string) => void;
+  onApplyPreset: (updatedPicks: Record<string, string | null>, presetName: string, presetType?: PresetType) => void;
   matrixCells?: Record<string, Record<string, MatrixCellData>>;
   matrixMembers?: MatrixMemberOption[];
   hidePicksUntilKickoff?: boolean;
@@ -74,7 +74,7 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
     }
 
     setActivePreset('ALL_HOME');
-    onApplyPreset(newPicks, `Applied 'All Home' preset across ${affectedCount} unlocked games`);
+    onApplyPreset(newPicks, `Applied 'All Home' preset across ${affectedCount} unlocked games`, 'ALL_HOME');
   };
 
   /**
@@ -94,7 +94,7 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
     }
 
     setActivePreset('ALL_AWAY');
-    onApplyPreset(newPicks, `Applied 'All Away' preset across ${affectedCount} unlocked games`);
+    onApplyPreset(newPicks, `Applied 'All Away' preset across ${affectedCount} unlocked games`, 'ALL_AWAY');
   };
 
   /**
@@ -125,7 +125,7 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
     }
 
     setActivePreset('FAVORITES');
-    onApplyPreset(newPicks, `Applied 'Favorites' preset across ${affectedCount} unlocked games`);
+    onApplyPreset(newPicks, `Applied 'Favorites' preset across ${affectedCount} unlocked games`, 'FAVORITES');
   };
 
   /**
@@ -164,7 +164,7 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
     }
 
     setActivePreset('CONTRARIAN');
-    onApplyPreset(newPicks, `Applied 'Contrarian' preset across ${affectedCount} unlocked games (Faded the league consensus)`);
+    onApplyPreset(newPicks, `Applied 'Contrarian' preset across ${affectedCount} unlocked games (Faded the league consensus)`, 'CONTRARIAN');
   };
 
   /**
@@ -197,7 +197,7 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
     }
 
     setActivePreset('MIRROR');
-    onApplyPreset(newPicks, `Cloned picks from ${rivalLabel} across ${affectedCount} unlocked games`);
+    onApplyPreset(newPicks, `Cloned picks from ${rivalLabel} across ${affectedCount} unlocked games`, 'MIRROR');
   };
 
   /**
@@ -216,7 +216,7 @@ export const PickPresetControls: React.FC<PickPresetControlsProps> = ({
     }
 
     setActivePreset('CLEAR');
-    onApplyPreset(newPicks, `Cleared picks for ${affectedCount} unlocked games`);
+    onApplyPreset(newPicks, `Cleared picks for ${affectedCount} unlocked games`, 'CLEAR');
   };
 
   return (
