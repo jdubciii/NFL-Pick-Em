@@ -233,29 +233,26 @@ export async function savePickAtomically(
   if (typeof db.$queryRawUnsafe === 'function') {
     // Identity resolution across UUID and external ESPN ID when an alias is present
     if (externalGameId && String(externalGameId) !== String(gameId)) {
-      try {
-        const dupCheckSql = `
-          SELECT id, game_id FROM public.picks
-          WHERE pool_id = $1::uuid AND user_id = $2::uuid AND week = $3::int AND game_id IN ($4::text, $5::text)
-        `;
-        const dupRows = await db.$queryRawUnsafe(dupCheckSql, poolId, userId, week, String(gameId), String(externalGameId));
-        if (dupRows && dupRows.length > 1) {
-          console.warn(
-            `DUPLICATE_PICKS_DETECTED: Found duplicate picks for game ${gameId} and ${externalGameId}. Consolidating to canonical UUID.`
-          );
-          const extraIds = dupRows.filter((r: any) => String(r.game_id) === String(externalGameId)).map((r: any) => r.id);
-          if (extraIds.length > 0) {
-            await db.$queryRawUnsafe(`DELETE FROM public.picks WHERE id = ANY($1::uuid[])`, extraIds);
-          }
-        } else if (dupRows && dupRows.length === 1 && String(dupRows[0].game_id) === String(externalGameId)) {
-          // Convert existing externalGameId row to canonical gameId so the upsert updates the existing row in place
-          await db.$queryRawUnsafe(
-            `UPDATE public.picks SET game_id = $1::text WHERE id = $2::uuid`,
-            String(gameId),
-            dupRows[0].id
-          );
-        }
-      } catch (_) {}
+      const dupCheckSql = `
+        SELECT id, game_id FROM public.picks
+        WHERE pool_id = $1::uuid AND user_id = $2::uuid AND week = $3::int AND game_id IN ($4::text, $5::text)
+      `;
+      const dupRows = await db.$queryRawUnsafe(dupCheckSql, poolId, userId, week, String(gameId), String(externalGameId));
+      if (dupRows && dupRows.length > 1) {
+        console.error(
+          `DUPLICATE_PICKS_DETECTED: Conflicting alias rows exist for game ${gameId} and external ID ${externalGameId}. Deletes forbidden.`
+        );
+        throw new Error(
+          `DUPLICATE_PICKS_DETECTED: Duplicate picks detected for game ${gameId} and alias ${externalGameId}. Rows preserved; manual resolution required.`
+        );
+      } else if (dupRows && dupRows.length === 1 && String(dupRows[0].game_id) === String(externalGameId)) {
+        // Convert existing externalGameId row to canonical gameId so the upsert updates the existing row in place
+        await db.$queryRawUnsafe(
+          `UPDATE public.picks SET game_id = $1::text WHERE id = $2::uuid`,
+          String(gameId),
+          dupRows[0].id
+        );
+      }
     }
 
     const upsertSql = `

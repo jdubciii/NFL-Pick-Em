@@ -570,13 +570,23 @@ export const WeeklyPicks: React.FC = () => {
     let saveSuccess = false;
     let saveError: any = null;
 
-    // Single mutation contract: Primary via Express backend when authenticated with token
-    if (token) {
+    // Single mutation contract: Canonical backend mutation
+    let activeToken = token;
+    if (!activeToken) {
+      try {
+        activeToken = (await supabase.auth.getSession()).data.session?.access_token || null;
+      } catch (_) {}
+    }
+
+    if (!activeToken) {
+      saveError = new Error('Authentication required to save pick.');
+    } else {
       try {
         const res = await scopedExpressFetch('/api/picks', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            Authorization: `Bearer ${activeToken}`,
           },
           body: JSON.stringify({
             pool_id: pool.id,
@@ -591,58 +601,8 @@ export const WeeklyPicks: React.FC = () => {
           const errData = await res.json().catch(() => ({}));
           saveError = new Error(errData.error || `Server error (${res.status})`);
         }
-      } catch (err) {
+      } catch (err: any) {
         saveError = err;
-      }
-    } else if (user?.id) {
-      // Fallback via Supabase direct when no backend proxy token is active
-      try {
-        if (teamToSend) {
-          const { error: sbErr } = await supabase.from('picks').upsert({
-            pool_id: activePoolId,
-            user_id: user.id,
-            week: selectedWeek,
-            game_id: String(game.id),
-            selected_team: teamToSend,
-            updated_at: new Date().toISOString()
-          }, {
-            onConflict: 'pool_id,user_id,week,game_id'
-          });
-          if (sbErr) {
-            saveError = sbErr;
-          } else {
-            saveSuccess = true;
-            // Clean up any legacy external id row if present
-            if (ext && ext !== String(game.id)) {
-              await supabase.from('picks').delete().match({
-                pool_id: activePoolId,
-                user_id: user.id,
-                week: selectedWeek,
-                game_id: ext,
-              });
-            }
-          }
-        } else {
-          // Deleting: remove both UUID and external id rows so no orphan remains
-          const { error: sbErr } = await supabase.from('picks').delete().match({
-            pool_id: activePoolId,
-            user_id: user.id,
-            week: selectedWeek,
-            game_id: String(game.id),
-          });
-          if (ext && ext !== String(game.id)) {
-            await supabase.from('picks').delete().match({
-              pool_id: activePoolId,
-              user_id: user.id,
-              week: selectedWeek,
-              game_id: ext,
-            });
-          }
-          if (sbErr) saveError = sbErr;
-          else saveSuccess = true;
-        }
-      } catch (sbErr) {
-        saveError = sbErr;
       }
     }
 
@@ -686,56 +646,66 @@ export const WeeklyPicks: React.FC = () => {
     const unlockedPickedGames = games.filter((g) => !isGameLocked(g) && !isGameKickoffLocked(g) && g.userPick);
     if (unlockedPickedGames.length === 0) return;
 
+    const prevUserPicks = { ...userPicks };
+    const prevGames = [...games];
+
     // Optimistically clear picks in local state
     const updatedUserPicks = { ...userPicks };
-    unlockedPickedGames.forEach((g) => delete updatedUserPicks[g.id]);
+    unlockedPickedGames.forEach((g) => {
+      delete updatedUserPicks[g.id];
+      const ext = String((g as any).externalGameId || (g as any).external_game_id || '');
+      if (ext) delete updatedUserPicks[ext];
+    });
     setUserPicks(updatedUserPicks);
 
     setGames((prev) =>
       prev.map((g) => (!isGameLocked(g) && !isGameKickoffLocked(g) ? { ...g, userPick: null } : g))
     );
 
-    // Clear in localStorage
-    try {
-      localStorage.setItem(userPicksCacheKey, JSON.stringify(updatedUserPicks));
-    } catch (e) {
-      console.warn('localStorage clear warning:', e);
+    let activeToken = token;
+    if (!activeToken) {
+      try {
+        activeToken = (await supabase.auth.getSession()).data.session?.access_token || null;
+      } catch (_) {}
     }
 
-    // Clear in Supabase
-    try {
-      await Promise.all(
-        unlockedPickedGames.map((game) =>
-          supabase.from('picks').delete().match({
-            pool_id: activePoolId,
-            user_id: user.id,
-            game_id: String(game.id),
-            week: selectedWeek,
-          })
-        )
-      );
-    } catch (sbErr) {
-      console.warn('Supabase clear warning:', sbErr);
-    }
-
-    // Backend proxy if configured
-    if (token) {
-      Promise.all(
-        unlockedPickedGames.map((game) =>
-          scopedExpressFetch('/api/picks', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              pool_id: pool.id,
-              game_id: game.id,
-              selected_team_id: null,
-              week: selectedWeek,
-            }),
-          })
-        )
-      ).catch((err) => console.warn('Backend clear warning:', err));
+    if (activeToken && pool?.id) {
+      try {
+        const batchPayload = unlockedPickedGames.map((game) => ({
+          game_id: game.id,
+          selected_team_id: null,
+          week: selectedWeek,
+        }));
+        const res = await scopedExpressFetch('/api/picks/batch', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${activeToken}`,
+          },
+          body: JSON.stringify({
+            pool_id: pool.id,
+            picks: batchPayload,
+          }),
+        });
+        if (!res.ok) {
+          throw new Error(`Clear picks failed: server status ${res.status}`);
+        }
+        try {
+          localStorage.setItem(userPicksCacheKey, JSON.stringify(updatedUserPicks));
+        } catch (e) {
+          console.warn('localStorage clear warning:', e);
+        }
+        triggerHaptic('impactMedium');
+      } catch (err: any) {
+        // Rollback on clear failure
+        setUserPicks(prevUserPicks);
+        setGames(prevGames);
+        setFeedbackMessage({
+          text: `Failed to clear picks: ${err.message || 'Network error'}. Picks restored.`,
+          type: 'error',
+        });
+        setTimeout(() => setFeedbackMessage(null), 3500);
+      }
     }
 
     triggerHaptic('impactMedium');
@@ -836,72 +806,120 @@ export const WeeklyPicks: React.FC = () => {
             console.warn('localStorage preset save warning:', e);
           }
 
-          // Persist to Supabase
-          if (user?.id) {
+          const entries = Object.entries(confirmedEditablePicks);
+          const batchPayload = entries.map(([gameId, selectedTeamId]) => ({
+            game_id: gameId,
+            selected_team_id: selectedTeamId,
+            week: selectedWeek,
+          }));
+
+          if (batchPayload.length === 0) return;
+
+          let activeToken = token;
+          if (!activeToken) {
             try {
-              const upsertRows = Object.entries(confirmedEditablePicks).map(([gameId, selectedTeamId]) => ({
-                pool_id: activePoolId,
-                user_id: user.id,
-                week: selectedWeek,
-                game_id: String(gameId),
-                selected_team: selectedTeamId,
-                updated_at: new Date().toISOString(),
-              }));
-              if (upsertRows.length > 0) {
-                await supabase.from('picks').upsert(upsertRows, { onConflict: 'pool_id,user_id,week,game_id' });
-              }
-            } catch (sbErr) {
-              console.warn('Supabase preset save warning:', sbErr);
-            }
+              activeToken = (await supabase.auth.getSession()).data.session?.access_token || null;
+            } catch (_) {}
           }
 
-          // Backend proxy if configured
-          if (token) {
-            const entries = Object.entries(confirmedEditablePicks);
-            const batchPayload = entries.map(([gameId, selectedTeamId]) => ({
-              game_id: gameId,
-              selected_team_id: selectedTeamId,
-            }));
-
-            if (batchPayload.length > 0) {
-              try {
-                const batchRes = await scopedExpressFetch('/api/picks/batch', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({
-                    pool_id: pool.id,
-                    picks: batchPayload,
-                  }),
-                });
-
-                if (!batchRes.ok) {
-                  await Promise.all(
-                    entries.map(([gameId, selectedTeamId]) =>
-                      scopedExpressFetch('/api/picks', {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                          pool_id: pool.id,
-                          game_id: gameId,
-                          selected_team_id: selectedTeamId,
-                        }),
-                      })
-                    )
-                  );
-                }
-              } catch (proxyErr) {
-                console.warn('Backend proxy batch warning:', proxyErr);
-              }
-            }
+          if (!activeToken || !pool?.id) {
+            throw new Error('Authentication required to persist preset.');
           }
 
-          triggerHaptic('selection');
+          let saveSuccess = false;
+          let saveError: any = null;
+
+          try {
+            const batchRes = await scopedExpressFetch('/api/picks/batch', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${activeToken}`,
+              },
+              body: JSON.stringify({
+                pool_id: pool.id,
+                picks: batchPayload,
+              }),
+            });
+
+            if (batchRes.ok) {
+              saveSuccess = true;
+            } else {
+              // Try individual saves if batch route rejected
+              const singleResults = await Promise.allSettled(
+                batchPayload.map((p) =>
+                  scopedExpressFetch('/api/picks', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      Authorization: `Bearer ${activeToken}`,
+                    },
+                    body: JSON.stringify({
+                      pool_id: pool.id,
+                      game_id: p.game_id,
+                      selected_team_id: p.selected_team_id,
+                      week: selectedWeek,
+                    }),
+                  })
+                )
+              );
+              const anyOk = singleResults.some((r) => r.status === 'fulfilled' && r.value.ok);
+              if (anyOk) {
+                saveSuccess = true;
+              } else {
+                const errData = await batchRes.json().catch(() => ({}));
+                saveError = new Error(errData.error || `Server error (${batchRes.status})`);
+              }
+            }
+          } catch (netErr: any) {
+            saveError = netErr;
+          }
+
+          if (saveSuccess) {
+            try {
+              const savedMap = JSON.parse(localStorage.getItem(userPicksCacheKey) || '{}');
+              Object.assign(savedMap, confirmedEditablePicks);
+              setUserPicks((prev) => ({ ...prev, ...confirmedEditablePicks }));
+              localStorage.setItem(userPicksCacheKey, JSON.stringify(savedMap));
+            } catch (e) {
+              console.warn('localStorage preset save warning:', e);
+            }
+            triggerHaptic('selection');
+          } else {
+            // Revert optimistic preset state and notify user
+            setUserPicks(currentPicksMap);
+            setGames((prev) =>
+              prev.map((g) => ({
+                ...g,
+                userPick: currentPicksMap[g.id] ?? null,
+              }))
+            );
+            try {
+              localStorage.setItem(userPicksCacheKey, JSON.stringify(currentPicksMap));
+            } catch (_) {}
+            setFeedbackMessage({
+              text: `Failed to save preset: ${saveError?.message || 'Server error'}. Selections reverted.`,
+              type: 'error',
+            });
+            setTimeout(() => setFeedbackMessage(null), 4000);
+          }
         } catch (err: any) {
           console.error('Error auto-saving preset:', err);
+          setUserPicks(currentPicksMap);
+          setGames((prev) =>
+            prev.map((g) => ({
+              ...g,
+              userPick: currentPicksMap[g.id] ?? null,
+            }))
+          );
+          try {
+            localStorage.setItem(userPicksCacheKey, JSON.stringify(currentPicksMap));
+          } catch (_) {}
+          setFeedbackMessage({
+            text: `Failed to save preset: ${err?.message || 'Error'}. Selections reverted.`,
+            type: 'error',
+          });
+          setTimeout(() => setFeedbackMessage(null), 4000);
         }
       },
       updatedPicks
@@ -990,15 +1008,30 @@ export const WeeklyPicks: React.FC = () => {
 
     try {
       if (gamesToRestore.length > 0) {
-        const rows = gamesToRestore.map((item) => ({
-          pool_id: activePoolId,
-          user_id: user.id,
-          week: selectedWeek,
-          game_id: item.gameId,
-          selected_team: item.team,
-          updated_at: new Date().toISOString(),
-        }));
-        await supabase.from('picks').upsert(rows, { onConflict: 'pool_id,user_id,week,game_id' });
+        let activeToken = token;
+        if (!activeToken) {
+          try {
+            activeToken = (await supabase.auth.getSession()).data.session?.access_token || null;
+          } catch (_) {}
+        }
+        if (activeToken && pool?.id) {
+          const batchPayload = gamesToRestore.map((item) => ({
+            game_id: item.gameId,
+            selected_team_id: item.team,
+            week: selectedWeek,
+          }));
+          await scopedExpressFetch('/api/picks/batch', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${activeToken}`,
+            },
+            body: JSON.stringify({
+              pool_id: pool.id,
+              picks: batchPayload,
+            }),
+          });
+        }
       }
     } catch (err) {
       console.warn('Undo bulk restore warning:', err);

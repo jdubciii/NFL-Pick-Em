@@ -103,9 +103,9 @@ describe('Bundle 1 — Eight P0 Fixes Verification Suite', () => {
       expect(countUniquePickedGames(games, inflatedUserPicks)).toBe(2);
     });
 
-    it('savePickAtomically resolves external ESPN ID to existing row and consolidates duplicates', async () => {
+    it('savePickAtomically surfaces explicit error and preserves rows on duplicate logical picks (never deletes)', async () => {
       const mockDb = {
-        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ..._params: any[]) => {
           if (sql.includes('SELECT id, game_id FROM public.picks')) {
             // Simulate 2 duplicate rows found (one with canonical UUID, one with ESPN ID)
             return [
@@ -114,7 +114,37 @@ describe('Bundle 1 — Eight P0 Fixes Verification Suite', () => {
             ];
           }
           if (sql.includes('DELETE FROM public.picks')) {
-            return [];
+            throw new Error('VIOLATION: DELETE FROM public.picks must never be called');
+          }
+          return [];
+        }),
+      };
+
+      await expect(
+        savePickAtomically(mockDb, {
+          poolId: 'pool-uuid-1',
+          userId: 'user-uuid-1',
+          gameId: 'c032a900-1111-2222-3333-444455556666',
+          externalGameId: '401671800',
+          week: 8,
+          selectedTeamId: 'DEN',
+        })
+      ).rejects.toThrow(/DUPLICATE_PICKS_DETECTED/);
+
+      // Verify no DELETE query was called
+      const queries = mockDb.$queryRawUnsafe.mock.calls.map((c: any[]) => c[0]);
+      expect(queries.some((q: string) => q.includes('DELETE FROM public.picks'))).toBe(false);
+    });
+
+    it('savePickAtomically resolves single external ESPN ID row to canonical UUID via UPDATE (preserves rows)', async () => {
+      const mockDb = {
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
+          if (sql.includes('SELECT id, game_id FROM public.picks')) {
+            // Only legacy ESPN ID row exists
+            return [{ id: 'row-uuid-2', game_id: '401671800' }];
+          }
+          if (sql.includes('DELETE FROM public.picks')) {
+            throw new Error('VIOLATION: DELETE FROM public.picks must never be called');
           }
           if (sql.includes('UPDATE public.picks SET game_id')) {
             return [];
@@ -122,7 +152,7 @@ describe('Bundle 1 — Eight P0 Fixes Verification Suite', () => {
           if (sql.includes('INSERT INTO public.picks')) {
             return [
               {
-                id: 'row-uuid-1',
+                id: 'row-uuid-2',
                 pool_id: params[0],
                 user_id: params[1],
                 week: params[2],
@@ -148,9 +178,10 @@ describe('Bundle 1 — Eight P0 Fixes Verification Suite', () => {
 
       expect(result.gameId).toBe('c032a900-1111-2222-3333-444455556666');
       expect(result.selectedTeamId).toBe('DEN');
-      // Assert duplicate check query was executed
+
       const queries = mockDb.$queryRawUnsafe.mock.calls.map((c: any[]) => c[0]);
-      expect(queries.some((q: string) => q.includes('SELECT id, game_id FROM public.picks'))).toBe(true);
+      expect(queries.some((q: string) => q.includes('UPDATE public.picks SET game_id'))).toBe(true);
+      expect(queries.some((q: string) => q.includes('DELETE FROM public.picks'))).toBe(false);
     });
   });
 
