@@ -9,7 +9,7 @@ import { Role, Status } from '@prisma/client';
 import prisma from './db/client';
 import { JWT_SECRET, UUID_REGEX, requireAuth, requireAdmin, requirePoolCommissioner, requirePoolMember } from './middleware/auth';
 import { picksRouter } from './routes/picks';
-import { adminRouter } from './routes/admin';
+import { adminRouter, poolAdminRouter } from './routes/admin';
 import { meRouter } from './routes/me';
 import { notificationsRouter } from './routes/notifications';
 import { opsRouter } from './routes/ops';
@@ -55,6 +55,18 @@ app.post(['/api/picks', '/api/picks/batch'], (_req, res) => {
     code: 'ENDPOINT_RETIRED',
   });
 });
+
+// Retire legacy unscoped admin pick and pool routes with state-free 410 (HAG6-AUTHORITY-2026-10-31-01)
+app.use(
+  ['/api/admin/picks', '/api/admin/pools'],
+  (_req: Request, res: Response): void => {
+    res.status(410).json({
+      error: 'ENDPOINT_RETIRED: Legacy unscoped admin pick and pool endpoints have been retired. Use canonical pool-scoped routes under /api/pools/:pool_id/* (Invariant #20).',
+      code: 'ENDPOINT_RETIRED',
+      retired: true,
+    });
+  }
+);
 app.use('/api/picks', picksRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/admin/ops', adminOpsRouter);
@@ -64,6 +76,7 @@ app.use('/api/webhooks', webhooksRouter);
 app.use('/api/pools', opsRouter);
 app.use('/api/pools', poolSocialRouter);
 app.use('/api/pools', poolTiebreakerRouter);
+app.use('/api/pools', poolAdminRouter);
 app.use('/api/pools/:pool_id/shot-cam', shotCamRouter);
 app.use('/api/shot-cam', shotCamRouter);
 app.use('/api/pools/:pool_id/shame', shotCamRouter);

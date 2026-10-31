@@ -94,7 +94,7 @@ export const AdminDashboard: React.FC = () => {
     if (!currentPoolId) return;
     setLoadingPicks(true);
     try {
-      const res = await scopedExpressFetch(`/api/admin/picks?user_id=${userId}&pool_id=${currentPoolId}`);
+      const res = await scopedExpressFetch(`/api/pools/${currentPoolId}/admin/picks?user_id=${userId}`);
       if (!res.ok) throw new Error('Failed to fetch user pick slate.');
       const data = await res.json();
       setGames(data.games || []);
@@ -141,7 +141,7 @@ export const AdminDashboard: React.FC = () => {
     setOverridingGameId(game.id);
 
     try {
-      const res = await scopedExpressFetch('/api/admin/picks', {
+      const res = await scopedExpressFetch(`/api/pools/${poolId}/admin/picks`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

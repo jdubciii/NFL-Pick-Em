@@ -206,7 +206,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   // 3. Trusted read-only application user lookup (strictly no writes during authentication)
   let dbUser: { id: string; email: string; role: Role } | null = null;
   try {
-    dbUser = await prisma.user.findUnique({
+    const db = getPrismaClient();
+    dbUser = await db.user.findUnique({
       where: { id: verifiedAuthUser.id },
       select: {
         id: true,
@@ -285,23 +286,22 @@ async function handlePoolCommissioner(
   res: Response,
   next: NextFunction
 ): Promise<void> {
+  const from = options.from || 'param';
+  if (from === 'query' || from === 'body') {
+    res.status(400).json({
+      error: 'GUARD_SELECTION_RETIRED: query and body guard selection has been retired under Invariant #20. Pool identity must be path-scoped.',
+      code: 'GUARD_SELECTION_RETIRED',
+    });
+    return;
+  }
+
   if (!req.user) {
     res.status(401).json({ error: 'Authentication required.' });
     return;
   }
 
-  const from = options.from || 'param';
   const paramName = options.name || 'pool_id';
-
-  let rawPoolId: any;
-  if (from === 'query') {
-    rawPoolId = req.query[paramName] || (paramName === 'pool_id' ? req.query.poolId : undefined);
-  } else if (from === 'body') {
-    rawPoolId = req.body?.[paramName] || (paramName === 'pool_id' ? req.body?.poolId : undefined);
-  } else {
-    // param (default)
-    rawPoolId = req.params[paramName] || (paramName === 'pool_id' ? req.params.poolId : undefined);
-  }
+  const rawPoolId = req.params[paramName] || (paramName === 'pool_id' ? req.params.poolId : undefined);
 
   if (!rawPoolId || typeof rawPoolId !== 'string' || !UUID_REGEX.test(rawPoolId)) {
     res.status(400).json({ error: 'Invalid pool ID format. Must be a valid UUID.' });

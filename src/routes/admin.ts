@@ -1,9 +1,25 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db/client';
-import { requireAuth, requireAdmin, requirePoolCommissioner } from '../middleware/auth';
+import { requireAuth, requireAdmin, requirePoolCommissioner, getPrismaClient } from '../middleware/auth';
 import { normalizeTeamCode } from '../services/authoritativeSlateService';
 
 export const adminRouter = Router();
+export const poolAdminRouter = Router({ mergeParams: true });
+
+/**
+ * State-free HTTP 410 Gone for retired legacy unscoped admin pick and pool routes (Invariant #20, HAG6-AUTHORITY-2026-10-31-01).
+ * Executes immediately without authentication or database reads/writes.
+ */
+adminRouter.use(
+  ['/picks', '/pools'],
+  (_req: Request, res: Response): void => {
+    res.status(410).json({
+      error: 'ENDPOINT_RETIRED: Legacy unscoped admin pick and pool endpoints have been retired. Use canonical pool-scoped routes under /api/pools/:pool_id/* (Invariant #20).',
+      code: 'ENDPOINT_RETIRED',
+      retired: true,
+    });
+  }
+);
 
 /**
  * GET /api/admin/users
@@ -11,7 +27,8 @@ export const adminRouter = Router();
  */
 adminRouter.get('/users', requireAuth, requireAdmin, async (_req: Request, res: Response): Promise<void> => {
   try {
-    const users = await prisma.user.findMany({
+    const db = getPrismaClient();
+    const users = await db.user.findMany({
       select: {
         id: true,
         email: true,
@@ -28,82 +45,13 @@ adminRouter.get('/users', requireAuth, requireAdmin, async (_req: Request, res: 
 });
 
 /**
- * GET /api/admin/picks
- * Returns all weekly NFL games populated with the targeted user's picks.
- * Protected by requirePoolCommissioner({ from: 'query' }).
- */
-adminRouter.get('/picks', requireAuth, requirePoolCommissioner({ from: 'query' }), async (req: Request, res: Response): Promise<void> => {
-  const targetUserId = req.query.user_id ? String(req.query.user_id) : undefined;
-  const requestedWeek = req.query.week || req.query.week_no || req.query.weekNumber;
-  const pool = req.pool!;
-  const settings = (pool.settings as any) || {};
-  const defaultWeek = Number(settings.week_number ?? settings.current_week ?? 5);
-  const isAllWeeks = String(requestedWeek).toLowerCase() === 'all';
-  const weekNum = requestedWeek !== undefined && requestedWeek !== null && requestedWeek !== ''
-    ? (isAllWeeks ? 0 : parseInt(String(requestedWeek), 10) || defaultWeek)
-    : defaultWeek;
-
-  try {
-    const allGames = await prisma.game.findMany({
-      orderBy: { kickoffTime: 'asc' },
-      include: {
-        picks: targetUserId
-          ? {
-              where: {
-                userId: targetUserId,
-                poolId: pool.id,
-              },
-            }
-          : false,
-      },
-    });
-
-    let games = allGames;
-    if (!isAllWeeks && weekNum > 0 && allGames.length > 0) {
-      const padded = weekNum < 10 ? `_w0${weekNum}_` : `_w${weekNum}_`;
-      const unpadded = `_w${weekNum}_`;
-      const patternMatched = allGames.filter((g) =>
-        g.externalGameId && (
-          g.externalGameId.toLowerCase().includes(padded.toLowerCase()) ||
-          g.externalGameId.toLowerCase().includes(unpadded.toLowerCase())
-        )
-      );
-      if (patternMatched.length > 0) {
-        games = patternMatched;
-      }
-    }
-
-    res.json({
-      pool: {
-        id: pool.id,
-        name: pool.name,
-      },
-      games: games.map((game) => ({
-        id: game.id,
-        externalGameId: game.externalGameId,
-        homeTeamId: game.homeTeamId,
-        awayTeamId: game.awayTeamId,
-        kickoffTime: game.kickoffTime,
-        status: game.status,
-        homeScore: game.homeScore,
-        awayScore: game.awayScore,
-        userPick: (game as any).picks?.[0]?.selectedTeamId ?? null,
-        pickId: (game as any).picks?.[0]?.id ?? null,
-      })),
-    });
-  } catch (error) {
-    console.error('Error fetching admin picks slate:', error);
-    res.status(500).json({ error: 'Failed to fetch admin picks slate.' });
-  }
-});
-
-/**
  * GET /api/admin/audit-logs
  * Returns recent audit logs for the audit trail viewer.
  */
 adminRouter.get('/audit-logs', requireAuth, requireAdmin, async (_req: Request, res: Response): Promise<void> => {
   try {
-    const logs = await prisma.auditLog.findMany({
+    const db = getPrismaClient();
+    const logs = await db.auditLog.findMany({
       take: 50,
       orderBy: { timestamp: 'desc' },
       include: {
@@ -124,38 +72,138 @@ adminRouter.get('/audit-logs', requireAuth, requireAdmin, async (_req: Request, 
 });
 
 /**
- * PUT /api/admin/picks
- * POST /api/admin/picks/override
- * POST /api/admin/pools/:pool_id/picks/override
+ * GET /api/pools/:pool_id/admin/picks
+ * Returns all weekly NFL games populated with the targeted user's picks.
+ * Protected by requirePoolCommissioner (strictly path-scoped, requiring ACTIVE commissioner membership).
+ */
+export const handleAdminPicksGet = async (req: Request, res: Response): Promise<void> => {
+  const pool = req.pool!;
+  const poolId = pool.id;
+
+  // Reject conflicting query pool_id if supplied
+  const queryPoolId = req.query.pool_id || req.query.poolId;
+  if (queryPoolId && String(queryPoolId) !== poolId) {
+    res.status(400).json({
+      error: `POOL_MISMATCH: query pool_id '${queryPoolId}' does not match path parameter pool_id '${poolId}'.`,
+    });
+    return;
+  }
+
+  const targetUserId = req.query.user_id ? String(req.query.user_id) : undefined;
+  const requestedWeek = req.query.week || req.query.week_no || req.query.weekNumber;
+  const settings = (pool.settings as any) || {};
+  const defaultWeek = Number(settings.week_number ?? settings.current_week ?? 5);
+  const isAllWeeks = String(requestedWeek).toLowerCase() === 'all';
+  const weekNum = requestedWeek !== undefined && requestedWeek !== null && requestedWeek !== ''
+    ? (isAllWeeks ? 0 : parseInt(String(requestedWeek), 10) || defaultWeek)
+    : defaultWeek;
+
+  try {
+    const db = getPrismaClient();
+    const allGames = await db.game.findMany({
+      orderBy: { kickoffTime: 'asc' },
+      include: {
+        picks: targetUserId
+          ? {
+              where: {
+                userId: targetUserId,
+                poolId: pool.id,
+              },
+            }
+          : false,
+      },
+    });
+
+    let games = allGames;
+    if (!isAllWeeks && weekNum > 0 && allGames.length > 0) {
+      const padded = weekNum < 10 ? `_w0${weekNum}_` : `_w${weekNum}_`;
+      const unpadded = `_w${weekNum}_`;
+      const patternMatched = allGames.filter((g: any) =>
+        g.externalGameId && (
+          g.externalGameId.toLowerCase().includes(padded.toLowerCase()) ||
+          g.externalGameId.toLowerCase().includes(unpadded.toLowerCase())
+        )
+      );
+      if (patternMatched.length > 0) {
+        games = patternMatched;
+      }
+    }
+
+    res.json({
+      pool: {
+        id: pool.id,
+        name: pool.name,
+      },
+      games: games.map((game: any) => ({
+        id: game.id,
+        externalGameId: game.externalGameId,
+        homeTeamId: game.homeTeamId,
+        awayTeamId: game.awayTeamId,
+        kickoffTime: game.kickoffTime,
+        status: game.status,
+        homeScore: game.homeScore,
+        awayScore: game.awayScore,
+        userPick: (game as any).picks?.[0]?.selectedTeamId ?? null,
+        pickId: (game as any).picks?.[0]?.id ?? null,
+      })),
+    });
+  } catch (error) {
+    console.error('Error fetching admin picks slate:', error);
+    res.status(500).json({ error: 'Failed to fetch admin picks slate.' });
+  }
+};
+
+/**
+ * PUT /api/pools/:pool_id/admin/picks
+ * POST /api/pools/:pool_id/admin/picks/override
+ * POST /api/pools/:pool_id/picks/override
  * Commissioner override route for modifying or creating picks for any user.
- * Protected by requirePoolCommissioner({ from: 'body' }).
+ * Protected by requirePoolCommissioner (strictly path-scoped, requiring ACTIVE commissioner membership).
  * Captures previous state, updates pick, immediately re-grades if game is final, and writes an audit log.
  */
-const handleAdminPickOverride = async (req: Request, res: Response): Promise<void> => {
-  const userId = req.body.user_id || req.body.userId;
-  const poolId = req.pool?.id || req.body.pool_id || req.body.poolId || req.params.pool_id;
-  const rawGameId = req.body.game_id || req.body.gameId;
-  const rawSelectedTeamId = req.body.selected_team_id !== undefined
-    ? req.body.selected_team_id
-    : (req.body.selectedTeamId !== undefined
-      ? req.body.selectedTeamId
-      : (req.body.selected_team !== undefined
-        ? req.body.selected_team
-        : (req.body.selectedTeam !== undefined
-          ? req.body.selectedTeam
-          : (req.body.team_id !== undefined
-            ? req.body.team_id
-            : (req.body.teamId !== undefined
-              ? req.body.teamId
-              : req.body.team)))));
+export const handleAdminPickOverride = async (req: Request, res: Response): Promise<void> => {
+  const pool = req.pool!;
+  const poolId = pool.id;
 
-  if (!userId || !poolId || !rawGameId) {
-    res.status(400).json({ error: 'user_id, pool_id, and game_id are required fields.' });
+  // Reject conflicting body/query pool IDs (derive authority strictly from path/req.pool)
+  const bodyPoolId = req.body?.pool_id || req.body?.poolId;
+  if (bodyPoolId && String(bodyPoolId) !== poolId) {
+    res.status(400).json({
+      error: `POOL_MISMATCH: body pool_id '${bodyPoolId}' does not match path parameter pool_id '${poolId}'.`,
+    });
+    return;
+  }
+
+  const queryPoolId = req.query?.pool_id || req.query?.poolId;
+  if (queryPoolId && String(queryPoolId) !== poolId) {
+    res.status(400).json({
+      error: `POOL_MISMATCH: query pool_id '${queryPoolId}' does not match path parameter pool_id '${poolId}'.`,
+    });
+    return;
+  }
+
+  const userId = req.body?.user_id || req.body?.userId;
+  const rawGameId = req.body?.game_id || req.body?.gameId;
+  const rawSelectedTeamId = req.body?.selected_team_id !== undefined
+    ? req.body.selected_team_id
+    : (req.body?.selectedTeamId !== undefined
+      ? req.body.selectedTeamId
+      : (req.body?.selected_team !== undefined
+        ? req.body.selected_team
+        : (req.body?.selectedTeam !== undefined
+          ? req.body.selectedTeam
+          : (req.body?.team_id !== undefined
+            ? req.body.team_id
+            : (req.body?.teamId !== undefined
+              ? req.body.teamId
+              : req.body?.team)))));
+
+  if (!userId || !rawGameId) {
+    res.status(400).json({ error: 'user_id and game_id are required fields.' });
     return;
   }
 
   const gameId = String(rawGameId).trim();
-  // Ensure missing or empty inputs map to null
   const selectedTeamId = rawSelectedTeamId !== undefined && rawSelectedTeamId !== null && String(rawSelectedTeamId).trim().length > 0
     ? String(rawSelectedTeamId).trim()
     : null;
@@ -163,9 +211,9 @@ const handleAdminPickOverride = async (req: Request, res: Response): Promise<voi
   const adminId = req.user!.id;
 
   try {
-    // 1. Fetch game details to verify existence and participants
+    const db = getPrismaClient();
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(gameId);
-    const game = await prisma.game.findFirst({
+    const game = await db.game.findFirst({
       where: isUuid
         ? { OR: [{ id: gameId }, { externalGameId: gameId }] }
         : { externalGameId: gameId },
@@ -176,7 +224,6 @@ const handleAdminPickOverride = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    // Validate home/away team selection using normalized comparison (Fail-closed)
     const normHome = normalizeTeamCode(game.homeTeamId);
     const normAway = normalizeTeamCode(game.awayTeamId);
     const normSelected = selectedTeamId ? normalizeTeamCode(selectedTeamId) : null;
@@ -194,8 +241,7 @@ const handleAdminPickOverride = async (req: Request, res: Response): Promise<voi
       }
     }
 
-    // 2. Query existing pick to capture old state for auditing
-    const existingPick = await prisma.pick.findUnique({
+    const existingPick = await db.pick.findUnique({
       where: {
         poolId_userId_gameId: {
           poolId,
@@ -205,8 +251,7 @@ const handleAdminPickOverride = async (req: Request, res: Response): Promise<voi
       },
     });
 
-    // 3. Execute transaction: Upsert pick, upsert PickResult if finalized, and create AuditLog
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await db.$transaction(async (tx: any) => {
       const pick = await tx.pick.upsert({
         where: {
           poolId_userId_gameId: {
@@ -228,7 +273,6 @@ const handleAdminPickOverride = async (req: Request, res: Response): Promise<voi
         },
       });
 
-      // If the targeted game is FINAL or has scores, immediately re-grade and upsert PickResult
       if (game.status === 'FINAL' || (game.homeScore !== null && game.awayScore !== null)) {
         let winner: string | null = null;
         if (game.homeScore !== null && game.awayScore !== null) {
@@ -284,7 +328,11 @@ const handleAdminPickOverride = async (req: Request, res: Response): Promise<voi
   }
 };
 
-adminRouter.put('/picks', requireAuth, requirePoolCommissioner({ from: 'body' }), handleAdminPickOverride);
-adminRouter.post('/picks/override', requireAuth, requirePoolCommissioner({ from: 'body' }), handleAdminPickOverride);
-adminRouter.post('/pools/:pool_id/picks/override', requireAuth, requirePoolCommissioner({ from: 'param' }), handleAdminPickOverride);
-
+// Canonical pool-scoped admin pick routes under /api/pools/:pool_id/* (Invariant #20)
+poolAdminRouter.get('/:pool_id/admin/picks', requireAuth, requirePoolCommissioner, handleAdminPicksGet);
+poolAdminRouter.get('/:pool_id/picks/admin', requireAuth, requirePoolCommissioner, handleAdminPicksGet);
+poolAdminRouter.put('/:pool_id/admin/picks', requireAuth, requirePoolCommissioner, handleAdminPickOverride);
+poolAdminRouter.post('/:pool_id/admin/picks', requireAuth, requirePoolCommissioner, handleAdminPickOverride);
+poolAdminRouter.post('/:pool_id/admin/picks/override', requireAuth, requirePoolCommissioner, handleAdminPickOverride);
+poolAdminRouter.post('/:pool_id/picks/override', requireAuth, requirePoolCommissioner, handleAdminPickOverride);
+poolAdminRouter.put('/:pool_id/picks/override', requireAuth, requirePoolCommissioner, handleAdminPickOverride);

@@ -1,21 +1,32 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express, { Request, Response } from 'express';
+import fs from 'fs';
+import path from 'path';
+import jwt from 'jsonwebtoken';
 import {
   requireAuth,
   requirePoolCommissioner,
   requirePoolMember,
   setPrismaClientForTesting,
   setSupabaseAuthClientForTesting,
+  getPrismaClient,
+  createSyntheticSupabaseToken,
   AuthUserPayload,
 } from '../src/middleware/auth';
+import { adminRouter, poolAdminRouter } from '../src/routes/admin';
 import { adminOpsRouter } from '../src/routes/adminOps';
+import { app as prodApp } from '../src/server';
 import { Role } from '@prisma/client';
 
-describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invariant Suite', () => {
+describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY-2026-10-31-01 & HAG6-AUTHORITY-2026-10-31-01)', () => {
   const POOL_ID = '11111111-1111-1111-1111-111111111111';
   const COMMISH_ID = '22222222-2222-2222-2222-222222222222';
   const MEMBER_ID = '33333333-3333-3333-3333-333333333333';
   const OUTSIDER_ID = '44444444-4444-4444-4444-444444444444';
+
+  const createAuthToken = (userId: string, role = 'USER') => {
+    return createSyntheticSupabaseToken({ id: userId, email: `${userId}@example.com`, role });
+  };
 
   const mockPool = {
     id: POOL_ID,
@@ -30,16 +41,59 @@ describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invarian
   beforeEach(() => {
     vi.restoreAllMocks();
 
+    const mockAuthClient = {
+      auth: {
+        getUser: vi.fn().mockImplementation(async (token: string) => {
+          const decoded: any = jwt.decode(token);
+          if (!decoded || !decoded.sub) return { data: { user: null }, error: new Error('Invalid token') };
+          return {
+            data: {
+              user: {
+                id: decoded.sub,
+                email: decoded.email,
+                app_metadata: decoded.app_metadata || {},
+                user_metadata: decoded.user_metadata || {},
+              },
+            },
+            error: null,
+          };
+        }),
+      },
+    };
+    setSupabaseAuthClientForTesting(mockAuthClient as any);
+
     mockPrisma = {
+      user: {
+        findUnique: vi.fn().mockImplementation(async ({ where }: any) => ({
+          id: where.id,
+          email: `${where.id}@example.com`,
+          role: where.id === COMMISH_ID ? Role.ADMIN : Role.USER,
+        })),
+      },
       pool: {
         findUnique: vi.fn(),
       },
       poolMembership: {
         findUnique: vi.fn(),
       },
+      game: {
+        findMany: vi.fn(),
+        findFirst: vi.fn(),
+      },
+      pick: {
+        findUnique: vi.fn(),
+      },
+      $transaction: vi.fn(),
     };
 
     setPrismaClientForTesting(mockPrisma);
+  });
+
+  afterEach(() => {
+    // Reset test Prisma injection to prevent leaking fake authority across tests
+    setPrismaClientForTesting(null);
+    setSupabaseAuthClientForTesting(null);
+    vi.restoreAllMocks();
   });
 
   function createMockReqRes(options: {
@@ -75,7 +129,7 @@ describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invarian
     return { req, res, next };
   }
 
-  describe('1. requirePoolCommissioner: Active Actor Membership Requirement', () => {
+  describe('1. requirePoolCommissioner: Active Actor Membership Requirement & Retired Query/Body Selection', () => {
     it('denies commissioner with 403 when pool membership is absent (non-member)', async () => {
       mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
       mockPrisma.poolMembership.findUnique.mockResolvedValue(null);
@@ -192,6 +246,36 @@ describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invarian
       expect(req.pool).toEqual(mockPool);
       expect(req.membership).toEqual(activeMembership);
     });
+
+    it('retires query guard selection ({ from: "query" }) with HTTP 400 and zero DB reads', async () => {
+      const middleware = requirePoolCommissioner({ from: 'query' as any });
+      const { req, res, next } = createMockReqRes({
+        user: { id: COMMISH_ID, email: 'commish@example.com', role: Role.USER },
+        query: { pool_id: POOL_ID },
+      });
+
+      await middleware(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.jsonData.code).toBe('GUARD_SELECTION_RETIRED');
+      expect(mockPrisma.pool.findUnique).not.toHaveBeenCalled();
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('retires body guard selection ({ from: "body" }) with HTTP 400 and zero DB reads', async () => {
+      const middleware = requirePoolCommissioner({ from: 'body' as any });
+      const { req, res, next } = createMockReqRes({
+        user: { id: COMMISH_ID, email: 'commish@example.com', role: Role.USER },
+        body: { pool_id: POOL_ID },
+      });
+
+      await middleware(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.jsonData.code).toBe('GUARD_SELECTION_RETIRED');
+      expect(mockPrisma.pool.findUnique).not.toHaveBeenCalled();
+      expect(next).not.toHaveBeenCalled();
+    });
   });
 
   describe('2. requirePoolMember: Elimination of Commissioner Bypass Shortcut', () => {
@@ -211,7 +295,7 @@ describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invarian
       expect(next).not.toHaveBeenCalled();
     });
 
-    it('denies commissioner with PENDING membership', async () => {
+    it('denies commissioner with PENDING membership (shortcut eliminated)', async () => {
       mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
       mockPrisma.poolMembership.findUnique.mockResolvedValue({
         poolId: POOL_ID,
@@ -231,12 +315,16 @@ describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invarian
       expect(next).not.toHaveBeenCalled();
     });
 
-    it('denies outsider user with 403', async () => {
+    it('denies commissioner with INACTIVE membership (shortcut eliminated)', async () => {
       mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
-      mockPrisma.poolMembership.findUnique.mockResolvedValue(null);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'INACTIVE',
+      });
 
       const { req, res, next } = createMockReqRes({
-        user: { id: OUTSIDER_ID, email: 'outsider@example.com', role: Role.USER },
+        user: { id: COMMISH_ID, email: 'commish@example.com', role: Role.USER },
         params: { pool_id: POOL_ID },
       });
 
@@ -247,7 +335,48 @@ describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invarian
       expect(next).not.toHaveBeenCalled();
     });
 
-    it('authorizes regular user with verified ACTIVE pool membership', async () => {
+    it('denies commissioner with unknown membership status', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'UNKNOWN_VALUE',
+      });
+
+      const { req, res, next } = createMockReqRes({
+        user: { id: COMMISH_ID, email: 'commish@example.com', role: Role.USER },
+        params: { pool_id: POOL_ID },
+      });
+
+      await requirePoolMember(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.jsonData.error).toContain('Active pool membership required');
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('authorizes commissioner with verified ACTIVE membership', async () => {
+      const activeMembership = {
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      };
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue(activeMembership);
+
+      const { req, res, next } = createMockReqRes({
+        user: { id: COMMISH_ID, email: 'commish@example.com', role: Role.USER },
+        params: { pool_id: POOL_ID },
+      });
+
+      await requirePoolMember(req, res, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(req.pool).toEqual(mockPool);
+      expect(req.membership).toEqual(activeMembership);
+    });
+
+    it('authorizes regular user with verified ACTIVE membership', async () => {
       const activeMembership = {
         poolId: POOL_ID,
         userId: MEMBER_ID,
@@ -267,30 +396,9 @@ describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invarian
       expect(req.pool).toEqual(mockPool);
       expect(req.membership).toEqual(activeMembership);
     });
-
-    it('authorizes commissioner with verified ACTIVE pool membership', async () => {
-      const activeMembership = {
-        poolId: POOL_ID,
-        userId: COMMISH_ID,
-        status: 'ACTIVE',
-      };
-      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
-      mockPrisma.poolMembership.findUnique.mockResolvedValue(activeMembership);
-
-      const { req, res, next } = createMockReqRes({
-        user: { id: COMMISH_ID, email: 'commish@example.com', role: Role.USER },
-        params: { pool_id: POOL_ID },
-      });
-
-      await requirePoolMember(req, res, next);
-
-      expect(next).toHaveBeenCalledTimes(1);
-      expect(req.pool).toEqual(mockPool);
-      expect(req.membership).toEqual(activeMembership);
-    });
   });
 
-  describe('3. Route-Level Behavioral Integration Tests', () => {
+  describe('3. Express Integration: Shared Guard Enforcement on Routes', () => {
     let app: express.Express;
     let server: any;
     let baseUrl: string;
@@ -299,27 +407,24 @@ describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invarian
       app = express();
       app.use(express.json());
 
-      // Synthetic auth injector for testing routes
       const mockAuth = (req: any, _res: any, next: any) => {
-        const actorId = req.headers['x-test-user-id'] as string;
-        if (actorId) {
+        const userId = req.headers['x-test-user-id'];
+        if (userId) {
           req.user = {
-            id: actorId,
-            email: `${actorId}@example.com`,
-            role: Role.USER,
+            id: String(userId),
+            email: `${userId}@example.com`,
+            role: userId === COMMISH_ID ? Role.ADMIN : Role.USER,
           };
         }
         next();
       };
 
-      // Sample commissioner-protected route
-      app.post('/api/pools/:pool_id/adjudicate', mockAuth, requirePoolCommissioner, (_req, res) => {
-        res.status(200).json({ success: true, message: 'Adjudication executed' });
+      app.post('/api/pools/:pool_id/adjudicate', mockAuth, requirePoolCommissioner, (_req: Request, res: Response) => {
+        res.json({ success: true, message: 'Adjudication executed' });
       });
 
-      // Sample member-protected route
-      app.get('/api/pools/:pool_id/matrix', mockAuth, requirePoolMember, (_req, res) => {
-        res.status(200).json({ success: true, message: 'Matrix loaded' });
+      app.get('/api/pools/:pool_id/matrix', mockAuth, requirePoolMember, (_req: Request, res: Response) => {
+        res.json({ success: true, message: 'Matrix loaded' });
       });
 
       await new Promise<void>((resolve) => {
@@ -331,25 +436,13 @@ describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invarian
       });
     });
 
-    it('HTTP route: commissioner without active membership is denied 403 on commissioner route', async () => {
-      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
-      mockPrisma.poolMembership.findUnique.mockResolvedValue(null);
-
-      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/adjudicate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-test-user-id': COMMISH_ID,
-        },
-        body: JSON.stringify({ action: 'APPROVE', applicantId: 'app-1' }),
-      });
-
-      expect(res.status).toBe(403);
-      const data = await res.json();
-      expect(data.error).toContain('Active pool membership required');
+    afterEach(async () => {
+      if (server) {
+        await new Promise<void>((resolve) => server.close(resolve));
+      }
     });
 
-    it('HTTP route: commissioner with PENDING membership is denied 403 on commissioner route', async () => {
+    it('HTTP route: commissioner with PENDING membership denied 403 on adjudication', async () => {
       mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
       mockPrisma.poolMembership.findUnique.mockResolvedValue({
         poolId: POOL_ID,
@@ -363,7 +456,6 @@ describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invarian
           'Content-Type': 'application/json',
           'x-test-user-id': COMMISH_ID,
         },
-        body: JSON.stringify({ action: 'APPROVE', applicantId: 'app-1' }),
       });
 
       expect(res.status).toBe(403);
@@ -371,7 +463,7 @@ describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invarian
       expect(data.error).toContain('Active pool membership required');
     });
 
-    it('HTTP route: commissioner with ACTIVE membership succeeds on commissioner route', async () => {
+    it('HTTP route: commissioner with ACTIVE membership succeeds on adjudication', async () => {
       mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
       mockPrisma.poolMembership.findUnique.mockResolvedValue({
         poolId: POOL_ID,
@@ -385,7 +477,6 @@ describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invarian
           'Content-Type': 'application/json',
           'x-test-user-id': COMMISH_ID,
         },
-        body: JSON.stringify({ action: 'APPROVE', applicantId: 'app-1' }),
       });
 
       expect(res.status).toBe(200);
@@ -393,7 +484,7 @@ describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invarian
       expect(data.success).toBe(true);
     });
 
-    it('HTTP route: commissioner without membership is denied 403 on member route (matrix)', async () => {
+    it('HTTP route: commissioner without membership denied 403 on member route (matrix)', async () => {
       mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
       mockPrisma.poolMembership.findUnique.mockResolvedValue(null);
 
@@ -437,6 +528,7 @@ describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invarian
       app = express();
       app.use(express.json());
       app.use('/api/admin/ops', adminOpsRouter);
+      app.use('/api/admin', adminRouter);
 
       await new Promise<void>((resolve) => {
         server = app.listen(0, () => {
@@ -445,6 +537,12 @@ describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invarian
           resolve();
         });
       });
+    });
+
+    afterEach(async () => {
+      if (server) {
+        await new Promise<void>((resolve) => server.close(resolve));
+      }
     });
 
     it('POST /api/admin/ops/slate/refresh returns state-free HTTP 410 Gone (ENDPOINT_RETIRED)', async () => {
@@ -461,6 +559,667 @@ describe('HAG-5 / HAG5-AUTHORITY-2026-10-31-01 Authority & Shared Guard Invarian
       expect(data.code).toBe('ENDPOINT_RETIRED');
       expect(data.retired).toBe(true);
       expect(data.error).toContain('Legacy unscoped admin slate refresh endpoint has been retired');
+    });
+
+    it('GET /api/admin/picks returns state-free HTTP 410 Gone with ZERO database reads/writes', async () => {
+      const res = await fetch(`${baseUrl}/api/admin/picks?user_id=${MEMBER_ID}&pool_id=${POOL_ID}`);
+
+      expect(res.status).toBe(410);
+      const data = await res.json();
+      expect(data.code).toBe('ENDPOINT_RETIRED');
+      expect(data.retired).toBe(true);
+      expect(mockPrisma.pool.findUnique).not.toHaveBeenCalled();
+      expect(mockPrisma.game.findMany).not.toHaveBeenCalled();
+    });
+
+    it('PUT /api/admin/picks returns state-free HTTP 410 Gone with ZERO database reads/writes', async () => {
+      const res = await fetch(`${baseUrl}/api/admin/picks`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          pool_id: POOL_ID,
+          game_id: 'game-uuid-1',
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(410);
+      const data = await res.json();
+      expect(data.code).toBe('ENDPOINT_RETIRED');
+      expect(data.retired).toBe(true);
+      expect(mockPrisma.pool.findUnique).not.toHaveBeenCalled();
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('POST /api/admin/picks/override returns state-free HTTP 410 Gone with ZERO database reads/writes', async () => {
+      const res = await fetch(`${baseUrl}/api/admin/picks/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          pool_id: POOL_ID,
+          game_id: 'game-uuid-1',
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(410);
+      const data = await res.json();
+      expect(data.code).toBe('ENDPOINT_RETIRED');
+      expect(data.retired).toBe(true);
+      expect(mockPrisma.pool.findUnique).not.toHaveBeenCalled();
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('POST /api/admin/pools/:pool_id/picks/override returns state-free HTTP 410 Gone with ZERO reads/writes', async () => {
+      const res = await fetch(`${baseUrl}/api/admin/pools/${POOL_ID}/picks/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: 'game-uuid-1',
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(410);
+      const data = await res.json();
+      expect(data.code).toBe('ENDPOINT_RETIRED');
+      expect(data.retired).toBe(true);
+      expect(mockPrisma.pool.findUnique).not.toHaveBeenCalled();
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('PUT /api/admin/pools/:pool_id/picks/override returns state-free HTTP 410 Gone with ZERO reads/writes', async () => {
+      const res = await fetch(`${baseUrl}/api/admin/pools/${POOL_ID}/picks/override`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: 'game-uuid-1',
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(410);
+      const data = await res.json();
+      expect(data.code).toBe('ENDPOINT_RETIRED');
+      expect(data.retired).toBe(true);
+      expect(mockPrisma.pool.findUnique).not.toHaveBeenCalled();
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('5. Canonical Pool-Scoped Admin Pick Routes (/api/pools/:pool_id/*)', () => {
+    let app: express.Express;
+    let server: any;
+    let baseUrl: string;
+
+    const mockGame = {
+      id: 'game-uuid-1',
+      externalGameId: '2026_w08_WAS_SF',
+      homeTeamId: 'SF',
+      awayTeamId: 'WAS',
+      kickoffTime: new Date(Date.now() + 86400000),
+      status: 'SCHEDULED',
+      homeScore: null,
+      awayScore: null,
+    };
+
+    beforeEach(async () => {
+      app = express();
+      app.use(express.json());
+      app.use('/api/pools', poolAdminRouter);
+
+      await new Promise<void>((resolve) => {
+        server = app.listen(0, () => {
+          const addr = server.address() as any;
+          baseUrl = `http://127.0.0.1:${addr.port}`;
+          resolve();
+        });
+      });
+    });
+
+    afterEach(async () => {
+      if (server) {
+        await new Promise<void>((resolve) => server.close(resolve));
+      }
+    });
+
+    describe('GET /api/pools/:pool_id/admin/picks', () => {
+      it('authorizes ACTIVE commissioner and returns game slate with picks', async () => {
+        mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+        mockPrisma.poolMembership.findUnique.mockResolvedValue({
+          poolId: POOL_ID,
+          userId: COMMISH_ID,
+          status: 'ACTIVE',
+        });
+        mockPrisma.game.findMany.mockResolvedValue([
+          {
+            ...mockGame,
+            picks: [{ id: 'pick-1', selectedTeamId: 'SF' }],
+          },
+        ]);
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks?user_id=${MEMBER_ID}&week=8`, {
+          headers: {
+            Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+          },
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.pool.id).toBe(POOL_ID);
+        expect(data.games).toHaveLength(1);
+        expect(data.games[0].userPick).toBe('SF');
+      });
+
+      it('denies commissioner with PENDING membership (403)', async () => {
+        mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+        mockPrisma.poolMembership.findUnique.mockResolvedValue({
+          poolId: POOL_ID,
+          userId: COMMISH_ID,
+          status: 'PENDING',
+        });
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks?user_id=${MEMBER_ID}`, {
+          headers: {
+            Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+          },
+        });
+
+        expect(res.status).toBe(403);
+        const data = await res.json();
+        expect(data.error).toContain('Active pool membership required');
+      });
+
+      it('denies non-commissioner active member (403)', async () => {
+        mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+        mockPrisma.poolMembership.findUnique.mockResolvedValue({
+          poolId: POOL_ID,
+          userId: MEMBER_ID,
+          status: 'ACTIVE',
+        });
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks?user_id=${MEMBER_ID}`, {
+          headers: {
+            Authorization: `Bearer ${createAuthToken(MEMBER_ID, 'USER')}`,
+          },
+        });
+
+        expect(res.status).toBe(403);
+        const data = await res.json();
+        expect(data.error).toContain('Pool commissioner privileges required');
+      });
+
+      it('rejects conflicting query pool_id mismatch with HTTP 400 (POOL_MISMATCH)', async () => {
+        mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+        mockPrisma.poolMembership.findUnique.mockResolvedValue({
+          poolId: POOL_ID,
+          userId: COMMISH_ID,
+          status: 'ACTIVE',
+        });
+
+        const MISMATCH_POOL_ID = '99999999-9999-9999-9999-999999999999';
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks?pool_id=${MISMATCH_POOL_ID}`, {
+          headers: {
+            Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+          },
+        });
+
+        expect(res.status).toBe(400);
+        const data = await res.json();
+        expect(data.error).toContain('POOL_MISMATCH');
+      });
+    });
+
+    describe('PUT /api/pools/:pool_id/admin/picks', () => {
+      it('authorizes ACTIVE commissioner and executes override', async () => {
+        mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+        mockPrisma.poolMembership.findUnique.mockResolvedValue({
+          poolId: POOL_ID,
+          userId: COMMISH_ID,
+          status: 'ACTIVE',
+        });
+        mockPrisma.game.findFirst.mockResolvedValue(mockGame);
+        mockPrisma.pick.findUnique.mockResolvedValue(null);
+
+        const mockPick = {
+          id: 'pick-override-1',
+          poolId: POOL_ID,
+          userId: MEMBER_ID,
+          gameId: mockGame.id,
+          selectedTeamId: 'SF',
+          submittedById: COMMISH_ID,
+        };
+        const mockAudit = { id: 'audit-log-1' };
+
+        mockPrisma.$transaction.mockImplementation(async (cb: any) => {
+          return cb({
+            pick: { upsert: vi.fn().mockResolvedValue(mockPick) },
+            pickResult: { upsert: vi.fn() },
+            auditLog: { create: vi.fn().mockResolvedValue(mockAudit) },
+          });
+        });
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+          },
+          body: JSON.stringify({
+            user_id: MEMBER_ID,
+            game_id: mockGame.id,
+            selected_team_id: 'SF',
+          }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.message).toBe('Pick successfully updated by admin.');
+        expect(data.pick.id).toBe('pick-override-1');
+        expect(data.auditLogId).toBe('audit-log-1');
+      });
+
+      it('denies commissioner with INACTIVE membership (403)', async () => {
+        mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+        mockPrisma.poolMembership.findUnique.mockResolvedValue({
+          poolId: POOL_ID,
+          userId: COMMISH_ID,
+          status: 'INACTIVE',
+        });
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+          },
+          body: JSON.stringify({
+            user_id: MEMBER_ID,
+            game_id: mockGame.id,
+            selected_team_id: 'SF',
+          }),
+        });
+
+        expect(res.status).toBe(403);
+      });
+
+      it('rejects conflicting body pool_id mismatch with HTTP 400 (POOL_MISMATCH)', async () => {
+        mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+        mockPrisma.poolMembership.findUnique.mockResolvedValue({
+          poolId: POOL_ID,
+          userId: COMMISH_ID,
+          status: 'ACTIVE',
+        });
+
+        const MISMATCH_POOL_ID = '99999999-9999-9999-9999-999999999999';
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+          },
+          body: JSON.stringify({
+            pool_id: MISMATCH_POOL_ID,
+            user_id: MEMBER_ID,
+            game_id: mockGame.id,
+            selected_team_id: 'SF',
+          }),
+        });
+
+        expect(res.status).toBe(400);
+        const data = await res.json();
+        expect(data.error).toContain('POOL_MISMATCH');
+      });
+
+      it('rejects conflicting query pool_id mismatch with HTTP 400 (POOL_MISMATCH)', async () => {
+        mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+        mockPrisma.poolMembership.findUnique.mockResolvedValue({
+          poolId: POOL_ID,
+          userId: COMMISH_ID,
+          status: 'ACTIVE',
+        });
+
+        const MISMATCH_POOL_ID = '99999999-9999-9999-9999-999999999999';
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks?pool_id=${MISMATCH_POOL_ID}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+          },
+          body: JSON.stringify({
+            user_id: MEMBER_ID,
+            game_id: mockGame.id,
+            selected_team_id: 'SF',
+          }),
+        });
+
+        expect(res.status).toBe(400);
+        const data = await res.json();
+        expect(data.error).toContain('POOL_MISMATCH');
+      });
+    });
+
+    describe('POST /api/pools/:pool_id/picks/override', () => {
+      it('authorizes ACTIVE commissioner and executes override', async () => {
+        mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+        mockPrisma.poolMembership.findUnique.mockResolvedValue({
+          poolId: POOL_ID,
+          userId: COMMISH_ID,
+          status: 'ACTIVE',
+        });
+        mockPrisma.game.findFirst.mockResolvedValue(mockGame);
+        mockPrisma.pick.findUnique.mockResolvedValue(null);
+
+        const mockPick = {
+          id: 'pick-override-post-1',
+          poolId: POOL_ID,
+          userId: MEMBER_ID,
+          gameId: mockGame.id,
+          selectedTeamId: 'SF',
+          submittedById: COMMISH_ID,
+        };
+        const mockAudit = { id: 'audit-log-2' };
+
+        mockPrisma.$transaction.mockImplementation(async (cb: any) => {
+          return cb({
+            pick: { upsert: vi.fn().mockResolvedValue(mockPick) },
+            pickResult: { upsert: vi.fn() },
+            auditLog: { create: vi.fn().mockResolvedValue(mockAudit) },
+          });
+        });
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/picks/override`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+          },
+          body: JSON.stringify({
+            user_id: MEMBER_ID,
+            game_id: mockGame.id,
+            selected_team_id: 'SF',
+          }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.message).toBe('Pick successfully updated by admin.');
+        expect(data.pick.id).toBe('pick-override-post-1');
+      });
+
+      it('rejects body pool_id mismatch with HTTP 400 (POOL_MISMATCH)', async () => {
+        mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+        mockPrisma.poolMembership.findUnique.mockResolvedValue({
+          poolId: POOL_ID,
+          userId: COMMISH_ID,
+          status: 'ACTIVE',
+        });
+
+        const MISMATCH_POOL_ID = '99999999-9999-9999-9999-999999999999';
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/picks/override`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+          },
+          body: JSON.stringify({
+            pool_id: MISMATCH_POOL_ID,
+            user_id: MEMBER_ID,
+            game_id: mockGame.id,
+            selected_team_id: 'SF',
+          }),
+        });
+
+        expect(res.status).toBe(400);
+        const data = await res.json();
+        expect(data.error).toContain('POOL_MISMATCH');
+      });
+    });
+
+    describe('POST /api/pools/:pool_id/admin/picks/override', () => {
+      it('authorizes ACTIVE commissioner and executes override', async () => {
+        mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+        mockPrisma.poolMembership.findUnique.mockResolvedValue({
+          poolId: POOL_ID,
+          userId: COMMISH_ID,
+          status: 'ACTIVE',
+        });
+        mockPrisma.game.findFirst.mockResolvedValue(mockGame);
+        mockPrisma.pick.findUnique.mockResolvedValue(null);
+
+        const mockPick = {
+          id: 'pick-override-admin-post-1',
+          poolId: POOL_ID,
+          userId: MEMBER_ID,
+          gameId: mockGame.id,
+          selectedTeamId: 'SF',
+          submittedById: COMMISH_ID,
+        };
+        const mockAudit = { id: 'audit-log-3' };
+
+        mockPrisma.$transaction.mockImplementation(async (cb: any) => {
+          return cb({
+            pick: { upsert: vi.fn().mockResolvedValue(mockPick) },
+            pickResult: { upsert: vi.fn() },
+            auditLog: { create: vi.fn().mockResolvedValue(mockAudit) },
+          });
+        });
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks/override`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+          },
+          body: JSON.stringify({
+            user_id: MEMBER_ID,
+            game_id: mockGame.id,
+            selected_team_id: 'SF',
+          }),
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.message).toBe('Pick successfully updated by admin.');
+        expect(data.pick.id).toBe('pick-override-admin-post-1');
+      });
+    });
+  });
+
+  describe('6. AdminDashboard Client Callers Migration & URL Audit', () => {
+    it('verifies client/src/components/AdminDashboard.tsx calls canonical /api/pools/:pool_id/admin/picks and zero /api/admin/picks', () => {
+      const filePath = path.resolve(__dirname, '../client/src/components/AdminDashboard.tsx');
+      const content = fs.readFileSync(filePath, 'utf-8');
+
+      expect(content).not.toContain('/api/admin/picks');
+      expect(content).toContain('/api/pools/${currentPoolId}/admin/picks');
+      expect(content).toContain('/api/pools/${poolId}/admin/picks');
+    });
+
+    it('verifies client/src/pages/AdminDashboard.tsx calls canonical /api/pools/:pool_id/admin/picks and zero /api/admin/picks', () => {
+      const filePath = path.resolve(__dirname, '../client/src/pages/AdminDashboard.tsx');
+      const content = fs.readFileSync(filePath, 'utf-8');
+
+      expect(content).not.toContain('/api/admin/picks');
+      expect(content).toContain('/api/pools/${currentPoolId}/admin/picks');
+      expect(content).toContain('/api/pools/${poolId}/admin/picks');
+    });
+  });
+
+  describe('7. Test Injection Hygiene: Reset setPrismaClientForTesting', () => {
+    it('ensures setPrismaClientForTesting(null) resets client to default prisma without leakage', () => {
+      setPrismaClientForTesting(null);
+      expect(getPrismaClient()).toBeDefined();
+    });
+  });
+
+  describe('8. Production App Mount & Route Integration (/api/pools/:pool_id/* and /api/admin retirement)', () => {
+    let server: any;
+    let baseUrl: string;
+
+    const mockGame = {
+      id: 'game-uuid-prod-1',
+      externalGameId: '2026_w08_WAS_SF',
+      homeTeamId: 'SF',
+      awayTeamId: 'WAS',
+      kickoffTime: new Date(Date.now() + 86400000),
+      status: 'SCHEDULED',
+      homeScore: null,
+      awayScore: null,
+    };
+
+    beforeEach(async () => {
+      await new Promise<void>((resolve) => {
+        server = prodApp.listen(0, () => {
+          const addr = server.address() as any;
+          baseUrl = `http://127.0.0.1:${addr.port}`;
+          resolve();
+        });
+      });
+    });
+
+    afterEach(async () => {
+      if (server) {
+        await new Promise<void>((resolve) => server.close(resolve));
+      }
+    });
+
+    it('production app: GET /api/admin/picks returns state-free 410 Gone with zero DB reads', async () => {
+      const res = await fetch(`${baseUrl}/api/admin/picks?user_id=${MEMBER_ID}&pool_id=${POOL_ID}`);
+
+      expect(res.status).toBe(410);
+      const data = await res.json();
+      expect(data.code).toBe('ENDPOINT_RETIRED');
+      expect(data.retired).toBe(true);
+      expect(mockPrisma.pool.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('production app: PUT /api/admin/picks returns state-free 410 Gone with zero DB writes', async () => {
+      const res = await fetch(`${baseUrl}/api/admin/picks`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          pool_id: POOL_ID,
+          game_id: 'game-1',
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(410);
+      const data = await res.json();
+      expect(data.code).toBe('ENDPOINT_RETIRED');
+      expect(data.retired).toBe(true);
+      expect(mockPrisma.pool.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('production app: POST /api/admin/picks/override returns state-free 410 Gone', async () => {
+      const res = await fetch(`${baseUrl}/api/admin/picks/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          pool_id: POOL_ID,
+          game_id: 'game-1',
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(410);
+      const data = await res.json();
+      expect(data.code).toBe('ENDPOINT_RETIRED');
+    });
+
+    it('production app: POST /api/admin/pools/:pool_id/picks/override returns state-free 410 Gone', async () => {
+      const res = await fetch(`${baseUrl}/api/admin/pools/${POOL_ID}/picks/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: 'game-1',
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(410);
+      const data = await res.json();
+      expect(data.code).toBe('ENDPOINT_RETIRED');
+    });
+
+    it('production app: GET /api/pools/:pool_id/admin/picks succeeds for ACTIVE commissioner', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      mockPrisma.game.findMany.mockResolvedValue([
+        {
+          ...mockGame,
+          picks: [{ id: 'pick-prod-1', selectedTeamId: 'SF' }],
+        },
+      ]);
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks?user_id=${MEMBER_ID}&week=8`, {
+        headers: {
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+      });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.pool.id).toBe(POOL_ID);
+      expect(data.games).toHaveLength(1);
+    });
+
+    it('production app: PUT /api/pools/:pool_id/admin/picks succeeds for ACTIVE commissioner', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      mockPrisma.game.findFirst.mockResolvedValue(mockGame);
+      mockPrisma.pick.findUnique.mockResolvedValue(null);
+
+      const mockPick = {
+        id: 'pick-prod-override-1',
+        poolId: POOL_ID,
+        userId: MEMBER_ID,
+        gameId: mockGame.id,
+        selectedTeamId: 'SF',
+        submittedById: COMMISH_ID,
+      };
+      const mockAudit = { id: 'audit-log-prod-1' };
+
+      mockPrisma.$transaction.mockImplementation(async (cb: any) => {
+        return cb({
+          pick: { upsert: vi.fn().mockResolvedValue(mockPick) },
+          pickResult: { upsert: vi.fn() },
+          auditLog: { create: vi.fn().mockResolvedValue(mockAudit) },
+        });
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: mockGame.id,
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.message).toBe('Pick successfully updated by admin.');
     });
   });
 });

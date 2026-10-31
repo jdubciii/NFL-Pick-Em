@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import http from 'http';
 import { picksRouter, setLegacyGameAdapterForTesting, setLegacyPickSaveAdapterForTesting } from '../src/routes/picks';
-import { adminRouter } from '../src/routes/admin';
+import { adminRouter, poolAdminRouter } from '../src/routes/admin';
 import prisma from '../src/db/client';
 import {
   setSupabaseAuthClientForTesting,
@@ -101,6 +101,7 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
     app.use(express.json());
     app.use('/api/picks', picksRouter);
     app.use('/api/admin', adminRouter);
+    app.use('/api/pools', poolAdminRouter);
 
     await new Promise<void>((resolve) => {
       server = app.listen(0, () => {
@@ -444,7 +445,7 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
     });
   });
 
-  describe('POST /api/admin/picks/override - Commissioner Override Participant Validation', () => {
+  describe('POST /api/pools/:pool_id/picks/override - Commissioner Override Participant Validation', () => {
     it('rejects commissioner override pick when selected team is NOT in the game', async () => {
       vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue(mockPool as any);
       vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
@@ -455,7 +456,7 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
       vi.spyOn(prisma.game, 'findFirst').mockResolvedValue(mockWasAtSfGame as any);
 
       const token = createAuthToken(ADMIN_ID, 'ADMIN');
-      const res = await fetch(`${baseUrl}/api/admin/picks/override`, {
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/picks/override`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -504,7 +505,7 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
       });
 
       const token = createAuthToken(ADMIN_ID, 'ADMIN');
-      const res = await fetch(`${baseUrl}/api/admin/picks/override`, {
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/picks/override`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
