@@ -225,6 +225,26 @@ export const handleAdminPickOverride = async (req: Request, res: Response): Prom
       return;
     }
 
+    const authoritativeWeek = initialGame.week != null ? Number(initialGame.week) : null;
+    if (authoritativeWeek == null || !Number.isInteger(authoritativeWeek) || authoritativeWeek < 1 || authoritativeWeek > 18) {
+      res.status(400).json({
+        error: 'INVALID_PICK_WEEK: Matchup has invalid or missing authoritative week metadata.',
+        code: 'INVALID_PICK_WEEK',
+      });
+      return;
+    }
+
+    if (rawWeek !== undefined && rawWeek !== null) {
+      const callerWeek = Number(rawWeek);
+      if (!Number.isFinite(callerWeek) || !Number.isInteger(callerWeek) || callerWeek !== authoritativeWeek) {
+        res.status(400).json({
+          error: `INVALID_PICK_WEEK: Provided week ${rawWeek} does not match authoritative game week ${authoritativeWeek}.`,
+          code: 'INVALID_PICK_WEEK',
+        });
+        return;
+      }
+    }
+
     // 2. Early participant check
     const normSelected = selectedTeamId ? normalizeTeamCode(selectedTeamId) : null;
     if (normSelected) {
@@ -252,13 +272,12 @@ export const handleAdminPickOverride = async (req: Request, res: Response): Prom
     }
 
     const canonicalGameId = initialGame.id;
-    const targetWeek = rawWeek !== undefined && rawWeek !== null ? Number(rawWeek) : (initialGame.week ?? undefined);
 
     const result = await savePickAtomically(db, {
       poolId,
       userId,
       gameId: canonicalGameId,
-      week: targetWeek,
+      week: authoritativeWeek,
       selectedTeamId: normSelected,
       submittedById: adminId,
       externalGameId: initialGame.externalGameId || undefined,
@@ -267,19 +286,28 @@ export const handleAdminPickOverride = async (req: Request, res: Response): Prom
         if (savedPick.id === 'noop') {
           return null;
         }
-        if (tx?.auditLog && typeof tx.auditLog.create === 'function') {
-          const auditLog = await tx.auditLog.create({
-            data: {
-              actorId: adminId,
-              action: 'ADMIN_OVERRIDE_PICK',
-              targetEntityId: savedPick.id,
-              oldValue: existingRecord ? JSON.parse(JSON.stringify(existingRecord)) : null,
-              newValue: JSON.parse(JSON.stringify(savedPick)),
-            },
-          });
-          return auditLog?.id || null;
+        if (!tx?.auditLog || typeof tx.auditLog.create !== 'function') {
+          const auditErr: any = new Error('AUDIT_LOG_UNAVAILABLE: Mandatory audit log capability is unavailable under transaction. Zero writes.');
+          auditErr.code = 'AUDIT_LOG_UNAVAILABLE';
+          auditErr.statusCode = 500;
+          throw auditErr;
         }
-        return null;
+        const auditLog = await tx.auditLog.create({
+          data: {
+            actorId: adminId,
+            action: 'ADMIN_OVERRIDE_PICK',
+            targetEntityId: savedPick.id,
+            oldValue: existingRecord ? JSON.parse(JSON.stringify(existingRecord)) : null,
+            newValue: JSON.parse(JSON.stringify(savedPick)),
+          },
+        });
+        if (!auditLog || !auditLog.id || String(auditLog.id).trim().length === 0) {
+          const auditErr: any = new Error('AUDIT_LOG_FAILED: Failed to create mandatory audit log entry for admin override. Zero writes.');
+          auditErr.code = 'AUDIT_LOG_FAILED';
+          auditErr.statusCode = 500;
+          throw auditErr;
+        }
+        return auditLog.id;
       },
     });
 

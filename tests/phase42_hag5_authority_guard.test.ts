@@ -660,10 +660,13 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
     games?: any[];
     picks?: any[];
     poolSettings?: any;
-    onAdvisoryLock?: (lockKey: string) => void;
-    onBeforeUpdate?: () => void;
-    onBeforeInsert?: () => void;
-    onBeforeAudit?: () => void;
+    auditLogCapability?: boolean;
+    simulateLockContention?: boolean;
+    onAuditCreate?: (data: any) => Promise<any> | any;
+    onAdvisoryLock?: (lockKey: string) => void | Promise<void>;
+    onBeforeUpdate?: () => void | Promise<void>;
+    onBeforeInsert?: () => void | Promise<void>;
+    onBeforeAudit?: () => void | Promise<void>;
   }) {
     const gamesTable: any[] = config?.games ? JSON.parse(JSON.stringify(config.games)) : [];
     for (const g of gamesTable) {
@@ -677,7 +680,7 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
       if (g.homeTeamId) g.home_team_id = g.homeTeamId;
       if (g.awayTeamId) g.away_team_id = g.awayTeamId;
       if (g.externalGameId) g.external_game_id = g.externalGameId;
-      if (!g.week) g.week = 8;
+      if (g.week === undefined) g.week = 8;
     }
 
     const picksTable: any[] = config?.picks ? JSON.parse(JSON.stringify(config.picks)) : [];
@@ -685,6 +688,34 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
     const committedPicks: any[] = JSON.parse(JSON.stringify(picksTable));
     const committedAuditLogs: any[] = [];
     const advisoryLockKeys: string[] = [];
+
+    const heldAdvisoryLocks = new Set<string>();
+    const advisoryLockWaiters = new Map<string, Array<() => void>>();
+
+    const acquireAdvisoryLock = async (key: string) => {
+      advisoryLockKeys.push(key);
+      if (config?.onAdvisoryLock) await config.onAdvisoryLock(key);
+      if (config?.simulateLockContention) {
+        while (heldAdvisoryLocks.has(key)) {
+          await new Promise<void>((resolve) => {
+            if (!advisoryLockWaiters.has(key)) advisoryLockWaiters.set(key, []);
+            advisoryLockWaiters.get(key)!.push(resolve);
+          });
+        }
+        heldAdvisoryLocks.add(key);
+      }
+    };
+
+    const releaseAdvisoryLocks = (keys: string[]) => {
+      for (const k of keys) {
+        heldAdvisoryLocks.delete(k);
+        const waiters = advisoryLockWaiters.get(k);
+        if (waiters && waiters.length > 0) {
+          const next = waiters.shift()!;
+          next();
+        }
+      }
+    };
 
     const handleQuery = async (sql: string, ...params: any[]) => {
       if (sql.includes('FROM public.games')) {
@@ -701,12 +732,11 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
           status: g.status,
           season: g.season || 2026,
           season_type: g.season_type || 2,
-          week: g.week || 8,
+          week: g.week,
         }));
       }
       if (sql.includes('pg_advisory_xact_lock')) {
-        advisoryLockKeys.push(params[0]);
-        if (config?.onAdvisoryLock) config.onAdvisoryLock(params[0]);
+        await acquireAdvisoryLock(params[0]);
         return [];
       }
       if (sql.includes('FROM public.picks') && sql.includes('FOR UPDATE')) {
@@ -731,7 +761,7 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
         }));
       }
       if (sql.includes('UPDATE public.picks')) {
-        if (config?.onBeforeUpdate) config.onBeforeUpdate();
+        if (config?.onBeforeUpdate) await config.onBeforeUpdate();
         const rowId = params[2];
         const existing = picksTable.find((p: any) => p.id === rowId);
         if (existing) {
@@ -751,7 +781,7 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
         return [];
       }
       if (sql.includes('INSERT INTO public.picks')) {
-        if (config?.onBeforeInsert) config.onBeforeInsert();
+        if (config?.onBeforeInsert) await config.onBeforeInsert();
         const newRow = {
           id: `pick-gen-${picksTable.length + 1}`,
           pool_id: params[0],
@@ -770,23 +800,27 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
 
     let currentSettings = config?.poolSettings !== undefined ? config.poolSettings : { lock_offset: 0 };
 
-    const txMock = {
+    const txMock: any = {
       pool: {
         findUnique: vi.fn().mockImplementation(async ({ where }: any) => {
           if (!currentSettings) return null;
           return { id: where.id, settings: currentSettings };
         }),
       },
-      auditLog: {
+      $queryRawUnsafe: vi.fn().mockImplementation(handleQuery),
+    };
+
+    if (config?.auditLogCapability !== false) {
+      txMock.auditLog = {
         create: vi.fn().mockImplementation(async ({ data }: any) => {
-          if (config?.onBeforeAudit) config.onBeforeAudit();
+          if (config?.onBeforeAudit) await config.onBeforeAudit();
+          if (config?.onAuditCreate) return await config.onAuditCreate(data);
           const entry = { id: `audit-log-${auditLogsTable.length + 1}`, ...data };
           auditLogsTable.push(entry);
           return entry;
         }),
-      },
-      $queryRawUnsafe: vi.fn().mockImplementation(handleQuery),
-    };
+      };
+    }
 
     return {
       picksTable,
@@ -796,10 +830,23 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
       gamesTable,
       setPoolSettings: (s: any) => { currentSettings = s; },
       $transaction: vi.fn().mockImplementation(async (cb: any) => {
+        const txLocks: string[] = [];
+        const localTxMock = {
+          ...txMock,
+          $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
+            if (sql.includes('pg_advisory_xact_lock')) {
+              const lockKey = params[0];
+              txLocks.push(lockKey);
+              await acquireAdvisoryLock(lockKey);
+              return [];
+            }
+            return handleQuery(sql, ...params);
+          }),
+        };
         const picksSnapshot = JSON.parse(JSON.stringify(picksTable));
         const auditSnapshot = JSON.parse(JSON.stringify(auditLogsTable));
         try {
-          const res = await cb(txMock);
+          const res = await cb(localTxMock);
           committedPicks.length = 0;
           committedPicks.push(...JSON.parse(JSON.stringify(picksTable)));
           committedAuditLogs.length = 0;
@@ -811,6 +858,10 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
           auditLogsTable.length = 0;
           auditLogsTable.push(...auditSnapshot);
           throw err;
+        } finally {
+          if (config?.simulateLockContention) {
+            releaseAdvisoryLocks(txLocks);
+          }
         }
       }),
       $queryRawUnsafe: vi.fn().mockImplementation(handleQuery),
@@ -2132,6 +2183,371 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it('fails closed when matchup has missing or invalid authoritative week metadata (400 INVALID_PICK_WEEK)', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      const prodDb = createProductionDbMock({
+        games: [{
+          ...scheduledGame,
+          week: null,
+        }],
+      });
+      mockPrisma.$transaction = prodDb.$transaction;
+      mockPrisma.$queryRawUnsafe = prodDb.$queryRawUnsafe;
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.code).toBe('INVALID_PICK_WEEK');
+      expect(prodDb.getCommittedPicksCount()).toBe(0);
+      expect(prodDb.getCommittedAuditCount()).toBe(0);
+    });
+
+    it('rejects fractional week in override request with HTTP 400 INVALID_PICK_WEEK and ZERO writes', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      const prodDb = createProductionDbMock({
+        games: [scheduledGame],
+      });
+      mockPrisma.$transaction = prodDb.$transaction;
+      mockPrisma.$queryRawUnsafe = prodDb.$queryRawUnsafe;
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'SF',
+          week: 8.5,
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.code).toBe('INVALID_PICK_WEEK');
+      expect(prodDb.getCommittedPicksCount()).toBe(0);
+      expect(prodDb.getCommittedAuditCount()).toBe(0);
+    });
+
+    it('rejects out-of-bounds week in override request with HTTP 400 INVALID_PICK_WEEK and ZERO writes', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      const prodDb = createProductionDbMock({
+        games: [scheduledGame],
+      });
+      mockPrisma.$transaction = prodDb.$transaction;
+      mockPrisma.$queryRawUnsafe = prodDb.$queryRawUnsafe;
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'SF',
+          week: 19,
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.code).toBe('INVALID_PICK_WEEK');
+      expect(prodDb.getCommittedPicksCount()).toBe(0);
+      expect(prodDb.getCommittedAuditCount()).toBe(0);
+    });
+
+    it('rejects caller week mismatch against authoritative game week with HTTP 400 INVALID_PICK_WEEK and ZERO writes', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      const prodDb = createProductionDbMock({
+        games: [scheduledGame], // authoritative week is 8
+      });
+      mockPrisma.$transaction = prodDb.$transaction;
+      mockPrisma.$queryRawUnsafe = prodDb.$queryRawUnsafe;
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'SF',
+          week: 9, // mismatch!
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.code).toBe('INVALID_PICK_WEEK');
+      expect(prodDb.getCommittedPicksCount()).toBe(0);
+      expect(prodDb.getCommittedAuditCount()).toBe(0);
+    });
+
+    it('fails closed when authoritative week changes during advisory lock wait (409 AUTHORITATIVE_WEEK_CHANGED)', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      const prodDb = createProductionDbMock({
+        games: [scheduledGame],
+        onAdvisoryLock: () => {
+          // Authoritative week changed under lock wait from 8 to 9
+          prodDb.gamesTable[0].week = 9;
+        },
+      });
+      mockPrisma.$transaction = prodDb.$transaction;
+      mockPrisma.$queryRawUnsafe = prodDb.$queryRawUnsafe;
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(409);
+      const data = await res.json();
+      expect(data.code).toBe('AUTHORITATIVE_WEEK_CHANGED');
+      expect(prodDb.getCommittedPicksCount()).toBe(0);
+      expect(prodDb.getCommittedAuditCount()).toBe(0);
+    });
+
+    it('rolls back pick mutation when audit capability is unavailable under transaction (500 AUDIT_LOG_UNAVAILABLE)', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      const prodDb = createProductionDbMock({
+        games: [scheduledGame],
+        auditLogCapability: false,
+      });
+      mockPrisma.$transaction = prodDb.$transaction;
+      mockPrisma.$queryRawUnsafe = prodDb.$queryRawUnsafe;
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.code).toBe('AUDIT_LOG_UNAVAILABLE');
+      expect(prodDb.getCommittedPicksCount()).toBe(0);
+      expect(prodDb.getCommittedAuditCount()).toBe(0);
+    });
+
+    it('rolls back pick mutation when audit log creation throws under transaction (500 AUDIT_LOG_FAILED)', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      const prodDb = createProductionDbMock({
+        games: [scheduledGame],
+        onAuditCreate: () => {
+          throw new Error('Database connection dropped during auditLog.create');
+        },
+      });
+      mockPrisma.$transaction = prodDb.$transaction;
+      mockPrisma.$queryRawUnsafe = prodDb.$queryRawUnsafe;
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(500);
+      expect(prodDb.getCommittedPicksCount()).toBe(0);
+      expect(prodDb.getCommittedAuditCount()).toBe(0);
+    });
+
+    it('rolls back pick mutation when audit log creation returns missing or empty ID (500 AUDIT_LOG_FAILED)', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      const prodDb = createProductionDbMock({
+        games: [scheduledGame],
+        onAuditCreate: () => {
+          return { id: '' };
+        },
+      });
+      mockPrisma.$transaction = prodDb.$transaction;
+      mockPrisma.$queryRawUnsafe = prodDb.$queryRawUnsafe;
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.code).toBe('AUDIT_LOG_FAILED');
+      expect(prodDb.getCommittedPicksCount()).toBe(0);
+      expect(prodDb.getCommittedAuditCount()).toBe(0);
+    });
+
+    it('overlapping standard user pick (alias) vs commissioner override (UUID) serializes with true contention on identical canonical lock key', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+
+      const lockKeyHistory: string[] = [];
+      const executionEvents: string[] = [];
+
+      const prodDb = createProductionDbMock({
+        games: [scheduledGame],
+        simulateLockContention: true,
+        onAdvisoryLock: async (key) => {
+          lockKeyHistory.push(key);
+        },
+        onBeforeInsert: async () => {
+          executionEvents.push('contender1:in_transaction_before_insert');
+          // Contender 1 pauses while holding the advisory lock to ensure Contender 2 contends
+          await new Promise((r) => setTimeout(r, 60));
+          executionEvents.push('contender1:inserting');
+        },
+      });
+      mockPrisma.$transaction = prodDb.$transaction;
+      mockPrisma.$queryRawUnsafe = prodDb.$queryRawUnsafe;
+
+      // Launch Contender 1 (standard pick via alias)
+      const contender1Promise = savePickAtomically(mockPrisma as any, {
+        poolId: POOL_ID,
+        userId: MEMBER_ID,
+        gameId: scheduledGame.externalGameId, // alias: '2026_w08_WAS_SF'
+        selectedTeamId: 'SF',
+        week: 8,
+      }).then((res) => {
+        executionEvents.push('contender1:finished');
+        return res;
+      });
+
+      // Small delay so Contender 1 enters advisory lock first
+      await new Promise((r) => setTimeout(r, 10));
+
+      executionEvents.push('contender2:starting_fetch');
+      const contender2Promise = fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id, // UUID: 'game-uuid-auth-1'
+          selected_team_id: 'WAS',
+        }),
+      }).then(async (res) => {
+        executionEvents.push('contender2:finished');
+        const json = await res.json();
+        return { status: res.status, json };
+      });
+
+      const [c1Result, c2Result] = await Promise.all([contender1Promise, contender2Promise]);
+
+      expect(c1Result.selectedTeamId).toBe('SF');
+      expect(c2Result.status).toBe(200);
+      expect(c2Result.json.pick.selectedTeamId).toBe('WAS');
+
+      // Both must have used the EXACT same canonical advisory lock key:
+      const expectedLockKey = `${POOL_ID}:${MEMBER_ID}:8:${scheduledGame.id}`;
+      expect(lockKeyHistory).toHaveLength(2);
+      expect(lockKeyHistory[0]).toBe(expectedLockKey);
+      expect(lockKeyHistory[1]).toBe(expectedLockKey);
+
+      // Verify execution order proved true lock contention:
+      expect(executionEvents.indexOf('contender1:in_transaction_before_insert')).toBeLessThan(executionEvents.indexOf('contender2:finished'));
+      expect(executionEvents.indexOf('contender1:finished')).toBeLessThan(executionEvents.indexOf('contender2:finished'));
+
+      // In the end, exactly 1 pick row exists (updated in-place from SF to WAS) and 1 audit log exists
+      expect(prodDb.getCommittedPicksCount()).toBe(1);
+      expect(prodDb.picksTable[0].selected_team_id).toBe('WAS');
+      expect(prodDb.picksTable[0].submitted_by).toBe(COMMISH_ID);
+      expect(prodDb.getCommittedAuditCount()).toBe(1);
+      expect(prodDb.auditLogsTable[0].actorId).toBe(COMMISH_ID);
+      expect(prodDb.auditLogsTable[0].oldValue.selected_team_id).toBe('SF');
+      expect(prodDb.auditLogsTable[0].newValue.selectedTeamId).toBe('WAS');
     });
 
     it('concurrent standard user pick (alias) vs commissioner override (UUID) serializes on identical canonical advisory lock key', async () => {

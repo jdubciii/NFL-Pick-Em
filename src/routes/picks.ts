@@ -296,6 +296,16 @@ export async function executeSerializedPickMutation(
 ): Promise<SavedPickRecord> {
   const { poolId, userId, gameId, selectedTeamId, externalGameId } = params;
 
+  if (params.week != null) {
+    const w = Number(params.week);
+    if (!Number.isFinite(w) || !Number.isInteger(w) || w < 1 || w > 18) {
+      const weekErr: any = new Error(`INVALID_PICK_WEEK: Pick week must be a finite integer between 1 and 18 (received ${params.week}).`);
+      weekErr.code = 'INVALID_PICK_WEEK';
+      weekErr.statusCode = 400;
+      throw weekErr;
+    }
+  }
+
   const normSelected = selectedTeamId !== null && selectedTeamId !== undefined && String(selectedTeamId).trim().length > 0
     ? normalizeTeamCode(selectedTeamId)
     : null;
@@ -304,11 +314,26 @@ export async function executeSerializedPickMutation(
 
   // 1. Resolve canonical game identity for advisory lock key
   let canonicalGameId: string;
+  let preLockGame: GameWithCanonicalLock | null = null;
+
   if (isUuid) {
     canonicalGameId = gameId;
+    if (params.week == null) {
+      // If week omitted by caller on UUID input, resolve preLockGame to obtain authoritative week
+      try {
+        preLockGame = await resolveGameWithCanonicalLock(executor, gameId);
+      } catch (preErr: any) {
+        if (!explicitNonTransactionTestAdapter) {
+          const lockErr = new Error(`UNVERIFIED_KICKOFF: Authoritative matchup resolution failed before lock (${preErr.message}). Zero writes.`);
+          (lockErr as any).code = 'UNVERIFIED_KICKOFF';
+          (lockErr as any).statusCode = 403;
+          (lockErr as any).status = 403;
+          throw lockErr;
+        }
+      }
+    }
   } else {
     // For alias input: resolve initial canonical identity before acquiring advisory lock
-    let preLockGame: GameWithCanonicalLock | null = null;
     try {
       preLockGame = await resolveGameWithCanonicalLock(executor, gameId);
     } catch (preErr: any) {
@@ -343,6 +368,7 @@ export async function executeSerializedPickMutation(
           canonicalKickoffTime: futureDate,
           lockEffectiveAt: null,
           status: 'SCHEDULED',
+          week: params.week !== undefined ? params.week : (params.gameData?.week !== undefined ? params.gameData.week : undefined),
         };
       } else {
         const lockErr = new Error(`UNVERIFIED_KICKOFF: Authoritative matchup ${gameId} not found for alias resolution. Zero writes.`);
@@ -364,7 +390,37 @@ export async function executeSerializedPickMutation(
     canonicalGameId = String((preLockGame as GameWithCanonicalLock).id || (preLockGame as any).gameId || gameId);
   }
 
-  const effectiveWeek = Number(params.week ?? (params.gameData?.week || 8));
+  // Derive initial authoritative week
+  let effectiveWeek: number;
+  if (params.week != null) {
+    const callerWeek = Number(params.week);
+    if (preLockGame && preLockGame.week != null) {
+      const resolvedWeek = Number(preLockGame.week);
+      if (callerWeek !== resolvedWeek) {
+        const weekErr: any = new Error(`INVALID_PICK_WEEK: Provided week ${callerWeek} does not match authoritative game week ${resolvedWeek}.`);
+        weekErr.code = 'INVALID_PICK_WEEK';
+        weekErr.statusCode = 400;
+        throw weekErr;
+      }
+    }
+    effectiveWeek = callerWeek;
+  } else if (preLockGame && preLockGame.week != null) {
+    const resolvedWeek = Number(preLockGame.week);
+    if (!Number.isInteger(resolvedWeek) || resolvedWeek < 1 || resolvedWeek > 18) {
+      const weekErr: any = new Error(`INVALID_PICK_WEEK: Authoritative matchup week is invalid or outside season bounds (1-18).`);
+      weekErr.code = 'INVALID_PICK_WEEK';
+      weekErr.statusCode = 400;
+      throw weekErr;
+    }
+    effectiveWeek = resolvedWeek;
+  } else if (explicitNonTransactionTestAdapter && params.gameData?.week != null) {
+    effectiveWeek = Number(params.gameData.week);
+  } else {
+    const weekErr: any = new Error(`INVALID_PICK_WEEK: Authoritative matchup week metadata is missing or invalid. Zero writes.`);
+    weekErr.code = 'INVALID_PICK_WEEK';
+    weekErr.statusCode = 400;
+    throw weekErr;
+  }
 
   const actorId = params.submittedById || userId;
 
@@ -383,6 +439,7 @@ export async function executeSerializedPickMutation(
       refreshedGame = {
         id: params.gameData.id || params.gameData.gameId || canonicalGameId,
         ...params.gameData,
+        week: params.gameData.week !== undefined ? params.gameData.week : effectiveWeek,
       };
     } else {
       const lockErr = new Error(`UNVERIFIED_KICKOFF: Authoritative matchup reread failed under advisory lock (${refreshErr.message}). Zero writes.`);
@@ -398,6 +455,7 @@ export async function executeSerializedPickMutation(
       refreshedGame = {
         id: params.gameData.id || params.gameData.gameId || canonicalGameId,
         ...params.gameData,
+        week: params.gameData.week !== undefined ? params.gameData.week : effectiveWeek,
       };
     } else if (explicitNonTransactionTestAdapter && !executor?.pool?.findUnique) {
       const futureDate = new Date(Date.now() + 86400000);
@@ -410,6 +468,7 @@ export async function executeSerializedPickMutation(
         canonicalKickoffTime: futureDate,
         lockEffectiveAt: null,
         status: 'SCHEDULED',
+        week: effectiveWeek,
       };
     } else {
       const lockErr = new Error(`UNVERIFIED_KICKOFF: Authoritative matchup ${canonicalGameId} not found under advisory lock. Zero writes.`);
@@ -435,6 +494,31 @@ export async function executeSerializedPickMutation(
     (lockErr as any).statusCode = 403;
     (lockErr as any).status = 403;
     throw lockErr;
+  }
+
+  // Authoritative week verification under acquired advisory lock
+  const refreshedWeek = refreshedGame.week != null ? Number(refreshedGame.week) : null;
+  if (refreshedWeek == null || !Number.isInteger(refreshedWeek) || refreshedWeek < 1 || refreshedWeek > 18) {
+    const weekErr: any = new Error(`INVALID_PICK_WEEK: Authoritative matchup week is invalid or missing under advisory lock. Zero writes.`);
+    weekErr.code = 'INVALID_PICK_WEEK';
+    weekErr.statusCode = 400;
+    throw weekErr;
+  }
+
+  // If authoritative week changed while waiting for advisory lock, fail closed / retry safely
+  if (refreshedWeek !== effectiveWeek) {
+    const weekErr: any = new Error(`AUTHORITATIVE_WEEK_CHANGED: Authoritative matchup week changed from ${effectiveWeek} to ${refreshedWeek} under advisory lock. Zero writes.`);
+    weekErr.code = 'AUTHORITATIVE_WEEK_CHANGED';
+    weekErr.statusCode = 409;
+    throw weekErr;
+  }
+
+  // Reject caller week mismatch under lock if provided
+  if (params.week != null && Number(params.week) !== refreshedWeek) {
+    const weekErr: any = new Error(`INVALID_PICK_WEEK: Provided week ${params.week} does not match authoritative game week ${refreshedWeek}.`);
+    weekErr.code = 'INVALID_PICK_WEEK';
+    weekErr.statusCode = 400;
+    throw weekErr;
   }
 
   // Validate game status under lock
@@ -753,8 +837,14 @@ export async function savePickAtomically(
 ): Promise<SavedPickRecord> {
   const { poolId, userId, gameId, week } = params;
 
-  if (week != null && (isNaN(week) || week < 1 || week > 18)) {
-    throw new Error(`INVALID_PICK_WEEK: Authoritative week ${week} is invalid or outside season bounds (1-18).`);
+  if (week != null) {
+    const w = Number(week);
+    if (!Number.isFinite(w) || !Number.isInteger(w) || w < 1 || w > 18) {
+      const err: any = new Error(`INVALID_PICK_WEEK: Authoritative week ${week} must be a finite integer between 1 and 18.`);
+      err.code = 'INVALID_PICK_WEEK';
+      err.statusCode = 400;
+      throw err;
+    }
   }
 
   if (!poolId || !userId || !gameId) {
