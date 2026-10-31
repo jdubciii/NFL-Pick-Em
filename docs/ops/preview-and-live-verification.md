@@ -69,3 +69,44 @@ To activate the live preview and permit cross-origin communication, the followin
 3. **Supabase Auth Redirect URLs (Supabase Dashboard)**:
    - URL: `https://supabase.com/dashboard/project/nsljipyoihcoqkuphhll` > **Authentication** > **URL Configuration**.
    - Setting: Under **Redirect URLs**, add `https://jdubciii.github.io/NFL-Pick-Em/*` (and `https://jdubciii.github.io/NFL-Pick-Em/login`).
+
+## 9. Remediation & Triage Procedures (What To Do When Versions Do Not Match)
+
+When `./scripts/ops/check-live-status.sh` reports divergence (`exit 1`) or pending status (`exit 2`), follow the targeted remediation steps below:
+
+### Scenario A: Preview Behind GitHub Tip (`PREVIEW_COMMIT != GITHUB_TIP`)
+- **Root Cause**: The GitHub Actions preview deployment workflow did not run, is queued, or failed during execution.
+- **Action Steps**:
+  1. Navigate to the GitHub Actions tab: `https://github.com/jdubciii/NFL-Pick-Em/actions/workflows/preview.yml`.
+  2. Inspect the latest workflow run for `feat/p37-shell-auth-openslate`.
+  3. If the workflow failed during `Build Web Client Static Bundle`, review the Vite build log.
+  4. Verify that repository settings under **Settings > Pages** have Source set to **GitHub Actions** (if set to "Deploy from a branch", the action cannot deploy).
+  5. If the tip commit was pushed prior to workflow configuration, push an authorized commit to `feat/p37-shell-auth-openslate` to trigger the build.
+
+### Scenario B: Render Backend Behind GitHub Tip (`RENDER_COMMIT != GITHUB_TIP`)
+- **Root Cause**: Render service `nfl-pick-em-api` is configured with `autoDeploy: false` (per `render.yaml`) and requires manual deployment authorization, or a deployment is currently building.
+- **Action Steps**:
+  1. Navigate to the Render Dashboard: `https://dashboard.render.com` > Service `nfl-pick-em-api`.
+  2. Check the **Events** tab to verify if a deploy is currently running (`Building...` or `Deploying...`).
+  3. Once authorized by Jack, trigger deployment by clicking **Manual Deploy** > **Deploy latest commit** from `feat/p37-shell-auth-openslate`.
+  4. Monitor build logs: verify `npm install && npx prisma generate && npm run build` completes with exit code 0 and records `dist/build-info.json`.
+  5. Verify service starts with `npm start` and responds to `GET /api/health`.
+
+### Scenario C: Unreachable / Unknown Endpoints
+- **Render Live Backend reports `unknown` commit**:
+  - The currently running Render instance is running legacy code prior to HAG-11 or was deployed from a shallow clone without `RENDER_GIT_COMMIT`.
+  - **Action**: Redeploy the latest commit on Render so `RENDER_GIT_COMMIT` is injected and `dist/build-info.json` is generated.
+- **Render Live Backend reports `UNREACHABLE / PROBING FAILED`**:
+  - Render free tier instances spin down after 15 minutes of inactivity (cold start takes ~50 seconds).
+  - **Action**: Re-run `./scripts/ops/check-live-status.sh` or probe with increased timeout: `curl -m 60 https://nfl-pick-em-api.onrender.com/api/health`.
+  - If still down, check the Render service status tab and verify required environment variables (`DATABASE_URL`, `JWT_SECRET`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`).
+- **Preview reports `UNPUBLISHED / NOT YET DEPLOYED`**:
+  - GitHub Pages environment has not yet completed its initial deployment.
+  - **Action**: Check GitHub Pages deployment status in GitHub repository settings. Ensure the initial push after enabling GitHub Actions has executed.
+
+### Scenario D: Deliberate Backend/Preview Version Divergence Before Separate Deploy Approval
+- **Context**: In phased rollouts, the client static preview may be updated ahead of the backend (or vice-versa) while awaiting separate production deploy authorization.
+- **Action Steps**:
+  1. Confirm API contract compatibility: inspect changes between `RENDER_COMMIT` and `PREVIEW_COMMIT` to ensure the client bundle does not call un-migrated or retired backend endpoints.
+  2. Verify that `check-live-status.sh` output matches the known expected staging state (e.g. preview matches GitHub tip while Render remains at the prior approved commit).
+  3. Do NOT force-sync or prematurely trigger Render deployment until Jack explicitly reviews the preview report and approves backend rollout.
