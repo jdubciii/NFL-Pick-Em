@@ -646,22 +646,6 @@ export const WeeklyPicks: React.FC = () => {
     const unlockedPickedGames = games.filter((g) => !isGameLocked(g) && !isGameKickoffLocked(g) && g.userPick);
     if (unlockedPickedGames.length === 0) return;
 
-    const prevUserPicks = { ...userPicks };
-    const prevGames = [...games];
-
-    // Optimistically clear picks in local state
-    const updatedUserPicks = { ...userPicks };
-    unlockedPickedGames.forEach((g) => {
-      delete updatedUserPicks[g.id];
-      const ext = String((g as any).externalGameId || (g as any).external_game_id || '');
-      if (ext) delete updatedUserPicks[ext];
-    });
-    setUserPicks(updatedUserPicks);
-
-    setGames((prev) =>
-      prev.map((g) => (!isGameLocked(g) && !isGameKickoffLocked(g) ? { ...g, userPick: null } : g))
-    );
-
     let activeToken = token;
     if (!activeToken) {
       try {
@@ -669,46 +653,81 @@ export const WeeklyPicks: React.FC = () => {
       } catch (_) {}
     }
 
-    if (activeToken && pool?.id) {
-      try {
-        const batchPayload = unlockedPickedGames.map((game) => ({
-          game_id: game.id,
-          selected_team_id: null,
-          week: selectedWeek,
-        }));
-        const res = await scopedExpressFetch('/api/picks/batch', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${activeToken}`,
-          },
-          body: JSON.stringify({
-            pool_id: pool.id,
-            picks: batchPayload,
-          }),
-        });
-        if (!res.ok) {
-          throw new Error(`Clear picks failed: server status ${res.status}`);
-        }
-        try {
-          localStorage.setItem(userPicksCacheKey, JSON.stringify(updatedUserPicks));
-        } catch (e) {
-          console.warn('localStorage clear warning:', e);
-        }
-        triggerHaptic('impactMedium');
-      } catch (err: any) {
-        // Rollback on clear failure
-        setUserPicks(prevUserPicks);
-        setGames(prevGames);
-        setFeedbackMessage({
-          text: `Failed to clear picks: ${err.message || 'Network error'}. Picks restored.`,
-          type: 'error',
-        });
-        setTimeout(() => setFeedbackMessage(null), 3500);
-      }
+    if (!activeToken || !pool?.id) {
+      setFeedbackMessage({
+        text: 'Authentication required. Please sign in to clear picks.',
+        type: 'error',
+      });
+      setTimeout(() => setFeedbackMessage(null), 4000);
+      return;
     }
 
-    triggerHaptic('impactMedium');
+    try {
+      const batchPayload = unlockedPickedGames.map((game) => ({
+        game_id: game.id,
+        selected_team_id: null,
+        week: selectedWeek,
+      }));
+      const res = await scopedExpressFetch('/api/picks/batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${activeToken}`,
+        },
+        body: JSON.stringify({
+          pool_id: pool.id,
+          picks: batchPayload,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Clear picks failed: server status ${res.status}`);
+      }
+
+      const batchData = await res.json().catch(() => ({}));
+      const results: any[] = batchData.results || [];
+      const savedGameIds = new Set(
+        results.filter((r) => r.status === 'SAVED').map((r) => String(r.gameId))
+      );
+      const failures = results.filter((r) => r.status !== 'SAVED');
+
+      // Update state ONLY for games that were confirmed cleared (SAVED)
+      const nextUserPicks = { ...userPicks };
+      unlockedPickedGames.forEach((g) => {
+        if (savedGameIds.has(String(g.id))) {
+          delete nextUserPicks[g.id];
+          const ext = String((g as any).externalGameId || (g as any).external_game_id || '');
+          if (ext) delete nextUserPicks[ext];
+        }
+      });
+      setUserPicks(nextUserPicks);
+      setGames((prev) =>
+        prev.map((g) => (savedGameIds.has(String(g.id)) ? { ...g, userPick: null } : g))
+      );
+      try {
+        localStorage.setItem(userPicksCacheKey, JSON.stringify(nextUserPicks));
+      } catch (e) {
+        console.warn('localStorage clear warning:', e);
+      }
+
+      if (failures.length > 0) {
+        setFeedbackMessage({
+          text: `Cleared ${savedGameIds.size} picks. ${failures.length} matchup(s) locked or conflicted.`,
+          type: 'error',
+        });
+        setTimeout(() => setFeedbackMessage(null), 4000);
+      } else {
+        setFeedbackMessage({ text: 'All unlocked picks cleared.', type: 'success' });
+        setTimeout(() => setFeedbackMessage(null), 3000);
+      }
+      triggerHaptic('impactMedium');
+    } catch (err: any) {
+      setFeedbackMessage({
+        text: `Failed to clear picks: ${err.message || 'Network error'}. Picks preserved.`,
+        type: 'error',
+      });
+      setTimeout(() => setFeedbackMessage(null), 4000);
+    }
   };
 
   const handleClearAllPicks = () => {
@@ -1012,69 +1031,110 @@ export const WeeklyPicks: React.FC = () => {
 
   const handleUndoLastBulk = async () => {
     if (!lastBulkSnapshot || isPicksProtected || !user?.id) return;
-    const restoredUserPicks = { ...userPicks };
-    const gamesToRestore: { gameId: string; team: string }[] = [];
 
+    let activeToken = token;
+    if (!activeToken) {
+      try {
+        activeToken = (await supabase.auth.getSession()).data.session?.access_token || null;
+      } catch (_) {}
+    }
+
+    if (!activeToken || !pool?.id) {
+      setFeedbackMessage({
+        text: 'Authentication required. Please sign in to undo bulk action.',
+        type: 'error',
+      });
+      setTimeout(() => setFeedbackMessage(null), 4000);
+      return;
+    }
+
+    const gamesToRestore: { gameId: string; team: string | null }[] = [];
     for (const g of games) {
       if (!isGameLocked(g) && !isGameKickoffLocked(g)) {
         if (lastBulkSnapshot[g.id]) {
-          restoredUserPicks[g.id] = lastBulkSnapshot[g.id];
           gamesToRestore.push({ gameId: g.id, team: lastBulkSnapshot[g.id] });
-        } else {
-          delete restoredUserPicks[g.id];
+        } else if (userPicks[g.id]) {
+          gamesToRestore.push({ gameId: g.id, team: null });
         }
       }
     }
 
-    setUserPicks(restoredUserPicks);
-    setGames((prev) =>
-      prev.map((g) => {
-        if (!isGameLocked(g) && !isGameKickoffLocked(g)) {
-          return { ...g, userPick: restoredUserPicks[g.id] || null };
-        }
-        return g;
-      })
-    );
-
-    try {
-      localStorage.setItem(userPicksCacheKey, JSON.stringify(restoredUserPicks));
-    } catch (_) {}
-
-    try {
-      if (gamesToRestore.length > 0) {
-        let activeToken = token;
-        if (!activeToken) {
-          try {
-            activeToken = (await supabase.auth.getSession()).data.session?.access_token || null;
-          } catch (_) {}
-        }
-        if (activeToken && pool?.id) {
-          const batchPayload = gamesToRestore.map((item) => ({
-            game_id: item.gameId,
-            selected_team_id: item.team,
-            week: selectedWeek,
-          }));
-          await scopedExpressFetch('/api/picks/batch', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${activeToken}`,
-            },
-            body: JSON.stringify({
-              pool_id: pool.id,
-              picks: batchPayload,
-            }),
-          });
-        }
-      }
-    } catch (err) {
-      console.warn('Undo bulk restore warning:', err);
+    if (gamesToRestore.length === 0) {
+      setLastBulkSnapshot(null);
+      setFeedbackMessage({ text: 'No editable matchups to restore.', type: 'success' });
+      setTimeout(() => setFeedbackMessage(null), 3000);
+      return;
     }
 
-    setLastBulkSnapshot(null);
-    triggerHaptic('impactMedium');
-    setFeedbackMessage({ text: 'Last bulk action undone.', type: 'success' });
-    setTimeout(() => setFeedbackMessage(null), 3000);
+    try {
+      const batchPayload = gamesToRestore.map((item) => ({
+        game_id: item.gameId,
+        selected_team_id: item.team,
+        week: selectedWeek,
+      }));
+      const res = await scopedExpressFetch('/api/picks/batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${activeToken}`,
+        },
+        body: JSON.stringify({
+          pool_id: pool.id,
+          picks: batchPayload,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Restore picks failed: server status ${res.status}`);
+      }
+
+      const batchData = await res.json().catch(() => ({}));
+      const results: any[] = batchData.results || [];
+      const savedGameIds = new Set(
+        results.filter((r) => r.status === 'SAVED').map((r) => String(r.gameId))
+      );
+      const failures = results.filter((r) => r.status !== 'SAVED');
+
+      // Update state ONLY for games confirmed restored (SAVED)
+      const nextUserPicks = { ...userPicks };
+      gamesToRestore.forEach((item) => {
+        if (savedGameIds.has(String(item.gameId))) {
+          if (item.team) {
+            nextUserPicks[item.gameId] = item.team;
+          } else {
+            delete nextUserPicks[item.gameId];
+          }
+        }
+      });
+
+      setUserPicks(nextUserPicks);
+      setGames((prev) =>
+        prev.map((g) => (savedGameIds.has(String(g.id)) ? { ...g, userPick: nextUserPicks[g.id] ?? null } : g))
+      );
+      try {
+        localStorage.setItem(userPicksCacheKey, JSON.stringify(nextUserPicks));
+      } catch (_) {}
+
+      setLastBulkSnapshot(null);
+      triggerHaptic('impactMedium');
+
+      if (failures.length > 0) {
+        setFeedbackMessage({
+          text: `Restored ${savedGameIds.size} picks. ${failures.length} matchup(s) locked or conflicted.`,
+          type: 'error',
+        });
+        setTimeout(() => setFeedbackMessage(null), 4000);
+      } else {
+        setFeedbackMessage({ text: 'Last bulk action undone.', type: 'success' });
+        setTimeout(() => setFeedbackMessage(null), 3000);
+      }
+    } catch (err: any) {
+      setFeedbackMessage({
+        text: `Failed to undo bulk action: ${err.message || 'Network error'}. Picks not restored.`,
+        type: 'error',
+      });
+      setTimeout(() => setFeedbackMessage(null), 4000);
+    }
   };
 
   const handleUndoPreset = () => {

@@ -227,9 +227,28 @@ async function executeSerializedPickMutation(
     week: number;
     selectedTeamId: string | null;
     externalGameId?: string | null;
+    lockOffsetMinutes?: number;
+    gameData?: any;
   }
 ): Promise<SavedPickRecord> {
-  const { poolId, userId, gameId, week, selectedTeamId, externalGameId } = params;
+  const { poolId, userId, gameId, week, selectedTeamId, externalGameId, lockOffsetMinutes, gameData } = params;
+
+  // Authoritative kickoff lock validation at write boundary
+  if (gameData) {
+    const lockOffset = Number(lockOffsetMinutes ?? 0);
+    const writeLock = evaluateKickoffLock(gameData, lockOffset, new Date());
+    if (writeLock.isLocked) {
+      const lockErr = new Error(
+        writeLock.reason === 'UNVERIFIED_KICKOFF'
+          ? 'UNVERIFIED_KICKOFF: Matchup kickoff is unconfirmed (TBD). Picks are disabled.'
+          : 'KICKOFF_PASSED: Matchup kickoff passed before write completed.'
+      );
+      (lockErr as any).code = writeLock.reason;
+      (lockErr as any).statusCode = 403;
+      (lockErr as any).status = 403;
+      throw lockErr;
+    }
+  }
 
   // Candidate game IDs for identity resolution: canonical UUID and external alias
   const candidateIds = [String(gameId)];
@@ -355,6 +374,8 @@ export async function savePickAtomically(
     week: number;
     selectedTeamId: string | null;
     externalGameId?: string | null;
+    lockOffsetMinutes?: number;
+    gameData?: any;
   }
 ): Promise<SavedPickRecord> {
   const { poolId, userId, gameId, week, selectedTeamId, externalGameId } = params;
@@ -370,15 +391,11 @@ export async function savePickAtomically(
 
   if (typeof db.$transaction === 'function') {
     return await db.$transaction(async (tx: any) => {
-      // Serialize concurrent mutations on the same logical matchup using advisory xact lock
-      try {
-        await tx.$queryRawUnsafe(
-          `SELECT pg_advisory_xact_lock(hashtext($1))`,
-          `${poolId}:${userId}:${week}:${gameId}`
-        );
-      } catch (_) {
-        // Continue if advisory lock is unavailable in active test environment
-      }
+      // Serialize concurrent mutations on the same logical matchup using advisory xact lock (fail-closed)
+      await tx.$queryRawUnsafe(
+        `SELECT pg_advisory_xact_lock(hashtext($1))`,
+        `${poolId}:${userId}:${week}:${gameId}`
+      );
       return await executeSerializedPickMutation(tx, params);
     });
   }
@@ -516,6 +533,8 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
       week: targetWeek,
       selectedTeamId: normSelected,
       externalGameId: game.externalGameId ? String(game.externalGameId) : null,
+      lockOffsetMinutes,
+      gameData: game,
     });
 
     res.status(200).json({
@@ -524,6 +543,14 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
     });
   } catch (error: any) {
     console.error('Error saving pick:', error);
+
+    if (error.code === 'KICKOFF_PASSED' || error.code === 'UNVERIFIED_KICKOFF' || error.statusCode === 403 || error.status === 403) {
+      res.status(403).json({
+        error: error.message || 'Game is locked.',
+        code: error.code || 'KICKOFF_PASSED',
+      });
+      return;
+    }
 
     if (error.code === 'DUPLICATE_PICK_IDENTITY' || error.statusCode === 409 || error.status === 409) {
       res.status(409).json({
@@ -657,6 +684,8 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
           week: targetWeek,
           selectedTeamId: normSelected,
           externalGameId: game.externalGameId ? String(game.externalGameId) : null,
+          lockOffsetMinutes,
+          gameData: game,
         });
 
         savedPicks.push(savedPick);
@@ -667,6 +696,13 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
             gameId: String(game.id),
             status: 'CONFLICT',
             code: 'DUPLICATE_PICK_IDENTITY',
+            error: err.message,
+          });
+        } else if (err.code === 'KICKOFF_PASSED' || err.code === 'UNVERIFIED_KICKOFF' || err.statusCode === 403) {
+          results.push({
+            gameId: String(game.id),
+            status: 'LOCKED',
+            code: err.code || 'KICKOFF_PASSED',
             error: err.message,
           });
         } else {

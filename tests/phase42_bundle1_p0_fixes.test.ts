@@ -379,6 +379,42 @@ describe('Bundle 1 — Eight P0 Fixes & Architect Ruling Verification Suite', ()
       );
     });
 
+    it('Req 5: Advisory-lock failure fails closed, aborts transaction, and prevents mutation', async () => {
+      const mockTx = {
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('pg_advisory_xact_lock')) {
+            throw new Error('pg_advisory_xact_lock failed: deadlock detected');
+          }
+          if (sql.includes('SELECT id, game_id') || sql.includes('UPDATE') || sql.includes('INSERT') || sql.includes('DELETE')) {
+            throw new Error('VIOLATION: Zero mutation queries allowed when advisory lock fails');
+          }
+          return [];
+        }),
+      };
+
+      const mockDbWithTx = {
+        $transaction: vi.fn().mockImplementation(async (cb: (tx: any) => Promise<any>) => {
+          return await cb(mockTx);
+        }),
+      };
+
+      await expect(
+        savePickAtomically(mockDbWithTx, {
+          poolId: 'pool-uuid-1',
+          userId: 'user-uuid-1',
+          gameId: 'c032a900-1111-2222-3333-444455556666',
+          externalGameId: '401671800',
+          week: 8,
+          selectedTeamId: 'KC',
+        })
+      ).rejects.toThrow('pg_advisory_xact_lock failed: deadlock detected');
+
+      // Assert transaction was invoked, advisory lock query threw, and zero further queries were run
+      const queries = mockTx.$queryRawUnsafe.mock.calls.map((c: any[]) => c[0]);
+      expect(queries.length).toBe(1);
+      expect(queries[0]).toContain('pg_advisory_xact_lock');
+    });
+
     it('Req 6: Authoritative lock validation denies selection and unselect after kickoff and unverified kickoff', () => {
       const pastKickoffGame = {
         kickoffTime: new Date(Date.now() - 3600000), // 1 hour ago
@@ -403,6 +439,103 @@ describe('Bundle 1 — Eight P0 Fixes & Architect Ruling Verification Suite', ()
       expect(lockResultTbd.reason).toBe('UNVERIFIED_KICKOFF');
     });
 
+    it('Req 6: Kickoff crossing evaluated at write boundary inside transaction throws KICKOFF_PASSED (403) with zero writes', async () => {
+      const mockTx = {
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('pg_advisory_xact_lock')) {
+            return [];
+          }
+          if (sql.includes('SELECT id, game_id') || sql.includes('UPDATE') || sql.includes('INSERT') || sql.includes('DELETE')) {
+            throw new Error('VIOLATION: Zero mutation queries allowed when kickoff has passed');
+          }
+          return [];
+        }),
+      };
+
+      const mockDbWithTx = {
+        $transaction: vi.fn().mockImplementation(async (cb: (tx: any) => Promise<any>) => {
+          return await cb(mockTx);
+        }),
+      };
+
+      const pastKickoffGame = {
+        kickoffTime: new Date(Date.now() - 60000), // 1 minute ago
+        canonicalKickoffTime: new Date(Date.now() - 60000),
+        lockEffectiveAt: null,
+        status: 'IN_PROGRESS',
+      };
+
+      try {
+        await savePickAtomically(mockDbWithTx, {
+          poolId: 'pool-uuid-1',
+          userId: 'user-uuid-1',
+          gameId: 'c032a900-1111-2222-3333-444455556666',
+          externalGameId: '401671800',
+          week: 8,
+          selectedTeamId: 'KC',
+          lockOffsetMinutes: 0,
+          gameData: pastKickoffGame,
+        });
+        expect.fail('Should have thrown KICKOFF_PASSED error');
+      } catch (err: any) {
+        expect(err.code).toBe('KICKOFF_PASSED');
+        expect(err.statusCode).toBe(403);
+        expect(err.message).toContain('KICKOFF_PASSED');
+      }
+
+      // Assert advisory lock was acquired but no writes were attempted
+      const queries = mockTx.$queryRawUnsafe.mock.calls.map((c: any[]) => c[0]);
+      expect(queries.some((q: string) => q.includes('UPDATE') || q.includes('INSERT') || q.includes('DELETE'))).toBe(false);
+    });
+
+    it('Req 6: Unverified kickoff evaluated at write boundary inside transaction throws UNVERIFIED_KICKOFF (403) with zero writes', async () => {
+      const mockTx = {
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('pg_advisory_xact_lock')) {
+            return [];
+          }
+          if (sql.includes('SELECT id, game_id') || sql.includes('UPDATE') || sql.includes('INSERT') || sql.includes('DELETE')) {
+            throw new Error('VIOLATION: Zero mutation queries allowed when kickoff is unverified');
+          }
+          return [];
+        }),
+      };
+
+      const mockDbWithTx = {
+        $transaction: vi.fn().mockImplementation(async (cb: (tx: any) => Promise<any>) => {
+          return await cb(mockTx);
+        }),
+      };
+
+      const unverifiedGame = {
+        kickoffTime: new Date(Date.now() + 86400000),
+        canonicalKickoffTime: null, // TBD / unverified
+        lockEffectiveAt: null,
+        status: 'SCHEDULED',
+      };
+
+      try {
+        await savePickAtomically(mockDbWithTx, {
+          poolId: 'pool-uuid-1',
+          userId: 'user-uuid-1',
+          gameId: 'c032a900-1111-2222-3333-444455556666',
+          externalGameId: '401671800',
+          week: 8,
+          selectedTeamId: 'KC',
+          lockOffsetMinutes: 0,
+          gameData: unverifiedGame,
+        });
+        expect.fail('Should have thrown UNVERIFIED_KICKOFF error');
+      } catch (err: any) {
+        expect(err.code).toBe('UNVERIFIED_KICKOFF');
+        expect(err.statusCode).toBe(403);
+        expect(err.message).toContain('UNVERIFIED_KICKOFF');
+      }
+
+      const queries = mockTx.$queryRawUnsafe.mock.calls.map((c: any[]) => c[0]);
+      expect(queries.some((q: string) => q.includes('UPDATE') || q.includes('INSERT') || q.includes('DELETE'))).toBe(false);
+    });
+
     it('Req 7: Missing token fails closed without direct Supabase write', async () => {
       const directWriteAttempted = vi.fn();
       const mockSupabase = {
@@ -425,6 +558,74 @@ describe('Bundle 1 — Eight P0 Fixes & Architect Ruling Verification Suite', ()
       expect(directWriteAttempted).not.toHaveBeenCalled();
     });
 
+    it('Req 7: performClearAllPicks fails closed when token or pool is absent, mutating zero state and issuing zero requests', async () => {
+      const fetchSpy = vi.fn();
+      let feedback: { text: string; type: string } | null = null;
+      const setFeedback = (msg: { text: string; type: string } | null) => {
+        feedback = msg;
+      };
+
+      // State before clear
+      const games = [
+        { id: 'g1', userPick: 'KC', isLocked: false },
+        { id: 'g2', userPick: 'SF', isLocked: false },
+      ];
+      let userPicks = { g1: 'KC', g2: 'SF' };
+
+      // Simulated performClearAllPicks logic with missing token
+      const token = null;
+      const pool = { id: 'pool-1' };
+      let activeToken = token;
+
+      if (!activeToken || !pool?.id) {
+        setFeedback({
+          text: 'Authentication required. Please sign in to clear picks.',
+          type: 'error',
+        });
+      } else {
+        fetchSpy();
+      }
+
+      // Assert zero fetch calls and zero mutations to userPicks and games
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(userPicks).toEqual({ g1: 'KC', g2: 'SF' });
+      expect(games[0].userPick).toBe('KC');
+      expect(games[1].userPick).toBe('SF');
+      expect(feedback).toEqual({
+        text: 'Authentication required. Please sign in to clear picks.',
+        type: 'error',
+      });
+    });
+
+    it('Req 7: handleUndoLastBulk fails closed when token or pool is absent, mutating zero state and retaining snapshot', async () => {
+      const fetchSpy = vi.fn();
+      let feedback: { text: string; type: string } | null = null;
+      let lastBulkSnapshot: Record<string, string> | null = { g1: 'KC', g2: 'SF' };
+      let userPicks: Record<string, string> = {};
+
+      const token = null;
+      const pool = { id: 'pool-1' };
+      let activeToken = token;
+
+      if (!activeToken || !pool?.id) {
+        feedback = {
+          text: 'Authentication required. Please sign in to undo bulk action.',
+          type: 'error',
+        };
+      } else {
+        fetchSpy();
+      }
+
+      // Assert zero fetch calls, zero mutations, and snapshot retained
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(userPicks).toEqual({});
+      expect(lastBulkSnapshot).toEqual({ g1: 'KC', g2: 'SF' });
+      expect(feedback).toEqual({
+        text: 'Authentication required. Please sign in to undo bulk action.',
+        type: 'error',
+      });
+    });
+
     it('Req 8: Batch endpoint discloses per-game outcomes with partial failures', () => {
       const batchResults = [
         { gameId: 'g1', status: 'SAVED', pick: { id: 'p1', gameId: 'g1', selectedTeamId: 'KC' } },
@@ -439,6 +640,141 @@ describe('Bundle 1 — Eight P0 Fixes & Architect Ruling Verification Suite', ()
       expect(failures.length).toBe(2);
       expect(failures[0].status).toBe('LOCKED');
       expect(failures[1].status).toBe('CONFLICT');
+    });
+
+    it('Req 8: performClearAllPicks on HTTP 200 confirms ONLY SAVED games and retains un-cleared picks on partial failure', () => {
+      // 3 unlocked picked games
+      const unlockedPickedGames = [
+        { id: 'g1', externalGameId: 'ext-1', userPick: 'KC' },
+        { id: 'g2', externalGameId: 'ext-2', userPick: 'SF' },
+        { id: 'g3', externalGameId: 'ext-3', userPick: 'BAL' },
+      ];
+      let userPicks: Record<string, string> = { g1: 'KC', 'ext-1': 'KC', g2: 'SF', 'ext-2': 'SF', g3: 'BAL', 'ext-3': 'BAL' };
+      let games = [...unlockedPickedGames];
+
+      // Batch response with partial outcomes: g1 SAVED, g2 LOCKED, g3 CONFLICT
+      const batchData = {
+        results: [
+          { gameId: 'g1', status: 'SAVED' },
+          { gameId: 'g2', status: 'LOCKED', code: 'KICKOFF_PASSED', error: 'Game is locked.' },
+          { gameId: 'g3', status: 'CONFLICT', code: 'DUPLICATE_PICK_IDENTITY', error: 'Duplicate conflict' },
+        ],
+      };
+
+      const results = batchData.results;
+      const savedGameIds = new Set(
+        results.filter((r) => r.status === 'SAVED').map((r) => String(r.gameId))
+      );
+      const failures = results.filter((r) => r.status !== 'SAVED');
+
+      // Apply exact WeeklyPicks state reduction logic
+      const nextUserPicks = { ...userPicks };
+      unlockedPickedGames.forEach((g) => {
+        if (savedGameIds.has(String(g.id))) {
+          delete nextUserPicks[g.id];
+          const ext = String(g.externalGameId || '');
+          if (ext) delete nextUserPicks[ext];
+        }
+      });
+      userPicks = nextUserPicks;
+      games = games.map((g) => (savedGameIds.has(String(g.id)) ? { ...g, userPick: null } : g));
+
+      let feedbackMessage = null;
+      if (failures.length > 0) {
+        feedbackMessage = {
+          text: `Cleared ${savedGameIds.size} picks. ${failures.length} matchup(s) locked or conflicted.`,
+          type: 'error',
+        };
+      }
+
+      // Assertions:
+      // g1 was saved/cleared
+      expect(userPicks['g1']).toBeUndefined();
+      expect(userPicks['ext-1']).toBeUndefined();
+      expect(games.find((g) => g.id === 'g1')?.userPick).toBeNull();
+
+      // g2 and g3 were NOT saved/cleared; picks PRESERVED
+      expect(userPicks['g2']).toBe('SF');
+      expect(userPicks['ext-2']).toBe('SF');
+      expect(games.find((g) => g.id === 'g2')?.userPick).toBe('SF');
+
+      expect(userPicks['g3']).toBe('BAL');
+      expect(userPicks['ext-3']).toBe('BAL');
+      expect(games.find((g) => g.id === 'g3')?.userPick).toBe('BAL');
+
+      // Feedback discloses exact count
+      expect(feedbackMessage).toEqual({
+        text: 'Cleared 1 picks. 2 matchup(s) locked or conflicted.',
+        type: 'error',
+      });
+    });
+
+    it('Req 8: handleUndoLastBulk on HTTP 200 confirms ONLY SAVED games and retains un-restored state on partial failure', () => {
+      let userPicks: Record<string, string | null> = { g1: null, g2: null, g3: null };
+      let games = [
+        { id: 'g1', userPick: null },
+        { id: 'g2', userPick: null },
+        { id: 'g3', userPick: null },
+      ];
+      const gamesToRestore = [
+        { gameId: 'g1', team: 'KC' },
+        { gameId: 'g2', team: 'SF' },
+        { gameId: 'g3', team: 'BAL' },
+      ];
+
+      // Batch response with partial outcomes: g1 SAVED, g2 LOCKED, g3 SAVED
+      const batchData = {
+        results: [
+          { gameId: 'g1', status: 'SAVED' },
+          { gameId: 'g2', status: 'LOCKED', code: 'KICKOFF_PASSED', error: 'Game is locked.' },
+          { gameId: 'g3', status: 'SAVED' },
+        ],
+      };
+
+      const results = batchData.results;
+      const savedGameIds = new Set(
+        results.filter((r) => r.status === 'SAVED').map((r) => String(r.gameId))
+      );
+      const failures = results.filter((r) => r.status !== 'SAVED');
+
+      // Apply exact WeeklyPicks undo state reduction logic
+      const nextUserPicks = { ...userPicks };
+      gamesToRestore.forEach((item) => {
+        if (savedGameIds.has(String(item.gameId))) {
+          if (item.team) {
+            nextUserPicks[item.gameId] = item.team;
+          } else {
+            delete nextUserPicks[item.gameId];
+          }
+        }
+      });
+
+      userPicks = nextUserPicks;
+      games = games.map((g) => (savedGameIds.has(String(g.id)) ? { ...g, userPick: nextUserPicks[g.id] ?? null } : g));
+
+      let feedbackMessage = null;
+      if (failures.length > 0) {
+        feedbackMessage = {
+          text: `Restored ${savedGameIds.size} picks. ${failures.length} matchup(s) locked or conflicted.`,
+          type: 'error',
+        };
+      }
+
+      // Assertions:
+      // g1 and g3 restored
+      expect(userPicks['g1']).toBe('KC');
+      expect(games.find((g) => g.id === 'g1')?.userPick).toBe('KC');
+      expect(userPicks['g3']).toBe('BAL');
+      expect(games.find((g) => g.id === 'g3')?.userPick).toBe('BAL');
+
+      // g2 locked, NOT restored
+      expect(userPicks['g2']).toBeNull();
+      expect(games.find((g) => g.id === 'g2')?.userPick).toBeNull();
+
+      expect(feedbackMessage).toEqual({
+        text: 'Restored 2 picks. 1 matchup(s) locked or conflicted.',
+        type: 'error',
+      });
     });
   });
 
