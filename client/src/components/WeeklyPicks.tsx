@@ -23,6 +23,16 @@ import {
 import type { MatrixResponsePayload } from './LeagueMatrixView';
 import { AppHeader } from './common/AppHeader';
 import { EmptyStateWireframe } from './common/EmptyStateWireframe';
+import {
+  reconcileCloudPicks,
+  filterPresetEligiblePicks,
+  validateBatchOutcomes,
+} from './weeklyPicksHelpers';
+export {
+  reconcileCloudPicks,
+  filterPresetEligiblePicks,
+  validateBatchOutcomes,
+} from './weeklyPicksHelpers';
 
 export interface GameItem {
   id: string;
@@ -336,63 +346,16 @@ export const WeeklyPicks: React.FC = () => {
             .eq('week', selectedWeek);
 
           if (dbPicks && Array.isArray(dbPicks) && dbPicks.length > 0) {
-            const cloudMap: Record<string, string> = {};
-            const canonicalRowsMap = new Map<string, any[]>();
-            const ambiguousGameIds = new Set<string>();
+            const recon = reconcileCloudPicks(dbPicks, mappedGames || []);
+            const cloudMap = recon.cloudMap;
+            setConflictedGameIds(recon.conflictedGameIds);
 
-            // Detect duplicate identity across all rows BEFORE filtering null selections
-            dbPicks.forEach((p: any) => {
-              const gId = p.game_id || p.matchup_id;
-              if (!gId) return;
-              const matched = (mappedGames || []).find(
-                (g: any) => String(g.id) === String(gId) || String((g as any).externalGameId || (g as any).external_game_id) === String(gId)
-              );
-              const canonicalId = matched ? String((matched as any).id) : String(gId);
-              if (!canonicalRowsMap.has(canonicalId)) {
-                canonicalRowsMap.set(canonicalId, []);
-              }
-              canonicalRowsMap.get(canonicalId)!.push(p);
-            });
-
-            // Visibly flag duplicate ambiguity and track explicit per-matchup conflict state
-            canonicalRowsMap.forEach((rows, canonicalId) => {
-              if (rows.length > 1) {
-                ambiguousGameIds.add(canonicalId);
-                const matched = (mappedGames || []).find((g: any) => String(g.id) === canonicalId);
-                const ext = matched ? String((matched as any).externalGameId || (matched as any).external_game_id || '') : '';
-                if (ext) ambiguousGameIds.add(ext);
-                console.warn(`DUPLICATE_PICKS_DETECTED: Found ${rows.length} duplicate/conflicting stored picks for matchup ${canonicalId}.`);
-              }
-            });
-
-            if (ambiguousGameIds.size > 0) {
-              setConflictedGameIds(new Set(ambiguousGameIds));
+            if (recon.logicalConflictGameIds.size > 0) {
               setFeedbackMessage({
-                text: `Ambiguous pick records detected: ${ambiguousGameIds.size} matchup(s) have duplicate rows in database. Conflict state preserved; ordinary save disabled pending resolution.`,
+                text: `Ambiguous pick records detected: ${recon.logicalConflictGameIds.size} matchup(s) have duplicate rows in database. Conflict state preserved; ordinary save disabled pending resolution.`,
                 type: 'error',
               });
-            } else {
-              setConflictedGameIds(new Set());
             }
-
-            // Build cloudMap: Exclude ambiguous duplicate matchups entirely (do NOT select any winner!)
-            canonicalRowsMap.forEach((rows, canonicalId) => {
-              const matched = (mappedGames || []).find((g: any) => String(g.id) === canonicalId);
-              const ext = matched ? String((matched as any).externalGameId || (matched as any).external_game_id || '') : '';
-
-              if (rows.length > 1) {
-                // Ruling -03: Do not select any winner. Preserve explicit conflict state, exclude ambiguous selection
-                // from confirmed state/counts and prevent ordinary save success until separately authorized resolution. No row cleanup.
-                return;
-              }
-
-              const nonNullRows = rows.filter((r) => r.selected_team);
-              if (nonNullRows.length > 0) {
-                const chosen = nonNullRows[0].selected_team;
-                cloudMap[canonicalId] = chosen;
-                if (ext) cloudMap[ext] = chosen;
-              }
-            });
 
             userPicksMap = cloudMap;
             setUserPicks(cloudMap);
@@ -739,22 +702,11 @@ export const WeeklyPicks: React.FC = () => {
         throw new Error('MALFORMED_RESPONSE: Unable to parse server response as JSON.');
       }
 
-      if (!batchData || !Array.isArray(batchData.results)) {
-        throw new Error('INVALID_BATCH_RESPONSE: Server response lacks valid results array.');
-      }
+      const requestedItems = unlockedPickedGames.map((g) => ({ gameId: g.id, expectedTeam: null }));
+      const validation = validateBatchOutcomes(requestedItems, batchData, games);
 
-      const results: any[] = batchData.results;
-      const savedGameIds = new Set<string>();
-      results.filter((r) => r.status === 'SAVED').forEach((r) => {
-        const rawId = String(r.gameId);
-        const match = games.find(
-          (g) => String(g.id) === rawId || String((g as any).externalGameId || (g as any).external_game_id) === rawId
-        );
-        savedGameIds.add(match ? String(match.id) : rawId);
-      });
-
-      const confirmedClearedGames = unlockedPickedGames.filter((g) => savedGameIds.has(String(g.id)));
-      const failedGames = unlockedPickedGames.filter((g) => !savedGameIds.has(String(g.id)));
+      const confirmedClearedGames = unlockedPickedGames.filter((g) => validation.confirmedSavedCanonicalIds.has(String(g.id)));
+      const failedGames = unlockedPickedGames.filter((g) => !validation.confirmedSavedCanonicalIds.has(String(g.id)));
 
       // Update state ONLY for games that were confirmed cleared (SAVED)
       const nextUserPicks = { ...userPicks };
@@ -765,7 +717,7 @@ export const WeeklyPicks: React.FC = () => {
       });
       setUserPicks(nextUserPicks);
       setGames((prev) =>
-        prev.map((g) => (savedGameIds.has(String(g.id)) ? { ...g, userPick: null } : g))
+        prev.map((g) => (validation.confirmedSavedCanonicalIds.has(String(g.id)) ? { ...g, userPick: null } : g))
       );
       try {
         localStorage.setItem(userPicksCacheKey, JSON.stringify(nextUserPicks));
@@ -773,7 +725,7 @@ export const WeeklyPicks: React.FC = () => {
         console.warn('localStorage clear warning:', e);
       }
 
-      if (failedGames.length > 0) {
+      if (failedGames.length > 0 || !validation.isValid) {
         setFeedbackMessage({
           text: `Cleared ${confirmedClearedGames.length} picks. ${failedGames.length} matchup(s) failed or locked.`,
           type: 'error',
@@ -842,11 +794,30 @@ export const WeeklyPicks: React.FC = () => {
       if (g.userPick) currentPicksMap[g.id] = g.userPick;
     }
 
-    // 1. Optimistically update local state (only unlocked games)
+    const { eligiblePicks, candidateGames, hasExcludedConflicts } = filterPresetEligiblePicks(
+      updatedPicks,
+      games,
+      conflictedGameIds,
+      isGameLocked,
+      isGameKickoffLocked
+    );
+
+    if (candidateGames.length === 0) {
+      setFeedbackMessage({
+        text: hasExcludedConflicts
+          ? 'Cannot apply preset: all target matchups have unresolved duplicate conflicts.'
+          : 'No editable matchups available to apply preset.',
+        type: 'error',
+      });
+      setTimeout(() => setFeedbackMessage(null), 3500);
+      return;
+    }
+
+    // 1. Optimistically update local state strictly for eligible (unlocked, non-conflicted) games
     setGames((prev) =>
       prev.map((game) => {
-        if (!isGameLocked(game) && !isGameKickoffLocked(game) && Object.prototype.hasOwnProperty.call(updatedPicks, game.id)) {
-          return { ...game, userPick: updatedPicks[game.id] };
+        if (eligiblePicks[game.id]) {
+          return { ...game, userPick: eligiblePicks[game.id] };
         }
         return game;
       })
@@ -865,27 +836,11 @@ export const WeeklyPicks: React.FC = () => {
       presetType || 'CUSTOM',
       async (_enginePicks) => {
         try {
-          // Persist the confirmed updatedPicks, strictly excluding locked games
-          const confirmedEditablePicks: Record<string, string> = {};
-          for (const [gameId, selectedTeamId] of Object.entries(updatedPicks)) {
-            if (!selectedTeamId) continue;
-            const matchingGame = games.find(
-              (g) => String(g.id) === String(gameId) || String((g as any).externalGameId || (g as any).external_game_id) === String(gameId)
-            );
-            if (matchingGame && (isGameLocked(matchingGame) || isGameKickoffLocked(matchingGame))) {
-              continue; // Exclude locked games from upsert (locked picks immutable)
-            }
-            confirmedEditablePicks[gameId] = selectedTeamId;
-          }
-
-          const entries = Object.entries(confirmedEditablePicks).filter(([gid]) => !conflictedGameIds.has(gid));
-          const batchPayload = entries.map(([gameId, selectedTeamId]) => ({
-            game_id: gameId,
-            selected_team_id: selectedTeamId,
+          const batchPayload = candidateGames.map((g) => ({
+            game_id: g.id,
+            selected_team_id: eligiblePicks[g.id],
             week: selectedWeek,
           }));
-
-          if (batchPayload.length === 0) return;
 
           let activeToken = token;
           if (!activeToken) {
@@ -911,71 +866,61 @@ export const WeeklyPicks: React.FC = () => {
               }),
             });
 
-            if (batchRes.ok) {
-              let batchData: any;
-              try {
-                batchData = await batchRes.json();
-              } catch {
-                throw new Error('MALFORMED_RESPONSE: Unable to parse server response as JSON.');
-              }
-
-              if (!batchData || !Array.isArray(batchData.results)) {
-                throw new Error('INVALID_BATCH_RESPONSE: Server response lacks valid results array.');
-              }
-
-              const confirmedPicksList: any[] = batchData.picks || [];
-              const confirmedPicksMap: Record<string, string> = {};
-              confirmedPicksList.forEach((p: any) => {
-                const rawGid = p.gameId || p.game_id;
-                const team = p.selectedTeamId || p.selected_team_id || p.selectedTeam || p.selected_team;
-                if (rawGid && team) {
-                  const match = games.find(
-                    (g) => String(g.id) === String(rawGid) || String((g as any).externalGameId || (g as any).external_game_id) === String(rawGid)
-                  );
-                  const canonicalId = match ? String(match.id) : String(rawGid);
-                  confirmedPicksMap[canonicalId] = String(team);
-                  const ext = match ? String((match as any).externalGameId || (match as any).external_game_id || '') : '';
-                  if (ext) confirmedPicksMap[ext] = String(team);
-                }
-              });
-
-              const savedResults = (batchData.results || []).filter((r: any) => r.status === 'SAVED');
-              const explicitFailures = (batchData.results || []).filter((r: any) => r.status !== 'SAVED');
-              const failedCount = Math.max(explicitFailures.length, batchPayload.length - savedResults.length);
-
-              // Apply ONLY confirmed picks on top of current picks
-              const finalPicksMap = { ...currentPicksMap, ...confirmedPicksMap };
-              setUserPicks(finalPicksMap);
-              setGames((prev) =>
-                prev.map((g) => ({
-                  ...g,
-                  userPick: finalPicksMap[g.id] ?? null,
-                }))
-              );
-              try {
-                localStorage.setItem(userPicksCacheKey, JSON.stringify(finalPicksMap));
-              } catch (e) {
-                console.warn('localStorage preset save warning:', e);
-              }
-
-              if (failedCount > 0) {
-                setFeedbackMessage({
-                  text: `Saved ${savedResults.length} picks. ${failedCount} matchup(s) failed or locked.`,
-                  type: 'error',
-                });
-                setTimeout(() => setFeedbackMessage(null), 4000);
-              } else {
-                setFeedbackMessage({ text: 'Preset saved successfully.', type: 'success' });
-                setTimeout(() => setFeedbackMessage(null), 3000);
-              }
-              triggerHaptic('selection');
-            } else {
-              let errData: any = {};
-              try {
-                errData = await batchRes.json();
-              } catch (_) {}
-              throw new Error(errData.error || `Server error (${batchRes.status})`);
+            if (!batchRes.ok) {
+              throw new Error(`Preset save failed: server status ${batchRes.status}`);
             }
+
+            let batchData: any;
+            try {
+              batchData = await batchRes.json();
+            } catch {
+              throw new Error('MALFORMED_RESPONSE: Unable to parse server response as JSON.');
+            }
+
+            const requestedItems = candidateGames.map((g) => ({
+              gameId: g.id,
+              expectedTeam: eligiblePicks[g.id],
+            }));
+
+            const validation = validateBatchOutcomes(requestedItems, batchData, games);
+
+            // Apply ONLY confirmed picks matching successful SAVED results
+            const confirmedPicksMap = { ...currentPicksMap };
+            candidateGames.forEach((g) => {
+              if (validation.confirmedSavedCanonicalIds.has(String(g.id))) {
+                const team = validation.confirmedSavedPicks[g.id] || eligiblePicks[g.id];
+                confirmedPicksMap[g.id] = team;
+                const ext = String((g as any).externalGameId || (g as any).external_game_id || '');
+                if (ext) confirmedPicksMap[ext] = team;
+              }
+            });
+
+            setUserPicks(confirmedPicksMap);
+            setGames((prev) =>
+              prev.map((g) => {
+                if (validation.confirmedSavedCanonicalIds.has(String(g.id))) {
+                  return { ...g, userPick: validation.confirmedSavedPicks[g.id] || eligiblePicks[g.id] };
+                }
+                return { ...g, userPick: currentPicksMap[g.id] ?? null };
+              })
+            );
+            try {
+              localStorage.setItem(userPicksCacheKey, JSON.stringify(confirmedPicksMap));
+            } catch (e) {
+              console.warn('localStorage preset save warning:', e);
+            }
+
+            if (validation.failedCanonicalIds.size > 0 || !validation.isValid) {
+              setFeedbackMessage({
+                text: `Saved ${validation.confirmedSavedCanonicalIds.size} picks. ${validation.failedCanonicalIds.size} matchup(s) failed or locked.`,
+                type: 'error',
+              });
+              setTimeout(() => setFeedbackMessage(null), 4000);
+            } else {
+              setFeedbackMessage({ text: 'Preset saved successfully.', type: 'success' });
+              setTimeout(() => setFeedbackMessage(null), 3000);
+            }
+            triggerHaptic('selection');
           } catch (netErr: any) {
             // Revert optimistic preset state and notify user
             setUserPicks(currentPicksMap);
@@ -1134,22 +1079,11 @@ export const WeeklyPicks: React.FC = () => {
         throw new Error('MALFORMED_RESPONSE: Unable to parse server response as JSON.');
       }
 
-      if (!batchData || !Array.isArray(batchData.results)) {
-        throw new Error('INVALID_BATCH_RESPONSE: Server response lacks valid results array.');
-      }
+      const requestedItems = gamesToRestore.map((item) => ({ gameId: item.gameId, expectedTeam: item.team }));
+      const validation = validateBatchOutcomes(requestedItems, batchData, games);
 
-      const results: any[] = batchData.results;
-      const savedGameIds = new Set<string>();
-      results.filter((r) => r.status === 'SAVED').forEach((r) => {
-        const rawId = String(r.gameId);
-        const match = games.find(
-          (g) => String(g.id) === rawId || String((g as any).externalGameId || (g as any).external_game_id) === rawId
-        );
-        savedGameIds.add(match ? String(match.id) : rawId);
-      });
-
-      const confirmedRestoredGames = gamesToRestore.filter((item) => savedGameIds.has(String(item.gameId)));
-      const failedRestoreGames = gamesToRestore.filter((item) => !savedGameIds.has(String(item.gameId)));
+      const confirmedRestoredGames = gamesToRestore.filter((item) => validation.confirmedSavedCanonicalIds.has(String(item.gameId)));
+      const failedRestoreGames = gamesToRestore.filter((item) => !validation.confirmedSavedCanonicalIds.has(String(item.gameId)));
 
       // Update state ONLY for games confirmed restored (SAVED)
       // Synchronize/remove BOTH canonical UUID and alias keys for confirmed selection/null (Ruling -03)
@@ -1172,7 +1106,7 @@ export const WeeklyPicks: React.FC = () => {
 
       setUserPicks(nextUserPicks);
       setGames((prev) =>
-        prev.map((g) => (savedGameIds.has(String(g.id)) ? { ...g, userPick: nextUserPicks[g.id] ?? null } : g))
+        prev.map((g) => (validation.confirmedSavedCanonicalIds.has(String(g.id)) ? { ...g, userPick: nextUserPicks[g.id] ?? null } : g))
       );
       try {
         localStorage.setItem(userPicksCacheKey, JSON.stringify(nextUserPicks));
@@ -1180,7 +1114,7 @@ export const WeeklyPicks: React.FC = () => {
 
       triggerHaptic('impactMedium');
 
-      if (failedRestoreGames.length > 0) {
+      if (failedRestoreGames.length > 0 || !validation.isValid) {
         setFeedbackMessage({
           text: `Restored ${confirmedRestoredGames.length} picks. ${failedRestoreGames.length} matchup(s) failed or locked.`,
           type: 'error',
