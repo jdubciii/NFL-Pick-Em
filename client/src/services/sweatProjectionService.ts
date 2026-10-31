@@ -13,6 +13,15 @@ export interface SlateGame {
   awayTeam: string;
   spread?: number;
   kickoffTime?: string;
+  status?: string;
+  homeScore?: number;
+  awayScore?: number;
+}
+
+export function isFinalStatus(status?: string | null): boolean {
+  if (!status) return false;
+  const s = String(status).toUpperCase().trim();
+  return s === 'FINAL' || s === 'F' || s === 'COMPLETED' || s === 'SETTLED' || s === 'STATUS_FINAL';
 }
 
 export interface UserPickItem {
@@ -486,7 +495,10 @@ export function calculateProvisionalStandings(
         }
       }
 
-      const statusDesc = bestCandidate.live ? bestCandidate.live.status : 'SCHEDULED';
+      const isCandidateFinal = isFinalStatus((bestCandidate.game as any)?.status) || isFinalStatus(bestCandidate.live?.status);
+      const statusDesc = isCandidateFinal
+        ? 'FINAL'
+        : (bestCandidate.live ? bestCandidate.live.status : ((bestCandidate.game as any)?.status || 'SCHEDULED'));
       const matchupText = `${bestCandidate.game.awayTeam} @ ${bestCandidate.game.homeTeam}`;
 
       let impactDesc = `Victory with ${bestCandidate.pick.selectedTeam} stabilizes rank`;

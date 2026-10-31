@@ -1,5 +1,5 @@
 import { LiveGame } from './liveScoreService';
-import { SlateGame, UserPickItem, UserStandingRef } from './sweatProjectionService';
+import { SlateGame, UserPickItem, UserStandingRef, isFinalStatus } from './sweatProjectionService';
 
 export interface CompetitorPoints {
   banked: number;
@@ -116,19 +116,39 @@ export function calculateRivalryShowdown(
   const pendingRivalPicks: PendingRivalPickGame[] = [];
 
   for (const game of games) {
-    const live = scoreMap.get(game.id);
-    const uPick = validUserPicks.get(game.id);
-    const rPick = validRivalPicks.get(game.id);
+    const live = scoreMap.get(game.id) || ((game as any)?.externalGameId ? scoreMap.get((game as any).externalGameId) : undefined);
+    const uPick = validUserPicks.get(game.id) || ((game as any)?.externalGameId ? validUserPicks.get((game as any).externalGameId) : undefined);
+    const rPick = validRivalPicks.get(game.id) || ((game as any)?.externalGameId ? validRivalPicks.get((game as any).externalGameId) : undefined);
 
-    const homeScore = live ? parseInt(live.homeTeam?.score || '0', 10) : 0;
-    const awayScore = live ? parseInt(live.awayTeam?.score || '0', 10) : 0;
-    const isLive = live && live.status === 'IN_PROGRESS';
-    const isFinal = live && live.status === 'FINAL';
+    const isGameFinal = isFinalStatus((game as any)?.status);
+    const isLiveFinal = isFinalStatus(live?.status);
+    const isFinal = isGameFinal || isLiveFinal;
+
+    const isLive = !isFinal && Boolean(
+      (live && (live.status === 'IN_PROGRESS' || String(live.status).toUpperCase() === 'LIVE' || String(live.status).toUpperCase() === 'HALFTIME')) ||
+      ((game as any)?.status && (String((game as any).status).toUpperCase() === 'IN_PROGRESS' || String((game as any).status).toUpperCase() === 'LIVE'))
+    );
+
+    const homeScore = (isGameFinal && ((game as any)?.homeScore !== undefined || (game as any)?.home_score !== undefined))
+      ? Number((game as any)?.homeScore ?? (game as any)?.home_score)
+      : (live?.homeTeam?.score !== undefined
+          ? parseInt(live.homeTeam.score || '0', 10)
+          : Number((game as any)?.homeScore ?? (game as any)?.home_score ?? 0));
+
+    const awayScore = (isGameFinal && ((game as any)?.awayScore !== undefined || (game as any)?.away_score !== undefined))
+      ? Number((game as any)?.awayScore ?? (game as any)?.away_score)
+      : (live?.awayTeam?.score !== undefined
+          ? parseInt(live.awayTeam.score || '0', 10)
+          : Number((game as any)?.awayScore ?? (game as any)?.away_score ?? 0));
+
+    const homeCode = (live?.homeTeam?.code || game.homeTeam || '').toUpperCase();
+    const awayCode = (live?.awayTeam?.code || game.awayTeam || '').toUpperCase();
 
     // Calculate user points
-    if (uPick && live) {
-      const isHome = uPick.selectedTeam.toUpperCase() === live.homeTeam.code.toUpperCase();
-      const isAway = uPick.selectedTeam.toUpperCase() === live.awayTeam.code.toUpperCase();
+    if (uPick) {
+      const pickTeam = uPick.selectedTeam.toUpperCase();
+      const isHome = pickTeam === homeCode;
+      const isAway = pickTeam === awayCode;
 
       if (isFinal) {
         if ((homeScore > awayScore && isHome) || (awayScore > homeScore && isAway)) {
@@ -143,9 +163,10 @@ export function calculateRivalryShowdown(
     }
 
     // Calculate rival points
-    if (rPick && live) {
-      const isHome = rPick.selectedTeam.toUpperCase() === live.homeTeam.code.toUpperCase();
-      const isAway = rPick.selectedTeam.toUpperCase() === live.awayTeam.code.toUpperCase();
+    if (rPick) {
+      const pickTeam = rPick.selectedTeam.toUpperCase();
+      const isHome = pickTeam === homeCode;
+      const isAway = pickTeam === awayCode;
 
       if (isFinal) {
         if ((homeScore > awayScore && isHome) || (awayScore > homeScore && isAway)) {
@@ -167,15 +188,18 @@ export function calculateRivalryShowdown(
       const rTeam = rPick.selectedTeam.toUpperCase();
 
       if (uTeam === rTeam) {
+        const sharedStatus = isFinal
+          ? 'FINAL'
+          : (isLive ? (live?.status || 'IN_PROGRESS') : ((game as any)?.status || live?.status || 'SCHEDULED'));
         sharedPicks.push({
           gameId: game.id,
           matchup,
           selectedTeam: uPick.selectedTeam,
-          status: live ? live.status : 'SCHEDULED',
+          status: sharedStatus,
         });
       } else if (!isFinal) {
         // Unfinished game with differing selections -> Battleground!
-        const statusDesc = live ? live.status : 'SCHEDULED';
+        const statusDesc = isLive ? (live?.status || 'IN_PROGRESS') : ((game as any)?.status || live?.status || 'SCHEDULED');
         const qc = live && isLive ? `${(live.period && live.period >= 5) ? 'OT' : `Q${live.period}`} ${live.clock}` : undefined;
 
         battlegrounds.push({
@@ -187,8 +211,8 @@ export function calculateRivalryShowdown(
           rivalPick: rPick.selectedTeam,
           currentStatus: statusDesc,
           quarterClock: qc,
-          homeScore: live ? homeScore : undefined,
-          awayScore: live ? awayScore : undefined,
+          homeScore: (live || isLive) ? homeScore : undefined,
+          awayScore: (live || isLive) ? awayScore : undefined,
           netSwing: 2,
           branchOutcomes: {
             teamA: uPick.selectedTeam,
@@ -201,11 +225,12 @@ export function calculateRivalryShowdown(
       }
     } else if (uPick && !rPick && !isFinal) {
       // User picked Team A and rival has not picked that game yet
+      const pendingStatus = isLive ? (live?.status || 'IN_PROGRESS') : ((game as any)?.status || live?.status || 'SCHEDULED');
       pendingRivalPicks.push({
         gameId: game.id,
         matchup,
         userPick: uPick.selectedTeam,
-        status: live ? live.status : 'SCHEDULED',
+        status: pendingStatus,
       });
     }
   }

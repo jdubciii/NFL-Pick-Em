@@ -11,7 +11,8 @@ import {
   UserStandingRef,
   SlateGame,
   UserPickItem,
-  TiebreakerData
+  TiebreakerData,
+  isFinalStatus,
 } from '../services/sweatProjectionService';
 import { RivalryShowdown } from '../components/radar/RivalryShowdown';
 import { WatchPartyBigBoardModal } from '../components/radar/WatchPartyBigBoardModal';
@@ -91,13 +92,28 @@ export const RadarPage: React.FC = () => {
           setLastUpdated(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
           setIsStale(false);
           setGames((prev) => {
-            if (prev.length > 0) return prev;
+            if (prev.length > 0) {
+              return prev.map((pg) => {
+                const live = data.find((ls) => ls.id === pg.id || ls.id === (pg as any).externalGameId);
+                if (!live) return pg;
+                const isAuthFinal = isFinalStatus(pg.status);
+                return {
+                  ...pg,
+                  status: isAuthFinal ? 'FINAL' : live.status,
+                  homeScore: isAuthFinal ? pg.homeScore : (live.homeTeam?.score !== undefined ? Number(live.homeTeam.score) : pg.homeScore),
+                  awayScore: isAuthFinal ? pg.awayScore : (live.awayTeam?.score !== undefined ? Number(live.awayTeam.score) : pg.awayScore),
+                };
+              });
+            }
             return data.map((ls) => ({
               id: ls.id,
               homeTeam: ls.homeTeam.code,
               awayTeam: ls.awayTeam.code,
               spread: 0,
               kickoffTime: new Date().toISOString(),
+              status: ls.status,
+              homeScore: ls.homeTeam?.score !== undefined ? Number(ls.homeTeam.score) : undefined,
+              awayScore: ls.awayTeam?.score !== undefined ? Number(ls.awayTeam.score) : undefined,
             }));
           });
         } else if (liveScoresRef.current.length > 0) {
@@ -186,7 +202,7 @@ export const RadarPage: React.FC = () => {
           try {
             const { data: gameRows } = await supabase
               .from('games')
-              .select('id, external_game_id')
+              .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, status, home_score, away_score')
               .eq('week', activeWeek);
             (gameRows || []).forEach((g: any) => {
               if (g.id && g.external_game_id) {
@@ -194,6 +210,18 @@ export const RadarPage: React.FC = () => {
                 aliasMap.set(String(g.external_game_id), String(g.id));
               }
             });
+            if (gameRows && gameRows.length > 0) {
+              setGames(gameRows.map((g: any) => ({
+                id: g.id,
+                externalGameId: g.external_game_id,
+                homeTeam: g.home_team_id,
+                awayTeam: g.away_team_id,
+                kickoffTime: g.kickoff_time,
+                status: g.status,
+                homeScore: g.home_score !== null && g.home_score !== undefined ? Number(g.home_score) : undefined,
+                awayScore: g.away_score !== null && g.away_score !== undefined ? Number(g.away_score) : undefined,
+              })));
+            }
           } catch (_) {}
           const mappedPicks: UserPickItem[] = dbPicks.flatMap((p: any) => {
             const base: UserPickItem = {
@@ -217,10 +245,14 @@ export const RadarPage: React.FC = () => {
             if (matrix.rows && matrix.rows.length > 0) {
               setGames(matrix.rows.map((row: any) => ({
                 id: row.game_id,
+                externalGameId: row.external_game_id,
                 homeTeam: row.home_team_id,
                 awayTeam: row.away_team_id,
                 spread: row.spread,
                 kickoffTime: row.kickoff_time,
+                status: row.status,
+                homeScore: row.home_score !== null && row.home_score !== undefined ? Number(row.home_score) : undefined,
+                awayScore: row.away_score !== null && row.away_score !== undefined ? Number(row.away_score) : undefined,
               })));
             }
           }
@@ -278,8 +310,12 @@ export const RadarPage: React.FC = () => {
   // Find live matchup details for the swing game
   const swingLiveMatch = useMemo(() => {
     if (!activeSwingGame) return null;
-    return liveScores.find((l) => l.id === activeSwingGame.gameId);
-  }, [activeSwingGame, liveScores]);
+    const matchingGame = games.find((g) => g.id === activeSwingGame.gameId || (g as any)?.externalGameId === activeSwingGame.gameId);
+    return liveScores.find((l) =>
+      l.id === activeSwingGame.gameId ||
+      (matchingGame && (l.id === matchingGame.id || l.id === (matchingGame as any)?.externalGameId))
+    );
+  }, [activeSwingGame, liveScores, games]);
 
   // Determine active rival for head-to-head calculations
   const activeRival = useMemo(() => {
@@ -309,12 +345,13 @@ export const RadarPage: React.FC = () => {
       : 0;
 
     const queueGames = games.map((g) => {
-      const vPick = effectivePicks.find((p) => p.gameId === g.id && p.userId === currentUserId)?.selectedTeam || '';
+      const vPick = effectivePicks.find((p) => (p.gameId === g.id || p.gameId === (g as any)?.externalGameId) && p.userId === currentUserId)?.selectedTeam || '';
       const rPick = activeRival
-        ? effectivePicks.find((p) => p.gameId === g.id && p.userId === activeRival.id)?.selectedTeam
+        ? effectivePicks.find((p) => (p.gameId === g.id || p.gameId === (g as any)?.externalGameId) && p.userId === activeRival.id)?.selectedTeam
         : null;
-      const liveG = liveScores.find((ls) => ls.id === g.id);
-      const status = liveG?.status || (g as any).status || 'SCHEDULED';
+      const liveG = liveScores.find((ls) => ls.id === g.id || ls.id === (g as any)?.externalGameId);
+      const isFinal = isFinalStatus((g as any)?.status) || isFinalStatus(liveG?.status);
+      const status = isFinal ? 'FINAL' : (liveG?.status || (g as any)?.status || 'SCHEDULED');
       return {
         gameId: g.id,
         awayTeam: g.awayTeam,
@@ -340,18 +377,17 @@ export const RadarPage: React.FC = () => {
 
     const disagreementGames = games
       .filter((g) => {
-        const vPick = effectivePicks.find((p) => p.gameId === g.id && p.userId === currentUserId)?.selectedTeam;
+        const vPick = effectivePicks.find((p) => (p.gameId === g.id || p.gameId === (g as any)?.externalGameId) && p.userId === currentUserId)?.selectedTeam;
         const rPick = activeRival
-          ? effectivePicks.find((p) => p.gameId === g.id && p.userId === activeRival.id)?.selectedTeam
+          ? effectivePicks.find((p) => (p.gameId === g.id || p.gameId === (g as any)?.externalGameId) && p.userId === activeRival.id)?.selectedTeam
           : null;
-        const liveG = liveScores.find((ls) => ls.id === g.id);
-        const st = (liveG?.status || (g as any).status || 'SCHEDULED').toUpperCase();
-        const isSettled = st === 'FINAL' || st === 'F' || st === 'COMPLETED' || st === 'SETTLED';
+        const liveG = liveScores.find((ls) => ls.id === g.id || ls.id === (g as any)?.externalGameId);
+        const isSettled = isFinalStatus((g as any)?.status) || isFinalStatus(liveG?.status);
         if (isSettled || !vPick) return false;
         return Boolean(rPick && rPick !== vPick);
       })
       .map((g) => {
-        const vPick = effectivePicks.find((p) => p.gameId === g.id && p.userId === currentUserId)?.selectedTeam || '';
+        const vPick = effectivePicks.find((p) => (p.gameId === g.id || p.gameId === (g as any)?.externalGameId) && p.userId === currentUserId)?.selectedTeam || '';
         return {
           gameId: g.id,
           awayTeam: g.awayTeam,
@@ -730,14 +766,36 @@ export const RadarPage: React.FC = () => {
                     </span>
                     <span className="text-xs font-mono font-bold text-cyan-400">
                       {(() => {
-                        const isLiveOrFinal = Boolean(
-                          swingLiveMatch && ['IN_PROGRESS', 'LIVE', 'HALFTIME', 'FINAL'].includes((swingLiveMatch.status || '').toUpperCase())
-                        );
-                        if (swingLiveMatch && isLiveOrFinal) {
-                          return `${swingLiveMatch.awayTeam.code} ${swingLiveMatch.awayTeam.score} @ ${swingLiveMatch.homeTeam.code} ${swingLiveMatch.homeTeam.score}`;
+                        const matchingGame = games.find((g) => g.id === activeSwingGame.gameId || (g as any)?.externalGameId === activeSwingGame.gameId);
+                        const isFinal = isFinalStatus(activeSwingGame.gameStatus) || isFinalStatus((matchingGame as any)?.status) || isFinalStatus(swingLiveMatch?.status);
+
+                        const awayCode = swingLiveMatch?.awayTeam?.code || matchingGame?.awayTeam || '';
+                        const homeCode = swingLiveMatch?.homeTeam?.code || matchingGame?.homeTeam || '';
+
+                        const awayScore = swingLiveMatch?.awayTeam?.score !== undefined
+                          ? swingLiveMatch.awayTeam.score
+                          : (matchingGame?.awayScore !== undefined ? String(matchingGame.awayScore) : undefined);
+                        const homeScore = swingLiveMatch?.homeTeam?.score !== undefined
+                          ? swingLiveMatch.homeTeam.score
+                          : (matchingGame?.homeScore !== undefined ? String(matchingGame.homeScore) : undefined);
+
+                        const hasScores = awayScore !== undefined && homeScore !== undefined;
+
+                        if (isFinal) {
+                          if (hasScores && awayCode && homeCode) {
+                            return `${awayCode} ${awayScore} @ ${homeCode} ${homeScore}`;
+                          }
+                          return activeSwingGame.matchup || (awayCode && homeCode ? `${awayCode} @ ${homeCode}` : 'FINAL');
                         }
-                        if (swingLiveMatch) {
-                          return `${swingLiveMatch.awayTeam.code} @ ${swingLiveMatch.homeTeam.code}`;
+
+                        const isLive = Boolean(
+                          swingLiveMatch && ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((swingLiveMatch.status || '').toUpperCase())
+                        );
+                        if (swingLiveMatch && isLive && hasScores) {
+                          return `${awayCode} ${awayScore} @ ${homeCode} ${homeScore}`;
+                        }
+                        if (swingLiveMatch && awayCode && homeCode) {
+                          return `${awayCode} @ ${homeCode}`;
                         }
                         return activeSwingGame.matchup || 'AWAITING KICKOFF';
                       })()}
@@ -748,17 +806,24 @@ export const RadarPage: React.FC = () => {
                       Status:{' '}
                       <strong className="text-slate-200">
                         {(() => {
-                          const isLiveOrFinal = Boolean(
-                            swingLiveMatch && ['IN_PROGRESS', 'LIVE', 'HALFTIME', 'FINAL'].includes((swingLiveMatch.status || '').toUpperCase())
+                          const matchingGame = games.find((g) => g.id === activeSwingGame.gameId || (g as any)?.externalGameId === activeSwingGame.gameId);
+                          const isFinal = isFinalStatus(activeSwingGame.gameStatus) || isFinalStatus((matchingGame as any)?.status) || isFinalStatus(swingLiveMatch?.status);
+
+                          if (isFinal) {
+                            return 'FINAL';
+                          }
+
+                          const isLive = Boolean(
+                            swingLiveMatch && ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((swingLiveMatch.status || '').toUpperCase())
                           );
-                          if (swingLiveMatch && isLiveOrFinal) {
-                            return (swingLiveMatch.status as string) === 'FINAL'
-                              ? 'FINAL'
-                              : (swingLiveMatch.status as string) === 'HALFTIME'
+                          if (swingLiveMatch && isLive) {
+                            return (swingLiveMatch.status as string) === 'HALFTIME'
                               ? 'HALFTIME'
                               : `${(swingLiveMatch.period && swingLiveMatch.period >= 5) ? 'OT' : (swingLiveMatch.period ? `Q${swingLiveMatch.period}` : 'LIVE')} ${swingLiveMatch.clock || ''}`.trim();
                           }
-                          return activeSwingGame.gameStatus || 'PRE-KICKOFF';
+                          return (activeSwingGame.gameStatus && !isFinalStatus(activeSwingGame.gameStatus) && activeSwingGame.gameStatus !== 'SCHEDULED')
+                            ? activeSwingGame.gameStatus
+                            : ((matchingGame as any)?.status || swingLiveMatch?.status || 'SCHEDULED');
                         })()}
                       </strong>
                     </span>
