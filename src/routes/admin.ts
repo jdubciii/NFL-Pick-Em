@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import prisma from '../db/client';
 import { requireAuth, requireAdmin, requirePoolCommissioner, getPrismaClient } from '../middleware/auth';
 import { normalizeTeamCode } from '../services/authoritativeSlateService';
-import { savePickAtomically, resolveGameWithCanonicalLock, SavedPickRecord } from './picks';
+import { savePickAtomically, resolveGameWithCanonicalLock, SavedPickRecord, AmbiguousGameIdentityError } from './picks';
 
 export const adminRouter = Router();
 export const poolAdminRouter = Router({ mergeParams: true });
@@ -330,6 +330,22 @@ export const handleAdminPickOverride = async (req: Request, res: Response): Prom
 
     if (error.code === 'P2003') {
       res.status(400).json({ error: 'Invalid user_id, pool_id, or game_id reference.' });
+      return;
+    }
+
+    if (error instanceof AmbiguousGameIdentityError || error.code === 'AMBIGUOUS_GAME_IDENTITY') {
+      res.status(409).json({
+        error: error.message || 'Ambiguous game identity: multiple games matched. Zero writes performed.',
+        code: 'AMBIGUOUS_GAME_IDENTITY',
+      });
+      return;
+    }
+
+    if (error.code === 'DUPLICATE_PICK_IDENTITY') {
+      res.status(409).json({
+        error: error.message || 'Duplicate pick identity conflict detected. Zero writes performed.',
+        code: 'DUPLICATE_PICK_IDENTITY',
+      });
       return;
     }
 

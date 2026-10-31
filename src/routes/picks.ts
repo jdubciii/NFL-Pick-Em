@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db/client';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, getPrismaClient } from '../middleware/auth';
 import { PoolSettings } from '../types/pool';
 import { normalizeTeamCode } from '../services/authoritativeSlateService';
 
@@ -59,6 +59,16 @@ export function setAllowLegacyUnscopedPicksRouteForTesting(allow: boolean): void
   allowLegacyUnscopedPicksRouteForTesting = allow;
 }
 
+export class AmbiguousGameIdentityError extends Error {
+  code = 'AMBIGUOUS_GAME_IDENTITY';
+  statusCode = 409;
+  status = 409;
+  constructor(message: string) {
+    super(message);
+    this.name = 'AmbiguousGameIdentityError';
+  }
+}
+
 export async function resolveGameWithCanonicalLock(db: any, gameId: string): Promise<GameWithCanonicalLock | null> {
   if (!gameId) return null;
 
@@ -97,7 +107,7 @@ export async function resolveGameWithCanonicalLock(db: any, gameId: string): Pro
 
   if (rows && Array.isArray(rows)) {
     if (rows.length > 1) {
-      throw new Error(`AMBIGUOUS_GAME_IDENTITY: Multiple games matched ID ${gameId}.`);
+      throw new AmbiguousGameIdentityError(`AMBIGUOUS_GAME_IDENTITY: Multiple games matched ID ${gameId}. Zero writes performed.`);
     }
     if (rows.length === 1) {
       const r = rows[0];
@@ -323,6 +333,9 @@ export async function executeSerializedPickMutation(
       try {
         preLockGame = await resolveGameWithCanonicalLock(executor, gameId);
       } catch (preErr: any) {
+        if (preErr?.code === 'AMBIGUOUS_GAME_IDENTITY' || preErr instanceof AmbiguousGameIdentityError) {
+          throw preErr;
+        }
         if (!explicitNonTransactionTestAdapter) {
           const lockErr = new Error(`UNVERIFIED_KICKOFF: Authoritative matchup resolution failed before lock (${preErr.message}). Zero writes.`);
           (lockErr as any).code = 'UNVERIFIED_KICKOFF';
@@ -337,6 +350,9 @@ export async function executeSerializedPickMutation(
     try {
       preLockGame = await resolveGameWithCanonicalLock(executor, gameId);
     } catch (preErr: any) {
+      if (preErr?.code === 'AMBIGUOUS_GAME_IDENTITY' || preErr instanceof AmbiguousGameIdentityError) {
+        throw preErr;
+      }
       if (explicitNonTransactionTestAdapter && params.gameData) {
         preLockGame = {
           id: params.gameData.id || params.gameData.gameId || gameId,
@@ -435,6 +451,9 @@ export async function executeSerializedPickMutation(
   try {
     refreshedGame = await resolveGameWithCanonicalLock(executor, canonicalGameId);
   } catch (refreshErr: any) {
+    if (refreshErr?.code === 'AMBIGUOUS_GAME_IDENTITY' || refreshErr instanceof AmbiguousGameIdentityError) {
+      throw refreshErr;
+    }
     if (explicitNonTransactionTestAdapter && params.gameData) {
       refreshedGame = {
         id: params.gameData.id || params.gameData.gameId || canonicalGameId,
@@ -937,10 +956,11 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
   const userId = req.user!.id;
 
   try {
+    const db = getPrismaClient() || prisma;
     // 1. Fetch Pool and verify ACTIVE membership (Decision #55: Fail-closed)
     const [pool, membership] = await Promise.all([
-      prisma.pool.findUnique({ where: { id: poolId } }),
-      prisma.poolMembership.findUnique({
+      db.pool.findUnique({ where: { id: poolId } }),
+      db.poolMembership.findUnique({
         where: {
           poolId_userId: {
             poolId,
@@ -961,7 +981,7 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
     }
 
     // 2. Fetch Game with canonical effective lock columns
-    const game = await resolveGameWithCanonicalLock(prisma, gameId);
+    const game = await resolveGameWithCanonicalLock(db, gameId);
 
     if (!game) {
       res.status(404).json({ error: 'Game not found.' });
@@ -1019,7 +1039,7 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
     }
 
     // 6. Parameterized atomic persistence on verified 4-column key and TEXT game identity
-    const savedPick = await savePickAtomically(prisma, {
+    const savedPick = await savePickAtomically(db, {
       poolId,
       userId,
       gameId: String(game.id),
@@ -1041,6 +1061,14 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
       res.status(403).json({
         error: error.message || 'Game is locked.',
         code: error.code || 'KICKOFF_PASSED',
+      });
+      return;
+    }
+
+    if (error.code === 'AMBIGUOUS_GAME_IDENTITY' || error instanceof AmbiguousGameIdentityError) {
+      res.status(409).json({
+        error: error.message || 'Ambiguous game identity: multiple games matched. Zero writes performed.',
+        code: 'AMBIGUOUS_GAME_IDENTITY',
       });
       return;
     }
@@ -1096,9 +1124,10 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
   const userId = req.user!.id;
 
   try {
+    const db = getPrismaClient() || prisma;
     const [pool, membership] = await Promise.all([
-      prisma.pool.findUnique({ where: { id: poolId } }),
-      prisma.poolMembership.findUnique({
+      db.pool.findUnique({ where: { id: poolId } }),
+      db.poolMembership.findUnique({
         where: { poolId_userId: { poolId, userId } },
       }),
     ]);
@@ -1155,7 +1184,7 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
           ? String(rawSelected).trim()
           : null;
 
-        const game = await resolveGameWithCanonicalLock(prisma, gameId);
+        const game = await resolveGameWithCanonicalLock(db, gameId);
         if (!game) {
           results.push({ gameId, status: 'ERROR', error: 'Game not found.' });
           continue;
@@ -1193,7 +1222,7 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
           }
         }
 
-        const savedPick = await savePickAtomically(prisma, {
+        const savedPick = await savePickAtomically(db, {
           poolId,
           userId,
           gameId: String(game.id),
@@ -1207,7 +1236,14 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
         savedPicks.push(savedPick);
         results.push({ gameId: String(game.id), status: 'SAVED', pick: savedPick });
       } catch (err: any) {
-        if (err.code === 'DUPLICATE_PICK_IDENTITY' || err.statusCode === 409) {
+        if (err.code === 'AMBIGUOUS_GAME_IDENTITY' || err instanceof AmbiguousGameIdentityError) {
+          results.push({
+            gameId,
+            status: 'CONFLICT',
+            code: 'AMBIGUOUS_GAME_IDENTITY',
+            error: err.message,
+          });
+        } else if (err.code === 'DUPLICATE_PICK_IDENTITY' || err.statusCode === 409) {
           results.push({
             gameId,
             status: 'CONFLICT',

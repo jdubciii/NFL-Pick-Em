@@ -15,7 +15,7 @@ import {
 } from '../src/middleware/auth';
 import { adminRouter, poolAdminRouter } from '../src/routes/admin';
 import { adminOpsRouter } from '../src/routes/adminOps';
-import { savePickAtomically } from '../src/routes/picks';
+import { savePickAtomically, picksRouter, AmbiguousGameIdentityError } from '../src/routes/picks';
 import { app as prodApp } from '../src/server';
 import { Role } from '@prisma/client';
 
@@ -892,6 +892,7 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
     beforeEach(async () => {
       app = express();
       app.use(express.json());
+      app.use('/api/pools/:pool_id/picks', picksRouter);
       app.use('/api/pools', poolAdminRouter);
 
       await new Promise<void>((resolve) => {
@@ -1419,6 +1420,7 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
     beforeEach(async () => {
       app = express();
       app.use(express.json());
+      app.use('/api/pools/:pool_id/picks', picksRouter);
       app.use('/api/pools', poolAdminRouter);
 
       await new Promise<void>((resolve) => {
@@ -2602,6 +2604,130 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
       expect(lockKeyHistory[1]).toBe(expectedLockKey);
       expect(prodDb.advisoryLockKeys[0]).toBe(expectedLockKey);
       expect(prodDb.advisoryLockKeys[1]).toBe(expectedLockKey);
+    });
+
+    it('rejects ambiguous game identity on admin override with HTTP 409 AMBIGUOUS_GAME_IDENTITY and ZERO writes', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      // Two distinct games sharing the same externalGameId alias
+      const duplicateGame1 = {
+        ...scheduledGame,
+        id: 'game-uuid-auth-1a',
+      };
+      const duplicateGame2 = {
+        ...scheduledGame,
+        id: 'game-uuid-auth-1b',
+      };
+      const prodDb = createProductionDbMock({
+        games: [duplicateGame1, duplicateGame2],
+      });
+      mockPrisma.$transaction = prodDb.$transaction;
+      mockPrisma.$queryRawUnsafe = prodDb.$queryRawUnsafe;
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.externalGameId, // ambiguous alias matching both games
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(409);
+      const data = await res.json();
+      expect(data.code).toBe('AMBIGUOUS_GAME_IDENTITY');
+      expect(data.error).toContain('AMBIGUOUS_GAME_IDENTITY');
+      expect(prodDb.getCommittedPicksCount()).toBe(0);
+      expect(prodDb.getCommittedAuditCount()).toBe(0);
+    });
+
+    it('rejects ambiguous game identity on standard user pick with HTTP 409 AMBIGUOUS_GAME_IDENTITY and ZERO writes', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: MEMBER_ID,
+        status: 'ACTIVE',
+      });
+      const duplicateGame1 = {
+        ...scheduledGame,
+        id: 'game-uuid-auth-1a',
+      };
+      const duplicateGame2 = {
+        ...scheduledGame,
+        id: 'game-uuid-auth-1b',
+      };
+      const prodDb = createProductionDbMock({
+        games: [duplicateGame1, duplicateGame2],
+      });
+      mockPrisma.$transaction = prodDb.$transaction;
+      mockPrisma.$queryRawUnsafe = prodDb.$queryRawUnsafe;
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/picks`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(MEMBER_ID, 'USER')}`,
+        },
+        body: JSON.stringify({
+          game_id: scheduledGame.externalGameId, // ambiguous alias matching both games
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(409);
+      const data = await res.json();
+      expect(data.code).toBe('AMBIGUOUS_GAME_IDENTITY');
+      expect(data.error).toContain('AMBIGUOUS_GAME_IDENTITY');
+      expect(prodDb.getCommittedPicksCount()).toBe(0);
+      expect(prodDb.getCommittedAuditCount()).toBe(0);
+    });
+
+    it('database query failure during game resolution returns HTTP 500 and is NOT classified as AMBIGUOUS_GAME_IDENTITY or DUPLICATE_PICK_IDENTITY', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      const prodDb = createProductionDbMock({
+        games: [scheduledGame],
+      });
+      mockPrisma.$transaction = prodDb.$transaction;
+      // Force database query failure when querying public.games
+      mockPrisma.$queryRawUnsafe = vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
+        if (sql.includes('FROM public.games')) {
+          throw new Error('Connection terminated unexpectedly');
+        }
+        return prodDb.$queryRawUnsafe(sql, ...params);
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.code).not.toBe('AMBIGUOUS_GAME_IDENTITY');
+      expect(data.code).not.toBe('DUPLICATE_PICK_IDENTITY');
+      expect(prodDb.getCommittedPicksCount()).toBe(0);
+      expect(prodDb.getCommittedAuditCount()).toBe(0);
     });
   });
 });
