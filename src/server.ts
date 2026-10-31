@@ -46,6 +46,7 @@ app.use(express.json());
 
 
 // Routes
+app.use('/api/pools/:pool_id/picks', picksRouter);
 app.use('/api/picks', picksRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/admin/ops', adminOpsRouter);

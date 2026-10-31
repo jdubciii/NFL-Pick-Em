@@ -336,26 +336,56 @@ export const WeeklyPicks: React.FC = () => {
 
           if (dbPicks && Array.isArray(dbPicks) && dbPicks.length > 0) {
             const cloudMap: Record<string, string> = {};
-            const seenGameUuids = new Set<string>();
+            const canonicalRowsMap = new Map<string, any[]>();
+            const ambiguousGameIds = new Set<string>();
+
+            // Detect duplicate identity across all rows BEFORE filtering null selections
             dbPicks.forEach((p: any) => {
               const gId = p.game_id || p.matchup_id;
-              if (gId && p.selected_team) {
-                // Identity resolution: match by DB UUID or external ESPN ID
-                const matched = (mappedGames || []).find((g: any) => String(g.id) === String(gId) || String((g as any).externalGameId || (g as any).external_game_id) === String(gId));
-                if (matched) {
-                  const canonicalId = String((matched as any).id);
-                  const ext = String((matched as any).externalGameId || (matched as any).external_game_id || '');
-                  if (seenGameUuids.has(canonicalId)) {
-                    console.warn(`DUPLICATE_PICKS_DETECTED: Found duplicate stored pick for game ${canonicalId} / ${ext}. Using pick: ${p.selected_team}`);
-                  }
-                  seenGameUuids.add(canonicalId);
-                  cloudMap[canonicalId] = p.selected_team;
-                  if (ext) cloudMap[ext] = p.selected_team;
-                } else {
-                  cloudMap[String(gId)] = p.selected_team;
-                }
+              if (!gId) return;
+              const matched = (mappedGames || []).find(
+                (g: any) => String(g.id) === String(gId) || String((g as any).externalGameId || (g as any).external_game_id) === String(gId)
+              );
+              const canonicalId = matched ? String((matched as any).id) : String(gId);
+              if (!canonicalRowsMap.has(canonicalId)) {
+                canonicalRowsMap.set(canonicalId, []);
+              }
+              canonicalRowsMap.get(canonicalId)!.push(p);
+            });
+
+            // Visibly flag duplicate ambiguity
+            canonicalRowsMap.forEach((rows, canonicalId) => {
+              if (rows.length > 1) {
+                ambiguousGameIds.add(canonicalId);
+                console.warn(`DUPLICATE_PICKS_DETECTED: Found ${rows.length} conflicting stored picks for matchup ${canonicalId}.`);
               }
             });
+
+            if (ambiguousGameIds.size > 0) {
+              setFeedbackMessage({
+                text: `Ambiguous pick records detected: ${ambiguousGameIds.size} matchup(s) have duplicate rows in database. Please review your picks.`,
+                type: 'error',
+              });
+            }
+
+            // Build cloudMap without silent last-row-wins overwrite
+            canonicalRowsMap.forEach((rows, canonicalId) => {
+              const nonNullRows = rows.filter((r) => r.selected_team);
+              const matched = (mappedGames || []).find((g: any) => String(g.id) === canonicalId);
+              const ext = matched ? String((matched as any).externalGameId || (matched as any).external_game_id || '') : '';
+
+              if (rows.length > 1 && nonNullRows.length > 1) {
+                console.error(`CONFLICTING_DUPLICATE_PICKS: Conflicting selections for matchup ${canonicalId}:`, nonNullRows);
+                const chosen = nonNullRows[0].selected_team;
+                cloudMap[canonicalId] = chosen;
+                if (ext) cloudMap[ext] = chosen;
+              } else if (nonNullRows.length > 0) {
+                const chosen = nonNullRows[0].selected_team;
+                cloudMap[canonicalId] = chosen;
+                if (ext) cloudMap[ext] = chosen;
+              }
+            });
+
             userPicksMap = cloudMap;
             setUserPicks(cloudMap);
             try {
@@ -582,7 +612,7 @@ export const WeeklyPicks: React.FC = () => {
       saveError = new Error('Authentication required to save pick.');
     } else {
       try {
-        const res = await scopedExpressFetch('/api/picks', {
+        const res = await scopedExpressFetch(`/api/pools/${pool.id}/picks`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -668,7 +698,7 @@ export const WeeklyPicks: React.FC = () => {
         selected_team_id: null,
         week: selectedWeek,
       }));
-      const res = await scopedExpressFetch('/api/picks/batch', {
+      const res = await scopedExpressFetch(`/api/pools/${pool.id}/picks/batch`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -686,9 +716,14 @@ export const WeeklyPicks: React.FC = () => {
 
       const batchData = await res.json().catch(() => ({}));
       const results: any[] = batchData.results || [];
-      const savedGameIds = new Set(
-        results.filter((r) => r.status === 'SAVED').map((r) => String(r.gameId))
-      );
+      const savedGameIds = new Set<string>();
+      results.filter((r) => r.status === 'SAVED').forEach((r) => {
+        const rawId = String(r.gameId);
+        const match = games.find(
+          (g) => String(g.id) === rawId || String((g as any).externalGameId || (g as any).external_game_id) === rawId
+        );
+        savedGameIds.add(match ? String(match.id) : rawId);
+      });
       const failures = results.filter((r) => r.status !== 'SAVED');
 
       // Update state ONLY for games that were confirmed cleared (SAVED)
@@ -815,16 +850,6 @@ export const WeeklyPicks: React.FC = () => {
             confirmedEditablePicks[gameId] = selectedTeamId;
           }
 
-          // Persist to localStorage
-          try {
-            const savedMap = JSON.parse(localStorage.getItem(userPicksCacheKey) || '{}');
-            Object.assign(savedMap, confirmedEditablePicks);
-            setUserPicks((prev) => ({ ...prev, ...confirmedEditablePicks }));
-            localStorage.setItem(userPicksCacheKey, JSON.stringify(savedMap));
-          } catch (e) {
-            console.warn('localStorage preset save warning:', e);
-          }
-
           const entries = Object.entries(confirmedEditablePicks);
           const batchPayload = entries.map(([gameId, selectedTeamId]) => ({
             game_id: gameId,
@@ -845,11 +870,8 @@ export const WeeklyPicks: React.FC = () => {
             throw new Error('Authentication required to persist preset.');
           }
 
-          let saveSuccess = false;
-          let saveError: any = null;
-
           try {
-            const batchRes = await scopedExpressFetch('/api/picks/batch', {
+            const batchRes = await scopedExpressFetch(`/api/pools/${pool.id}/picks/batch`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -866,14 +888,22 @@ export const WeeklyPicks: React.FC = () => {
               const confirmedPicksList: any[] = batchData.picks || [];
               const confirmedPicksMap: Record<string, string> = {};
               confirmedPicksList.forEach((p: any) => {
-                const gId = p.gameId || p.game_id;
+                const rawGid = p.gameId || p.game_id;
                 const team = p.selectedTeamId || p.selected_team_id || p.selectedTeam || p.selected_team;
-                if (gId && team) confirmedPicksMap[String(gId)] = String(team);
+                if (rawGid && team) {
+                  const match = games.find(
+                    (g) => String(g.id) === String(rawGid) || String((g as any).externalGameId || (g as any).external_game_id) === String(rawGid)
+                  );
+                  const canonicalId = match ? String(match.id) : String(rawGid);
+                  confirmedPicksMap[canonicalId] = String(team);
+                  const ext = match ? String((match as any).externalGameId || (match as any).external_game_id || '') : '';
+                  if (ext) confirmedPicksMap[ext] = String(team);
+                }
               });
 
               const failures = (batchData.results || []).filter((r: any) => r.status !== 'SAVED');
 
-              // Apply confirmed picks on top of current picks
+              // Apply ONLY confirmed picks on top of current picks
               const finalPicksMap = { ...currentPicksMap, ...confirmedPicksMap };
               setUserPicks(finalPicksMap);
               setGames((prev) =>
@@ -894,51 +924,16 @@ export const WeeklyPicks: React.FC = () => {
                   type: 'error',
                 });
                 setTimeout(() => setFeedbackMessage(null), 4000);
+              } else {
+                setFeedbackMessage({ text: 'Preset saved successfully.', type: 'success' });
+                setTimeout(() => setFeedbackMessage(null), 3000);
               }
               triggerHaptic('selection');
-              saveSuccess = true;
             } else {
-              // Try individual saves if batch route rejected
-              const singleResults = await Promise.allSettled(
-                batchPayload.map((p) =>
-                  scopedExpressFetch('/api/picks', {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      Authorization: `Bearer ${activeToken}`,
-                    },
-                    body: JSON.stringify({
-                      pool_id: pool.id,
-                      game_id: p.game_id,
-                      selected_team_id: p.selected_team_id,
-                      week: selectedWeek,
-                    }),
-                  })
-                )
-              );
-              const anyOk = singleResults.some((r) => r.status === 'fulfilled' && r.value.ok);
-              if (anyOk) {
-                saveSuccess = true;
-              } else {
-                const errData = await batchRes.json().catch(() => ({}));
-                saveError = new Error(errData.error || `Server error (${batchRes.status})`);
-              }
+              const errData = await batchRes.json().catch(() => ({}));
+              throw new Error(errData.error || `Server error (${batchRes.status})`);
             }
           } catch (netErr: any) {
-            saveError = netErr;
-          }
-
-          if (saveSuccess) {
-            try {
-              const savedMap = JSON.parse(localStorage.getItem(userPicksCacheKey) || '{}');
-              Object.assign(savedMap, confirmedEditablePicks);
-              setUserPicks((prev) => ({ ...prev, ...confirmedEditablePicks }));
-              localStorage.setItem(userPicksCacheKey, JSON.stringify(savedMap));
-            } catch (e) {
-              console.warn('localStorage preset save warning:', e);
-            }
-            triggerHaptic('selection');
-          } else {
             // Revert optimistic preset state and notify user
             setUserPicks(currentPicksMap);
             setGames((prev) =>
@@ -951,7 +946,7 @@ export const WeeklyPicks: React.FC = () => {
               localStorage.setItem(userPicksCacheKey, JSON.stringify(currentPicksMap));
             } catch (_) {}
             setFeedbackMessage({
-              text: `Failed to save preset: ${saveError?.message || 'Server error'}. Selections reverted.`,
+              text: `Failed to save preset: ${netErr?.message || 'Server error'}. Selections reverted.`,
               type: 'error',
             });
             setTimeout(() => setFeedbackMessage(null), 4000);
@@ -1053,7 +1048,8 @@ export const WeeklyPicks: React.FC = () => {
       if (!isGameLocked(g) && !isGameKickoffLocked(g)) {
         if (lastBulkSnapshot[g.id]) {
           gamesToRestore.push({ gameId: g.id, team: lastBulkSnapshot[g.id] });
-        } else if (userPicks[g.id]) {
+        } else if (userPicks[g.id] || g.userPick) {
+          // Explicit null mutation for previously unpicked games
           gamesToRestore.push({ gameId: g.id, team: null });
         }
       }
@@ -1072,7 +1068,7 @@ export const WeeklyPicks: React.FC = () => {
         selected_team_id: item.team,
         week: selectedWeek,
       }));
-      const res = await scopedExpressFetch('/api/picks/batch', {
+      const res = await scopedExpressFetch(`/api/pools/${pool.id}/picks/batch`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1090,9 +1086,14 @@ export const WeeklyPicks: React.FC = () => {
 
       const batchData = await res.json().catch(() => ({}));
       const results: any[] = batchData.results || [];
-      const savedGameIds = new Set(
-        results.filter((r) => r.status === 'SAVED').map((r) => String(r.gameId))
-      );
+      const savedGameIds = new Set<string>();
+      results.filter((r) => r.status === 'SAVED').forEach((r) => {
+        const rawId = String(r.gameId);
+        const match = games.find(
+          (g) => String(g.id) === rawId || String((g as any).externalGameId || (g as any).external_game_id) === rawId
+        );
+        savedGameIds.add(match ? String(match.id) : rawId);
+      });
       const failures = results.filter((r) => r.status !== 'SAVED');
 
       // Update state ONLY for games confirmed restored (SAVED)
@@ -1115,7 +1116,6 @@ export const WeeklyPicks: React.FC = () => {
         localStorage.setItem(userPicksCacheKey, JSON.stringify(nextUserPicks));
       } catch (_) {}
 
-      setLastBulkSnapshot(null);
       triggerHaptic('impactMedium');
 
       if (failures.length > 0) {
@@ -1125,6 +1125,7 @@ export const WeeklyPicks: React.FC = () => {
         });
         setTimeout(() => setFeedbackMessage(null), 4000);
       } else {
+        setLastBulkSnapshot(null);
         setFeedbackMessage({ text: 'Last bulk action undone.', type: 'success' });
         setTimeout(() => setFeedbackMessage(null), 3000);
       }

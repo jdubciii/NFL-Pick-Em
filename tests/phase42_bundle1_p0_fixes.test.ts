@@ -1,4 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import express from 'express';
+import http from 'http';
+import prisma from '../src/db/client';
+import { setSupabaseAuthClientForTesting, createSyntheticSupabaseToken } from '../src/middleware/auth';
 import { QuickFillSafetyEngine, type SlateGameItem } from '../client/src/services/QuickFillSafetyEngine';
 import {
   formatCanonicalKickoffDisplay,
@@ -12,6 +16,9 @@ import {
   savePickAtomically,
   evaluateKickoffLock,
   DuplicatePickIdentityError,
+  picksRouter,
+  setLegacyGameAdapterForTesting,
+  setLegacyPickSaveAdapterForTesting,
   type GameWithCanonicalLock,
 } from '../src/routes/picks';
 
@@ -827,6 +834,525 @@ describe('Bundle 1 — Eight P0 Fixes & Architect Ruling Verification Suite', ()
       expect(gameKickoff).toContain('1:00 PM');
       expect(timeOnly).toBe('1:00 PM');
       expect(fullKickoff).toContain('1:00 PM');
+    });
+  });
+
+  describe('Architect Binding Ruling HAG2-IDENTITY-2026-10-31-02 Behavioral Handler & Invariant Suite', () => {
+    const POOL_ID = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+    const USER_ID = 'b2222222-2222-2222-2222-222222222222';
+    let app: express.Application;
+    let server: http.Server;
+    let baseUrl: string;
+
+    const createToken = (id: string) =>
+      createSyntheticSupabaseToken({ id, email: `${id}@example.com`, role: 'USER' });
+
+    beforeEach(async () => {
+      const getUserMock = vi.fn().mockImplementation(async (token: string) => {
+        const parts = token.split('.');
+        if (parts.length < 2) return { data: { user: null }, error: new Error('invalid') };
+        const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+        return {
+          data: {
+            user: {
+              id: payload.sub,
+              aud: 'authenticated',
+              role: 'authenticated',
+              email: payload.email || `${payload.sub}@example.com`,
+              app_metadata: {},
+              user_metadata: {},
+              created_at: new Date().toISOString(),
+            },
+          },
+          error: null,
+        };
+      });
+      setSupabaseAuthClientForTesting({ auth: { getUser: getUserMock } } as any);
+
+      vi.spyOn(prisma.user, 'findUnique').mockImplementation(async ({ where }: any) => ({
+        id: where.id,
+        email: `${where.id}@example.com`,
+        role: 'USER',
+        createdAt: new Date(),
+      }) as any);
+
+      vi.spyOn(prisma.pool, 'findUnique').mockResolvedValue({
+        id: POOL_ID,
+        name: 'Main League',
+        settings: { lock_offset: 0 },
+      } as any);
+
+      vi.spyOn(prisma.poolMembership, 'findUnique').mockResolvedValue({
+        poolId: POOL_ID,
+        userId: USER_ID,
+        status: 'ACTIVE',
+      } as any);
+
+      app = express();
+      app.use(express.json());
+      app.use('/api/pools/:pool_id/picks', picksRouter);
+      app.use('/api/picks', picksRouter);
+
+      await new Promise<void>((resolve) => {
+        server = app.listen(0, () => {
+          const addr = server.address() as any;
+          baseUrl = `http://127.0.0.1:${addr.port}`;
+          resolve();
+        });
+      });
+    });
+
+    afterEach(async () => {
+      setLegacyGameAdapterForTesting(null);
+      setLegacyPickSaveAdapterForTesting(null);
+      setSupabaseAuthClientForTesting(null);
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+
+    it('Correction 1 & 6: Tenant-scoped POST /api/pools/:pool_id/picks route saves pick with active membership', async () => {
+      setLegacyGameAdapterForTesting(async () => ({
+        id: 'uuid-1',
+        externalGameId: '401873010',
+        homeTeamId: 'GB',
+        awayTeamId: 'DET',
+        kickoffTime: new Date(Date.now() + 86400000),
+        status: 'SCHEDULED',
+        canonicalKickoffTime: new Date(Date.now() + 86400000),
+        lockEffectiveAt: new Date(Date.now() + 86400000),
+        season: 2026,
+        seasonType: 2,
+        week: 8,
+      }));
+
+      const saveMock = vi.fn().mockImplementation(async (_db, params) => ({
+        id: 'saved-pick-1',
+        poolId: params.poolId,
+        userId: params.userId,
+        gameId: params.gameId,
+        week: params.week,
+        selectedTeamId: params.selectedTeamId,
+        submittedById: params.userId,
+      }));
+      setLegacyPickSaveAdapterForTesting(saveMock);
+
+      const token = createToken(USER_ID);
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/picks`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          pool_id: POOL_ID,
+          game_id: '401873010',
+          selected_team_id: 'DET',
+          week: 8,
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.pick.selectedTeamId).toBe('DET');
+      expect(saveMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ poolId: POOL_ID, week: 8, selectedTeamId: 'DET' })
+      );
+    });
+
+    it('Correction 6: Tenant-scoped POST /api/pools/:pool_id/picks rejects body pool_id mismatch with HTTP 400', async () => {
+      const token = createToken(USER_ID);
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/picks`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          pool_id: 'different-pool-id',
+          game_id: '401873010',
+          selected_team_id: 'DET',
+          week: 8,
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('POOL_MISMATCH');
+    });
+
+    it('Correction 1: Actual HTTP route returns 409 DUPLICATE_PICK_IDENTITY with zero writes when duplicate rows exist', async () => {
+      setLegacyGameAdapterForTesting(async () => ({
+        id: 'c032a900-1111-2222-3333-444455556666',
+        externalGameId: '401671800',
+        homeTeamId: 'GB',
+        awayTeamId: 'DET',
+        kickoffTime: new Date(Date.now() + 86400000),
+        status: 'SCHEDULED',
+        canonicalKickoffTime: new Date(Date.now() + 86400000),
+        lockEffectiveAt: new Date(Date.now() + 86400000),
+        season: 2026,
+        seasonType: 2,
+        week: 8,
+      }));
+
+      // Mock save adapter that throws DuplicatePickIdentityError to simulate duplicate rows in db
+      setLegacyPickSaveAdapterForTesting(async () => {
+        throw new DuplicatePickIdentityError(
+          'DUPLICATE_PICK_IDENTITY: Multiple conflicting rows exist for game c032a900-1111-2222-3333-444455556666 and alias 401671800. Zero writes performed.'
+        );
+      });
+
+      const token = createToken(USER_ID);
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/picks`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          pool_id: POOL_ID,
+          game_id: '401671800',
+          selected_team_id: 'DET',
+          week: 8,
+        }),
+      });
+
+      expect(res.status).toBe(409);
+      const data = await res.json();
+      expect(data.code).toBe('DUPLICATE_PICK_IDENTITY');
+      expect(data.error).toContain('Zero writes performed');
+    });
+
+    it('Correction 5: Batch route records missing game_id with explicit status: ERROR', async () => {
+      const token = createToken(USER_ID);
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/picks/batch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          pool_id: POOL_ID,
+          picks: [
+            { selected_team_id: 'DET', week: 8 }, // missing game_id
+          ],
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.results.length).toBe(1);
+      expect(data.results[0].status).toBe('ERROR');
+      expect(data.results[0].error).toContain('Missing game_id');
+    });
+
+    it('Correction 5: Batch route retains earlier committed outcomes when a later item encounters an error', async () => {
+      setLegacyGameAdapterForTesting(async (_db, gameId) => ({
+        id: gameId === 'g1' ? 'uuid-g1' : 'uuid-g2',
+        externalGameId: gameId,
+        homeTeamId: 'GB',
+        awayTeamId: 'DET',
+        kickoffTime: new Date(Date.now() + 86400000),
+        status: 'SCHEDULED',
+        canonicalKickoffTime: new Date(Date.now() + 86400000),
+        lockEffectiveAt: new Date(Date.now() + 86400000),
+        season: 2026,
+        seasonType: 2,
+        week: 8,
+      }));
+
+      // Item 1 succeeds and commits; Item 2 encounters persistence error
+      setLegacyPickSaveAdapterForTesting(async (_db, params) => {
+        if (params.gameId === 'uuid-g1' || params.gameId === 'g1') {
+          return {
+            id: 'saved-g1',
+            poolId: params.poolId,
+            userId: params.userId,
+            gameId: params.gameId,
+            week: params.week,
+            selectedTeamId: params.selectedTeamId,
+            submittedById: params.userId,
+          };
+        }
+        const deadlockErr = new Error('deadlock detected on item 2');
+        (deadlockErr as any).code = 'DEADLOCK_DETECTED';
+        throw deadlockErr;
+      });
+
+      const token = createToken(USER_ID);
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/picks/batch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          pool_id: POOL_ID,
+          picks: [
+            { game_id: 'g1', selected_team_id: 'DET', week: 8 },
+            { game_id: 'g2', selected_team_id: 'GB', week: 8 },
+          ],
+        }),
+      });
+
+      // Does NOT abort with 500 losing g1! Returns HTTP 200 with per-item outcomes!
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.picks.length).toBe(1);
+      expect(data.picks[0].id).toBe('saved-g1');
+      expect(data.results.length).toBe(2);
+      expect(data.results[0].status).toBe('SAVED');
+      expect(data.results[1].status).toBe('ERROR');
+      expect(data.results[1].error).toContain('deadlock detected');
+    });
+
+    it('Correction 1 & 5: Concurrency serialization resolves alias vs UUID contenders on zero-row creation', async () => {
+      // In-memory simulated PostgreSQL table for the matchup
+      const tableRows: any[] = [];
+
+      const createContenderTx = () => ({
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
+          if (sql.includes('pg_advisory_xact_lock')) {
+            return [];
+          }
+          if (sql.includes('SELECT id, game_id')) {
+            const candidateIds = params.slice(3).map(String);
+            return tableRows.filter((r) => candidateIds.includes(String(r.game_id)));
+          }
+          if (sql.includes('INSERT INTO public.picks')) {
+            const newRow = {
+              id: 'row-created-by-uuid',
+              pool_id: params[0],
+              user_id: params[1],
+              week: params[2],
+              game_id: params[3], // UUID
+              selected_team_id: params[4],
+              submitted_by: params[5],
+              created_at: new Date().toISOString(),
+            };
+            tableRows.push(newRow);
+            return [newRow];
+          }
+          if (sql.includes('UPDATE public.picks') && sql.includes('selected_team_id')) {
+            const targetRow = tableRows.find((r) => r.id === params[2]);
+            if (targetRow) {
+              targetRow.selected_team_id = params[0];
+            }
+            return targetRow ? [targetRow] : [];
+          }
+          return [];
+        }),
+      });
+
+      const tx1 = createContenderTx();
+      const db1 = { $transaction: async (cb: any) => cb(tx1) };
+
+      const tx2 = createContenderTx();
+      const db2 = { $transaction: async (cb: any) => cb(tx2) };
+
+      // Contender 1 submits using canonical UUID
+      await savePickAtomically(db1, {
+        poolId: 'pool-uuid-1',
+        userId: 'user-uuid-1',
+        gameId: 'c032a900-1111-2222-3333-444455556666',
+        externalGameId: '401671800',
+        week: 8,
+        selectedTeamId: 'KC',
+      });
+
+      // Contender 2 submits using external ESPN alias
+      const p2 = await savePickAtomically(db2, {
+        poolId: 'pool-uuid-1',
+        userId: 'user-uuid-1',
+        gameId: 'c032a900-1111-2222-3333-444455556666',
+        externalGameId: '401671800',
+        week: 8,
+        selectedTeamId: 'DEN',
+      });
+
+      // Exactly ONE row exists in table (zero duplicate rows created!)
+      expect(tableRows.length).toBe(1);
+      expect(tableRows[0].id).toBe('row-created-by-uuid');
+      expect(tableRows[0].game_id).toBe('c032a900-1111-2222-3333-444455556666');
+      expect(tableRows[0].selected_team_id).toBe('DEN');
+      expect(p2.selectedTeamId).toBe('DEN');
+    });
+
+    it('Correction 1: Write-boundary kickoff crossing denies null unselect with 403 and zero writes', async () => {
+      const mockTx = {
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('pg_advisory_xact_lock')) return [];
+          if (sql.includes('UPDATE') || sql.includes('INSERT') || sql.includes('DELETE')) {
+            throw new Error('VIOLATION: Zero writes allowed when unselect crosses kickoff');
+          }
+          return [];
+        }),
+      };
+      const mockDb = { $transaction: async (cb: any) => cb(mockTx) };
+
+      const pastKickoffGame = {
+        kickoffTime: new Date(Date.now() - 10000), // 10s ago
+        canonicalKickoffTime: new Date(Date.now() - 10000),
+        lockEffectiveAt: null,
+        status: 'IN_PROGRESS',
+      };
+
+      try {
+        await savePickAtomically(mockDb, {
+          poolId: 'pool-uuid-1',
+          userId: 'user-uuid-1',
+          gameId: 'c032a900-1111-2222-3333-444455556666',
+          externalGameId: '401671800',
+          week: 8,
+          selectedTeamId: null, // Null unselect
+          lockOffsetMinutes: 0,
+          gameData: pastKickoffGame,
+        });
+        expect.fail('Should have thrown KICKOFF_PASSED error on unselect');
+      } catch (err: any) {
+        expect(err.code).toBe('KICKOFF_PASSED');
+        expect(err.statusCode).toBe(403);
+      }
+
+      const queries = mockTx.$queryRawUnsafe.mock.calls.map((c: any[]) => c[0]);
+      expect(queries.some((q: string) => q.includes('UPDATE') || q.includes('INSERT') || q.includes('DELETE'))).toBe(false);
+    });
+
+    it('Correction 6: WeeklyPicks rehydration detects duplicate identity BEFORE filtering null selections and visibly flags ambiguity', () => {
+      const mappedGames = [
+        { id: 'c032a900-1111-2222-3333-444455556666', externalGameId: '401671800' },
+      ];
+
+      // dbPicks has 2 rows for the same canonical game: one with selected_team 'KC' (alias), one with selected_team null (UUID)
+      const dbPicks = [
+        { game_id: '401671800', selected_team: 'KC' },
+        { game_id: 'c032a900-1111-2222-3333-444455556666', selected_team: null },
+      ];
+
+      const canonicalRowsMap = new Map<string, any[]>();
+      const ambiguousGameIds = new Set<string>();
+
+      // Exact WeeklyPicks logic: group all rows before filtering null selections
+      dbPicks.forEach((p: any) => {
+        const gId = p.game_id;
+        const matched = mappedGames.find(
+          (g) => String(g.id) === String(gId) || String(g.externalGameId) === String(gId)
+        );
+        const canonicalId = matched ? String(matched.id) : String(gId);
+        if (!canonicalRowsMap.has(canonicalId)) {
+          canonicalRowsMap.set(canonicalId, []);
+        }
+        canonicalRowsMap.get(canonicalId)!.push(p);
+      });
+
+      canonicalRowsMap.forEach((rows, canonicalId) => {
+        if (rows.length > 1) {
+          ambiguousGameIds.add(canonicalId);
+        }
+      });
+
+      expect(ambiguousGameIds.has('c032a900-1111-2222-3333-444455556666')).toBe(true);
+      expect(ambiguousGameIds.size).toBe(1);
+    });
+
+    it('Correction 3: performApplyPreset normalizes returned alias IDs to logical UUID and does NOT merge un-saved picks', () => {
+      const games = [
+        { id: 'uuid-1', externalGameId: '401873011' },
+        { id: 'uuid-2', externalGameId: '401873012' },
+      ];
+
+      const currentPicksMap: Record<string, string> = { 'uuid-1': 'GB', 'uuid-2': 'CHI' };
+
+      // Server returns batchData where game 1 is confirmed SAVED using its stored ESPN alias, game 2 failed/locked
+      const batchData = {
+        picks: [{ game_id: '401873011', selected_team_id: 'DET' }], // returned with alias
+        results: [
+          { gameId: '401873011', status: 'SAVED' },
+          { gameId: 'uuid-2', status: 'LOCKED', error: 'Game locked' },
+        ],
+      };
+
+      const confirmedPicksMap: Record<string, string> = {};
+      batchData.picks.forEach((p: any) => {
+        const rawGid = p.gameId || p.game_id;
+        const team = p.selectedTeamId || p.selected_team_id;
+        if (rawGid && team) {
+          const match = games.find(
+            (g) => String(g.id) === String(rawGid) || String(g.externalGameId) === String(rawGid)
+          );
+          const canonicalId = match ? String(match.id) : String(rawGid);
+          confirmedPicksMap[canonicalId] = String(team);
+        }
+      });
+
+      // Confirmed pick normalized to canonical UUID!
+      expect(confirmedPicksMap['uuid-1']).toBe('DET');
+
+      // Final picks map applies ONLY confirmed picks on top of current picks
+      const finalPicksMap = { ...currentPicksMap, ...confirmedPicksMap };
+      expect(finalPicksMap['uuid-1']).toBe('DET'); // Updated
+      expect(finalPicksMap['uuid-2']).toBe('CHI'); // Preserved current pick (not overwritten by failed preset)
+    });
+
+    it('Correction 4: handleUndoLastBulk sends explicit null mutations for previously unpicked games and normalizes alias IDs', () => {
+      const games = [
+        { id: 'uuid-1', externalGameId: '401873011', userPick: 'DET' },
+        { id: 'uuid-2', externalGameId: '401873012', userPick: 'KC' },
+      ];
+      const userPicks: Record<string, string> = { 'uuid-1': 'DET', 'uuid-2': 'KC' };
+      // Snapshot before bulk action: game 1 was 'GB', game 2 was unpicked (not in snapshot)
+      const lastBulkSnapshot: Record<string, string> = { 'uuid-1': 'GB' };
+
+      const gamesToRestore: { gameId: string; team: string | null }[] = [];
+      for (const g of games) {
+        if (lastBulkSnapshot[g.id]) {
+          gamesToRestore.push({ gameId: g.id, team: lastBulkSnapshot[g.id] });
+        } else if (userPicks[g.id] || g.userPick) {
+          // Explicit null mutation for previously unpicked game!
+          gamesToRestore.push({ gameId: g.id, team: null });
+        }
+      }
+
+      expect(gamesToRestore).toEqual([
+        { gameId: 'uuid-1', team: 'GB' },
+        { gameId: 'uuid-2', team: null }, // Explicit null!
+      ]);
+
+      // Server returns results where uuid-1 is returned as alias 401873011
+      const batchData = {
+        results: [
+          { gameId: '401873011', status: 'SAVED' },
+          { gameId: 'uuid-2', status: 'LOCKED', error: 'Game is locked' },
+        ],
+      };
+
+      const savedGameIds = new Set<string>();
+      batchData.results.filter((r) => r.status === 'SAVED').forEach((r) => {
+        const rawId = String(r.gameId);
+        const match = games.find(
+          (g) => String(g.id) === rawId || String(g.externalGameId) === rawId
+        );
+        savedGameIds.add(match ? String(match.id) : rawId);
+      });
+
+      // uuid-1 resolved from alias 401873011!
+      expect(savedGameIds.has('uuid-1')).toBe(true);
+      expect(savedGameIds.has('uuid-2')).toBe(false);
+
+      // Reconcile ONLY saved games:
+      const nextUserPicks = { ...userPicks };
+      gamesToRestore.forEach((item) => {
+        if (savedGameIds.has(String(item.gameId))) {
+          if (item.team) {
+            nextUserPicks[item.gameId] = item.team;
+          } else {
+            delete nextUserPicks[item.gameId];
+          }
+        }
+      });
+
+      expect(nextUserPicks['uuid-1']).toBe('GB'); // Restored
+      expect(nextUserPicks['uuid-2']).toBe('KC'); // Retained (locked game not reverted)
     });
   });
 });

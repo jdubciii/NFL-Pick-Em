@@ -4,7 +4,7 @@ import { requireAuth } from '../middleware/auth';
 import { PoolSettings } from '../types/pool';
 import { normalizeTeamCode } from '../services/authoritativeSlateService';
 
-export const picksRouter = Router();
+export const picksRouter = Router({ mergeParams: true });
 
 export interface GameWithCanonicalLock {
   id: string;
@@ -233,7 +233,7 @@ async function executeSerializedPickMutation(
 ): Promise<SavedPickRecord> {
   const { poolId, userId, gameId, week, selectedTeamId, externalGameId, lockOffsetMinutes, gameData } = params;
 
-  // Authoritative kickoff lock validation at write boundary
+  // Authoritative kickoff lock validation at write boundary post-wait
   if (gameData) {
     const lockOffset = Number(lockOffsetMinutes ?? 0);
     const writeLock = evaluateKickoffLock(gameData, lockOffset, new Date());
@@ -384,9 +384,17 @@ export async function savePickAtomically(
     throw new Error(`INVALID_PICK_WEEK: Authoritative week ${week} is invalid or outside season bounds (1-18).`);
   }
 
+  if (!poolId || !userId || !gameId) {
+    throw new Error('MISSING_KEY_ATTRIBUTES: poolId, userId, gameId, and week are required.');
+  }
+
   // In test environments where an explicit legacy save adapter is injected, use it directly
   if (legacyPickSaveAdapterForTesting) {
     return await legacyPickSaveAdapterForTesting(db, params);
+  }
+
+  if (!db || (typeof db.$transaction !== 'function' && typeof db.$queryRawUnsafe !== 'function')) {
+    throw new Error('TRANSACTION_UNAVAILABLE: Database client lacks transaction and advisory locking capability.');
   }
 
   if (typeof db.$transaction === 'function') {
@@ -400,11 +408,12 @@ export async function savePickAtomically(
     });
   }
 
-  if (typeof db.$queryRawUnsafe === 'function') {
-    return await executeSerializedPickMutation(db, params);
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('TRANSACTION_UNAVAILABLE: Production database client must support interactive transactions.');
   }
 
-  throw new Error('PICK_PERSISTENCE_FAILED: No raw SQL executor available for atomic pick persistence.');
+  // Non-production fallback for direct execution environments where db is a mock or query executor
+  return await executeSerializedPickMutation(db, params);
 }
 
 /**
@@ -415,8 +424,17 @@ export async function savePickAtomically(
  * participant validation, kickoff locks, and 4-column atomic persistence with TEXT game identity.
  */
 picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<void> => {
-  const poolId = req.body.pool_id || req.body.poolId;
+  const poolId = req.params.pool_id || req.body.pool_id || req.body.poolId;
   const rawGameId = req.body.game_id || req.body.gameId;
+
+  if (req.params.pool_id && (req.body.pool_id || req.body.poolId)) {
+    const bodyPoolId = req.body.pool_id || req.body.poolId;
+    if (bodyPoolId !== req.params.pool_id) {
+      res.status(400).json({ error: 'POOL_MISMATCH: Request body pool_id does not match route path pool_id.' });
+      return;
+    }
+  }
+
   const rawSelectedTeamId = req.body.selected_team_id !== undefined
     ? req.body.selected_team_id
     : (req.body.selectedTeamId !== undefined
@@ -576,8 +594,16 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
  * Enforces atomic 4-column persistence with TEXT game identity.
  */
 picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Promise<void> => {
-  const poolId = req.body.pool_id || req.body.poolId;
+  const poolId = req.params.pool_id || req.body.pool_id || req.body.poolId;
   const picksList = req.body.picks || [];
+
+  if (req.params.pool_id && (req.body.pool_id || req.body.poolId)) {
+    const bodyPoolId = req.body.pool_id || req.body.poolId;
+    if (bodyPoolId !== req.params.pool_id) {
+      res.status(400).json({ error: 'POOL_MISMATCH: Request body pool_id does not match route path pool_id.' });
+      return;
+    }
+  }
 
   if (!poolId || !Array.isArray(picksList)) {
     res.status(400).json({ error: 'pool_id and picks array are required.' });
@@ -618,7 +644,14 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
 
     for (const item of picksList) {
       const rawGameId = item.game_id || item.gameId;
-      if (!rawGameId) continue;
+      if (!rawGameId) {
+        results.push({
+          gameId: 'unknown',
+          status: 'ERROR',
+          error: 'Missing game_id in batch item payload.',
+        });
+        continue;
+      }
       const gameId = String(rawGameId).trim();
 
       const rawSelected = item.selected_team_id !== undefined
@@ -706,8 +739,18 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
             error: err.message,
           });
         } else {
-          // Truthfully propagate database persistence failure with HTTP 500
-          throw err;
+          // If earlier items in this batch already committed, do not abort the response and lose their committed outcomes!
+          if (savedPicks.length > 0) {
+            results.push({
+              gameId: String(game.id),
+              status: 'ERROR',
+              code: err.code || 'PERSISTENCE_ERROR',
+              error: err.message,
+            });
+          } else {
+            // Truthfully propagate database persistence failure with HTTP 500 when zero items committed
+            throw err;
+          }
         }
       }
     }
