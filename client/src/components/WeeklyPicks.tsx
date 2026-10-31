@@ -843,6 +843,40 @@ export const WeeklyPicks: React.FC = () => {
             });
 
             if (batchRes.ok) {
+              const batchData = await batchRes.json().catch(() => ({}));
+              const confirmedPicksList: any[] = batchData.picks || [];
+              const confirmedPicksMap: Record<string, string> = {};
+              confirmedPicksList.forEach((p: any) => {
+                const gId = p.gameId || p.game_id;
+                const team = p.selectedTeamId || p.selected_team_id || p.selectedTeam || p.selected_team;
+                if (gId && team) confirmedPicksMap[String(gId)] = String(team);
+              });
+
+              const failures = (batchData.results || []).filter((r: any) => r.status !== 'SAVED');
+
+              // Apply confirmed picks on top of current picks
+              const finalPicksMap = { ...currentPicksMap, ...confirmedPicksMap };
+              setUserPicks(finalPicksMap);
+              setGames((prev) =>
+                prev.map((g) => ({
+                  ...g,
+                  userPick: finalPicksMap[g.id] ?? null,
+                }))
+              );
+              try {
+                localStorage.setItem(userPicksCacheKey, JSON.stringify(finalPicksMap));
+              } catch (e) {
+                console.warn('localStorage preset save warning:', e);
+              }
+
+              if (failures.length > 0) {
+                setFeedbackMessage({
+                  text: `Saved ${confirmedPicksList.length} picks. ${failures.length} matchup(s) failed or locked.`,
+                  type: 'error',
+                });
+                setTimeout(() => setFeedbackMessage(null), 4000);
+              }
+              triggerHaptic('selection');
               saveSuccess = true;
             } else {
               // Try individual saves if batch route rejected

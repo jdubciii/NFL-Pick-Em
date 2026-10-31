@@ -208,6 +208,144 @@ export function evaluateKickoffLock(
   return { isLocked: false };
 }
 
+export class DuplicatePickIdentityError extends Error {
+  code = 'DUPLICATE_PICK_IDENTITY';
+  statusCode = 409;
+  status = 409;
+  constructor(message: string) {
+    super(message);
+    this.name = 'DuplicatePickIdentityError';
+  }
+}
+
+async function executeSerializedPickMutation(
+  executor: any,
+  params: {
+    poolId: string;
+    userId: string;
+    gameId: string;
+    week: number;
+    selectedTeamId: string | null;
+    externalGameId?: string | null;
+  }
+): Promise<SavedPickRecord> {
+  const { poolId, userId, gameId, week, selectedTeamId, externalGameId } = params;
+
+  // Candidate game IDs for identity resolution: canonical UUID and external alias
+  const candidateIds = [String(gameId)];
+  if (externalGameId && String(externalGameId) !== String(gameId)) {
+    candidateIds.push(String(externalGameId));
+  }
+
+  // If externalGameId is provided OR selectedTeamId is null (unselect), perform identity lookup
+  if ((externalGameId && String(externalGameId) !== String(gameId)) || selectedTeamId === null) {
+    const placeholders = candidateIds.map((_, i) => `$${i + 4}::text`).join(', ');
+    const lookupSql = `
+      SELECT id, game_id, pool_id, user_id, week, selected_team_id, submitted_by, created_at
+      FROM public.picks
+      WHERE pool_id = $1::uuid AND user_id = $2::uuid AND week = $3::int AND game_id IN (${placeholders})
+    `;
+    const lookupRows = await executor.$queryRawUnsafe(lookupSql, poolId, userId, week, ...candidateIds);
+
+    if (lookupRows && lookupRows.length > 1) {
+      console.error(
+        `DUPLICATE_PICK_IDENTITY: Multiple conflicting rows exist for game ${gameId} and alias ${externalGameId}. Zero writes performed.`
+      );
+      throw new DuplicatePickIdentityError(
+        `DUPLICATE_PICK_IDENTITY: Multiple conflicting rows exist for game ${gameId} and alias ${externalGameId}. Zero writes performed.`
+      );
+    }
+
+    if (lookupRows && lookupRows.length === 1) {
+      const existing = lookupRows[0];
+      // Update that exact existing row's selection in place, preserving id, game_id, created_at and ownership
+      const updateSql = `
+        UPDATE public.picks
+        SET selected_team_id = $1, submitted_by = $2::uuid
+        WHERE id = $3::uuid
+        RETURNING id, pool_id, user_id, week, game_id, selected_team_id, submitted_by, created_at;
+      `;
+      const updateRows = await executor.$queryRawUnsafe(updateSql, selectedTeamId, userId, existing.id);
+      if (!updateRows || !Array.isArray(updateRows) || updateRows.length === 0) {
+        throw new Error('PICK_PERSISTENCE_FAILED: Database returned no row after atomic pick update.');
+      }
+      const r = updateRows[0];
+      return {
+        id: String(r.id),
+        poolId: String(r.pool_id || r.poolId),
+        userId: String(r.user_id || r.userId),
+        gameId: String(r.game_id || r.gameId),
+        week: Number(r.week),
+        selectedTeamId: r.selected_team_id !== undefined ? r.selected_team_id : (r.selectedTeamId !== undefined ? r.selectedTeamId : null),
+        submittedById: String(r.submitted_by || r.submittedById || userId),
+        createdAt: r.created_at || r.createdAt,
+      };
+    }
+
+    // Zero matching rows found
+    if (selectedTeamId === null) {
+      // Unselect on zero matching rows: confirmed no-op, NO INSERT
+      return {
+        id: 'noop',
+        poolId,
+        userId,
+        gameId: String(gameId),
+        week,
+        selectedTeamId: null,
+        submittedById: userId,
+        createdAt: new Date(),
+      };
+    }
+  }
+
+  // Zero existing rows and selectedTeamId is non-null: Insert one UUID-keyed row
+  const upsertSql = `
+    INSERT INTO public.picks (
+      id, pool_id, user_id, week, game_id, selected_team_id, submitted_by, created_at
+    )
+    VALUES (
+      gen_random_uuid(),
+      $1::uuid,
+      $2::uuid,
+      $3::int,
+      $4::text,
+      $5,
+      $6::uuid,
+      NOW()
+    )
+    ON CONFLICT (pool_id, user_id, week, game_id)
+    DO UPDATE SET
+      selected_team_id = EXCLUDED.selected_team_id,
+      submitted_by = EXCLUDED.submitted_by
+    RETURNING id, pool_id, user_id, week, game_id, selected_team_id, submitted_by, created_at;
+  `;
+  const rows = await executor.$queryRawUnsafe(
+    upsertSql,
+    poolId,
+    userId,
+    week,
+    gameId,
+    selectedTeamId,
+    userId
+  );
+
+  if (!rows || !Array.isArray(rows) || rows.length === 0) {
+    throw new Error('PICK_PERSISTENCE_FAILED: Database returned no row after atomic pick save.');
+  }
+
+  const r = rows[0];
+  return {
+    id: String(r.id),
+    poolId: String(r.pool_id || r.poolId),
+    userId: String(r.user_id || r.userId),
+    gameId: String(r.game_id || r.gameId),
+    week: Number(r.week),
+    selectedTeamId: r.selected_team_id !== undefined ? r.selected_team_id : (r.selectedTeamId !== undefined ? r.selectedTeamId : null),
+    submittedById: String(r.submitted_by || r.submittedById || userId),
+    createdAt: r.created_at || r.createdAt,
+  };
+}
+
 export async function savePickAtomically(
   db: any,
   params: {
@@ -230,76 +368,23 @@ export async function savePickAtomically(
     return await legacyPickSaveAdapterForTesting(db, params);
   }
 
-  if (typeof db.$queryRawUnsafe === 'function') {
-    // Identity resolution across UUID and external ESPN ID when an alias is present
-    if (externalGameId && String(externalGameId) !== String(gameId)) {
-      const dupCheckSql = `
-        SELECT id, game_id FROM public.picks
-        WHERE pool_id = $1::uuid AND user_id = $2::uuid AND week = $3::int AND game_id IN ($4::text, $5::text)
-      `;
-      const dupRows = await db.$queryRawUnsafe(dupCheckSql, poolId, userId, week, String(gameId), String(externalGameId));
-      if (dupRows && dupRows.length > 1) {
-        console.error(
-          `DUPLICATE_PICKS_DETECTED: Conflicting alias rows exist for game ${gameId} and external ID ${externalGameId}. Deletes forbidden.`
+  if (typeof db.$transaction === 'function') {
+    return await db.$transaction(async (tx: any) => {
+      // Serialize concurrent mutations on the same logical matchup using advisory xact lock
+      try {
+        await tx.$queryRawUnsafe(
+          `SELECT pg_advisory_xact_lock(hashtext($1))`,
+          `${poolId}:${userId}:${week}:${gameId}`
         );
-        throw new Error(
-          `DUPLICATE_PICKS_DETECTED: Duplicate picks detected for game ${gameId} and alias ${externalGameId}. Rows preserved; manual resolution required.`
-        );
-      } else if (dupRows && dupRows.length === 1 && String(dupRows[0].game_id) === String(externalGameId)) {
-        // Convert existing externalGameId row to canonical gameId so the upsert updates the existing row in place
-        await db.$queryRawUnsafe(
-          `UPDATE public.picks SET game_id = $1::text WHERE id = $2::uuid`,
-          String(gameId),
-          dupRows[0].id
-        );
+      } catch (_) {
+        // Continue if advisory lock is unavailable in active test environment
       }
-    }
+      return await executeSerializedPickMutation(tx, params);
+    });
+  }
 
-    const upsertSql = `
-      INSERT INTO public.picks (
-        id, pool_id, user_id, week, game_id, selected_team_id, submitted_by, created_at
-      )
-      VALUES (
-        gen_random_uuid(),
-        $1::uuid,
-        $2::uuid,
-        $3::int,
-        $4::text,
-        $5,
-        $6::uuid,
-        NOW()
-      )
-      ON CONFLICT (pool_id, user_id, week, game_id)
-      DO UPDATE SET
-        selected_team_id = EXCLUDED.selected_team_id,
-        submitted_by = EXCLUDED.submitted_by
-      RETURNING id, pool_id, user_id, week, game_id, selected_team_id, submitted_by, created_at;
-    `;
-    const rows = await db.$queryRawUnsafe(
-      upsertSql,
-      poolId,
-      userId,
-      week,
-      gameId,
-      selectedTeamId,
-      userId
-    );
-
-    if (!rows || !Array.isArray(rows) || rows.length === 0) {
-      throw new Error('PICK_PERSISTENCE_FAILED: Database returned no row after atomic pick save.');
-    }
-
-    const r = rows[0];
-    return {
-      id: String(r.id),
-      poolId: String(r.pool_id || r.poolId),
-      userId: String(r.user_id || r.userId),
-      gameId: String(r.game_id || r.gameId),
-      week: Number(r.week),
-      selectedTeamId: r.selected_team_id !== undefined ? r.selected_team_id : (r.selectedTeamId !== undefined ? r.selectedTeamId : null),
-      submittedById: String(r.submitted_by || r.submittedById || userId),
-      createdAt: r.created_at || r.createdAt,
-    };
+  if (typeof db.$queryRawUnsafe === 'function') {
+    return await executeSerializedPickMutation(db, params);
   }
 
   throw new Error('PICK_PERSISTENCE_FAILED: No raw SQL executor available for atomic pick persistence.');
@@ -440,6 +525,14 @@ picksRouter.post('/', requireAuth, async (req: Request, res: Response): Promise<
   } catch (error: any) {
     console.error('Error saving pick:', error);
 
+    if (error.code === 'DUPLICATE_PICK_IDENTITY' || error.statusCode === 409 || error.status === 409) {
+      res.status(409).json({
+        error: error.message || 'Duplicate pick identity conflict detected. Zero writes performed.',
+        code: 'DUPLICATE_PICK_IDENTITY',
+      });
+      return;
+    }
+
     if (error.code === 'P2003') {
       res.status(400).json({ error: 'Invalid pool_id or game_id reference.' });
       return;
@@ -488,8 +581,19 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
     const lockOffsetMinutes = Number(settings.lock_offset ?? settings.lockOffset ?? 0);
 
     const savedPicks: SavedPickRecord[] = [];
+    const results: Array<{
+      gameId: string;
+      status: 'SAVED' | 'CONFLICT' | 'LOCKED' | 'ERROR' | 'MISMATCH';
+      pick?: SavedPickRecord;
+      error?: string;
+      code?: string;
+    }> = [];
+
     for (const item of picksList) {
       const rawGameId = item.game_id || item.gameId;
+      if (!rawGameId) continue;
+      const gameId = String(rawGameId).trim();
+
       const rawSelected = item.selected_team_id !== undefined
         ? item.selected_team_id
         : (item.selectedTeamId !== undefined
@@ -507,27 +611,30 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
         ? String(rawSelected).trim()
         : null;
 
-      if (!rawGameId) continue;
-      const gameId = String(rawGameId).trim();
-
       const game = await resolveGameWithCanonicalLock(prisma, gameId);
-      if (!game) continue;
+      if (!game) {
+        results.push({ gameId, status: 'ERROR', error: 'Game not found.' });
+        continue;
+      }
 
       // Validate requested week vs game week
       const requestedWeek = item.week !== undefined ? item.week : (item.selectedWeek !== undefined ? item.selectedWeek : req.body.week);
       if (requestedWeek !== undefined && requestedWeek !== null && game.week !== undefined && game.week !== null) {
         if (Number(requestedWeek) !== Number(game.week)) {
-          continue; // skip mismatched cross-week picks
+          results.push({ gameId, status: 'MISMATCH', error: `Requested week does not match game week (${game.week}).` });
+          continue;
         }
       }
 
       const targetWeek = game.week ?? (requestedWeek !== undefined && requestedWeek !== null ? Number(requestedWeek) : null);
       if (targetWeek == null || isNaN(targetWeek) || targetWeek < 1 || targetWeek > 18) {
+        results.push({ gameId, status: 'ERROR', error: 'Missing authoritative week metadata.' });
         continue;
       }
 
       const lockResult = evaluateKickoffLock(game, lockOffsetMinutes, new Date());
       if (lockResult.isLocked) {
+        results.push({ gameId, status: 'LOCKED', error: 'Game is locked.' });
         continue;
       }
 
@@ -537,26 +644,43 @@ picksRouter.post('/batch', requireAuth, async (req: Request, res: Response): Pro
 
       if (normSelected) {
         if (normHome === 'UNK' || normAway === 'UNK' || (normSelected !== normHome && normSelected !== normAway)) {
+          results.push({ gameId, status: 'ERROR', error: 'Selected team is not a participant in this game.' });
           continue;
         }
       }
 
-      const savedPick = await savePickAtomically(prisma, {
-        poolId,
-        userId,
-        gameId: String(game.id),
-        week: targetWeek,
-        selectedTeamId: normSelected,
-        externalGameId: game.externalGameId ? String(game.externalGameId) : null,
-      });
+      try {
+        const savedPick = await savePickAtomically(prisma, {
+          poolId,
+          userId,
+          gameId: String(game.id),
+          week: targetWeek,
+          selectedTeamId: normSelected,
+          externalGameId: game.externalGameId ? String(game.externalGameId) : null,
+        });
 
-      savedPicks.push(savedPick);
+        savedPicks.push(savedPick);
+        results.push({ gameId: String(game.id), status: 'SAVED', pick: savedPick });
+      } catch (err: any) {
+        if (err.code === 'DUPLICATE_PICK_IDENTITY' || err.statusCode === 409) {
+          results.push({
+            gameId: String(game.id),
+            status: 'CONFLICT',
+            code: 'DUPLICATE_PICK_IDENTITY',
+            error: err.message,
+          });
+        } else {
+          // Truthfully propagate database persistence failure with HTTP 500
+          throw err;
+        }
+      }
     }
 
     res.status(200).json({
       message: `Batch processed ${savedPicks.length} picks successfully.`,
       count: savedPicks.length,
       picks: savedPicks,
+      results,
     });
   } catch (error: any) {
     console.error('Error in batch picks:', error);

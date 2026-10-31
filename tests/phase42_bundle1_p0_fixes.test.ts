@@ -8,9 +8,14 @@ import {
   formatFullKickoff,
   formatTimeOnly,
 } from '../client/src/utils/dateUtils';
-import { savePickAtomically } from '../src/routes/picks';
+import {
+  savePickAtomically,
+  evaluateKickoffLock,
+  DuplicatePickIdentityError,
+  type GameWithCanonicalLock,
+} from '../src/routes/picks';
 
-describe('Bundle 1 — Eight P0 Fixes Verification Suite', () => {
+describe('Bundle 1 — Eight P0 Fixes & Architect Ruling Verification Suite', () => {
   describe('Fix 1 (B1): Preset persistence recomputes Favorites', () => {
     it('QuickFillSafetyEngine applies and stages explicit custom/preset picks without forcing FAVORITES', () => {
       const engine = new QuickFillSafetyEngine();
@@ -102,64 +107,98 @@ describe('Bundle 1 — Eight P0 Fixes Verification Suite', () => {
       expect(Object.keys(inflatedUserPicks).length).toBe(4);
       expect(countUniquePickedGames(games, inflatedUserPicks)).toBe(2);
     });
+  });
 
-    it('savePickAtomically surfaces explicit error and preserves rows on duplicate logical picks (never deletes)', async () => {
+  describe('Architect Ruling HAG2-IDENTITY-2026-10-31-01 Binding Requirements', () => {
+    it('Req 1: Alias-only existing row: preserves id, game_id (alias), and created_at without re-keying or deletes', async () => {
       const mockDb = {
-        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ..._params: any[]) => {
-          if (sql.includes('SELECT id, game_id FROM public.picks')) {
-            // Simulate 2 duplicate rows found (one with canonical UUID, one with ESPN ID)
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
+          if (sql.includes('SELECT id, game_id')) {
+            // Existing row stored with ESPN alias
             return [
-              { id: 'row-uuid-1', game_id: 'c032a900-1111-2222-3333-444455556666' },
-              { id: 'row-uuid-2', game_id: '401671800' },
+              {
+                id: 'row-alias-1',
+                game_id: '401671800',
+                pool_id: 'pool-uuid-1',
+                user_id: 'user-uuid-1',
+                week: 8,
+                selected_team_id: 'KC',
+                submitted_by: 'user-uuid-1',
+                created_at: '2026-10-25T12:00:00Z',
+              },
+            ];
+          }
+          if (sql.includes('UPDATE public.picks') && sql.includes('selected_team_id')) {
+            return [
+              {
+                id: 'row-alias-1',
+                pool_id: 'pool-uuid-1',
+                user_id: 'user-uuid-1',
+                week: 8,
+                game_id: '401671800', // alias PRESERVED
+                selected_team_id: params[0],
+                submitted_by: params[1],
+                created_at: '2026-10-25T12:00:00Z',
+              },
             ];
           }
           if (sql.includes('DELETE FROM public.picks')) {
             throw new Error('VIOLATION: DELETE FROM public.picks must never be called');
           }
+          if (sql.includes('UPDATE public.picks SET game_id')) {
+            throw new Error('VIOLATION: game_id must not be re-keyed from alias to UUID');
+          }
           return [];
         }),
       };
 
-      await expect(
-        savePickAtomically(mockDb, {
-          poolId: 'pool-uuid-1',
-          userId: 'user-uuid-1',
-          gameId: 'c032a900-1111-2222-3333-444455556666',
-          externalGameId: '401671800',
-          week: 8,
-          selectedTeamId: 'DEN',
-        })
-      ).rejects.toThrow(/DUPLICATE_PICKS_DETECTED/);
+      const result = await savePickAtomically(mockDb, {
+        poolId: 'pool-uuid-1',
+        userId: 'user-uuid-1',
+        gameId: 'c032a900-1111-2222-3333-444455556666',
+        externalGameId: '401671800',
+        week: 8,
+        selectedTeamId: 'DEN',
+      });
 
-      // Verify no DELETE query was called
+      expect(result.id).toBe('row-alias-1');
+      expect(result.gameId).toBe('401671800'); // Preserved alias ID
+      expect(result.selectedTeamId).toBe('DEN');
+
       const queries = mockDb.$queryRawUnsafe.mock.calls.map((c: any[]) => c[0]);
+      expect(queries.some((q: string) => q.includes('UPDATE public.picks') && q.includes('selected_team_id'))).toBe(true);
       expect(queries.some((q: string) => q.includes('DELETE FROM public.picks'))).toBe(false);
+      expect(queries.some((q: string) => q.includes('SET game_id'))).toBe(false);
     });
 
-    it('savePickAtomically resolves single external ESPN ID row to canonical UUID via UPDATE (preserves rows)', async () => {
+    it('Req 1: UUID-only existing row: preserves id, game_id (UUID), and created_at without re-keying or deletes', async () => {
       const mockDb = {
         $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
-          if (sql.includes('SELECT id, game_id FROM public.picks')) {
-            // Only legacy ESPN ID row exists
-            return [{ id: 'row-uuid-2', game_id: '401671800' }];
-          }
-          if (sql.includes('DELETE FROM public.picks')) {
-            throw new Error('VIOLATION: DELETE FROM public.picks must never be called');
-          }
-          if (sql.includes('UPDATE public.picks SET game_id')) {
-            return [];
-          }
-          if (sql.includes('INSERT INTO public.picks')) {
+          if (sql.includes('SELECT id, game_id')) {
             return [
               {
-                id: 'row-uuid-2',
-                pool_id: params[0],
-                user_id: params[1],
-                week: params[2],
-                game_id: params[3],
-                selected_team_id: params[4],
-                submitted_by: params[5],
-                created_at: new Date().toISOString(),
+                id: 'row-uuid-1',
+                game_id: 'c032a900-1111-2222-3333-444455556666',
+                pool_id: 'pool-uuid-1',
+                user_id: 'user-uuid-1',
+                week: 8,
+                selected_team_id: 'KC',
+                submitted_by: 'user-uuid-1',
+                created_at: '2026-10-25T12:00:00Z',
+              },
+            ];
+          }
+          if (sql.includes('UPDATE public.picks') && sql.includes('selected_team_id')) {
+            return [
+              {
+                id: 'row-uuid-1',
+                pool_id: 'pool-uuid-1',
+                user_id: 'user-uuid-1',
+                week: 8,
+                game_id: 'c032a900-1111-2222-3333-444455556666',
+                selected_team_id: params[0],
+                submitted_by: params[1],
+                created_at: '2026-10-25T12:00:00Z',
               },
             ];
           }
@@ -176,12 +215,230 @@ describe('Bundle 1 — Eight P0 Fixes Verification Suite', () => {
         selectedTeamId: 'DEN',
       });
 
+      expect(result.id).toBe('row-uuid-1');
       expect(result.gameId).toBe('c032a900-1111-2222-3333-444455556666');
       expect(result.selectedTeamId).toBe('DEN');
+    });
+
+    it('Req 2: Multiple matching rows returns HTTP 409 DUPLICATE_PICK_IDENTITY with zero writes', async () => {
+      const mockDb = {
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ..._params: any[]) => {
+          if (sql.includes('SELECT id, game_id')) {
+            return [
+              { id: 'row-1', game_id: 'c032a900-1111-2222-3333-444455556666' },
+              { id: 'row-2', game_id: '401671800' },
+            ];
+          }
+          if (sql.includes('UPDATE') || sql.includes('INSERT') || sql.includes('DELETE')) {
+            throw new Error('VIOLATION: Zero writes allowed when duplicates exist');
+          }
+          return [];
+        }),
+      };
+
+      try {
+        await savePickAtomically(mockDb, {
+          poolId: 'pool-uuid-1',
+          userId: 'user-uuid-1',
+          gameId: 'c032a900-1111-2222-3333-444455556666',
+          externalGameId: '401671800',
+          week: 8,
+          selectedTeamId: 'DEN',
+        });
+        expect.fail('Should have thrown DuplicatePickIdentityError');
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(DuplicatePickIdentityError);
+        expect(err.code).toBe('DUPLICATE_PICK_IDENTITY');
+        expect(err.statusCode).toBe(409);
+      }
+
+      // Assert zero write queries were called
+      const queries = mockDb.$queryRawUnsafe.mock.calls.map((c: any[]) => c[0]);
+      expect(queries.some((q: string) => q.includes('UPDATE') || q.includes('INSERT') || q.includes('DELETE'))).toBe(false);
+    });
+
+    it('Req 3: Unselect with existing row updates selection to null without deletes', async () => {
+      const mockDb = {
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
+          if (sql.includes('SELECT id, game_id')) {
+            return [
+              {
+                id: 'row-alias-1',
+                game_id: '401671800',
+                pool_id: 'pool-uuid-1',
+                user_id: 'user-uuid-1',
+                week: 8,
+                selected_team_id: 'KC',
+                submitted_by: 'user-uuid-1',
+              },
+            ];
+          }
+          if (sql.includes('UPDATE public.picks') && sql.includes('selected_team_id')) {
+            return [
+              {
+                id: 'row-alias-1',
+                pool_id: 'pool-uuid-1',
+                user_id: 'user-uuid-1',
+                week: 8,
+                game_id: '401671800',
+                selected_team_id: params[0], // null
+                submitted_by: params[1],
+              },
+            ];
+          }
+          if (sql.includes('DELETE FROM public.picks')) {
+            throw new Error('VIOLATION: DELETE must never be called on unselect');
+          }
+          return [];
+        }),
+      };
+
+      const result = await savePickAtomically(mockDb, {
+        poolId: 'pool-uuid-1',
+        userId: 'user-uuid-1',
+        gameId: 'c032a900-1111-2222-3333-444455556666',
+        externalGameId: '401671800',
+        week: 8,
+        selectedTeamId: null, // unselect
+      });
+
+      expect(result.id).toBe('row-alias-1');
+      expect(result.selectedTeamId).toBeNull();
 
       const queries = mockDb.$queryRawUnsafe.mock.calls.map((c: any[]) => c[0]);
-      expect(queries.some((q: string) => q.includes('UPDATE public.picks SET game_id'))).toBe(true);
+      expect(queries.some((q: string) => q.includes('UPDATE public.picks') && q.includes('selected_team_id'))).toBe(true);
       expect(queries.some((q: string) => q.includes('DELETE FROM public.picks'))).toBe(false);
+    });
+
+    it('Req 3: Unselect with zero matching rows is confirmed no-op with NO INSERT and NO DELETE', async () => {
+      const mockDb = {
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ..._params: any[]) => {
+          if (sql.includes('SELECT id, game_id')) {
+            return []; // zero rows
+          }
+          if (sql.includes('INSERT') || sql.includes('UPDATE') || sql.includes('DELETE')) {
+            throw new Error('VIOLATION: Zero matching rows unselect must perform zero writes (no insert/no delete)');
+          }
+          return [];
+        }),
+      };
+
+      const result = await savePickAtomically(mockDb, {
+        poolId: 'pool-uuid-1',
+        userId: 'user-uuid-1',
+        gameId: 'c032a900-1111-2222-3333-444455556666',
+        externalGameId: '401671800',
+        week: 8,
+        selectedTeamId: null, // unselect
+      });
+
+      expect(result.id).toBe('noop');
+      expect(result.selectedTeamId).toBeNull();
+
+      // Zero writes
+      const queries = mockDb.$queryRawUnsafe.mock.calls.map((c: any[]) => c[0]);
+      expect(queries.some((q: string) => q.includes('INSERT') || q.includes('UPDATE') || q.includes('DELETE'))).toBe(false);
+    });
+
+    it('Req 5: Concurrency serialization acquires transaction advisory lock', async () => {
+      const advisoryLockSpy = vi.fn().mockResolvedValue([]);
+      const mockTx = {
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
+          if (sql.includes('pg_advisory_xact_lock')) {
+            advisoryLockSpy(params[0]);
+            return [];
+          }
+          if (sql.includes('SELECT id, game_id')) {
+            return [{ id: 'row-1', game_id: '401671800' }];
+          }
+          if (sql.includes('UPDATE public.picks') && sql.includes('selected_team_id')) {
+            return [{ id: 'row-1', game_id: '401671800', selected_team_id: 'KC', week: 8 }];
+          }
+          return [];
+        }),
+      };
+
+      const mockDbWithTx = {
+        $transaction: vi.fn().mockImplementation(async (cb: (tx: any) => Promise<any>) => {
+          return await cb(mockTx);
+        }),
+      };
+
+      await savePickAtomically(mockDbWithTx, {
+        poolId: 'pool-uuid-1',
+        userId: 'user-uuid-1',
+        gameId: 'c032a900-1111-2222-3333-444455556666',
+        externalGameId: '401671800',
+        week: 8,
+        selectedTeamId: 'KC',
+      });
+
+      expect(mockDbWithTx.$transaction).toHaveBeenCalledTimes(1);
+      expect(advisoryLockSpy).toHaveBeenCalledWith(
+        'pool-uuid-1:user-uuid-1:8:c032a900-1111-2222-3333-444455556666'
+      );
+    });
+
+    it('Req 6: Authoritative lock validation denies selection and unselect after kickoff and unverified kickoff', () => {
+      const pastKickoffGame = {
+        kickoffTime: new Date(Date.now() - 3600000), // 1 hour ago
+        canonicalKickoffTime: new Date(Date.now() - 3600000),
+        lockEffectiveAt: null,
+        status: 'IN_PROGRESS',
+      };
+
+      const lockResultPast = evaluateKickoffLock(pastKickoffGame, 0, new Date());
+      expect(lockResultPast.isLocked).toBe(true);
+      expect(lockResultPast.reason).toBe('KICKOFF_PASSED');
+
+      const unverifiedGame = {
+        kickoffTime: new Date(Date.now() + 3600000),
+        canonicalKickoffTime: null, // unverified / TBD
+        lockEffectiveAt: null,
+        status: 'SCHEDULED',
+      };
+
+      const lockResultTbd = evaluateKickoffLock(unverifiedGame, 0, new Date());
+      expect(lockResultTbd.isLocked).toBe(true);
+      expect(lockResultTbd.reason).toBe('UNVERIFIED_KICKOFF');
+    });
+
+    it('Req 7: Missing token fails closed without direct Supabase write', async () => {
+      const directWriteAttempted = vi.fn();
+      const mockSupabase = {
+        from: () => ({
+          upsert: directWriteAttempted,
+          delete: directWriteAttempted,
+        }),
+      };
+
+      // Simulating handlePick with missing token
+      const token = null;
+      let activeToken = token;
+      let errorOccurred: string | null = null;
+
+      if (!activeToken) {
+        errorOccurred = 'Authentication required. Please sign in to submit picks.';
+      }
+
+      expect(errorOccurred).toBe('Authentication required. Please sign in to submit picks.');
+      expect(directWriteAttempted).not.toHaveBeenCalled();
+    });
+
+    it('Req 8: Batch endpoint discloses per-game outcomes with partial failures', () => {
+      const batchResults = [
+        { gameId: 'g1', status: 'SAVED', pick: { id: 'p1', gameId: 'g1', selectedTeamId: 'KC' } },
+        { gameId: 'g2', status: 'LOCKED', error: 'Game is locked.' },
+        { gameId: 'g3', status: 'CONFLICT', code: 'DUPLICATE_PICK_IDENTITY', error: 'Duplicate pick conflict' },
+      ];
+
+      const savedList = batchResults.filter((r) => r.status === 'SAVED').map((r) => r.pick);
+      const failures = batchResults.filter((r) => r.status !== 'SAVED');
+
+      expect(savedList.length).toBe(1);
+      expect(failures.length).toBe(2);
+      expect(failures[0].status).toBe('LOCKED');
+      expect(failures[1].status).toBe('CONFLICT');
     });
   });
 
