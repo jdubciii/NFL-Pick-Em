@@ -1,6 +1,8 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import fs from 'fs';
+import path from 'path';
 import { execSync } from 'child_process';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
@@ -86,7 +88,7 @@ app.use(streamRouter);
 
 
 
-function resolveServerCommitSha(): string {
+export function resolveServerCommitSha(): string {
   if (process.env.RENDER_GIT_COMMIT) {
     return process.env.RENDER_GIT_COMMIT;
   }
@@ -100,7 +102,33 @@ function resolveServerCommitSha(): string {
   }
 }
 
-export const SERVER_BUILD_TIMESTAMP = process.env.BUILD_TIME || process.env.RENDER_BUILD_TIME || new Date().toISOString();
+export function resolveServerBuildTimestamp(): string {
+  if (process.env.BUILD_TIME) {
+    return process.env.BUILD_TIME;
+  }
+  if (process.env.RENDER_BUILD_TIME) {
+    return process.env.RENDER_BUILD_TIME;
+  }
+  try {
+    const candidates = [
+      path.resolve(__dirname, 'build-info.json'),
+      path.resolve(__dirname, '../dist/build-info.json'),
+    ];
+    for (const buildInfoPath of candidates) {
+      if (fs.existsSync(buildInfoPath)) {
+        const data = JSON.parse(fs.readFileSync(buildInfoPath, 'utf8'));
+        if (data && typeof data.builtAt === 'string') {
+          return data.builtAt;
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return 'unknown';
+}
+
+export const SERVER_BUILD_TIMESTAMP = resolveServerBuildTimestamp();
 export const SERVER_COMMIT_SHA = resolveServerCommitSha();
 
 // Health check endpoint reporting commit SHA and build timestamp (Directive 1)

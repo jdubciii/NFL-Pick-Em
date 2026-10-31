@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - feat/p37-shell-auth-openslate
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,6 +16,8 @@ concurrency:
 
 jobs:
   deploy:
+    # Strictly enforce that only feat/p37-shell-auth-openslate can publish preview
+    if: github.ref == 'refs/heads/feat/p37-shell-auth-openslate'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

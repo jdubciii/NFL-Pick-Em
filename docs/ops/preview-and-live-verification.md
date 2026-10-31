@@ -13,9 +13,7 @@ Directive 1 ("See It Live") establishes zero-cost ($0) browser preview hosting f
 
 ## 3. GitHub Actions Continuous Deployment Workflow
 - **Workflow File**: `.github/workflows/preview.yml`
-- **Triggers**:
-  - `push` to `feat/p37-shell-auth-openslate`
-  - `workflow_dispatch` (manual one-click trigger)
+- **Branch Restriction**: Triggers strictly on `push` to `feat/p37-shell-auth-openslate` with job-level ref enforcement (`if: github.ref == 'refs/heads/feat/p37-shell-auth-openslate'`). Manual `workflow_dispatch` is removed so a manual run cannot deploy `main` or unreviewed branches.
 - **Deployment Mechanics**: Official GitHub Pages actions (`actions/configure-pages@v5`, `actions/upload-pages-artifact@v3`, `actions/deploy-pages@v4`).
 
 ## 4. Backend Health & Version Reporting
@@ -25,19 +23,20 @@ Directive 1 ("See It Live") establishes zero-cost ($0) browser preview hosting f
   {
     "status": "ok",
     "commit": "2bd9487a2ce64a2bc280c512bf690ac32c3476b5",
-    "builtAt": "2026-10-31T19:25:20.453Z",
-    "timestamp": "2026-10-31T19:26:00.123Z",
+    "builtAt": "2026-10-31T19:31:58.269Z",
+    "timestamp": "2026-10-31T19:32:00.123Z",
     "uptime": 128.4
   }
   ```
 - **Commit Resolution**: Reads `process.env.RENDER_GIT_COMMIT` (injected automatically by Render web service deployments), falls back to `process.env.GIT_COMMIT`, and falls back to `git rev-parse HEAD` in local development.
+- **Guaranteed Build-Time Artifact**: `npm run build` executes `tsc && node scripts/ops/record-build-info.cjs`, emitting `dist/build-info.json` at build time. Runtime health checks read this artifact or `BUILD_TIME` env var; if unavailable, it reports `'unknown'` — strictly avoiding labeling boot/uptime as `builtAt`.
 
 ## 5. Client Version Visibility & Profile UI
 - **Injected Constants**: `APP_BUILD_COMMIT` and `APP_BUILD_TIME` via Vite build definitions.
 - **Profile UI (`ProfilePage.tsx`)**:
   - Displays **System Build & Deployment Verification** card (`data-testid="system-build-verification"`).
   - Displays client static dist commit SHA and build timestamp.
-  - Automatically probes `/api/health` on mount, displaying the live Render backend commit SHA, health status badge (`HEALTHY` vs `UNREACHABLE`), and build timestamp.
+  - Automatically probes `/api/health` on mount, displaying the live Render backend commit SHA, health status badge (`HEALTHY` vs `UNREACHABLE`), and backend build timestamp.
 
 ## 6. Capacitor Web Compatibility & Browser Fallbacks
 An exhaustive audit of native device integrations confirms safe browser operation:
@@ -51,12 +50,12 @@ Pez can execute the repository script:
 ```bash
 ./scripts/ops/check-live-status.sh
 ```
-Or execute the standalone one-liner:
+Or execute the standalone one-liner querying the authoritative remote:
 ```bash
-GITHUB_TIP=$(git rev-parse --short origin/feat/p37-shell-auth-openslate 2>/dev/null || git rev-parse --short HEAD)
+GITHUB_TIP=$(git ls-remote --heads https://github.com/jdubciii/NFL-Pick-Em.git refs/heads/feat/p37-shell-auth-openslate 2>/dev/null | awk '{print $1}')
 RENDER_COMMIT=$(curl -fsSL --max-time 5 https://nfl-pick-em-api.onrender.com/api/health 2>/dev/null | jq -r '.commit' | cut -c1-7)
 PREVIEW_COMMIT=$(curl -fsSL --max-time 5 https://jdubciii.github.io/NFL-Pick-Em/version.json 2>/dev/null | jq -r '.commit' | cut -c1-7)
-echo "GitHub: ${GITHUB_TIP} | Render: ${RENDER_COMMIT:-OFFLINE} | Preview: ${PREVIEW_COMMIT:-UNPUBLISHED}"
+echo "GitHub Remote: ${GITHUB_TIP} | Render: ${RENDER_COMMIT:-OFFLINE} | Preview: ${PREVIEW_COMMIT:-UNPUBLISHED}"
 ```
 
 ## 8. Exact Remaining Manual Approval & Settings Steps
