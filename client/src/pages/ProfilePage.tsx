@@ -546,7 +546,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
             loading: false,
             status: data.status || 'ok',
             commit: data.commit || 'unknown',
-            builtAt: data.builtAt || data.timestamp || null,
+            builtAt: (data.builtAt && data.builtAt !== 'unknown') ? data.builtAt : 'unknown',
             error: null,
           });
         }
@@ -556,7 +556,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
             loading: false,
             status: 'offline',
             commit: null,
-            builtAt: null,
+            builtAt: 'unknown',
             error: err.message || 'Offline',
           });
         }
@@ -1204,53 +1204,53 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                 System Build & Deployment Verification
               </h2>
             </div>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">
+            <span className="text-xs font-mono px-2.5 py-1 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 font-semibold">
               DIRECTIVE-1
             </span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             {/* Client Version */}
-            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1.5">
+            <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
                   Client Web Bundle
                 </span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800 font-mono">
+                <span className="text-xs px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800 font-mono font-medium">
                   STATIC DIST
                 </span>
               </div>
-              <div className="font-mono text-cyan-300 font-bold break-all">
+              <div className="text-xs sm:text-sm font-mono text-cyan-300 font-bold break-all">
                 Commit: {APP_BUILD_COMMIT}
               </div>
-              <div className="text-[10px] text-slate-500 font-mono">
+              <div className="text-xs text-slate-300 font-mono">
                 Built: {APP_BUILD_TIME}
               </div>
             </div>
 
             {/* Backend Version */}
-            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1.5">
+            <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
                   Render Live Backend
                 </span>
                 <span
-                  className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${
+                  className={`text-xs px-2 py-0.5 rounded border font-mono font-medium ${
                     backendHealth.status === 'ok'
-                      ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800'
+                      ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800'
                       : backendHealth.loading
-                      ? 'bg-slate-800 text-slate-300 border-slate-700'
-                      : 'bg-rose-950/80 text-rose-400 border-rose-800'
+                      ? 'bg-slate-800 text-slate-200 border-slate-700'
+                      : 'bg-rose-950/80 text-rose-300 border-rose-800'
                   }`}
                 >
                   {backendHealth.loading ? 'PROBING...' : backendHealth.status === 'ok' ? 'HEALTHY' : 'UNREACHABLE'}
                 </span>
               </div>
-              <div className="font-mono text-cyan-300 font-bold break-all">
+              <div className="text-xs sm:text-sm font-mono text-cyan-300 font-bold break-all">
                 Commit: {backendHealth.commit ? backendHealth.commit.substring(0, 7) : (backendHealth.error || 'N/A')}
               </div>
-              <div className="text-[10px] text-slate-500 font-mono">
-                {backendHealth.builtAt ? `Built: ${backendHealth.builtAt}` : 'No timestamp'}
+              <div className="text-xs text-slate-300 font-mono">
+                Built: {backendHealth.builtAt && backendHealth.builtAt !== 'unknown' ? backendHealth.builtAt : 'unknown'}
               </div>
             </div>
           </div>

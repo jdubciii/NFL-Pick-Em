@@ -6,6 +6,10 @@
 # 1. Authoritative Remote GitHub Tip SHA (via git ls-remote on refs/heads/${BRANCH})
 # 2. Render Live Backend SHA (https://nfl-pick-em-api.onrender.com/api/health)
 # 3. GitHub Pages Static Preview SHA (https://jdubciii.github.io/NFL-Pick-Em/version.json)
+#
+# Strict requirements:
+# - Valid full 40-character identical hashes across all 3 targets
+# - Render live backend reports status=ok
 # ==============================================================================
 
 set -uo pipefail
@@ -34,27 +38,32 @@ fi
 
 # 2. Render Live Backend Health
 RENDER_PAYLOAD=$(curl -fsSL --max-time 8 "${RENDER_HEALTH_URL}" 2>/dev/null || echo "")
+RENDER_STATUS="unreachable"
+RENDER_COMMIT="UNREACHABLE"
+RENDER_BUILT_AT="unknown"
+
 if [ -n "$RENDER_PAYLOAD" ] && echo "$RENDER_PAYLOAD" | jq . >/dev/null 2>&1; then
   RENDER_STATUS=$(echo "$RENDER_PAYLOAD" | jq -r '.status // "unknown"')
   RENDER_COMMIT=$(echo "$RENDER_PAYLOAD" | jq -r '.commit // "unknown"')
-  RENDER_BUILT_AT=$(echo "$RENDER_PAYLOAD" | jq -r '.builtAt // .timestamp // "unknown"')
+  RENDER_BUILT_AT=$(echo "$RENDER_PAYLOAD" | jq -r '.builtAt // "unknown"')
   echo "  [2] Render Live Backend:"
   echo "      SHA: ${RENDER_COMMIT} (status: ${RENDER_STATUS}, built: ${RENDER_BUILT_AT})"
 else
-  RENDER_COMMIT="UNREACHABLE"
   echo "  [2] Render Live Backend:"
   echo "      UNREACHABLE / PROBING FAILED"
 fi
 
 # 3. Static Preview URL
 PREVIEW_PAYLOAD=$(curl -fsSL --max-time 8 "${PREVIEW_VERSION_URL}" 2>/dev/null || echo "")
+PREVIEW_COMMIT="UNPUBLISHED"
+PREVIEW_BUILT_AT="unknown"
+
 if [ -n "$PREVIEW_PAYLOAD" ] && echo "$PREVIEW_PAYLOAD" | jq . >/dev/null 2>&1; then
   PREVIEW_COMMIT=$(echo "$PREVIEW_PAYLOAD" | jq -r '.commit // "unknown"')
   PREVIEW_BUILT_AT=$(echo "$PREVIEW_PAYLOAD" | jq -r '.builtAt // "unknown"')
   echo "  [3] GitHub Pages Static Preview:"
   echo "      SHA: ${PREVIEW_COMMIT} (built: ${PREVIEW_BUILT_AT})"
 else
-  PREVIEW_COMMIT="UNPUBLISHED"
   echo "  [3] GitHub Pages Static Preview:"
   echo "      UNPUBLISHED / NOT YET DEPLOYED"
 fi
@@ -65,28 +74,39 @@ if [ "$GITHUB_TIP" = "UNAVAILABLE" ]; then
   exit 3
 fi
 
-# Compare full 40-char hashes or exact matches
-FULL_MATCH=false
-if [ "$GITHUB_TIP" = "$RENDER_COMMIT" ] && [ "$GITHUB_TIP" = "$PREVIEW_COMMIT" ]; then
-  FULL_MATCH=true
+HEX_40_REGEX="^[0-9a-fA-F]{40}$"
+
+IS_VALID_TIP=false
+if [[ "$GITHUB_TIP" =~ $HEX_40_REGEX ]]; then
+  IS_VALID_TIP=true
 fi
 
-# Also check if backend/preview emitted 7-char short SHAs matching the prefix of full remote SHA
-SHORT_MATCH=false
-if [ "${RENDER_COMMIT:0:7}" = "${GITHUB_TIP:0:7}" ] && [ "${PREVIEW_COMMIT:0:7}" = "${GITHUB_TIP:0:7}" ]; then
-  SHORT_MATCH=true
+IS_VALID_RENDER=false
+if [[ "$RENDER_COMMIT" =~ $HEX_40_REGEX ]]; then
+  IS_VALID_RENDER=true
 fi
 
-if [ "$FULL_MATCH" = true ] || [ "$SHORT_MATCH" = true ]; then
-  echo "  RESULT: ✅ SYNCHRONIZED — Tip, Render backend, and preview match (${GITHUB_TIP})."
+IS_VALID_PREVIEW=false
+if [[ "$PREVIEW_COMMIT" =~ $HEX_40_REGEX ]]; then
+  IS_VALID_PREVIEW=true
+fi
+
+# Exact 40-character identical match AND status=ok required
+if [ "$IS_VALID_TIP" = true ] && [ "$IS_VALID_RENDER" = true ] && [ "$IS_VALID_PREVIEW" = true ] && \
+   [ "$GITHUB_TIP" = "$RENDER_COMMIT" ] && [ "$GITHUB_TIP" = "$PREVIEW_COMMIT" ] && \
+   [ "$RENDER_STATUS" = "ok" ]; then
+  echo "  RESULT: ✅ SYNCHRONIZED — Tip, Render backend, and preview match exact 40-char SHA (${GITHUB_TIP}) with status=ok."
   exit 0
-elif [ "$RENDER_COMMIT" = "UNREACHABLE" ] || [ "$PREVIEW_COMMIT" = "UNPUBLISHED" ]; then
-  echo "  RESULT: ⏳ PENDING PUBLICATION/DEPLOYMENT — Waiting for review or deploy triggers."
+elif [ "$RENDER_COMMIT" = "UNREACHABLE" ] || [ "$PREVIEW_COMMIT" = "UNPUBLISHED" ] || [ "$RENDER_COMMIT" = "unknown" ]; then
+  echo "  RESULT: ⏳ PENDING PUBLICATION/DEPLOYMENT — Waiting for review, publication, or deployment completion."
+  echo "          GitHub Tip:   ${GITHUB_TIP}"
+  echo "          Render Live:  ${RENDER_COMMIT} (status: ${RENDER_STATUS})"
+  echo "          Preview URL:  ${PREVIEW_COMMIT}"
   exit 2
 else
-  echo "  RESULT: ⚠️ DIVERGENCE DETECTED — Hashes do not match across all 3 targets."
-  echo "          GitHub:  ${GITHUB_TIP}"
-  echo "          Render:  ${RENDER_COMMIT}"
-  echo "          Preview: ${PREVIEW_COMMIT}"
+  echo "  RESULT: ⚠️ DIVERGENCE DETECTED — Full 40-character hashes do not match across all 3 targets or status!=ok."
+  echo "          GitHub Tip:   ${GITHUB_TIP}"
+  echo "          Render Live:  ${RENDER_COMMIT} (status: ${RENDER_STATUS})"
+  echo "          Preview URL:  ${PREVIEW_COMMIT}"
   exit 1
 fi

@@ -46,17 +46,16 @@ An exhaustive audit of native device integrations confirms safe browser operatio
 4. **CapacitorHttp**: Only active in native Android WebView. Standard web browsers use native `window.fetch`.
 
 ## 7. Pez Synchronization Check Command
-Pez can execute the repository script:
+Pez executes the repository synchronization verification script:
 ```bash
 ./scripts/ops/check-live-status.sh
 ```
-Or execute the standalone one-liner querying the authoritative remote:
-```bash
-GITHUB_TIP=$(git ls-remote --heads https://github.com/jdubciii/NFL-Pick-Em.git refs/heads/feat/p37-shell-auth-openslate 2>/dev/null | awk '{print $1}')
-RENDER_COMMIT=$(curl -fsSL --max-time 5 https://nfl-pick-em-api.onrender.com/api/health 2>/dev/null | jq -r '.commit' | cut -c1-7)
-PREVIEW_COMMIT=$(curl -fsSL --max-time 5 https://jdubciii.github.io/NFL-Pick-Em/version.json 2>/dev/null | jq -r '.commit' | cut -c1-7)
-echo "GitHub Remote: ${GITHUB_TIP} | Render: ${RENDER_COMMIT:-OFFLINE} | Preview: ${PREVIEW_COMMIT:-UNPUBLISHED}"
-```
+This authoritatively verifies all three targets:
+1. **GitHub Remote Tip SHA** via `git ls-remote` on `refs/heads/feat/p37-shell-auth-openslate`
+2. **Render Live Backend SHA & Health** via `GET https://nfl-pick-em-api.onrender.com/api/health` (requiring `status: 'ok'`)
+3. **GitHub Pages Static Preview SHA** via `GET https://jdubciii.github.io/NFL-Pick-Em/version.json`
+
+The check enforces strict equality across all three full 40-character hexadecimal SHAs and verifies backend health status (`status=ok`), exiting 0 on exact synchronization, 2 if deployment/publication is pending, and 1 on divergence.
 
 ## 8. Exact Remaining Manual Approval & Settings Steps
 To activate the live preview and permit cross-origin communication, the following three manual settings steps are required:
