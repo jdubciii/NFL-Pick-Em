@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import { execSync } from 'child_process';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import bcrypt from 'bcrypt';
@@ -85,9 +86,32 @@ app.use(streamRouter);
 
 
 
-// Health check endpoint
-app.get('/api/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+function resolveServerCommitSha(): string {
+  if (process.env.RENDER_GIT_COMMIT) {
+    return process.env.RENDER_GIT_COMMIT;
+  }
+  if (process.env.GIT_COMMIT) {
+    return process.env.GIT_COMMIT;
+  }
+  try {
+    return execSync('git rev-parse HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  } catch {
+    return 'unknown';
+  }
+}
+
+export const SERVER_BUILD_TIMESTAMP = process.env.BUILD_TIME || process.env.RENDER_BUILD_TIME || new Date().toISOString();
+export const SERVER_COMMIT_SHA = resolveServerCommitSha();
+
+// Health check endpoint reporting commit SHA and build timestamp (Directive 1)
+app.get(['/api/health', '/health'], (_req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    commit: SERVER_COMMIT_SHA,
+    builtAt: SERVER_BUILD_TIMESTAMP,
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+  });
 });
 
 /**

@@ -10,10 +10,12 @@ if (typeof window !== 'undefined') {
   cleanLegacyBootstrapStorage(localStorage);
 }
 
+const routerBasename = import.meta.env.BASE_URL || '/';
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AuthProvider>
-      <BrowserRouter>
+      <BrowserRouter basename={routerBasename}>
         <App />
       </BrowserRouter>
     </AuthProvider>

@@ -12,6 +12,7 @@ import {
   DeadlinePlannerResult,
 } from '../services/deadlineAlertPlanner';
 import { evaluateCanonicalGameLock } from '../services/lockEnforcementService';
+import { APP_BUILD_COMMIT, APP_BUILD_TIME } from '../utils/version';
 
 interface PendingApplicant {
   userId: string;
@@ -518,6 +519,54 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
   const [permissionState, setPermissionState] = useState<'GRANTED' | 'DENIED' | 'PROMPT_REQUIRED'>('PROMPT_REQUIRED');
   const [testNotificationBanner, setTestNotificationBanner] = useState<string | null>(null);
+
+  const [backendHealth, setBackendHealth] = useState<{
+    loading: boolean;
+    status: string | null;
+    commit: string | null;
+    builtAt: string | null;
+    error: string | null;
+  }>({
+    loading: true,
+    status: null,
+    commit: null,
+    builtAt: null,
+    error: null,
+  });
+
+  useEffect(() => {
+    let isMounted = true;
+    async function checkBackend() {
+      try {
+        const res = await scopedExpressFetch('/api/health');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (isMounted) {
+          setBackendHealth({
+            loading: false,
+            status: data.status || 'ok',
+            commit: data.commit || 'unknown',
+            builtAt: data.builtAt || data.timestamp || null,
+            error: null,
+          });
+        }
+      } catch (err: any) {
+        if (isMounted) {
+          setBackendHealth({
+            loading: false,
+            status: 'offline',
+            commit: null,
+            builtAt: null,
+            error: err.message || 'Offline',
+          });
+        }
+      }
+    }
+    checkBackend();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Sync user-specific opt-in preference when user context is authenticated
   useEffect(() => {
@@ -1144,6 +1193,67 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
               </div>
             </div>
           )}
+        </div>
+
+        {/* System Build & Live Deployment Verification (Directive 1) */}
+        <div data-testid="system-build-verification" className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-lg space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🚀</span>
+              <h2 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-white">
+                System Build & Deployment Verification
+              </h2>
+            </div>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">
+              DIRECTIVE-1
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            {/* Client Version */}
+            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  Client Web Bundle
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800 font-mono">
+                  STATIC DIST
+                </span>
+              </div>
+              <div className="font-mono text-cyan-300 font-bold break-all">
+                Commit: {APP_BUILD_COMMIT}
+              </div>
+              <div className="text-[10px] text-slate-500 font-mono">
+                Built: {APP_BUILD_TIME}
+              </div>
+            </div>
+
+            {/* Backend Version */}
+            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  Render Live Backend
+                </span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${
+                    backendHealth.status === 'ok'
+                      ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800'
+                      : backendHealth.loading
+                      ? 'bg-slate-800 text-slate-300 border-slate-700'
+                      : 'bg-rose-950/80 text-rose-400 border-rose-800'
+                  }`}
+                >
+                  {backendHealth.loading ? 'PROBING...' : backendHealth.status === 'ok' ? 'HEALTHY' : 'UNREACHABLE'}
+                </span>
+              </div>
+              <div className="font-mono text-cyan-300 font-bold break-all">
+                Commit: {backendHealth.commit ? backendHealth.commit.substring(0, 7) : (backendHealth.error || 'N/A')}
+              </div>
+              <div className="text-[10px] text-slate-500 font-mono">
+                {backendHealth.builtAt ? `Built: ${backendHealth.builtAt}` : 'No timestamp'}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 

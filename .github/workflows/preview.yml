@@ -1,0 +1,63 @@
+name: Deploy Static Preview to GitHub Pages
+
+on:
+  push:
+    branches:
+      - feat/p37-shell-auth-openslate
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: 'pages'
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm --prefix client ci
+
+      - name: Build Web Client Static Bundle
+        env:
+          VITE_API_URL: https://nfl-pick-em-api.onrender.com
+          VITE_SUPABASE_URL: https://nsljipyoihcoqkuphhll.supabase.co
+          VITE_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5zbGppcHlvaWhjb3FrdXBoaGxsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA1NTY3NDUsImV4cCI6MjEwNjEzMjc0NX0.OD0dom_H-n0cAPeQyngmUPJhrKNNr9G9m6DqpPsFGYw
+          VITE_BASE_PATH: /NFL-Pick-Em/
+          VITE_GIT_COMMIT: ${{ github.sha }}
+        run: |
+          npm run client:build
+          # Copy index.html to 404.html for GitHub Pages SPA client-side routing fallback
+          cp client/dist/index.html client/dist/404.html
+          # Generate machine-readable version.json for status checks
+          echo "{\"commit\":\"${{ github.sha }}\",\"builtAt\":\"$(date -u +'%Y-%m-%dT%H:%M:%SZ')\",\"branch\":\"${{ github.ref_name }}\"}" > client/dist/version.json
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: 'client/dist'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
