@@ -656,12 +656,15 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
     let server: any;
     let baseUrl: string;
 
+    const futureKickoff = new Date(Date.now() + 86400000);
     const mockGame = {
       id: 'game-uuid-1',
       externalGameId: '2026_w08_WAS_SF',
       homeTeamId: 'SF',
       awayTeamId: 'WAS',
-      kickoffTime: new Date(Date.now() + 86400000),
+      kickoffTime: futureKickoff,
+      canonicalKickoffTime: futureKickoff,
+      lockEffectiveAt: futureKickoff,
       status: 'SCHEDULED',
       homeScore: null,
       awayScore: null,
@@ -797,8 +800,12 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
 
         mockPrisma.$transaction.mockImplementation(async (cb: any) => {
           return cb({
-            pick: { upsert: vi.fn().mockResolvedValue(mockPick) },
-            pickResult: { upsert: vi.fn() },
+            game: { findUnique: vi.fn().mockResolvedValue(mockGame) },
+            pick: {
+              findMany: vi.fn().mockResolvedValue([]),
+              upsert: vi.fn().mockResolvedValue(mockPick),
+              update: vi.fn().mockResolvedValue(mockPick),
+            },
             auditLog: { create: vi.fn().mockResolvedValue(mockAudit) },
           });
         });
@@ -926,8 +933,12 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
 
         mockPrisma.$transaction.mockImplementation(async (cb: any) => {
           return cb({
-            pick: { upsert: vi.fn().mockResolvedValue(mockPick) },
-            pickResult: { upsert: vi.fn() },
+            game: { findUnique: vi.fn().mockResolvedValue(mockGame) },
+            pick: {
+              findMany: vi.fn().mockResolvedValue([]),
+              upsert: vi.fn().mockResolvedValue(mockPick),
+              update: vi.fn().mockResolvedValue(mockPick),
+            },
             auditLog: { create: vi.fn().mockResolvedValue(mockAudit) },
           });
         });
@@ -1003,8 +1014,12 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
 
         mockPrisma.$transaction.mockImplementation(async (cb: any) => {
           return cb({
-            pick: { upsert: vi.fn().mockResolvedValue(mockPick) },
-            pickResult: { upsert: vi.fn() },
+            game: { findUnique: vi.fn().mockResolvedValue(mockGame) },
+            pick: {
+              findMany: vi.fn().mockResolvedValue([]),
+              upsert: vi.fn().mockResolvedValue(mockPick),
+              update: vi.fn().mockResolvedValue(mockPick),
+            },
             auditLog: { create: vi.fn().mockResolvedValue(mockAudit) },
           });
         });
@@ -1061,12 +1076,15 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
     let server: any;
     let baseUrl: string;
 
+    const futureKickoff = new Date(Date.now() + 86400000);
     const mockGame = {
       id: 'game-uuid-prod-1',
       externalGameId: '2026_w08_WAS_SF',
       homeTeamId: 'SF',
       awayTeamId: 'WAS',
-      kickoffTime: new Date(Date.now() + 86400000),
+      kickoffTime: futureKickoff,
+      canonicalKickoffTime: futureKickoff,
+      lockEffectiveAt: futureKickoff,
       status: 'SCHEDULED',
       homeScore: null,
       awayScore: null,
@@ -1198,8 +1216,12 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
 
       mockPrisma.$transaction.mockImplementation(async (cb: any) => {
         return cb({
-          pick: { upsert: vi.fn().mockResolvedValue(mockPick) },
-          pickResult: { upsert: vi.fn() },
+          game: { findUnique: vi.fn().mockResolvedValue(mockGame) },
+          pick: {
+            findMany: vi.fn().mockResolvedValue([]),
+            upsert: vi.fn().mockResolvedValue(mockPick),
+            update: vi.fn().mockResolvedValue(mockPick),
+          },
           auditLog: { create: vi.fn().mockResolvedValue(mockAudit) },
         });
       });
@@ -1220,6 +1242,563 @@ describe('HAG-5 / HAG-6 Shared Guard & Authority Invariant Suite (HAG5-AUTHORITY
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.message).toBe('Pick successfully updated by admin.');
+    });
+  });
+
+  describe('9. Cardinal #66 Kickoff Lock Supremacy & Identity Preservation on Admin Override Routes (HAG6-AUTHORITY-2026-10-31-02)', () => {
+    let app: express.Express;
+    let server: any;
+    let baseUrl: string;
+
+    const futureKickoff = new Date(Date.now() + 86400000);
+    const pastKickoff = new Date(Date.now() - 3600000);
+
+    const scheduledGame = {
+      id: 'game-uuid-auth-1',
+      externalGameId: '2026_w08_WAS_SF',
+      homeTeamId: 'SF',
+      awayTeamId: 'WAS',
+      kickoffTime: futureKickoff,
+      canonicalKickoffTime: futureKickoff,
+      lockEffectiveAt: futureKickoff,
+      status: 'SCHEDULED',
+      homeScore: null,
+      awayScore: null,
+    };
+
+    beforeEach(async () => {
+      app = express();
+      app.use(express.json());
+      app.use('/api/pools', poolAdminRouter);
+
+      await new Promise<void>((resolve) => {
+        server = app.listen(0, () => {
+          const addr = server.address() as any;
+          baseUrl = `http://127.0.0.1:${addr.port}`;
+          resolve();
+        });
+      });
+    });
+
+    afterEach(async () => {
+      if (server) {
+        await new Promise<void>((resolve) => server.close(resolve));
+      }
+    });
+
+    it('rejects override on kicked-off game with HTTP 403 KICKOFF_PASSED and ZERO writes', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      mockPrisma.game.findFirst.mockResolvedValue({
+        ...scheduledGame,
+        kickoffTime: pastKickoff,
+        canonicalKickoffTime: pastKickoff,
+        lockEffectiveAt: pastKickoff,
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.code).toBe('KICKOFF_PASSED');
+      expect(data.error).toContain('KICKOFF_PASSED');
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects override on FINAL game with HTTP 403 KICKOFF_PASSED and ZERO writes', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      mockPrisma.game.findFirst.mockResolvedValue({
+        ...scheduledGame,
+        status: 'FINAL',
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/picks/override`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.code).toBe('KICKOFF_PASSED');
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects override on IN_PROGRESS game with HTTP 403 KICKOFF_PASSED and ZERO writes', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      mockPrisma.game.findFirst.mockResolvedValue({
+        ...scheduledGame,
+        status: 'IN_PROGRESS',
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks/override`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.code).toBe('KICKOFF_PASSED');
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects override when canonical kickoff is unconfirmed (null/TBD) with HTTP 403 UNVERIFIED_KICKOFF and ZERO writes', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      mockPrisma.game.findFirst.mockResolvedValue({
+        ...scheduledGame,
+        canonicalKickoffTime: null,
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.code).toBe('UNVERIFIED_KICKOFF');
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects override when pool lock offset is non-numeric/invalid with HTTP 403 UNVERIFIED_KICKOFF and ZERO writes', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue({
+        ...mockPool,
+        settings: { lock_offset: 'non-numeric-offset' },
+      });
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      mockPrisma.game.findFirst.mockResolvedValue(scheduledGame);
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.code).toBe('UNVERIFIED_KICKOFF');
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects null unselect (clearing pick) on kicked-off game with HTTP 403 KICKOFF_PASSED and ZERO writes', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      mockPrisma.game.findFirst.mockResolvedValue({
+        ...scheduledGame,
+        kickoffTime: pastKickoff,
+        canonicalKickoffTime: pastKickoff,
+        lockEffectiveAt: pastKickoff,
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: null,
+        }),
+      });
+
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.code).toBe('KICKOFF_PASSED');
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects null unselect on FINAL game with HTTP 403 KICKOFF_PASSED and ZERO writes', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      mockPrisma.game.findFirst.mockResolvedValue({
+        ...scheduledGame,
+        status: 'FINAL',
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/picks/override`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: null,
+        }),
+      });
+
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.code).toBe('KICKOFF_PASSED');
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects null unselect on unverified kickoff game with HTTP 403 UNVERIFIED_KICKOFF and ZERO writes', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      mockPrisma.game.findFirst.mockResolvedValue({
+        ...scheduledGame,
+        canonicalKickoffTime: null,
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: null,
+        }),
+      });
+
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.code).toBe('UNVERIFIED_KICKOFF');
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('enforces deadline crossing at transactional write boundary if game locks during row-wait', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      mockPrisma.game.findFirst.mockResolvedValue(scheduledGame);
+
+      const txMockPickUpsert = vi.fn();
+      const txMockPickUpdate = vi.fn();
+      const txMockAuditLogCreate = vi.fn();
+
+      mockPrisma.$transaction.mockImplementation(async (cb: any) => {
+        return cb({
+          game: {
+            findUnique: vi.fn().mockResolvedValue({
+              ...scheduledGame,
+              kickoffTime: pastKickoff,
+              canonicalKickoffTime: pastKickoff,
+              lockEffectiveAt: pastKickoff,
+              status: 'IN_PROGRESS',
+            }),
+          },
+          pick: {
+            findMany: vi.fn(),
+            upsert: txMockPickUpsert,
+            update: txMockPickUpdate,
+          },
+          auditLog: {
+            create: txMockAuditLogCreate,
+          },
+        });
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.code).toBe('KICKOFF_PASSED');
+      expect(txMockPickUpsert).not.toHaveBeenCalled();
+      expect(txMockPickUpdate).not.toHaveBeenCalled();
+      expect(txMockAuditLogCreate).not.toHaveBeenCalled();
+    });
+
+    it('detects duplicate pick rows for matchup and rejects with HTTP 409 DUPLICATE_PICK_IDENTITY and ZERO writes', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      mockPrisma.game.findFirst.mockResolvedValue(scheduledGame);
+
+      const txMockPickUpsert = vi.fn();
+      const txMockPickUpdate = vi.fn();
+      const txMockAuditLogCreate = vi.fn();
+
+      mockPrisma.$transaction.mockImplementation(async (cb: any) => {
+        return cb({
+          game: { findUnique: vi.fn().mockResolvedValue(scheduledGame) },
+          pick: {
+            findMany: vi.fn().mockResolvedValue([
+              { id: 'pick-row-1', poolId: POOL_ID, userId: MEMBER_ID, gameId: scheduledGame.id, selectedTeamId: 'SF' },
+              { id: 'pick-row-2', poolId: POOL_ID, userId: MEMBER_ID, gameId: scheduledGame.externalGameId, selectedTeamId: 'WAS' },
+            ]),
+            upsert: txMockPickUpsert,
+            update: txMockPickUpdate,
+          },
+          auditLog: { create: txMockAuditLogCreate },
+        });
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'SF',
+        }),
+      });
+
+      expect(res.status).toBe(409);
+      const data = await res.json();
+      expect(data.code).toBe('DUPLICATE_PICK_IDENTITY');
+      expect(txMockPickUpsert).not.toHaveBeenCalled();
+      expect(txMockPickUpdate).not.toHaveBeenCalled();
+      expect(txMockAuditLogCreate).not.toHaveBeenCalled();
+    });
+
+    it('preserves existing pick row and alias identity: updates in-place on existingPick.id with ZERO deletes or re-keying', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      mockPrisma.game.findFirst.mockResolvedValue(scheduledGame);
+
+      const existingPick = {
+        id: 'pick-alias-row-777',
+        poolId: POOL_ID,
+        userId: MEMBER_ID,
+        gameId: scheduledGame.externalGameId,
+        selectedTeamId: 'SF',
+        submittedById: MEMBER_ID,
+      };
+
+      const updatedPick = {
+        ...existingPick,
+        selectedTeamId: 'WAS',
+        submittedById: COMMISH_ID,
+      };
+
+      const txMockPickUpsert = vi.fn();
+      const txMockPickUpdate = vi.fn().mockResolvedValue(updatedPick);
+      const txMockAuditLogCreate = vi.fn().mockResolvedValue({ id: 'audit-preserve-1' });
+
+      mockPrisma.$transaction.mockImplementation(async (cb: any) => {
+        return cb({
+          game: { findUnique: vi.fn().mockResolvedValue(scheduledGame) },
+          pick: {
+            findMany: vi.fn().mockResolvedValue([existingPick]),
+            upsert: txMockPickUpsert,
+            update: txMockPickUpdate,
+          },
+          auditLog: { create: txMockAuditLogCreate },
+        });
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'WAS',
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.message).toBe('Pick successfully updated by admin.');
+      expect(data.pick.id).toBe('pick-alias-row-777');
+      expect(data.pick.selectedTeamId).toBe('WAS');
+
+      // Verified: update targeted exact existing row ID
+      expect(txMockPickUpdate).toHaveBeenCalledWith({
+        where: { id: 'pick-alias-row-777' },
+        data: {
+          selectedTeamId: 'WAS',
+          submittedById: COMMISH_ID,
+        },
+      });
+      expect(txMockPickUpsert).not.toHaveBeenCalled();
+      expect(txMockAuditLogCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            actorId: COMMISH_ID,
+            action: 'ADMIN_OVERRIDE_PICK',
+            targetEntityId: 'pick-alias-row-777',
+            oldValue: expect.objectContaining({ id: 'pick-alias-row-777', selectedTeamId: 'SF' }),
+            newValue: expect.objectContaining({ id: 'pick-alias-row-777', selectedTeamId: 'WAS' }),
+          }),
+        })
+      );
+    });
+
+    it('handles null unselect on unpicked game as confirmed no-op with 200 and ZERO writes', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      mockPrisma.game.findFirst.mockResolvedValue(scheduledGame);
+
+      const txMockPickUpsert = vi.fn();
+      const txMockPickUpdate = vi.fn();
+      const txMockAuditLogCreate = vi.fn();
+
+      mockPrisma.$transaction.mockImplementation(async (cb: any) => {
+        return cb({
+          game: { findUnique: vi.fn().mockResolvedValue(scheduledGame) },
+          pick: {
+            findMany: vi.fn().mockResolvedValue([]),
+            upsert: txMockPickUpsert,
+            update: txMockPickUpdate,
+          },
+          auditLog: { create: txMockAuditLogCreate },
+        });
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: null,
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.message).toBe('Pick unselect on unpicked game confirmed no-op.');
+      expect(data.pick).toBeNull();
+      expect(data.auditLogId).toBeNull();
+      expect(txMockPickUpsert).not.toHaveBeenCalled();
+      expect(txMockPickUpdate).not.toHaveBeenCalled();
+      expect(txMockAuditLogCreate).not.toHaveBeenCalled();
+    });
+
+    it('rejects non-participant team override with HTTP 400 and ZERO writes', async () => {
+      mockPrisma.pool.findUnique.mockResolvedValue(mockPool);
+      mockPrisma.poolMembership.findUnique.mockResolvedValue({
+        poolId: POOL_ID,
+        userId: COMMISH_ID,
+        status: 'ACTIVE',
+      });
+      mockPrisma.game.findFirst.mockResolvedValue(scheduledGame);
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/admin/picks`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${createAuthToken(COMMISH_ID, 'ADMIN')}`,
+        },
+        body: JSON.stringify({
+          user_id: MEMBER_ID,
+          game_id: scheduledGame.id,
+          selected_team_id: 'KC',
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toContain('Selected team \'KC\' is not a participant');
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
     });
   });
 });

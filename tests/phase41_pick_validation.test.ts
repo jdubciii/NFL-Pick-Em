@@ -41,6 +41,8 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
     homeTeamId: 'SF',
     awayTeamId: 'WAS',
     kickoffTime: futureKickoff,
+    canonicalKickoffTime: futureKickoff,
+    lockEffectiveAt: futureKickoff,
     status: GameStatus.SCHEDULED,
     homeScore: null,
     awayScore: null,
@@ -498,8 +500,13 @@ describe('Trial Workstream: Pick Validation & Non-Participant Rejection', () => 
 
       vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
         return cb({
-          pick: { upsert: upsertMock },
-          pickResult: { upsert: vi.fn() },
+          game: { findUnique: vi.fn().mockResolvedValue(mockWasAtSfGame) },
+          pick: {
+            findMany: vi.fn().mockResolvedValue([]),
+            create: upsertMock,
+            update: upsertMock,
+            upsert: upsertMock,
+          },
           auditLog: { create: auditMock },
         });
       });
