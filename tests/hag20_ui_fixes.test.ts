@@ -5,8 +5,9 @@ import path from 'path';
 
 describe('HAG-20: Client UI Fixes — Infamy week label and Matrix FINAL card', () => {
   describe('Fix 1: Shame screen Infamy Fixture Controls week label', () => {
-    it('authoritative NFL calendar service evaluates current week dynamically as Week 8', () => {
-      const currentWeek = getCurrentNFLWeek();
+    it('authoritative NFL calendar service evaluates Week 8 date deterministically', () => {
+      const week8Date = new Date('2026-11-01T12:00:00Z');
+      const currentWeek = getCurrentNFLWeek(week8Date);
       expect(currentWeek).toBe(8);
     });
 
