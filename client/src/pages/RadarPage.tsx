@@ -198,11 +198,9 @@ export const RadarPage: React.FC = () => {
         if (!isMounted) return;
 
         if (dbPicks && dbPicks.length > 0) {
-          // Week 8 fix: same alias approach as Matrix. Picks may carry the
-          // DB UUID or the ESPN external id, while Radar games may carry
-          // either, depending on whether the backend matrix or ESPN
-          // telemetry wins. An alias copy only matches a game list using
-          // the other id system, so it never double counts a game.
+          // Radar games can use DB or ESPN IDs, so expose both IDs for lookup.
+          // calculateProvisionalStandings resolves and deduplicates these
+          // aliases before awarding points or tracking active picks.
           let aliasMap = new Map<string, string>();
           try {
             const { data: gameRows } = await supabase

@@ -421,6 +421,7 @@ export function calculateProvisionalStandings(
     let bankedPoints = 0;
     let livePoints = 0;
     const userActivePicks: { game: SlateGame; live: LiveGame | undefined; pick: UserPickItem }[] = [];
+    const seenGameIds = new Set<string>();
 
     // Filter picks for this user strictly adhering to Decision #66
     const picks = userPicks.filter(
@@ -431,6 +432,14 @@ export function calculateProvisionalStandings(
       const gameDef = gameByInternalId.get(pick.gameId) || gameByExternalId.get(pick.gameId);
       const extId = gameDef?.externalGameId || (gameDef as any)?.external_game_id || internalToExternal.get(pick.gameId) || pick.gameId;
       const live = scoreMap.get(extId) || scoreMap.get(pick.gameId);
+
+      // Radar may receive the same stored pick under both its DB and ESPN IDs.
+      // Resolve those aliases to one game before counting points or active picks.
+      if (gameDef || live) {
+        const scoringGameId = gameDef ? String(gameDef.id) : String(live!.id);
+        if (seenGameIds.has(scoringGameId)) continue;
+        seenGameIds.add(scoringGameId);
+      }
 
       if (!live) {
         // Telemetry absent or scheduled: non-scoring
