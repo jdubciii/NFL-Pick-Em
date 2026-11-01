@@ -663,6 +663,71 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
         root.unmount();
       });
     });
+
+    it('refreshes the open Shame Ladder from the same score snapshots and competition ranks as Radar', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+      const members = [
+        { user_id: 'u1', role: 'MEMBER', users: { id: 'u1', display_name: 'Jack' } },
+        { user_id: 'u2', role: 'MEMBER', users: { id: 'u2', display_name: 'Mark' } },
+        { user_id: 'u3', role: 'MEMBER', users: { id: 'u3', display_name: 'Nick' } },
+      ];
+      const picks = [
+        { user_id: 'u1', game_id: 'db-game', selected_team: 'NO' },
+        { user_id: 'u2', game_id: 'db-game', selected_team: 'NO' },
+        { user_id: 'u3', game_id: 'db-game', selected_team: 'ATL' },
+      ];
+      const score = (home: string, away: string): LiveGame => ({
+        id: 'espn-game', name: 'ATL @ NO', shortName: 'ATL @ NO', status: 'IN_PROGRESS',
+        homeTeam: { code: 'NO', name: 'Saints', score: home },
+        awayTeam: { code: 'ATL', name: 'Falcons', score: away },
+        clock: '8:00', period: 3, seasonYear: 2026,
+      });
+      const options = {
+        members,
+        matrixRows: [{ game_id: 'db-game', external_game_id: 'espn-game', home_team_id: 'NO', away_team_id: 'ATL', kickoff_time: '2026-11-01T18:00:00Z' }],
+        picks,
+        liveScores: [score('21', '14')],
+        tiebreakerResponse: { status: 'UNAVAILABLE', tiebreakerOffered: false, readiness: [] },
+      };
+      setupWallMocks(options);
+
+      let refreshScores: (() => Promise<void>) | undefined;
+      const intervalSpy = vi.spyOn(globalThis, 'setInterval').mockImplementation(((callback: () => Promise<void>, delay: number) => {
+        if (delay === 30000) refreshScores = callback;
+        return 1 as any;
+      }) as any);
+
+      try {
+        await act(async () => {
+          root.render(React.createElement(WallOfShamePage, { poolId: 'p-1', season: 2026, seasonType: 2, week: 8 }));
+        });
+        expect(refreshScores).toBeDefined();
+        expect((container.textContent.match(/Tied #1/g) || [])).toHaveLength(2);
+
+        const games: SlateGame[] = [{ id: 'db-game', externalGameId: 'espn-game', homeTeam: 'NO', awayTeam: 'ATL', weekNumber: 8, seasonYear: 2026 }];
+        const scoredPicks: UserPickItem[] = picks.map((pick) => ({ userId: pick.user_id, gameId: pick.game_id, selectedTeam: pick.selected_team, isSubmitted: true }));
+        const radarBefore = calculateProvisionalStandings(members.map((member) => ({ id: member.user_id, name: member.users.display_name })), games, options.liveScores, scoredPicks);
+        expect(radarBefore.map(({ userId, totalProvisionalPoints, provisionalRank, tier, isTied }) => [userId, totalProvisionalPoints, provisionalRank, tier, isTied])).toEqual([
+          ['u1', 1, 1, 'SAFE_HAVEN', true], ['u2', 1, 1, 'SAFE_HAVEN', true], ['u3', 0, 3, 'PIT', false],
+        ]);
+
+        options.liveScores = [score('21', '24')];
+        await act(async () => { await refreshScores!(); });
+        const radarAfter = calculateProvisionalStandings(members.map((member) => ({ id: member.user_id, name: member.users.display_name })), games, options.liveScores, scoredPicks);
+        expect(radarAfter.map(({ userId, totalProvisionalPoints, provisionalRank, tier, isTied }) => [userId, totalProvisionalPoints, provisionalRank, tier, isTied])).toEqual([
+          ['u3', 1, 1, 'SAFE_HAVEN', false], ['u1', 0, 2, 'DANGER_ZONE', true], ['u2', 0, 2, 'DANGER_ZONE', true],
+        ]);
+        expect((container.textContent.match(/Tied #2/g) || [])).toHaveLength(2);
+        expect(container.textContent).toContain('Nick');
+        expect(container.textContent).toContain('Danger Zone');
+        expect(container.textContent).not.toContain('Tied #1');
+      } finally {
+        await act(async () => { root.unmount(); });
+        intervalSpy.mockRestore();
+      }
+    });
   });
 
   // =========================================================================

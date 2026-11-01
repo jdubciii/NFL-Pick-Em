@@ -56,6 +56,7 @@ export function WallOfShamePage({
   const [inspectSettledFixture, setInspectSettledFixture] = useState<boolean>(false);
 
   const reqGenRef = useRef(0);
+  const wasLadderOpenRef = useRef(false);
 
   const initialPoolId = propPoolId || '';
   const initialSeason = propSeason || 2026;
@@ -76,19 +77,22 @@ export function WallOfShamePage({
     isStale: false,
   });
 
-  const loadScopedData = useCallback(async (isRefresh: boolean = false) => {
+  const loadScopedData = useCallback(async (isRefresh: boolean = false, freshScores?: LiveGame[]) => {
     const currentGen = ++reqGenRef.current;
 
-    // Reset view state immediately on reload/refresh to clear prior safe claims and settlement headers
-    setSnapshot((prev) => ({
-      ...prev,
-      ladderData: [],
-      status: 'LOADING',
-      scoreStatus: 'STATUS_UNAVAILABLE',
-      isSettled: false,
-      errorMessage: undefined,
-      isStale: isRefresh,
-    }));
+    // Keep the last good standings visible while live telemetry is refreshed.
+    // A scope change still clears them immediately to avoid showing the wrong week.
+    if (!isRefresh || freshScores === undefined) {
+      setSnapshot((prev) => ({
+        ...prev,
+        ladderData: [],
+        status: 'LOADING',
+        scoreStatus: 'STATUS_UNAVAILABLE',
+        isSettled: false,
+        errorMessage: undefined,
+        isStale: isRefresh,
+      }));
+    }
 
     try {
       // 1. Resolve active pool & scope without hardcoded fallbacks (Fail Closed: Decision #55)
@@ -179,7 +183,9 @@ export function WallOfShamePage({
           .eq('week_number', targetWeek)
           .maybeSingle(),
         scopedExpressFetch(`/api/pools/${targetPoolId}/matrix?week_no=${targetWeek}`).catch(() => null),
-        fetchLiveNFLScores(targetWeek).catch(() => [] as LiveGame[]),
+        freshScores !== undefined
+          ? Promise.resolve(freshScores)
+          : fetchLiveNFLScores(targetWeek).catch(() => [] as LiveGame[]),
       ]);
 
       if (reqGenRef.current !== currentGen) return;
@@ -1095,6 +1101,48 @@ export function WallOfShamePage({
       reqGenRef.current += 1; // Invalidate any in-flight async operations on unmount
     };
   }, [loadScopedData]);
+
+  // Radar polls this same ESPN telemetry every 30 seconds. Refresh the visible
+  // provisional ladder on that cadence so both views score the same live state.
+  useEffect(() => {
+    if (activeTab !== 'ladder') {
+      wasLadderOpenRef.current = false;
+      return;
+    }
+    if (snapshot.isSettled) return;
+    let isMounted = true;
+    let isFetching = false;
+
+    const pullTelemetry = async () => {
+      if (isFetching) return;
+      isFetching = true;
+      try {
+        const scores = await fetchLiveNFLScores(propWeek ?? snapshot.week);
+        if (!isMounted) return;
+        if (scores.length > 0) {
+          await loadScopedData(true, scores);
+        } else {
+          setSnapshot((prev) => ({ ...prev, isStale: true }));
+        }
+      } catch (_) {
+        if (isMounted) setSnapshot((prev) => ({ ...prev, isStale: true }));
+      } finally {
+        isFetching = false;
+      }
+    };
+
+    // Returning from another Shame tab should not wait for the next tick.
+    // The initial page load already fetches scores, so skip its duplicate pull.
+    if (!wasLadderOpenRef.current && snapshot.status !== 'LOADING') {
+      void pullTelemetry();
+    }
+    wasLadderOpenRef.current = true;
+    const timer = setInterval(pullTelemetry, 30000);
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+    };
+  }, [activeTab, snapshot.isSettled, snapshot.status, snapshot.week, propWeek, loadScopedData]);
 
   const currentUserId = user?.id || 'viewer';
 
