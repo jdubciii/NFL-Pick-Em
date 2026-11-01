@@ -22,6 +22,34 @@ interface LiveGametrackStreamProps {
   weekNumber?: number;
 }
 
+type GametrackGame = LiveGame | LiveGameflowCardData;
+
+export function sortGametrackGames(games: GametrackGame[]): GametrackGame[] {
+  const statusRank = (game: GametrackGame): number => {
+    if ('status' in game) {
+      return game.status === 'FINAL' ? 0 : game.status === 'SCHEDULED' ? 2 : 1;
+    }
+    return game.isFinal ? 0 : 1;
+  };
+
+  const kickoffTime = (game: GametrackGame): number => {
+    if (!('status' in game)) return Number.POSITIVE_INFINITY;
+    for (const candidate of [game.dateTime, game.kickoffTime]) {
+      const value = Date.parse(candidate || '');
+      if (Number.isFinite(value)) return value;
+    }
+    return Number.POSITIVE_INFINITY;
+  };
+
+  return games
+    .map((game, index) => ({ game, index, rank: statusRank(game), kickoff: kickoffTime(game) }))
+    .sort((a, b) =>
+      a.rank - b.rank ||
+      (a.kickoff === b.kickoff ? a.index - b.index : a.kickoff < b.kickoff ? -1 : 1)
+    )
+    .map(({ game }) => game);
+}
+
 
 function formatKickoffAZ(iso?: string): string | null {
   if (!iso) return null;
@@ -62,6 +90,7 @@ export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({
 
   const activeGames: (LiveGame | LiveGameflowCardData)[] =
     propGames && propGames.length > 0 ? propGames : liveGames;
+  const sortedGames = sortGametrackGames(activeGames);
 
   const allFinal =
     activeGames.length > 0 &&
@@ -124,7 +153,7 @@ export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({
         )}
       </div>
 
-      {activeGames.map((item) => {
+      {sortedGames.map((item) => {
         const isEspnGame = 'homeTeam' in item && typeof item.homeTeam === 'object';
 
         const gameId = isEspnGame ? (item as LiveGame).id : (item as LiveGameflowCardData).gameId;

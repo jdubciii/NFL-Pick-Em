@@ -183,6 +183,25 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
             </div>
           )}
 
+          {activeLadder.length >= 7 && dangerTier1.length === 0 && (
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center px-1">
+                <span className="text-[10px] font-bold text-amber-400 uppercase">
+                  DANGER ZONE // 2ND–6TH PLACE (1 SHOT)
+                </span>
+                <span className="text-[9px] text-amber-400 font-bold">1 shot</span>
+              </div>
+            </div>
+          )}
+
+          {activeLadder.length >= 7 && (
+            <div className="my-1 border-t-2 border-dashed border-rose-500/50 relative text-center">
+              <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-slate-950 px-2 text-[9px] font-black text-rose-400 uppercase tracking-widest">
+                ▼ THE DROP (1 SHOT → 2 SHOTS STEP) ▼
+              </span>
+            </div>
+          )}
+
           {/* Active Danger Tier 2 (if active members present) */}
           {dangerTier2.length > 0 && (
             <div className="space-y-1.5">
@@ -209,6 +228,17 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {activeLadder.length >= 7 && dangerTier2.length === 0 && (
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center px-1">
+                <span className="text-[10px] font-bold text-rose-400 uppercase">
+                  HIGH DANGER // 7TH–9TH PLACE (2 SHOTS)
+                </span>
+                <span className="text-[9px] text-rose-400 font-bold">2 shots</span>
+              </div>
             </div>
           )}
 
@@ -246,7 +276,7 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
           )}
 
           {/* Collapsible Lower Charter Tiers drawer for small pools (< 7 members) */}
-          {activeLadder.length < 7 ? (
+          {activeLadder.length < 7 && (
             <details className="group border border-slate-800/80 rounded-xl p-3 bg-slate-900/40 text-xs">
               <summary className="cursor-pointer text-[10px] font-bold text-slate-400 hover:text-slate-200 uppercase tracking-wider flex items-center justify-between select-none">
                 <span>View Full 10-Player Charter Tier Rules (2nd–10th Place)</span>
@@ -296,37 +326,6 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
                 )}
               </div>
             </details>
-          ) : (
-            /* Full rendering when pool membership >= 7 */
-            <>
-              {dangerTier1.length === 0 && (
-                <div className="space-y-1.5">
-                  <div className="flex justify-between items-center px-1">
-                    <span className="text-[10px] font-bold text-amber-400 uppercase">
-                      DANGER ZONE // 2ND–6TH PLACE (1 SHOT)
-                    </span>
-                    <span className="text-[9px] text-amber-400 font-bold">1 shot</span>
-                  </div>
-                </div>
-              )}
-
-              <div className="my-1 border-t-2 border-dashed border-rose-500/50 relative text-center">
-                <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-slate-950 px-2 text-[9px] font-black text-rose-400 uppercase tracking-widest">
-                  ▼ THE DROP (1 SHOT → 2 SHOTS STEP) ▼
-                </span>
-              </div>
-
-              {dangerTier2.length === 0 && (
-                <div className="space-y-1.5">
-                  <div className="flex justify-between items-center px-1">
-                    <span className="text-[10px] font-bold text-rose-400 uppercase">
-                      HIGH DANGER // 7TH–9TH PLACE (2 SHOTS)
-                    </span>
-                    <span className="text-[9px] text-rose-400 font-bold">2 shots</span>
-                  </div>
-                </div>
-              )}
-            </>
           )}
         </>
       )}
