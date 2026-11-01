@@ -14,6 +14,7 @@ import {
   validateCanonicalReactionTarget,
 } from '../../services/poolSocialService';
 import { scopedExpressFetch } from '../../lib/apiClient';
+import { getCurrentNFLWeek } from '../../services/nflCalendarService';
 
 interface WeeklyRecapCardViewProps {
   currentWeek?: number;
@@ -46,11 +47,15 @@ export const DEMO_PARTICIPANTS: SettledParticipantSummary[] = [
 ];
 
 export const WeeklyRecapCardView: React.FC<WeeklyRecapCardViewProps> = ({
-  currentWeek = 6,
+  currentWeek: propCurrentWeek,
   liveParticipants = [],
   viewerUserId = 'u1',
   rivalUserId = 'u2',
 }) => {
+  const currentWeek =
+    typeof propCurrentWeek === 'number' && propCurrentWeek > 0
+      ? propCurrentWeek
+      : getCurrentNFLWeek();
   const [format, setFormat] = useState<RecapCardFormat>('LEAGUE_VERDICT');
   const [useDemoFixture, setUseDemoFixture] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -384,13 +389,13 @@ export const WeeklyRecapCardView: React.FC<WeeklyRecapCardViewProps> = ({
                 : 'bg-slate-950 border-slate-700 text-slate-400 hover:text-white'
             }`}
           >
-            <span>{useDemoFixture ? '🧪 DEMO FIXTURE ACTIVE' : 'LIVE POOL (WEEK 6)'}</span>
+            <span>{useDemoFixture ? '🧪 DEMO FIXTURE ACTIVE' : `LIVE POOL (WEEK ${currentWeek})`}</span>
           </button>
         </div>
 
         {useDemoFixture && (
           <div className="px-3 py-1.5 rounded-lg bg-amber-950/40 border border-amber-500/40 text-amber-300 text-[10px]">
-            <span className="font-bold">DEMO FIXTURE:</span> Simulates a settled Week 5 slate for PNG export testing while live Week 6 is unsettled.
+            <span className="font-bold">DEMO FIXTURE:</span> Simulates a settled Week 5 slate for PNG export testing while live Week {currentWeek} is unsettled.
           </div>
         )}
       </div>

@@ -219,9 +219,18 @@ export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({
                   {isEspnGame ? (formatKickoffAZ((item as LiveGame).dateTime) || 'Kickoff TBD') : 'Kickoff TBD'}
                 </span>
               ) : isEspnGame ? (
-                <span className="text-xs text-cyan-400 font-bold truncate max-w-[120px]">
-                  {(item as LiveGame).shortName || (item as LiveGame).name}
-                </span>
+                gameId ? (
+                  <a
+                    href={`https://www.espn.com/nfl/game/_/gameId/${gameId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-cyan-400 hover:text-cyan-300 hover:underline font-bold transition flex items-center gap-1"
+                    title={isFinal ? 'View game detail on ESPN' : 'View drive progression on ESPN'}
+                  >
+                    <span>{isFinal ? 'Game Detail' : 'Drive Progression'}</span>
+                    <span className="text-[10px]">↗</span>
+                  </a>
+                ) : null
               ) : (
                 <span className="text-xs text-cyan-400 font-bold">
                   Line: {(item as LiveGameflowCardData).spread > 0 ? `+${(item as LiveGameflowCardData).spread}` : (item as LiveGameflowCardData).spread}

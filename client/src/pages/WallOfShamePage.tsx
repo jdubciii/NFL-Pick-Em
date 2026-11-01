@@ -18,6 +18,7 @@ import {
   TiebreakerData,
 } from '../services/sweatProjectionService';
 import { scopedExpressFetch } from '../lib/apiClient';
+import { getCurrentNFLWeek } from '../services/nflCalendarService';
 import { evaluateSlateLockSummary } from '../services/lockEnforcementService';
 import { resolveAuthoritativeSlate } from '../services/authoritativeSlateClientService';
 
@@ -58,7 +59,7 @@ export function WallOfShamePage({
   const initialPoolId = propPoolId || '';
   const initialSeason = propSeason || 2026;
   const initialSeasonType = propSeasonType || 2;
-  const initialWeek = propWeek ?? 0;
+  const initialWeek = propWeek ?? getCurrentNFLWeek();
 
   const [snapshot, setSnapshot] = useState<ScopedLadderSnapshot>({
     userId: user?.id,
@@ -1277,7 +1278,7 @@ export function WallOfShamePage({
 
             {inspectSettledFixture && (
               <div className="mb-3 p-2 rounded-lg bg-amber-950/40 border border-amber-500/40 text-amber-300 text-[10px]">
-                <span className="font-bold">DEMO FIXTURE:</span> Simulating 1 settled week to verify personal/league story progression on hardware while live Week 6 is unsettled.
+                <span className="font-bold">DEMO FIXTURE:</span> Simulating 1 settled week to verify personal/league story progression on hardware while live Week {currentWeekDisplay} is unsettled.
               </div>
             )}
 
