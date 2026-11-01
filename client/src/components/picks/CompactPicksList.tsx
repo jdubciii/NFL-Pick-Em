@@ -168,11 +168,6 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
                   <span className="text-slate-100 text-xs font-mono font-bold whitespace-nowrap bg-zinc-800 px-1.5 py-0.5 rounded">
                     {g.kickoffTime}
                   </span>
-                  {g.favoriteLine ? (
-                    <span className="text-slate-300 text-xs font-mono font-bold whitespace-nowrap">
-                      {g.favoriteLine}
-                    </span>
-                  ) : null}
                   {g.isLocked ? (
                     <span className="text-xs text-amber-400 font-semibold mt-0.5 whitespace-nowrap">
                       🔒 Locked
@@ -184,6 +179,11 @@ export const CompactPicksList: React.FC<CompactPicksListProps> = ({
                   ) : null}
                 </>
               )}
+              {g.favoriteLine ? (
+                <span className="text-slate-300 text-xs font-mono font-bold whitespace-nowrap">
+                  {g.favoriteLine}
+                </span>
+              ) : null}
             </div>
 
             {/* Home Team Select Button */}

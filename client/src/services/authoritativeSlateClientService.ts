@@ -2,6 +2,7 @@
  * Client Authoritative Slate Resolution Service
  * Governs manifest primacy, pool authority, exact unique coverage, full metadata, and bounded cache.
  */
+import { getJackWeek8FavoriteLine, getJackWeek8HomeSpread } from './liveScoreService';
 
 export interface AuthoritativeManifestRecord {
   season: number;
@@ -417,8 +418,8 @@ export async function resolveAuthoritativeSlate(
       status: mappedStatus,
       homeScore: homeScoreVal,
       awayScore: awayScoreVal,
-      spread: null,
-      favoriteLine: liveScore?.favoriteLine ?? null,
+      spread: getJackWeek8HomeSpread(weekNumber, awayAbbr, homeAbbr, seasonYear),
+      favoriteLine: getJackWeek8FavoriteLine(weekNumber, awayAbbr, homeAbbr, seasonYear),
       awayRecord: liveScore?.awayTeam?.record ?? null,
       homeRecord: liveScore?.homeTeam?.record ?? null,
       userPick: null,

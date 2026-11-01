@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { scopedExpressFetch } from '../lib/apiClient';
 import { getCurrentNFLWeek } from '../services/nflCalendarService';
-import { fetchLiveNFLScores, LiveGame } from '../services/liveScoreService';
+import { fetchLiveNFLScores, getJackWeek8HomeSpread, LiveGame } from '../services/liveScoreService';
 import {
   calculateProvisionalStandings,
   ProvisionalStanding,
@@ -103,6 +103,7 @@ export const RadarPage: React.FC = () => {
                 const isAuthFinal = isFinalStatus(pg.status);
                 return {
                   ...pg,
+                  spread: getJackWeek8HomeSpread(activeWeek, pg.awayTeam, pg.homeTeam, Number(live.seasonYear)) ?? pg.spread,
                   status: isAuthFinal ? 'FINAL' : live.status,
                   homeScore: isAuthFinal ? pg.homeScore : (live.homeTeam?.score !== undefined ? Number(live.homeTeam.score) : pg.homeScore),
                   awayScore: isAuthFinal ? pg.awayScore : (live.awayTeam?.score !== undefined ? Number(live.awayTeam.score) : pg.awayScore),
@@ -113,7 +114,7 @@ export const RadarPage: React.FC = () => {
               id: ls.id,
               homeTeam: ls.homeTeam.code,
               awayTeam: ls.awayTeam.code,
-              spread: 0,
+              spread: getJackWeek8HomeSpread(activeWeek, ls.awayTeam.code, ls.homeTeam.code, Number(ls.seasonYear)) ?? undefined,
               kickoffTime: ls.kickoffTime || ls.dateTime,
               status: ls.status,
               homeScore: ls.homeTeam?.score !== undefined ? Number(ls.homeTeam.score) : undefined,
@@ -206,7 +207,7 @@ export const RadarPage: React.FC = () => {
           try {
             const { data: gameRows } = await supabase
               .from('games')
-              .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, status, home_score, away_score')
+              .select('id, external_game_id, home_team_id, away_team_id, kickoff_time, status, home_score, away_score, season')
               .eq('week', activeWeek);
             (gameRows || []).forEach((g: any) => {
               if (g.id && g.external_game_id) {
@@ -220,6 +221,7 @@ export const RadarPage: React.FC = () => {
                 externalGameId: g.external_game_id,
                 homeTeam: g.home_team_id,
                 awayTeam: g.away_team_id,
+                spread: getJackWeek8HomeSpread(activeWeek, g.away_team_id, g.home_team_id, Number(g.season)) ?? undefined,
                 kickoffTime: g.kickoff_time,
                 status: g.status,
                 homeScore: g.home_score !== null && g.home_score !== undefined ? Number(g.home_score) : undefined,
@@ -252,7 +254,7 @@ export const RadarPage: React.FC = () => {
                 externalGameId: row.external_game_id,
                 homeTeam: row.home_team_id,
                 awayTeam: row.away_team_id,
-                spread: row.spread,
+                spread: getJackWeek8HomeSpread(activeWeek, row.away_team_id, row.home_team_id, Number(row.season ?? new Date(row.kickoff_time).getUTCFullYear())) ?? undefined,
                 kickoffTime: row.kickoff_time,
                 status: row.status,
                 homeScore: row.home_score !== null && row.home_score !== undefined ? Number(row.home_score) : undefined,

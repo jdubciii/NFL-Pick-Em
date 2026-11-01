@@ -61,7 +61,7 @@ export const WhatIfChaosControls: React.FC<WhatIfChaosControlsProps> = ({
                     {game.homeTeam} {game.homeScore + homeDelta}
                   </span>
                   <span className="ml-1.5 text-[10px] text-cyan-400/80">
-                    [{game.spread > 0 ? '+' : ''}{game.spread}]
+                    {game.spread === null ? '[Spread unavailable]' : `[${game.spread > 0 ? '+' : ''}${game.spread}]`}
                   </span>
                 </div>
                 {game.isRedZone && (

@@ -15,6 +15,32 @@ export interface LiveGame {
   periodLabel?: string;
   dateTime?: string;
   favoriteLine?: string | null;
+  spread?: number | null;
+  seasonYear?: number;
+}
+
+// Jack's supplied Week 8 lines. The number is the home team's spread.
+// No feed odds or inferred lines are used for any other matchup or week.
+const WEEK_8_HOME_SPREADS: Record<string, number> = {
+  'TEN@CIN': -10.5,
+  'IND@JAX': -10.5,
+  'ARI@DAL': -7.5,
+};
+
+function normalizeSpreadTeamCode(code: string): string {
+  const value = String(code || '').trim().toUpperCase();
+  return value === 'JAC' ? 'JAX' : value === 'WSH' ? 'WAS' : value;
+}
+
+export function getJackWeek8HomeSpread(weekNumber: number, awayCode: string, homeCode: string, seasonYear: number): number | null {
+  if (weekNumber !== 8 || seasonYear !== 2026) return null;
+  return WEEK_8_HOME_SPREADS[`${normalizeSpreadTeamCode(awayCode)}@${normalizeSpreadTeamCode(homeCode)}`] ?? null;
+}
+
+export function getJackWeek8FavoriteLine(weekNumber: number, awayCode: string, homeCode: string, seasonYear: number): string | null {
+  const homeSpread = getJackWeek8HomeSpread(weekNumber, awayCode, homeCode, seasonYear);
+  if (homeSpread === null) return null;
+  return `${homeSpread < 0 ? normalizeSpreadTeamCode(homeCode) : normalizeSpreadTeamCode(awayCode)} -${Math.abs(homeSpread)}`;
 }
 
 export async function fetchLiveNFLScores(weekNumber: number = 5): Promise<LiveGame[]> {
@@ -63,16 +89,9 @@ export async function fetchLiveNFLScores(weekNumber: number = 5): Promise<LiveGa
         const total = recs.find((r: any) => r?.type === 'total') || recs[0];
         return total?.summary || null;
       };
-      // Spreads Jack provided for Week 8, and only these. No ESPN odds,
-      // no lines for any other game. Shown in favorites format:
-      // Jack's TEN +10.5 becomes CIN -10.5, IND +10.5 becomes JAX -10.5,
-      // ARI +7.5 becomes DAL -7.5.
-      const jackSpreads: Record<string, string> = {
-        'TEN@CIN': 'CIN -10.5',
-        'IND@JAX': 'JAX -10.5',
-        'ARI@DAL': 'DAL -7.5',
-      };
-      const favoriteLine = weekNumber === 8 ? (jackSpreads[`${awayCode}@${homeCode}`] || null) : null;
+      const seasonYear = Number(data.season?.year ?? event.season?.year ?? (event.date ? new Date(event.date).getUTCFullYear() : NaN));
+      const spread = getJackWeek8HomeSpread(weekNumber, awayCode, homeCode, seasonYear);
+      const favoriteLine = getJackWeek8FavoriteLine(weekNumber, awayCode, homeCode, seasonYear);
 
       const homeScore = home.score !== undefined && home.score !== null ? String(home.score) : undefined;
       const awayScore = away.score !== undefined && away.score !== null ? String(away.score) : undefined;
@@ -105,6 +124,8 @@ export async function fetchLiveNFLScores(weekNumber: number = 5): Promise<LiveGa
         periodLabel,
         dateTime: event.date || undefined,
         favoriteLine,
+        spread,
+        seasonYear,
       };
     });
   } catch (err) {

@@ -267,7 +267,7 @@ export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({
               )}
             </div>
 
-            {isScheduled && isEspnGame && espnGame.favoriteLine ? (
+            {isEspnGame && espnGame.favoriteLine ? (
               <div className="text-xs text-slate-300 font-bold pt-1">
                 FAV: {espnGame.favoriteLine}
               </div>

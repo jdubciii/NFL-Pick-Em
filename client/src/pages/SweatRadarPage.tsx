@@ -23,6 +23,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { formatGameKickoff } from '../utils/dateUtils';
+import { getJackWeek8HomeSpread } from '../services/liveScoreService';
 import { WhatIfSimulationWrapper } from '../components/mobile/WhatIfSimulationWrapper';
 import { LiveMatchupPulse } from '../components/animations/LiveMatchupPulse';
 
@@ -45,7 +46,7 @@ interface LeverageMatchup {
   awayTeamFull: string;
   kickoffTime: string;
   spread: string;
-  spreadValue: number;
+  spreadValue: number | null;
   homePickPct: number;
   awayPickPct: number;
   homeBackers: MemberPickInfo[];
@@ -106,7 +107,7 @@ interface GameSimData {
   homeTeamId: string;
   awayTeamId: string;
   kickoffTime: string;
-  spread: number;
+  spread: number | null;
   impliedHomeWinProb: number;
   status?: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL';
 }
@@ -425,9 +426,16 @@ export const SweatRadarPage: React.FC = () => {
 
       // 4. Construct GameSimData array with local timezone formatting
       const games: GameSimData[] = rows.map((row: any) => {
-        const spreadNum = typeof row.spread === 'number' ? row.spread : -3.5;
-        // Implied win probability from spread
-        const impliedProb = Math.max(0.20, Math.min(0.85, 0.50 - (spreadNum * 0.035)));
+        const spreadNum = getJackWeek8HomeSpread(
+          Number(row.week_number ?? row.week ?? matrixPayload?.week_no ?? 5),
+          row.away_team_id,
+          row.home_team_id,
+          Number(row.season ?? new Date(row.kickoff_time).getUTCFullYear())
+        );
+        // Without one of Jack's three lines, use a neutral simulation probability.
+        const impliedProb = spreadNum === null
+          ? 0.5
+          : Math.max(0.20, Math.min(0.85, 0.50 - (spreadNum * 0.035)));
 
         return {
           id: row.game_id,
@@ -477,7 +485,9 @@ export const SweatRadarPage: React.FC = () => {
         const userMember = members.find((m) => m.isUser);
         const userPick = userMember ? userMember.picks[g.id] : null;
 
-        const spreadStr = g.spread < 0 ? `${g.homeTeamId} ${g.spread}` : `${g.awayTeamId} -${g.spread}`;
+        const spreadStr = g.spread === null
+          ? 'Spread unavailable'
+          : g.spread < 0 ? `${g.homeTeamId} ${g.spread}` : `${g.awayTeamId} -${g.spread}`;
         const leverageScore = Math.round(95 - Math.abs(homePct - 50) * 0.8);
 
         return {

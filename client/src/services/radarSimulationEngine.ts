@@ -6,7 +6,7 @@ export interface LiveGameTelemetry {
   awayTeam: string;
   homeScore: number;
   awayScore: number;
-  spread: number;
+  spread: number | null;
   status: GameStatus;
   quarter?: string;
   timeRemaining?: string;
@@ -51,7 +51,10 @@ export interface ParticipantStandings {
   threatenedByRedZone: boolean;
 }
 
-export function evaluatePickATS(pick: UserPick, game: LiveGameTelemetry): { covered: boolean; push: boolean; points: number } {
+export function evaluatePickATS(pick: UserPick, game: LiveGameTelemetry): { covered: boolean; push: boolean; points: number | null } {
+  if (game.spread === null || !Number.isFinite(game.spread)) {
+    return { covered: false, push: false, points: null };
+  }
   const homeMarginWithSpread = (game.homeScore + game.spread) - game.awayScore;
 
   if (homeMarginWithSpread === 0) {
@@ -98,10 +101,10 @@ export function evaluateLiveStandings(
 
     if (game.status === 'FINAL') {
       const outcome = evaluatePickATS(pick, game);
-      userScore.banked += outcome.points;
+      if (outcome.points !== null) userScore.banked += outcome.points;
     } else if (game.status === 'IN_PROGRESS') {
       const outcome = evaluatePickATS(pick, game);
-      userScore.live += outcome.points;
+      if (outcome.points !== null) userScore.live += outcome.points;
 
       const isRedZone = game.isRedZone || (game.yardLine !== undefined && game.yardLine <= 20);
       if (isRedZone) {
