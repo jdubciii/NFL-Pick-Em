@@ -19,6 +19,7 @@ import { RivalryShowdown } from '../components/radar/RivalryShowdown';
 import { WatchPartyBigBoardModal } from '../components/radar/WatchPartyBigBoardModal';
 import { AppHeader } from '../components/common/AppHeader';
 import { deriveSundaySlatePhase, sundaySlatePhaseLabel } from '../services/radarSundaySlatePhase';
+import { isWeeklyScoredSlateFinal, resolveWeeklyTiebreakerSnapshot } from '../services/weeklyStandingsFinalityService';
 import {
   buildPersonalRootingQueue,
   evaluateLateGameEscape,
@@ -35,6 +36,7 @@ import {
 export const RadarPage: React.FC = () => {
   const { user, token } = useAuth();
   const activeWeek = getCurrentNFLWeek();
+  const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
   const [activeViewMode, setActiveViewMode] = useState<'LEAGUE' | 'RIVALRY'>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -78,7 +80,9 @@ export const RadarPage: React.FC = () => {
   const [members, setMembers] = useState<UserStandingRef[]>([]);
   const [games, setGames] = useState<SlateGame[]>([]);
   const [picks, setPicks] = useState<UserPickItem[]>([]);
-  const [tiebreakers] = useState<TiebreakerData | undefined>(undefined);
+  const [picksLoaded, setPicksLoaded] = useState(false);
+  const [tiebreakerResponse, setTiebreakerResponse] = useState<unknown>(null);
+  const [verifiedLeagueSlate, setVerifiedLeagueSlate] = useState(false);
 
   // Track live scores with fallback to retain last-good telemetry
   useEffect(() => {
@@ -125,6 +129,14 @@ export const RadarPage: React.FC = () => {
               awayScore: ls.awayTeam?.score !== undefined ? Number(ls.awayTeam.score) : undefined,
             }));
           });
+          // The member-scoped endpoint exposes locked predictions after kickoff.
+          // Refresh it alongside scores so a completed designated game resolves ties.
+          try {
+            const response = await scopedExpressFetch(
+              `/api/pools/${activePoolId}/tiebreaker?week=${activeWeek}&season=2026`
+            );
+            if (isMounted && response.ok) setTiebreakerResponse(await response.json());
+          } catch (_) {}
         } else if (liveScoresRef.current.length > 0) {
           setIsStale(true);
         }
@@ -147,8 +159,9 @@ export const RadarPage: React.FC = () => {
   // Fetch pool data: active members, games, and live picks from Supabase
   useEffect(() => {
     let isMounted = true;
-    const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
     const activeWeek = getCurrentNFLWeek();
+    setVerifiedLeagueSlate(false);
+    setPicksLoaded(false);
 
     const loadPoolData = async () => {
       try {
@@ -193,13 +206,14 @@ export const RadarPage: React.FC = () => {
         }
 
         // 2. Fetch picks from public.picks for the active week
-        const { data: dbPicks } = await supabase
+        const { data: dbPicks, error: picksError } = await supabase
           .from('picks')
           .select('user_id, matchup_id, game_id, selected_team, week')
           .eq('pool_id', activePoolId)
           .eq('week', activeWeek);
 
         if (!isMounted) return;
+        setPicksLoaded(!picksError && Array.isArray(dbPicks));
 
         if (dbPicks && dbPicks.length > 0) {
           // Radar games can use DB or ESPN IDs, so expose both IDs for lookup.
@@ -252,7 +266,9 @@ export const RadarPage: React.FC = () => {
           const res = await scopedExpressFetch(`/api/pools/${activePoolId}/matrix?week_no=${activeWeek}`);
           if (res.ok) {
             const matrix = await res.json();
-            if (matrix.rows && matrix.rows.length > 0) {
+            if (matrix.metadata?.pool_id === activePoolId &&
+                Number(matrix.metadata?.week_number) === activeWeek &&
+                Array.isArray(matrix.rows) && matrix.rows.length > 0) {
               setGames(matrix.rows.map((row: any) => ({
                 id: row.game_id,
                 weekNumber: activeWeek,
@@ -266,6 +282,7 @@ export const RadarPage: React.FC = () => {
                 homeScore: row.home_score !== null && row.home_score !== undefined ? Number(row.home_score) : undefined,
                 awayScore: row.away_score !== null && row.away_score !== undefined ? Number(row.away_score) : undefined,
               })));
+              setVerifiedLeagueSlate(true);
             }
           }
         } catch (_) {}
@@ -293,7 +310,19 @@ export const RadarPage: React.FC = () => {
     });
   }, [picks, simulationFlippedPicks, user?.id]);
 
-  // Compute Sunday Sweat provisional projections
+  const tiebreakerSnapshot = useMemo(() => resolveWeeklyTiebreakerSnapshot(
+    tiebreakerResponse,
+    members.map((member) => member.id),
+    games,
+    liveScores,
+  ), [tiebreakerResponse, members, games, liveScores]);
+  const tiebreakers: TiebreakerData | undefined = tiebreakerSnapshot.data;
+
+  const isFinalPosted = !isSimulationActive && picksLoaded && isWeeklyScoredSlateFinal(
+    games, liveScores, tiebreakerSnapshot, verifiedLeagueSlate, activeWeek === 8,
+  );
+
+  // Compute Sunday Sweat standings from the same scored slate and tiebreaker inputs.
   const provisionalResult: ProvisionalStandingsResult = useMemo(() => {
     return calculateProvisionalStandings(
       members,
@@ -547,8 +576,10 @@ export const RadarPage: React.FC = () => {
               <span>SIMULATED</span>
             </div>
           ) : (
-            <div className="px-2 py-0.5 rounded-full border border-cyan-500/30 bg-cyan-500/15 text-cyan-400 font-bold text-[10px]">
-              <span>PROJECTION</span>
+            <div className={`px-2 py-0.5 rounded-full border font-bold text-[10px] ${isFinalPosted
+              ? 'border-emerald-500/50 bg-emerald-950 text-emerald-300'
+              : 'border-cyan-500/30 bg-cyan-500/15 text-cyan-400'}`}>
+              <span>{isFinalPosted ? 'FINAL STANDINGS' : 'PROJECTION'}</span>
             </div>
           )
         }
@@ -660,11 +691,11 @@ export const RadarPage: React.FC = () => {
             <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-950 to-cyan-950/40 border-2 border-cyan-500/50 shadow-glow-cyan mb-4 font-mono">
               <div className="flex items-center justify-between border-b border-cyan-500/30 pb-2">
                 <span className="text-[10px] font-black text-cyan-300 uppercase tracking-wider">
-                  YOUR PROVISIONAL STANDING
+                  {isFinalPosted ? 'YOUR FINAL STANDING' : 'YOUR PROVISIONAL STANDING'}
                 </span>
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs font-black px-2 py-0.5 rounded bg-cyan-950 border border-cyan-400 text-cyan-200">
-                    RANK #{userStanding.provisionalRank}
+                    {userStanding.isTied ? `TIED #${userStanding.provisionalRank}` : `RANK #${userStanding.provisionalRank}`}
                   </span>
                   {renderTierBadge(userStanding.tier)}
                 </div>
@@ -819,11 +850,11 @@ export const RadarPage: React.FC = () => {
             )}
           </div>
 
-          {/* SUNDAY SWEAT PROVISIONAL STANDINGS */}
+          {/* Weekly standings are final once the scored league slate is complete. */}
           <div className="space-y-2 font-mono">
             <div className="flex justify-between items-center px-1 mb-1">
               <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
-                SUNDAY SWEAT PROVISIONAL STANDINGS
+                {isFinalPosted ? 'WEEKLY FINAL STANDINGS' : 'SUNDAY SWEAT PROVISIONAL STANDINGS'}
               </span>
               <button
                 onClick={handleToggleSimulation}
@@ -909,7 +940,7 @@ export const RadarPage: React.FC = () => {
                             : 'text-slate-300'
                         }`}
                       >
-                        #{p.provisionalRank}
+                        {p.isTied ? `Tied #${p.provisionalRank}` : `#${p.provisionalRank}`}
                       </span>
                       {p.rankDelta > 0 ? (
                         <span className="text-emerald-400 font-bold text-[9px]">▲+{p.rankDelta}</span>
@@ -952,7 +983,9 @@ export const RadarPage: React.FC = () => {
 
             <div className="pt-2 text-center">
               <p className="text-[9px] text-slate-500 font-mono">
-                * Provisional live standings. Tap any rival row to launch head-to-head duel. Official settlement post-audit.
+                {isFinalPosted
+                  ? '* Final weekly standings. Shot tiers are official penalties for this week.'
+                  : '* Provisional live standings. Tap any rival row to launch head-to-head duel. Final standings post when every scored league game is final.'}
               </p>
             </div>
           </div>
@@ -966,7 +999,7 @@ export const RadarPage: React.FC = () => {
         onClose={() => setIsBigBoardOpen(false)}
         activeWeek={activeWeek}
         poolTitle="MAIN LEAGUE"
-        phaseLabel={`${sundaySlatePhaseLabel(sundaySlatePhase)} · PROVISIONAL`}
+        phaseLabel={`${sundaySlatePhaseLabel(sundaySlatePhase)} · ${isFinalPosted ? 'FINAL STANDINGS' : 'PROVISIONAL'}`}
         isSimulation={isSimulationActive}
         members={members}
         standings={provisionalResult}

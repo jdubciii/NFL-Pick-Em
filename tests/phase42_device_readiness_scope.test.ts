@@ -1212,10 +1212,10 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
   });
 
   // =========================================================================
-  // Case 6: Settlement separation from game outcome finality
+  // Case 6: Scored-slate final posting and authoritative wrapup precedence
   // =========================================================================
-  describe('Case 6: Settlement separation from game outcome finality', () => {
-    it('mounts actual WallOfShamePage with all final scores and unconfirmed settlement: shows settlement not confirmed badge', async () => {
+  describe('Case 6: Scored-slate final posting and authoritative wrapup precedence', () => {
+    it('mounts actual WallOfShamePage with all scored games final and no wrapup: shows final standings', async () => {
       const { mockDoc } = setupMockDom();
       const container = mockDoc.createElement('div');
       const root = createRoot(container as any);
@@ -1239,9 +1239,42 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       });
 
       const text = container.textContent;
-      expect(text).toContain('WEEK 6 FINAL · SETTLEMENT NOT CONFIRMED');
-      expect(text).toContain('SETTLEMENT NOT CONFIRMED');
+      expect(text).toContain('FINAL STANDINGS · OFFICIAL PENALTIES');
+      expect(text).toContain('WEEK 6 · FINAL STANDINGS');
       expect(text).not.toContain('OFFICIAL SETTLED');
+
+      await act(async () => {
+        root.unmount();
+      });
+    });
+
+    it('keeps Week 8 Ladder provisional when final scores exist but its designated tiebreaker is unavailable', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+
+      setupWallMocks({
+        wrapup: null,
+        matrixRows: [
+          { game_id: 'g1', external_game_id: 'espn-g1', home_team_id: 'KC', away_team_id: 'DEN', kickoff_time: '2026-11-01T17:00:00Z' },
+        ],
+        liveScores: [
+          { id: 'espn-g1', name: 'DEN @ KC', shortName: 'DEN @ KC', homeTeam: { code: 'KC', name: 'Chiefs', score: '24' }, awayTeam: { code: 'DEN', name: 'Broncos', score: '10' }, status: 'FINAL', clock: 'FINAL', period: 4 },
+        ],
+        picks: [
+          { user_id: 'u1', game_id: 'g1', selected_team: 'KC', week: 8 },
+          { user_id: 'u2', game_id: 'g1', selected_team: 'DEN', week: 8 },
+        ],
+        tiebreakerResponse: { status: 'UNAVAILABLE', tiebreakerOffered: false, readiness: [] },
+      });
+
+      await act(async () => {
+        root.render(React.createElement(WallOfShamePage, { poolId: 'p-1', season: 2026, seasonType: 2, week: 8 }));
+      });
+
+      expect(container.textContent).toContain('WEEK 8 · PROVISIONAL PREVIEW — FINAL DATA PENDING');
+      expect(container.textContent).toContain('Provisional standings');
+      expect(container.textContent).not.toContain('FINAL STANDINGS · OFFICIAL PENALTIES');
 
       await act(async () => {
         root.unmount();
@@ -1575,7 +1608,7 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
 
       const text = container.textContent;
       expect(text).not.toContain('OFFICIALLY SETTLED');
-      expect(text).toContain('SETTLEMENT NOT CONFIRMED');
+      expect(text).toContain('FINAL STANDINGS · OFFICIAL PENALTIES');
 
       await act(async () => {
         root.unmount();

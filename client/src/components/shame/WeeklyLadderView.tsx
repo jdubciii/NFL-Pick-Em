@@ -18,6 +18,7 @@ export interface WeeklyLadderViewProps {
   status?: LadderViewStatus;
   weekNumber?: number;
   isSettled?: boolean;
+  isFinalPosted?: boolean;
   scoreStatus?: string;
   errorMessage?: string;
   onRetry?: () => void;
@@ -32,6 +33,7 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
   status = 'READY',
   weekNumber = 6,
   isSettled = false,
+  isFinalPosted = false,
   scoreStatus,
   errorMessage,
   onRetry,
@@ -53,15 +55,17 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
         </span>
         <span
           className={`text-[10px] px-2 py-0.5 rounded font-black border uppercase tracking-wider ${
-            isSettled
+            isSettled || isFinalPosted
               ? 'bg-emerald-950 border-emerald-500/60 text-emerald-300'
               : 'bg-cyan-950 border-cyan-500/60 text-cyan-300'
           }`}
         >
           {isSettled
             ? `WEEK ${weekNumber} · OFFICIAL SETTLED`
+            : isFinalPosted
+            ? `WEEK ${weekNumber} · FINAL STANDINGS`
             : scoreStatus === 'ALL_GAMES_FINAL'
-            ? `WEEK ${weekNumber} · PROVISIONAL PREVIEW — SETTLEMENT NOT CONFIRMED`
+            ? `WEEK ${weekNumber} · PROVISIONAL PREVIEW — FINAL DATA PENDING`
             : `WEEK ${weekNumber} · PROVISIONAL PREVIEW`}
         </span>
       </div>
@@ -79,8 +83,8 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
 
       {!isSettled && status === 'READY' && activeLadder.length > 0 && (
         <div className="text-[10px] text-slate-300 px-1 font-mono">
-          <p className="font-bold">Provisional standings{tiebreakerPending ? ' · Tiebreaker pending' : ''}</p>
-          <p>Shot tiers show current exposure. Official penalties assign upon Monday Night settlement.</p>
+          <p className="font-bold">{isFinalPosted ? 'Final weekly standings' : `Provisional standings${tiebreakerPending ? ' · Tiebreaker pending' : ''}`}</p>
+          <p>{isFinalPosted ? 'Shot tiers are the official weekly penalties.' : 'Shot tiers show current exposure until every scored league game is final.'}</p>
         </div>
       )}
 

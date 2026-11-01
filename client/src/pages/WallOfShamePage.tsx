@@ -21,6 +21,7 @@ import { scopedExpressFetch } from '../lib/apiClient';
 import { getCurrentNFLWeek } from '../services/nflCalendarService';
 import { evaluateSlateLockSummary } from '../services/lockEnforcementService';
 import { resolveAuthoritativeSlate } from '../services/authoritativeSlateClientService';
+import { isWeeklyScoredSlateFinal } from '../services/weeklyStandingsFinalityService';
 
 export interface WallOfShamePageProps {
   poolId?: string;
@@ -39,6 +40,7 @@ interface ScopedLadderSnapshot {
   status: LadderViewStatus;
   scoreStatus: 'STATUS_UNAVAILABLE' | 'GAMES_NOT_STARTED' | 'GAMES_LIVE' | 'WEEK_IN_PROGRESS' | 'ALL_GAMES_FINAL';
   isSettled: boolean;
+  isFinalPosted?: boolean;
   errorMessage?: string;
   observedAt: string;
   isStale: boolean;
@@ -599,6 +601,9 @@ export function WallOfShamePage({
 
       // 7. Fetch Tiebreaker Inputs (Finding 2)
       let tiebreakerData: TiebreakerData | undefined = undefined;
+      let tiebreakerVerified = targetWeek === 6;
+      let tiebreakerOffered = false;
+      let designatedTiebreakerEventId: string | undefined;
       if (targetWeek !== 6) {
         try {
           const tbRes = await scopedExpressFetch(
@@ -730,6 +735,7 @@ export function WallOfShamePage({
               return;
             }
             tiebreakerData = undefined;
+            tiebreakerVerified = true;
           } else {
             // tbJson.tiebreakerOffered === true
             if (tbJson.status !== 'DEFAULT_LIONS' && tbJson.status !== 'COMMISSIONER_OVERRIDE') {
@@ -789,6 +795,8 @@ export function WallOfShamePage({
               });
               return;
             }
+            designatedTiebreakerEventId = designatedEventId;
+            tiebreakerOffered = true;
 
             if (!Array.isArray(tbJson.readiness)) {
               setSnapshot({
@@ -871,7 +879,7 @@ export function WallOfShamePage({
               }
               seenMemberIds.add(mUserId);
 
-              // Require prediction property to be explicitly null or a valid finite number in [0, 999.99]
+              // Require prediction property to be explicitly null or a valid finite number in [0, 999.999]
               // Undefined, string, boolean, negative, NaN must fail closed
               if (!('prediction' in item)) {
                 setSnapshot({
@@ -897,7 +905,7 @@ export function WallOfShamePage({
                 typeof item.prediction === 'number' &&
                 Number.isFinite(item.prediction) &&
                 item.prediction >= 0 &&
-                item.prediction <= 999.99
+                item.prediction <= 999.999
               ) {
                 preds[mUserId] = item.prediction;
               } else {
@@ -970,6 +978,7 @@ export function WallOfShamePage({
               actualTotalScore,
               userPredictions: preds,
             };
+            tiebreakerVerified = true;
           }
         } catch (err) {
           if (reqGenRef.current !== currentGen) return;
@@ -1011,6 +1020,21 @@ export function WallOfShamePage({
         tiebreakerData
       );
 
+      // The scored league slate is the accepted matrix/manifest, not every NFL game
+      // in the calendar week. The existing wrapup path above stays authoritative.
+      const isFinalPosted = isWeeklyScoredSlateFinal(
+        gamesList,
+        liveScores,
+        {
+          verified: tiebreakerVerified,
+          offered: tiebreakerOffered,
+          eventId: designatedTiebreakerEventId,
+          data: tiebreakerData,
+        },
+        true,
+        targetSeason === 2026 && targetWeek === 8,
+      );
+
       const mappedLadder = standings.map((entry) => {
         let tier = 'DANGER_LOW';
         let status = `${entry.projectedPenalty.toFixed(2)} Shots`;
@@ -1018,19 +1042,19 @@ export function WallOfShamePage({
 
         if (entry.tier === 'SAFE_HAVEN') {
           tier = 'SAFE HAVEN';
-          status = 'PROJECTED SAFE';
+          status = isFinalPosted ? 'OFFICIAL SAFE' : 'PROJECTED SAFE';
           fsmDisplayStatus = 'Safe Haven';
         } else if (entry.tier === 'DANGER_ZONE') {
           tier = 'DANGER_LOW';
-          status = 'Projected 1.00 Shot';
+          status = isFinalPosted ? 'Official 1.00 Shot' : 'Projected 1.00 Shot';
           fsmDisplayStatus = 'Danger Zone';
         } else if (entry.tier === 'THE_DROP') {
           tier = 'DANGER_HIGH';
-          status = 'Projected 2.00 Shots';
+          status = isFinalPosted ? 'Official 2.00 Shots' : 'Projected 2.00 Shots';
           fsmDisplayStatus = 'The Drop';
         } else if (entry.tier === 'PIT') {
           tier = 'PIT';
-          status = 'Projected Dead Place';
+          status = isFinalPosted ? 'Official Dead Place' : 'Projected Dead Place';
           fsmDisplayStatus = 'Dead Place Monarch';
         }
 
@@ -1073,6 +1097,7 @@ export function WallOfShamePage({
         status: 'READY',
         scoreStatus: resolvedScoreStatus,
         isSettled: false,
+        isFinalPosted,
         tiebreakerPending: Boolean(tiebreakerData && tiebreakerData.actualTotalScore === undefined),
         observedAt: new Date().toISOString(),
         isStale: false,
@@ -1158,6 +1183,7 @@ export function WallOfShamePage({
   const effectiveLadder = isScopeMismatch ? [] : snapshot.ladderData;
   const effectiveScoreStatus = isScopeMismatch ? 'STATUS_UNAVAILABLE' : snapshot.scoreStatus;
   const effectiveIsSettled = isScopeMismatch ? false : snapshot.isSettled;
+  const effectiveIsFinalPosted = !isScopeMismatch && effectiveStatus === 'READY' && snapshot.isFinalPosted === true;
   const currentWeekDisplay = propWeek ?? snapshot.week;
 
   const demoRecords: AuthoritativeWeeklyStandingRow[] = useMemo(() => [
@@ -1195,12 +1221,13 @@ export function WallOfShamePage({
     if (isScopeMismatch) return 'STATUS UNAVAILABLE';
     if (activeTab === 'infamy') return 'SETTLED';
     if (effectiveIsSettled) return 'SETTLED';
+    if (effectiveIsFinalPosted) return 'FINAL STANDINGS';
     if (effectiveScoreStatus === 'ALL_GAMES_FINAL') return 'ALL GAMES FINAL';
     if (effectiveScoreStatus === 'GAMES_LIVE') return 'GAMES LIVE';
     if (effectiveScoreStatus === 'WEEK_IN_PROGRESS') return 'WEEK IN PROGRESS';
     if (effectiveScoreStatus === 'GAMES_NOT_STARTED') return 'GAMES NOT STARTED';
     return 'STATUS UNAVAILABLE';
-  }, [isScopeMismatch, activeTab, effectiveIsSettled, effectiveScoreStatus]);
+  }, [isScopeMismatch, activeTab, effectiveIsSettled, effectiveIsFinalPosted, effectiveScoreStatus]);
 
   // Unified right badge mapping per contract
   const headerRightBadge = useMemo(() => {
@@ -1225,10 +1252,17 @@ export function WallOfShamePage({
         </div>
       );
     }
+    if (effectiveIsFinalPosted) {
+      return (
+        <div className="px-2 py-0.5 rounded-full border border-emerald-700 bg-emerald-900/60 text-emerald-300 font-bold text-[10px]">
+          <span>FINAL STANDINGS · OFFICIAL PENALTIES</span>
+        </div>
+      );
+    }
     if (effectiveScoreStatus === 'ALL_GAMES_FINAL') {
       return (
         <div className="px-2 py-0.5 rounded-full border border-zinc-700 bg-zinc-800 text-zinc-300 font-bold text-[10px]">
-          <span>WEEK {currentWeekDisplay} FINAL · SETTLEMENT NOT CONFIRMED</span>
+          <span>PROVISIONAL · FINAL DATA PENDING</span>
         </div>
       );
     }
@@ -1244,7 +1278,7 @@ export function WallOfShamePage({
         <span>UNAVAILABLE</span>
       </div>
     );
-  }, [isScopeMismatch, activeTab, effectiveIsSettled, effectiveScoreStatus, effectiveStatus, currentWeekDisplay]);
+  }, [isScopeMismatch, activeTab, effectiveIsSettled, effectiveIsFinalPosted, effectiveScoreStatus, effectiveStatus]);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white pb-24">
@@ -1291,6 +1325,7 @@ export function WallOfShamePage({
             status={effectiveStatus}
             weekNumber={currentWeekDisplay}
             isSettled={effectiveIsSettled}
+            isFinalPosted={effectiveIsFinalPosted}
             scoreStatus={effectiveScoreStatus}
             errorMessage={isScopeMismatch ? undefined : snapshot.errorMessage}
             onRetry={() => loadScopedData(true)}
