@@ -1,5 +1,6 @@
-import { LiveGame } from './liveScoreService';
+import { getJackWeek8HomeSpread, LiveGame } from './liveScoreService';
 import { SlateGame, UserPickItem, UserStandingRef, isFinalStatus } from './sweatProjectionService';
+import { scoreLeaguePick } from './radarLiveConsequencesService';
 
 export interface CompetitorPoints {
   banked: number;
@@ -99,8 +100,8 @@ export function calculateRivalryShowdown(
     }
   }
 
-  const userPickCount = validUserPicks.size;
-  const rivalPickCount = validRivalPicks.size;
+  let userPickCount = 0;
+  let rivalPickCount = 0;
 
   let userBanked = 0;
   let userLive = 0;
@@ -143,40 +144,47 @@ export function calculateRivalryShowdown(
 
     const homeCode = (live?.homeTeam?.code || game.homeTeam || '').toUpperCase();
     const awayCode = (live?.awayTeam?.code || game.awayTeam || '').toUpperCase();
+    const approvedSpread = getJackWeek8HomeSpread(
+      game.weekNumber ?? NaN, awayCode, homeCode,
+      game.seasonYear ?? live?.seasonYear ?? NaN
+    );
+    const scoringGame = {
+      gameId: game.id,
+      homeTeam: homeCode,
+      awayTeam: awayCode,
+      homeScore,
+      awayScore,
+      spread: approvedSpread,
+      status: isFinal ? 'FINAL' as const : 'IN_PROGRESS' as const,
+    };
 
     // Calculate user points
     if (uPick) {
-      const pickTeam = uPick.selectedTeam.toUpperCase();
-      const isHome = pickTeam === homeCode;
-      const isAway = pickTeam === awayCode;
+      userPickCount += 1;
+      const points = Number.isFinite(homeScore) && Number.isFinite(awayScore)
+        ? scoreLeaguePick({ userId: user.id, userName: user.name, gameId: game.id, selectedTeam: uPick.selectedTeam }, scoringGame)
+        : 0;
 
       if (isFinal) {
-        if ((homeScore > awayScore && isHome) || (awayScore > homeScore && isAway)) {
-          userBanked += 1;
-        }
+        userBanked += points;
       } else if (isLive) {
-        if ((homeScore > awayScore && isHome) || (awayScore > homeScore && isAway)) {
-          userLive += 1;
-          userGameLivePoints.set(game.id, 1);
-        }
+        userLive += points;
+        userGameLivePoints.set(game.id, points);
       }
     }
 
     // Calculate rival points
     if (rPick) {
-      const pickTeam = rPick.selectedTeam.toUpperCase();
-      const isHome = pickTeam === homeCode;
-      const isAway = pickTeam === awayCode;
+      rivalPickCount += 1;
+      const points = Number.isFinite(homeScore) && Number.isFinite(awayScore)
+        ? scoreLeaguePick({ userId: rival.id, userName: rival.name, gameId: game.id, selectedTeam: rPick.selectedTeam }, scoringGame)
+        : 0;
 
       if (isFinal) {
-        if ((homeScore > awayScore && isHome) || (awayScore > homeScore && isAway)) {
-          rivalBanked += 1;
-        }
+        rivalBanked += points;
       } else if (isLive) {
-        if ((homeScore > awayScore && isHome) || (awayScore > homeScore && isAway)) {
-          rivalLive += 1;
-          rivalGameLivePoints.set(game.id, 1);
-        }
+        rivalLive += points;
+        rivalGameLivePoints.set(game.id, points);
       }
     }
 
@@ -260,7 +268,12 @@ export function calculateRivalryShowdown(
       ifTeamAWinsGap,
       teamB: bg.rivalPick,
       ifTeamBWinsGap,
-      description: `If ${bg.userPick} wins: ${teamADesc} | If ${bg.rivalPick} wins: ${teamBDesc}`,
+      description: getJackWeek8HomeSpread(
+        bg.game.weekNumber ?? NaN, bg.game.awayTeam, bg.game.homeTeam,
+        bg.game.seasonYear ?? bg.liveScore?.seasonYear ?? NaN
+      ) !== null
+        ? `If ${bg.userPick} covers: ${teamADesc} | If ${bg.rivalPick} covers: ${teamBDesc}`
+        : `If ${bg.userPick} wins: ${teamADesc} | If ${bg.rivalPick} wins: ${teamBDesc}`,
     };
   }
 

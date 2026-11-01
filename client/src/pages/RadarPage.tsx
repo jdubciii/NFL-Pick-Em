@@ -103,6 +103,8 @@ export const RadarPage: React.FC = () => {
                 const isAuthFinal = isFinalStatus(pg.status);
                 return {
                   ...pg,
+                  weekNumber: activeWeek,
+                  seasonYear: Number(live.seasonYear ?? pg.seasonYear),
                   spread: getJackWeek8HomeSpread(activeWeek, pg.awayTeam, pg.homeTeam, Number(live.seasonYear)) ?? pg.spread,
                   status: isAuthFinal ? 'FINAL' : live.status,
                   homeScore: isAuthFinal ? pg.homeScore : (live.homeTeam?.score !== undefined ? Number(live.homeTeam.score) : pg.homeScore),
@@ -112,6 +114,8 @@ export const RadarPage: React.FC = () => {
             }
             return data.map((ls) => ({
               id: ls.id,
+              weekNumber: activeWeek,
+              seasonYear: Number(ls.seasonYear),
               homeTeam: ls.homeTeam.code,
               awayTeam: ls.awayTeam.code,
               spread: getJackWeek8HomeSpread(activeWeek, ls.awayTeam.code, ls.homeTeam.code, Number(ls.seasonYear)) ?? undefined,
@@ -216,6 +220,8 @@ export const RadarPage: React.FC = () => {
             if (gameRows && gameRows.length > 0) {
               setGames(gameRows.map((g: any) => ({
                 id: g.id,
+                weekNumber: activeWeek,
+                seasonYear: Number(g.season),
                 externalGameId: g.external_game_id,
                 homeTeam: g.home_team_id,
                 awayTeam: g.away_team_id,
@@ -249,6 +255,8 @@ export const RadarPage: React.FC = () => {
             if (matrix.rows && matrix.rows.length > 0) {
               setGames(matrix.rows.map((row: any) => ({
                 id: row.game_id,
+                weekNumber: activeWeek,
+                seasonYear: Number(row.season ?? new Date(row.kickoff_time).getUTCFullYear()),
                 externalGameId: row.external_game_id,
                 homeTeam: row.home_team_id,
                 awayTeam: row.away_team_id,

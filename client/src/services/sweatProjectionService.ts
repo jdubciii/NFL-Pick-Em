@@ -1,4 +1,5 @@
-import { LiveGame } from './liveScoreService';
+import { getJackWeek8HomeSpread, LiveGame } from './liveScoreService';
+import { scoreLeaguePick } from './radarLiveConsequencesService';
 
 export interface UserStandingRef {
   id: string;
@@ -12,6 +13,8 @@ export interface SlateGame {
   homeTeam: string;
   awayTeam: string;
   spread?: number;
+  weekNumber?: number;
+  seasonYear?: number;
   kickoffTime?: string;
   status?: string;
   homeScore?: number;
@@ -430,6 +433,8 @@ export function calculateProvisionalStandings(
 
     for (const pick of picks) {
       const gameDef = gameByInternalId.get(pick.gameId) || gameByExternalId.get(pick.gameId);
+      // Only games in this league slate may contribute points.
+      if (!gameDef) continue;
       const extId = gameDef?.externalGameId || (gameDef as any)?.external_game_id || internalToExternal.get(pick.gameId) || pick.gameId;
       const live = scoreMap.get(extId) || scoreMap.get(pick.gameId);
 
@@ -441,7 +446,16 @@ export function calculateProvisionalStandings(
         seenGameIds.add(scoringGameId);
       }
 
-      if (!live) {
+      const hasAuthoritativeFinal = isFinalStatus(gameDef?.status);
+      const isFinal = hasAuthoritativeFinal || isFinalStatus(live?.status);
+      const liveStatus = String(live?.status || '').toUpperCase();
+      const gameStatus = String(gameDef.status || '').toUpperCase();
+      const isLive = !isFinal && (
+        ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes(liveStatus) ||
+        ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes(gameStatus)
+      );
+
+      if (!live && !isFinal && !isLive) {
         // Telemetry absent or scheduled: non-scoring
         if (gameDef) {
           userActivePicks.push({ game: gameDef, live: undefined, pick });
@@ -449,24 +463,28 @@ export function calculateProvisionalStandings(
         continue;
       }
 
-      const homeScore = parseInt(live.homeTeam?.score || '0', 10);
-      const awayScore = parseInt(live.awayTeam?.score || '0', 10);
+      const homeScore = hasAuthoritativeFinal && gameDef?.homeScore !== undefined
+        ? Number(gameDef.homeScore) : Number(live?.homeTeam?.score ?? gameDef?.homeScore);
+      const awayScore = hasAuthoritativeFinal && gameDef?.awayScore !== undefined
+        ? Number(gameDef.awayScore) : Number(live?.awayTeam?.score ?? gameDef?.awayScore);
+      const homeCode = (live?.homeTeam?.code || gameDef?.homeTeam || '').toUpperCase();
+      const awayCode = (live?.awayTeam?.code || gameDef?.awayTeam || '').toUpperCase();
+      const approvedSpread = getJackWeek8HomeSpread(
+        gameDef?.weekNumber ?? NaN, awayCode, homeCode,
+        gameDef?.seasonYear ?? live?.seasonYear ?? NaN
+      );
+      const points = Number.isFinite(homeScore) && Number.isFinite(awayScore)
+        ? scoreLeaguePick(
+          { userId: user.id, userName: user.name, gameId: String(gameDef?.id || live?.id || pick.gameId), selectedTeam: pick.selectedTeam },
+          { gameId: String(gameDef?.id || live?.id || pick.gameId), homeTeam: homeCode, awayTeam: awayCode,
+            homeScore, awayScore, spread: approvedSpread,
+            status: isFinal ? 'FINAL' : 'IN_PROGRESS' }
+        ) : 0;
 
-      const homeCode = (live.homeTeam?.code || gameDef?.homeTeam || '').toUpperCase();
-      const awayCode = (live.awayTeam?.code || gameDef?.awayTeam || '').toUpperCase();
-      const pickTeam = pick.selectedTeam.toUpperCase();
-
-      const isHomePick = pickTeam === homeCode;
-      const isAwayPick = pickTeam === awayCode;
-
-      if (live.status === 'FINAL') {
-        if ((homeScore > awayScore && isHomePick) || (awayScore > homeScore && isAwayPick)) {
-          bankedPoints += 1;
-        }
-      } else if (live.status === 'IN_PROGRESS') {
-        if ((homeScore > awayScore && isHomePick) || (awayScore > homeScore && isAwayPick)) {
-          livePoints += 1;
-        }
+      if (isFinal) {
+        bankedPoints += points;
+      } else if (isLive) {
+        livePoints += points;
         if (gameDef) {
           userActivePicks.push({ game: gameDef, live, pick });
         }

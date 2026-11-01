@@ -70,6 +70,22 @@ export function evaluatePickATS(pick: UserPick, game: LiveGameTelemetry): { cove
   }
 }
 
+/** League scoring: use the approved line when present, otherwise the winner. */
+export function scoreLeaguePick(pick: UserPick, game: LiveGameTelemetry): number {
+  const selectedTeam = pick.selectedTeam.trim().toUpperCase();
+  const homeTeam = game.homeTeam.trim().toUpperCase();
+  const awayTeam = game.awayTeam.trim().toUpperCase();
+  if (selectedTeam !== homeTeam && selectedTeam !== awayTeam) return 0;
+
+  if (game.spread !== null && Number.isFinite(game.spread)) {
+    return evaluatePickATS({ ...pick, selectedTeam }, { ...game, homeTeam, awayTeam }).points ?? 0;
+  }
+
+  const winner = game.homeScore > game.awayScore ? homeTeam
+    : game.awayScore > game.homeScore ? awayTeam : null;
+  return selectedTeam === winner ? 1 : 0;
+}
+
 export function evaluateLiveStandings(
   participants: ParticipantScoreInput[],
   picks: UserPick[],
