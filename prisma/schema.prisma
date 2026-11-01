@@ -189,7 +189,7 @@ model WeeklySubmission {
   poolId               String   @map("pool_id") @db.Uuid
   userId               String   @map("user_id") @db.Uuid
   weekNumber           Int      @map("week_number")
-  tieBreakerPrediction Decimal? @map("tie_breaker_prediction") @db.Decimal(5, 2)
+  tieBreakerPrediction Decimal? @map("tie_breaker_prediction") @db.Decimal(6, 3)
   isFinalized          Boolean  @default(false) @map("is_finalized")
   createdAt            DateTime @default(now()) @map("created_at")
   updatedAt            DateTime @default(now()) @updatedAt @map("updated_at")

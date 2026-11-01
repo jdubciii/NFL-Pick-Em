@@ -414,7 +414,7 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
       return;
     }
 
-    // Validate prediction input: range 0.00 to 999.99 with at most 2 decimal places
+    // Validate prediction input: range 0.000 to 999.999 with at most 3 decimal places
     let parsedPrediction: number | null = null;
     const isOmitted = !isClear && (rawPrediction === undefined || rawPrediction === '');
 
@@ -422,16 +422,16 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
       parsedPrediction = null;
     } else if (!isOmitted) {
       const predStr = String(rawPrediction).trim();
-      const validFormat = /^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/.test(predStr);
+      const validFormat = /^(?:0|[1-9]\d{0,2})(?:\.\d{1,3})?$/.test(predStr);
       const numVal = Number(predStr);
 
-      if (!validFormat || isNaN(numVal) || numVal < 0 || numVal > 999.99 || !isFinite(numVal)) {
+      if (!validFormat || isNaN(numVal) || numVal < 0 || numVal > 999.999 || !isFinite(numVal)) {
         res.status(400).json({
-          error: 'INVALID_PREDICTION: Prediction must be a valid number between 0.00 and 999.99 with at most two decimal places.',
+          error: 'INVALID_PREDICTION: Prediction must be a valid number between 0.000 and 999.999 with at most three decimal places.',
         });
         return;
       }
-      parsedPrediction = Math.round(numVal * 100) / 100;
+      parsedPrediction = Math.round(numVal * 1000) / 1000;
     }
 
     // Transactional save with mandatory row-level lock, fresh settings resolution, kickoff lock, and atomic freeze
