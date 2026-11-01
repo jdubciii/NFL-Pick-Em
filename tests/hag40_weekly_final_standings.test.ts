@@ -4,9 +4,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { WeeklyLadderView } from '../client/src/components/shame/WeeklyLadderView';
 import type { LiveGame } from '../client/src/services/liveScoreService';
 import { calculateProvisionalStandings, type SlateGame, type UserPickItem } from '../client/src/services/sweatProjectionService';
+import { evaluateSlateLockSummary } from '../client/src/services/lockEnforcementService';
 import {
   isWeeklyScoredSlateFinal,
   resolveWeeklyTiebreakerSnapshot,
+  selectAcceptedScoredSlateGames,
 } from '../client/src/services/weeklyStandingsFinalityService';
 
 const members = [{ id: 'jack', name: 'Jack' }, { id: 'mark', name: 'Mark' }];
@@ -51,6 +53,58 @@ const tiebreakerPayload = {
 };
 
 describe('weekly scored-slate final posting', () => {
+  it('posts final from nine accepted live finals when five unscored database games remain scheduled', () => {
+    const acceptedIds = Array.from({ length: 8 }, (_, index) => String(401873021 + index))
+      .concat('401873030');
+    const staleDatabaseGames: SlateGame[] = acceptedIds.map((id, index) => ({
+      id: `db-${id}`,
+      externalGameId: id,
+      homeTeam: index === 8 ? 'DET' : `H${index}`,
+      awayTeam: index === 8 ? 'MIN' : `A${index}`,
+      weekNumber: 8,
+      seasonYear: 2026,
+      status: 'SCHEDULED',
+    })).concat(Array.from({ length: 5 }, (_, index) => ({
+      id: `unscored-${index}`,
+      externalGameId: String(401873040 + index),
+      homeTeam: 'SEA',
+      awayTeam: 'CHI',
+      weekNumber: 8,
+      seasonYear: 2026,
+      status: 'SCHEDULED',
+    })));
+    const liveFinals: LiveGame[] = acceptedIds.map((id, index) => ({
+      id,
+      name: id,
+      shortName: id,
+      homeTeam: { code: index === 8 ? 'DET' : `H${index}`, name: 'Home', score: index === 8 ? '19' : '14' },
+      awayTeam: { code: index === 8 ? 'MIN' : `A${index}`, name: 'Away', score: index === 8 ? '15' : '7' },
+      status: 'FINAL',
+      clock: '0:00',
+      period: 4,
+    }));
+    const scoredGames = selectAcceptedScoredSlateGames(staleDatabaseGames, acceptedIds);
+    expect(scoredGames).toHaveLength(9);
+    const designation = {
+      status: 'DEFAULT_LIONS',
+      tiebreakerOffered: true,
+      eventId: '401873030',
+      readiness: [
+        { userId: 'jack', prediction: 48 },
+        { userId: 'mark', prediction: 38 },
+      ],
+    };
+    const resolved = resolveWeeklyTiebreakerSnapshot(
+      designation, members.map((member) => member.id), scoredGames!, liveFinals,
+    );
+    expect(resolved.data?.actualTotalScore).toBe(34);
+    expect(isWeeklyScoredSlateFinal(scoredGames!, liveFinals, resolved, true, true)).toBe(true);
+    expect(evaluateSlateLockSummary(scoredGames!, liveFinals, 0).allGamesFinal).toBe(true);
+    expect(isWeeklyScoredSlateFinal(staleDatabaseGames, liveFinals, resolved, true, true)).toBe(false);
+    expect(isWeeklyScoredSlateFinal(scoredGames!, liveFinals.slice(0, 8), resolved, true, true)).toBe(false);
+    expect(selectAcceptedScoredSlateGames(staleDatabaseGames, [...acceptedIds, 'missing-event'])).toBeNull();
+  });
+
   it('stays provisional with eight of nine final, then posts final on the ninth; a Monday game is outside the slate', () => {
     const eightFinal = scores('IN_PROGRESS');
     const pending = resolveWeeklyTiebreakerSnapshot(tiebreakerPayload, members.map((m) => m.id), games, eightFinal);

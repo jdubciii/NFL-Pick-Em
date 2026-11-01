@@ -400,6 +400,7 @@ function setupWallMocks(options: {
               revision: 1,
               manifest_fingerprint: `fp-mock-${reqWeek}`,
               event_ids: eventIds,
+              accepted_at: '2026-10-01T00:00:00.000Z',
             },
             error: null,
           };
@@ -472,6 +473,7 @@ function setupWallMocks(options: {
               revision: 1,
               manifest_fingerprint: `fp-mock-${reqWeek}`,
               event_ids: eventIds,
+              accepted_at: '2026-10-01T00:00:00.000Z',
             },
             error: null,
           });

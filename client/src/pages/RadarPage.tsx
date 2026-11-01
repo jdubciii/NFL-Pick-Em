@@ -19,7 +19,7 @@ import { RivalryShowdown } from '../components/radar/RivalryShowdown';
 import { WatchPartyBigBoardModal } from '../components/radar/WatchPartyBigBoardModal';
 import { AppHeader } from '../components/common/AppHeader';
 import { deriveSundaySlatePhase, sundaySlatePhaseLabel } from '../services/radarSundaySlatePhase';
-import { isWeeklyScoredSlateFinal, resolveWeeklyTiebreakerSnapshot } from '../services/weeklyStandingsFinalityService';
+import { isWeeklyScoredSlateFinal, resolveWeeklyTiebreakerSnapshot, selectAcceptedScoredSlateGames } from '../services/weeklyStandingsFinalityService';
 import {
   buildPersonalRootingQueue,
   evaluateLateGameEscape,
@@ -82,7 +82,7 @@ export const RadarPage: React.FC = () => {
   const [picks, setPicks] = useState<UserPickItem[]>([]);
   const [picksLoaded, setPicksLoaded] = useState(false);
   const [tiebreakerResponse, setTiebreakerResponse] = useState<unknown>(null);
-  const [verifiedLeagueSlate, setVerifiedLeagueSlate] = useState(false);
+  const [acceptedEventIds, setAcceptedEventIds] = useState<string[] | null>(null);
 
   // Track live scores with fallback to retain last-good telemetry
   useEffect(() => {
@@ -160,11 +160,31 @@ export const RadarPage: React.FC = () => {
   useEffect(() => {
     let isMounted = true;
     const activeWeek = getCurrentNFLWeek();
-    setVerifiedLeagueSlate(false);
+    setAcceptedEventIds(null);
     setPicksLoaded(false);
 
     const loadPoolData = async () => {
       try {
+        // The matrix may fall back to every NFL game in the calendar week.
+        // Only the accepted manifest identifies games scored by this league.
+        let manifest: { event_ids?: unknown; accepted_at?: string | null } | null = null;
+        try {
+          const result = await supabase
+            .from('weekly_slate_manifests')
+            .select('event_ids, accepted_at')
+            .eq('season', 2026)
+            .eq('season_type', 2)
+            .eq('week_number', activeWeek)
+            .maybeSingle();
+          if (!result.error) manifest = result.data;
+        } catch (_) {
+          // Keep provisional scoring available if manifest verification fails.
+        }
+        if (!isMounted) return;
+        if (manifest?.accepted_at && Array.isArray(manifest.event_ids)) {
+          setAcceptedEventIds(manifest.event_ids.map(String));
+        }
+
         // 1. Query all active members in the pool (Step 2)
         const { data: activeMembers } = await supabase
           .from('pool_memberships')
@@ -282,7 +302,6 @@ export const RadarPage: React.FC = () => {
                 homeScore: row.home_score !== null && row.home_score !== undefined ? Number(row.home_score) : undefined,
                 awayScore: row.away_score !== null && row.away_score !== undefined ? Number(row.away_score) : undefined,
               })));
-              setVerifiedLeagueSlate(true);
             }
           }
         } catch (_) {}
@@ -310,6 +329,11 @@ export const RadarPage: React.FC = () => {
     });
   }, [picks, simulationFlippedPicks, user?.id]);
 
+  const scoredSlateGames = useMemo(
+    () => selectAcceptedScoredSlateGames(games, acceptedEventIds),
+    [games, acceptedEventIds],
+  );
+
   const tiebreakerSnapshot = useMemo(() => resolveWeeklyTiebreakerSnapshot(
     tiebreakerResponse,
     members.map((member) => member.id),
@@ -319,7 +343,8 @@ export const RadarPage: React.FC = () => {
   const tiebreakers: TiebreakerData | undefined = tiebreakerSnapshot.data;
 
   const isFinalPosted = !isSimulationActive && picksLoaded && isWeeklyScoredSlateFinal(
-    games, liveScores, tiebreakerSnapshot, verifiedLeagueSlate, activeWeek === 8,
+    scoredSlateGames || [], liveScores, tiebreakerSnapshot,
+    Boolean(scoredSlateGames), activeWeek === 8,
   );
 
   // Compute Sunday Sweat standings from the same scored slate and tiebreaker inputs.
@@ -491,9 +516,15 @@ export const RadarPage: React.FC = () => {
   const [pulsingUserIds, setPulsingUserIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (provisionalResult.length === 0) return;
+    if (provisionalResult.length === 0) {
+      setPulsingUserIds((previous) => previous.size ? new Set() : previous);
+      return;
+    }
     // Decision: Prevent simulation states from polluting consecutive rank snapshot history
-    if (isSimulationActive) return;
+    if (isSimulationActive) {
+      setPulsingUserIds((previous) => previous.size ? new Set() : previous);
+      return;
+    }
 
     if (isInitialMountRef.current) {
       const initialMap = new Map<string, number>();
@@ -525,6 +556,9 @@ export const RadarPage: React.FC = () => {
       }, 2500);
       return () => clearTimeout(timer);
     }
+    // A new score refresh can cancel the prior timer without changing ranks.
+    // Clear its feedback now so a row cannot remain in the transition state.
+    setPulsingUserIds((previous) => previous.size ? new Set() : previous);
   }, [provisionalResult, isSimulationActive]);
 
   const handleToggleSimulation = () => {
@@ -919,7 +953,7 @@ export const RadarPage: React.FC = () => {
                         setActiveViewMode('RIVALRY');
                       }
                     }}
-                    className={`p-2.5 rounded-xl border grid grid-cols-12 items-center text-xs transition duration-300 cursor-pointer ${
+                    className={`p-2.5 rounded-xl border grid grid-cols-12 items-center text-xs cursor-pointer ${
                       isPulsing ? 'ring-1 ring-amber-400 bg-amber-500/10 motion-reduce:animate-none' : ''
                     } ${
                       isUser

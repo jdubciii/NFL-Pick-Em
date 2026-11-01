@@ -21,7 +21,7 @@ import { scopedExpressFetch } from '../lib/apiClient';
 import { getCurrentNFLWeek } from '../services/nflCalendarService';
 import { evaluateSlateLockSummary } from '../services/lockEnforcementService';
 import { resolveAuthoritativeSlate } from '../services/authoritativeSlateClientService';
-import { isWeeklyScoredSlateFinal } from '../services/weeklyStandingsFinalityService';
+import { isWeeklyScoredSlateFinal, selectAcceptedScoredSlateGames } from '../services/weeklyStandingsFinalityService';
 
 export interface WallOfShamePageProps {
   poolId?: string;
@@ -172,7 +172,7 @@ export function WallOfShamePage({
       }));
 
       // 2. Parallel authoritative data fetch for resolved scope
-      const [membersResult, wrapupResult, matrixResult, liveScores] = await Promise.all([
+      const [membersResult, wrapupResult, matrixResult, liveScores, manifestResult] = await Promise.all([
         supabase
           .from('pool_memberships')
           .select('user_id, role, users(id, email, display_name)')
@@ -188,6 +188,13 @@ export function WallOfShamePage({
         freshScores !== undefined
           ? Promise.resolve(freshScores)
           : fetchLiveNFLScores(targetWeek).catch(() => [] as LiveGame[]),
+        Promise.resolve(supabase
+          .from('weekly_slate_manifests')
+          .select('event_ids, accepted_at')
+          .eq('season', targetSeason)
+          .eq('season_type', targetSeasonType)
+          .eq('week_number', targetWeek)
+          .maybeSingle()).catch(() => ({ data: null, error: new Error('Manifest unavailable') })),
       ]);
 
       if (reqGenRef.current !== currentGen) return;
@@ -235,6 +242,11 @@ export function WallOfShamePage({
       let gamesList: any[] = [];
       let matrixPicks: UserPickItem[] = [];
       let isMatrixComplete = false;
+      let acceptedEventIds: string[] | null =
+        !manifestResult.error && manifestResult.data?.accepted_at &&
+        Array.isArray(manifestResult.data.event_ids)
+          ? manifestResult.data.event_ids.map(String)
+          : null;
 
       if (matrixResult && matrixResult.ok) {
         try {
@@ -380,6 +392,9 @@ export function WallOfShamePage({
           homeScore: g.homeScore !== null && g.homeScore !== undefined ? Number(g.homeScore) : undefined,
           awayScore: g.awayScore !== null && g.awayScore !== undefined ? Number(g.awayScore) : undefined,
         }));
+        if (resolution.manifest?.accepted_at && Array.isArray(resolution.manifest.event_ids)) {
+          acceptedEventIds = resolution.manifest.event_ids.map(String);
+        }
       }
 
       // 4. Official Settled Contract Verification (Finding 1 & 3)
@@ -1032,8 +1047,9 @@ export function WallOfShamePage({
 
       // The scored league slate is the accepted matrix/manifest, not every NFL game
       // in the calendar week. The existing wrapup path above stays authoritative.
+      const scoredSlateGames = selectAcceptedScoredSlateGames(gamesList, acceptedEventIds);
       const isFinalPosted = isWeeklyScoredSlateFinal(
-        gamesList,
+        scoredSlateGames || [],
         liveScores,
         {
           verified: tiebreakerVerified,
@@ -1041,7 +1057,7 @@ export function WallOfShamePage({
           eventId: designatedTiebreakerEventId,
           data: tiebreakerData,
         },
-        true,
+        Boolean(scoredSlateGames),
         targetSeason === 2026 && targetWeek === 8,
       );
 
@@ -1086,7 +1102,7 @@ export function WallOfShamePage({
       });
 
       // 9. Derive Truthful Slate Progress Status (Finding 5)
-      const slateSummary = evaluateSlateLockSummary(gamesList, liveScores, 0);
+      const slateSummary = evaluateSlateLockSummary(scoredSlateGames || gamesList, liveScores, 0);
 
       let resolvedScoreStatus: ScopedLadderSnapshot['scoreStatus'] = 'GAMES_NOT_STARTED';
       if (slateSummary.allGamesFinal) {

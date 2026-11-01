@@ -8,6 +8,26 @@ export interface WeeklyTiebreakerSnapshot {
   data?: TiebreakerData;
 }
 
+/**
+ * A calendar week can contain games outside the league's scored slate. Match
+ * the accepted manifest exactly before deciding whether weekly standings are
+ * final; stale status on an unscored game must not hold the league open.
+ */
+export function selectAcceptedScoredSlateGames(
+  games: readonly SlateGame[],
+  eventIds: readonly string[] | null | undefined,
+): SlateGame[] | null {
+  if (!eventIds?.length || new Set(eventIds.map(String)).size !== eventIds.length) return null;
+  const byEventId = new Map<string, SlateGame>();
+  for (const game of games) {
+    const id = String(game.externalGameId || game.external_game_id || game.id || '');
+    if (!id || byEventId.has(id)) return null;
+    byEventId.set(id, game);
+  }
+  const selected = eventIds.map((id) => byEventId.get(String(id)));
+  return selected.every((game): game is SlateGame => Boolean(game)) ? selected : null;
+}
+
 function validScore(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
