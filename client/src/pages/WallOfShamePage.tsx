@@ -42,6 +42,7 @@ interface ScopedLadderSnapshot {
   errorMessage?: string;
   observedAt: string;
   isStale: boolean;
+  tiebreakerPending?: boolean;
 }
 
 export function WallOfShamePage({
@@ -1027,7 +1028,7 @@ export function WallOfShamePage({
           fsmDisplayStatus = 'Dead Place Monarch';
         }
 
-        const rankStr = entry.isTied ? `T-#${entry.provisionalRank}` : `#${entry.provisionalRank}`;
+        const rankStr = entry.isTied ? `Tied #${entry.provisionalRank}` : `#${entry.provisionalRank}`;
 
         return {
           rank: entry.provisionalRank,
@@ -1066,6 +1067,7 @@ export function WallOfShamePage({
         status: 'READY',
         scoreStatus: resolvedScoreStatus,
         isSettled: false,
+        tiebreakerPending: Boolean(tiebreakerData && tiebreakerData.actualTotalScore === undefined),
         observedAt: new Date().toISOString(),
         isStale: false,
       });
@@ -1246,6 +1248,7 @@ export function WallOfShamePage({
             onRetry={() => loadScopedData(true)}
             observedAt={snapshot.observedAt}
             isStale={snapshot.isStale}
+            tiebreakerPending={snapshot.tiebreakerPending}
           />
         </div>
       )}

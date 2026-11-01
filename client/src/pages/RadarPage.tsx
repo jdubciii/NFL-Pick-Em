@@ -18,6 +18,7 @@ import {
 import { RivalryShowdown } from '../components/radar/RivalryShowdown';
 import { WatchPartyBigBoardModal } from '../components/radar/WatchPartyBigBoardModal';
 import { AppHeader } from '../components/common/AppHeader';
+import { deriveSundaySlatePhase, sundaySlatePhaseLabel } from '../services/radarSundaySlatePhase';
 import {
   buildPersonalRootingQueue,
   evaluateLateGameEscape,
@@ -62,6 +63,7 @@ export const RadarPage: React.FC = () => {
   const [liveScores, setLiveScores] = useState<LiveGame[]>([]);
   const [lastUpdated, setLastUpdated] = useState<string>('');
   const [isStale, setIsStale] = useState<boolean>(false);
+  const [phaseNow, setPhaseNow] = useState<number>(() => Date.now());
   const liveScoresRef = useRef<LiveGame[]>([]);
 
   // Simulation what-if state
@@ -83,6 +85,7 @@ export const RadarPage: React.FC = () => {
     let isMounted = true;
 
     const pullTelemetry = async () => {
+      setPhaseNow(Date.now());
       try {
         const activeWeek = getCurrentNFLWeek();
         const data = await fetchLiveNFLScores(activeWeek);
@@ -111,7 +114,7 @@ export const RadarPage: React.FC = () => {
               homeTeam: ls.homeTeam.code,
               awayTeam: ls.awayTeam.code,
               spread: 0,
-              kickoffTime: new Date().toISOString(),
+              kickoffTime: ls.kickoffTime || ls.dateTime,
               status: ls.status,
               homeScore: ls.homeTeam?.score !== undefined ? Number(ls.homeTeam.score) : undefined,
               awayScore: ls.awayTeam?.score !== undefined ? Number(ls.awayTeam.score) : undefined,
@@ -292,6 +295,11 @@ export const RadarPage: React.FC = () => {
       tiebreakers
     );
   }, [members, games, liveScores, effectivePicks, tiebreakers]);
+
+  const sundaySlatePhase = useMemo(
+    () => deriveSundaySlatePhase(games, liveScores, { now: phaseNow, isStale }),
+    [games, liveScores, phaseNow, isStale]
+  );
 
   // Find user's standing
   const currentUserId = user?.id || '';
@@ -523,13 +531,7 @@ export const RadarPage: React.FC = () => {
       <AppHeader
         poolName="MAIN LEAGUE"
         scope={`WEEK ${activeWeek}`}
-        phase={
-          liveScores.length > 0 && liveScores.every((g) => (g.status || '').toUpperCase() === 'FINAL')
-            ? 'SETTLED'
-            : liveScores.some((g) => ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()))
-            ? 'GAMES LIVE'
-            : 'PRE-KICKOFF'
-        }
+        phase={sundaySlatePhaseLabel(sundaySlatePhase)}
         rightContent={
           isSimulationActive ? (
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-950 border border-amber-500/80 text-amber-300 font-bold text-[10px] shadow-sm">
@@ -956,13 +958,7 @@ export const RadarPage: React.FC = () => {
         onClose={() => setIsBigBoardOpen(false)}
         activeWeek={activeWeek}
         poolTitle="MAIN LEAGUE"
-        phaseLabel={
-          liveScores.some((g) => ['FINAL', 'F', 'COMPLETED'].includes((g.status || '').toUpperCase()))
-            ? 'SETTLED · PROVISIONAL'
-            : liveScores.some((g) => ['IN_PROGRESS', 'LIVE', 'HALFTIME'].includes((g.status || '').toUpperCase()))
-            ? 'GAMES LIVE · PROVISIONAL'
-            : 'PRE-KICKOFF · PROVISIONAL'
-        }
+        phaseLabel={`${sundaySlatePhaseLabel(sundaySlatePhase)} · PROVISIONAL`}
         isSimulation={isSimulationActive}
         members={members}
         standings={provisionalResult}

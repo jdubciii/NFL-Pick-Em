@@ -16,6 +16,15 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   hideSubHeader = false,
 }) => {
   const getPhaseBadgeStyle = (currentPhase: string) => {
+    if (currentPhase.endsWith('· FINAL')) {
+      return { dot: 'bg-emerald-400', badge: 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300' };
+    }
+    if (currentPhase.endsWith('· IN PROGRESS')) {
+      return { dot: 'bg-amber-400 animate-pulse', badge: 'bg-amber-950/80 border-amber-500/60 text-amber-300' };
+    }
+    if (currentPhase.endsWith('· AWAITING GAME UPDATES')) {
+      return { dot: 'bg-amber-400', badge: 'bg-amber-950/80 border-amber-500/60 text-amber-300' };
+    }
     switch (currentPhase) {
       case 'GAMES LIVE':
         return {

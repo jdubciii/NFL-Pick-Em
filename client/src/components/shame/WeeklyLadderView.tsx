@@ -23,6 +23,7 @@ export interface WeeklyLadderViewProps {
   onRetry?: () => void;
   observedAt?: string;
   isStale?: boolean;
+  tiebreakerPending?: boolean;
   onTriggerFtaDemo?: () => void;
 }
 
@@ -36,6 +37,7 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
   onRetry,
   observedAt,
   isStale = false,
+  tiebreakerPending = false,
 }) => {
   const activeLadder = ladder || [];
   const safeMembers = activeLadder.filter((m) => m?.tier === 'SAFE' || m?.tier === 'SAFE HAVEN');
@@ -76,8 +78,9 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
       )}
 
       {!isSettled && status === 'READY' && activeLadder.length > 0 && (
-        <div className="text-[10px] text-slate-400 px-1 font-mono">
-          Provisional projection based on live Sunday Sweat standings. Official penalties assign upon Monday Night settlement.
+        <div className="text-[10px] text-slate-300 px-1 font-mono">
+          <p className="font-bold">Provisional standings{tiebreakerPending ? ' · Tiebreaker pending' : ''}</p>
+          <p>Shot tiers show current exposure. Official penalties assign upon Monday Night settlement.</p>
         </div>
       )}
 
@@ -184,13 +187,14 @@ export const WeeklyLadderView: React.FC<WeeklyLadderViewProps> = ({
           )}
 
           {activeLadder.length >= 7 && dangerTier1.length === 0 && (
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 opacity-70">
               <div className="flex justify-between items-center px-1">
-                <span className="text-[10px] font-bold text-amber-400 uppercase">
+                <span className="text-[10px] font-bold text-slate-400 uppercase">
                   DANGER ZONE // 2ND–6TH PLACE (1 SHOT)
                 </span>
-                <span className="text-[9px] text-amber-400 font-bold">1 shot</span>
+                <span className="text-[9px] text-slate-500 font-bold">1 shot</span>
               </div>
+              <p className="text-[10px] text-slate-500 italic px-1">No members currently in this tier.</p>
             </div>
           )}
 

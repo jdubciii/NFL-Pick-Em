@@ -1727,7 +1727,7 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       let text = container.textContent;
       // When live, tiebreaker score is not final so provisional ties are preserved
       expect(text).toContain('GAMES LIVE');
-      expect(text).toContain('T-#1'); // both members tied at rank 1
+      expect(text).toContain('Tied #1'); // both members tied at rank 1
 
       // Now game finishes and is FINAL with total 45 (NE 24, CHI 21)
       setupWallMocks({
