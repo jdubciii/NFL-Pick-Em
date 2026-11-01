@@ -10,7 +10,7 @@ import {
   AuthoritativeWeeklyStandingRow,
 } from '../services/seasonStoryService';
 import { WeeklyRecapCardView } from '../components/shame/WeeklyRecapCardView';
-import { fetchLiveNFLScores, LiveGame } from '../services/liveScoreService';
+import { fetchLiveNFLScores, getJackWeek8HomeSpread, LiveGame } from '../services/liveScoreService';
 import {
   calculateProvisionalStandings,
   validateTelemetryCoverage,
@@ -302,8 +302,13 @@ export function WallOfShamePage({
               externalGameId: row.external_game_id ? String(row.external_game_id) : String(row.game_id),
               homeTeam: row.home_team_id,
               awayTeam: row.away_team_id,
-              spread: row.spread,
+              spread: getJackWeek8HomeSpread(targetWeek, row.away_team_id, row.home_team_id, targetSeason) ?? (row.spread !== null && row.spread !== undefined ? Number(row.spread) : undefined),
+              weekNumber: targetWeek,
+              seasonYear: targetSeason,
               kickoffTime: row.kickoff_time,
+              status: row.status,
+              homeScore: row.home_score !== null && row.home_score !== undefined ? Number(row.home_score) : undefined,
+              awayScore: row.away_score !== null && row.away_score !== undefined ? Number(row.away_score) : undefined,
             }));
 
             for (const row of matrix.rows) {
@@ -367,8 +372,13 @@ export function WallOfShamePage({
           externalGameId: g.externalGameId ? String(g.externalGameId) : String(g.id),
           homeTeam: g.homeTeamId,
           awayTeam: g.awayTeamId,
-          spread: g.spread,
+          spread: getJackWeek8HomeSpread(targetWeek, g.awayTeamId, g.homeTeamId, targetSeason) ?? (g.spread !== null && g.spread !== undefined ? Number(g.spread) : undefined),
+          weekNumber: targetWeek,
+          seasonYear: targetSeason,
           kickoffTime: g.kickoffTime,
+          status: g.status,
+          homeScore: g.homeScore !== null && g.homeScore !== undefined ? Number(g.homeScore) : undefined,
+          awayScore: g.awayScore !== null && g.awayScore !== undefined ? Number(g.awayScore) : undefined,
         }));
       }
 
@@ -1162,9 +1172,20 @@ export function WallOfShamePage({
       void pullTelemetry();
     }
     wasLadderOpenRef.current = true;
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && !snapshot.isSettled) {
+        void pullTelemetry();
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
     const timer = setInterval(pullTelemetry, 30000);
     return () => {
       isMounted = false;
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
       clearInterval(timer);
     };
   }, [activeTab, snapshot.isSettled, snapshot.status, snapshot.week, propWeek, loadScopedData]);
