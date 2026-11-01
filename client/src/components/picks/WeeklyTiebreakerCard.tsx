@@ -203,21 +203,21 @@ export const WeeklyTiebreakerCard: React.FC<WeeklyTiebreakerCardProps> = ({
     if (!isExplicitClear) {
       if (rawVal === null || rawVal === undefined || rawVal.trim() === '') {
         setSaveStatus('error');
-        setStatusMessage('Enter a valid prediction (0.00-999.99).');
+        setStatusMessage('Enter a valid prediction (0.000-999.999).');
         setFailedMutationIntent({ type: 'save', value: '' });
         return;
       }
       const trimmed = rawVal.trim();
-      const validFormat = /^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/.test(trimmed);
+      const validFormat = /^(?:0|[1-9]\d{0,2})(?:\.\d{1,3})?$/.test(trimmed);
       const parsed = Number(trimmed);
 
-      if (!validFormat || isNaN(parsed) || parsed < 0 || parsed > 999.99 || !isFinite(parsed)) {
+      if (!validFormat || isNaN(parsed) || parsed < 0 || parsed > 999.999 || !isFinite(parsed)) {
         setSaveStatus('error');
-        setStatusMessage('Enter 0.00-999.99 (max 2 decimals).');
+        setStatusMessage('Enter 0.000-999.999 (max 3 decimals).');
         setFailedMutationIntent({ type: 'save', value: rawVal });
         return;
       }
-      numVal = Math.round(parsed * 100) / 100;
+      numVal = Math.round(parsed * 1000) / 1000;
     }
 
     const currentMutationId = ++activeMutationRef.current;

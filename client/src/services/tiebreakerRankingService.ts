@@ -77,20 +77,20 @@ export function compareTiebreakerPredictions(
   if (!aHasPred && bHasPred) return 1;
   if (!aHasPred && !bHasPred) return 0; // Both missing -> tied
 
-  // 2. Both valid: exact hundredths integer arithmetic
-  const aHundredths = Math.round(aVal! * 100);
-  const bHundredths = Math.round(bVal! * 100);
-  const actualHundredths = Math.round(actualFinalTotal * 100);
+  // 2. Both valid: exact thousandths integer arithmetic
+  const aThousandths = Math.round(aVal! * 1000);
+  const bThousandths = Math.round(bVal! * 1000);
+  const actualThousandths = Math.round(actualFinalTotal * 1000);
 
-  const aDist = Math.abs(aHundredths - actualHundredths);
-  const bDist = Math.abs(bHundredths - actualHundredths);
+  const aDist = Math.abs(aThousandths - actualThousandths);
+  const bDist = Math.abs(bThousandths - actualThousandths);
 
   if (aDist < bDist) return -1;
   if (aDist > bDist) return 1;
 
   // 3. Equal distance: under or equal beats over
-  const aUnderOrEqual = aHundredths <= actualHundredths;
-  const bUnderOrEqual = bHundredths <= actualHundredths;
+  const aUnderOrEqual = aThousandths <= actualThousandths;
+  const bUnderOrEqual = bThousandths <= actualThousandths;
 
   if (aUnderOrEqual && !bUnderOrEqual) return -1;
   if (!aUnderOrEqual && bUnderOrEqual) return 1;
@@ -202,8 +202,8 @@ export function calculateRankingsAndPenalties(
       if (canEvaluateTiebreaker && member.tieBreakerPrediction !== null && member.tieBreakerPrediction !== undefined && member.tieBreakerPrediction !== '') {
         const num = Number(member.tieBreakerPrediction);
         if (!isNaN(num)) {
-          // Exact hundredths distance divided by 100
-          distance = Math.round(Math.abs(num - actualTotal!) * 100) / 100;
+          // Exact thousandths distance divided by 1000
+          distance = Math.round(Math.abs(num - actualTotal!) * 1000) / 1000;
         }
       }
 
