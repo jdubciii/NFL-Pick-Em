@@ -26,16 +26,82 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js for Capacitor 8
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: 'client/package-lock.json'
+
+      - name: Setup Java for Android
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform and build tools
+        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
 
       - name: Install dependencies
         run: |
           npm --prefix client ci
+
+      - name: Check release signing secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64" || { echo 'Missing ANDROID_KEYSTORE_BASE64 secret'; exit 1; }
+          test -n "$ANDROID_KEYSTORE_PASSWORD" || { echo 'Missing ANDROID_KEYSTORE_PASSWORD secret'; exit 1; }
+          test -n "$ANDROID_KEY_ALIAS" || { echo 'Missing ANDROID_KEY_ALIAS secret'; exit 1; }
+          test -n "$ANDROID_KEY_PASSWORD" || { echo 'Missing ANDROID_KEY_PASSWORD secret'; exit 1; }
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+          test -s "$RUNNER_TEMP/release.keystore"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+          echo "ANDROID_VERSION_CODE=$((100000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+
+      - name: Build Android WebView client
+        working-directory: client
+        env:
+          VITE_API_URL: https://nfl-pick-em-api.onrender.com
+          VITE_SUPABASE_URL: https://nsljipyoihcoqkuphhll.supabase.co
+          VITE_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5zbGppcHlvaWhjb3FrdXBoaGxsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA1NTY3NDUsImV4cCI6MjEwNjEzMjc0NX0.OD0dom_H-n0cAPeQyngmUPJhrKNNr9G9m6DqpPsFGYw
+          VITE_BASE_PATH: /
+          VITE_GIT_COMMIT: ${{ github.sha }}
+        run: npm run build
+
+      - name: Sync Capacitor Android project
+        working-directory: client
+        run: npx cap sync android
+
+      - name: Assemble signed release APK
+        working-directory: client/android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Verify release APK
+        run: |
+          test -s client/android/app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose client/android/app/build/outputs/apk/release/app-release.apk
+          sha256sum client/android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Upload run-scoped APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nfl-pick-em-release-apk
+          path: client/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
 
       - name: Build Web Client Static Bundle
         env:
@@ -50,6 +116,8 @@ jobs:
           cp client/dist/index.html client/dist/404.html
           # Generate machine-readable version.json for status checks
           echo "{\"commit\":\"${{ github.sha }}\",\"builtAt\":\"$(date -u +'%Y-%m-%dT%H:%M:%SZ')\",\"branch\":\"${{ github.ref_name }}\"}" > client/dist/version.json
+          # One Pages deployment publishes both the existing preview and the stable APK URL.
+          cp client/android/app/build/outputs/apk/release/app-release.apk client/dist/app-release.apk
 
       - name: Setup Pages
         uses: actions/configure-pages@v5

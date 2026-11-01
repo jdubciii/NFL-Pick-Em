@@ -1,5 +1,7 @@
 # Directive 2: Auto Release review
 
+> Historical HAG-24 preparation. HAG-25 supersedes the standalone Android workflow and APK-link plan. Use [the current signing and fixed-link review](directive2-signing-and-apk-link.md) for the proposed release process. The notes below describe the earlier local-only draft, not the current workflow.
+
 This document records the local preparation for Jack's review. The feature branch has not been pushed for Directive 2. No APK has been published and Render's deployment setting has not been changed.
 
 ## Android APK workflow
