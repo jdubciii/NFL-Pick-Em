@@ -486,6 +486,18 @@ describe('HAG-52: Pool Scored Slate Adapter & Finality Regressions (HAG52-SLATE-
     ];
     expect(checkedInConfig!.scoredEventIds).toEqual(expected9Ids);
 
+    // Verify runtime immutability of checked-in entry and its scoredEventIds (Architect ruling)
+    expect(Object.isFrozen(checkedInConfig)).toBe(true);
+    expect(Object.isFrozen(checkedInConfig!.scoredEventIds)).toBe(true);
+    expect(() => {
+      // @ts-expect-error mutating frozen array at runtime must throw TypeError
+      (checkedInConfig!.scoredEventIds as string[]).push('malicious-event-id');
+    }).toThrow(TypeError);
+    expect(() => {
+      // @ts-expect-error mutating frozen entry property at runtime must throw TypeError
+      (checkedInConfig as Record<string, unknown>).version = 999;
+    }).toThrow(TypeError);
+
     // 2. Real accepted manifest with 14 canonical event IDs from Supabase
     const realManifest14EventIds = [
       '401873023', '401873026', '401873031', '401873024', '401873030',

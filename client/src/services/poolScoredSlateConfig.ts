@@ -12,8 +12,8 @@
  * - Does NOT dynamically derive the scored slate from picks, final scores,
  *   kickoff day, or the full NFL manifest.
  * - For Week 8, it must contain exactly nine distinct canonical ESPN event IDs.
- * - Real Week 8 nine IDs remain absent until authoritative accepted identity
- *   evidence is confirmed, safely yielding Provisional in production.
+ * - Real Week 8 nine IDs confirmed by commissioner Jack (CAR@GB, ARI@DAL, ATL@TB,
+ *   BAL@BUF, CLE@PIT, IND@JAX, LV@NYJ, MIN@DET, TEN@CIN) and populated in checked-in configuration.
  * - Future weeks/pools do not inherit the nine-game exception; preserve existing behavior.
  */
 
@@ -52,16 +52,16 @@ export function isTargetAffectedSlateScope(scope?: ScopedPoolSlateKey | null): b
 /**
  * Checked-in repository of explicit pool-scored slate configurations.
  * Scoped by `${poolId}:${season}:${seasonType}:${weekNumber}`.
- * Week 8 entry confirmed by commissioner Jack (HAG-52).
+ * Week 8 entry confirmed by commissioner Jack (HAG-52) and frozen at runtime.
  */
-const CHECKED_IN_SCOPED_SLATES: Record<string, ScopedPoolSlateEntry> = {
-  '9b893bef-3b5a-4ffa-951d-8ba27f9c9782:2026:2:8': {
+const CHECKED_IN_SCOPED_SLATES: Record<string, ScopedPoolSlateEntry> = Object.freeze({
+  '9b893bef-3b5a-4ffa-951d-8ba27f9c9782:2026:2:8': Object.freeze({
     poolId: TARGET_AFFECTED_POOL_ID,
     season: TARGET_AFFECTED_SEASON,
     seasonType: TARGET_AFFECTED_SEASON_TYPE,
     weekNumber: TARGET_AFFECTED_WEEK_NUMBER,
     version: 1,
-    scoredEventIds: [
+    scoredEventIds: Object.freeze([
       '401873023', // CAR @ GB
       '401873024', // ARI @ DAL (DAL -7.5)
       '401873025', // ATL @ TB
@@ -71,10 +71,10 @@ const CHECKED_IN_SCOPED_SLATES: Record<string, ScopedPoolSlateEntry> = {
       '401873029', // LV @ NYJ
       '401873030', // MIN @ DET (Tiebreaker, Total 34)
       '401873031', // TEN @ CIN (CIN -10.5)
-    ],
+    ]),
     description: 'Week 8 commissioner-confirmed 9-game pool slate (HAG-52)',
-  },
-};
+  }),
+});
 
 export function formatScopeKey(scope: ScopedPoolSlateKey): string | null {
   if (
