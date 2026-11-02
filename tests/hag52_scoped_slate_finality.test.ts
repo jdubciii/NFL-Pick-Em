@@ -277,8 +277,9 @@ describe('HAG-52: Pool Scored Slate Adapter & Finality Regressions (HAG52-SLATE-
   });
 
   it('Regression 6: Absent configuration for affected Week 8 fails closed to null and stays Provisional even when all 14 manifest games are final', () => {
-    // No override registered -> checked-in registry has NO real Week 8 entry per ruling
-    clearTestScopedSlatesOverride();
+    const scopeKey = formatScopeKey(targetScope)!;
+    // Explicitly simulate absent configuration for target scope to verify fail-closed
+    setTestScopedSlatesOverride({ [scopeKey]: null });
 
     const staleDbGames = buildGames(manifest14EventIds, 'SCHEDULED');
     // ALL 14 manifest games are final
@@ -456,5 +457,129 @@ describe('HAG-52: Pool Scored Slate Adapter & Finality Regressions (HAG52-SLATE-
     // selectAcceptedScoredSlateGames fails closed to null
     const staleDbGames = buildGames(manifest14EventIds, 'SCHEDULED');
     expect(selectAcceptedScoredSlateGames(staleDbGames, manifest14EventIds, targetScope)).toBeNull();
+  });
+
+  it('Regression 12: Real checked-in Week 8 configuration flips to Final on the 14-ID accepted manifest with 9 pool finals and unfinished outside games', () => {
+    // Zero test overrides: exercises real CHECKED_IN_SCOPED_SLATES directly
+    clearTestScopedSlatesOverride();
+
+    // 1. Verify checked-in entry resolves and matches commissioner authorization
+    const checkedInConfig = getScopedPoolSlateConfig(targetScope);
+    expect(checkedInConfig).not.toBeNull();
+    expect(checkedInConfig!.poolId).toBe(TARGET_AFFECTED_POOL_ID);
+    expect(checkedInConfig!.season).toBe(2026);
+    expect(checkedInConfig!.seasonType).toBe(2);
+    expect(checkedInConfig!.weekNumber).toBe(8);
+    expect(checkedInConfig!.version).toBe(1);
+    expect(checkedInConfig!.scoredEventIds).toHaveLength(9);
+
+    const expected9Ids = [
+      '401873023', // CAR@GB
+      '401873024', // ARI@DAL
+      '401873025', // ATL@TB
+      '401873026', // BAL@BUF
+      '401873027', // CLE@PIT
+      '401873028', // IND@JAX
+      '401873029', // LV@NYJ
+      '401873030', // MIN@DET (Tiebreaker)
+      '401873031', // TEN@CIN
+    ];
+    expect(checkedInConfig!.scoredEventIds).toEqual(expected9Ids);
+
+    // 2. Real accepted manifest with 14 canonical event IDs from Supabase
+    const realManifest14EventIds = [
+      '401873023', '401873026', '401873031', '401873024', '401873030',
+      '401873029', '401873027', '401873025', '401873028',
+      '401873032', '401873033', '401873034', '401873035', '401873036',
+    ];
+
+    // Real DB games (14 games in DB, mostly SCHEDULED)
+    const realDbGames: SlateGame[] = realManifest14EventIds.map((id) => ({
+      id: `db-${id}`,
+      externalGameId: id,
+      homeTeam: id === '401873030' ? 'DET' : 'HOM',
+      awayTeam: id === '401873030' ? 'MIN' : 'AWY',
+      weekNumber: 8,
+      seasonYear: 2026,
+      status: id === '401873023' ? 'FINAL' : 'SCHEDULED',
+      homeScore: id === '401873023' ? 27 : undefined,
+      awayScore: id === '401873023' ? 19 : undefined,
+    }));
+
+    // 3. Real Live ESPN Scoreboard: 12 FINAL (all 9 pool games + 3 outside games),
+    // 1 IN_PROGRESS (SNF 401873035), 1 SCHEDULED (MNF 401873036)
+    const realLiveFinalsSet = new Set([
+      '401873023', '401873024', '401873025', '401873026', '401873027',
+      '401873028', '401873029', '401873030', '401873031',
+      '401873032', '401873033', '401873034',
+    ]);
+
+    const realLiveScores: LiveGame[] = realManifest14EventIds.map((id) => {
+      const isFinal = realLiveFinalsSet.has(id);
+      const isInProgress = id === '401873035';
+      return {
+        id,
+        name: id,
+        shortName: id,
+        homeTeam: {
+          code: id === '401873030' ? 'DET' : 'HOM',
+          name: 'Home',
+          score: isFinal ? (id === '401873030' ? '19' : '24') : isInProgress ? '10' : undefined,
+        },
+        awayTeam: {
+          code: id === '401873030' ? 'MIN' : 'AWY',
+          name: 'Away',
+          score: isFinal ? (id === '401873030' ? '15' : '17') : isInProgress ? '10' : undefined,
+        },
+        status: isFinal ? 'FINAL' : isInProgress ? 'IN_PROGRESS' : 'SCHEDULED',
+        clock: isFinal ? '0:00' : isInProgress ? '8:42 2Q' : '',
+        period: isFinal ? 4 : isInProgress ? 2 : 0,
+      };
+    });
+
+    // 4. selectAcceptedScoredSlateGames scopes down to exactly the 9 confirmed matchups
+    const scoredGames = selectAcceptedScoredSlateGames(realDbGames, realManifest14EventIds, targetScope);
+    expect(scoredGames).not.toBeNull();
+    expect(scoredGames).toHaveLength(9);
+    expect(scoredGames!.map((g) => g.externalGameId)).toEqual(expected9Ids);
+
+    // 5. Tiebreaker payload for MIN@DET 401873030 (resolved at 34)
+    const tiebreakerPayload = {
+      status: 'DEFAULT_LIONS',
+      tiebreakerOffered: true,
+      eventId: '401873030',
+      readiness: [
+        { userId: 'user-1', prediction: 34.0 },
+        { userId: 'user-2', prediction: 40.0 },
+      ],
+    };
+    const tiebreakerSnapshot = resolveWeeklyTiebreakerSnapshot(
+      tiebreakerPayload,
+      members.map((m) => m.id),
+      scoredGames!,
+      realLiveScores,
+    );
+    expect(tiebreakerSnapshot.verified).toBe(true);
+    expect(tiebreakerSnapshot.offered).toBe(true);
+    expect(tiebreakerSnapshot.data?.actualTotalScore).toBe(34);
+
+    // 6. Standings flip to FINAL because all 9 scoped games are final,
+    // despite unpicked games 401873035 (SNF) and 401873036 (MNF) not being final!
+    const isFinal = isWeeklyScoredSlateFinal(
+      scoredGames!,
+      realLiveScores,
+      tiebreakerSnapshot,
+      true,
+      true,
+    );
+    expect(isFinal).toBe(true);
+
+    // 7. Negative control: if any of the 9 scored games is NOT final, finality stays false (Provisional)
+    const liveScoresWithPendingGame = realLiveScores.map((g) =>
+      g.id === '401873024' ? { ...g, status: 'IN_PROGRESS', clock: '2:15 4Q' } : g,
+    );
+    expect(
+      isWeeklyScoredSlateFinal(scoredGames!, liveScoresWithPendingGame, tiebreakerSnapshot, true, true),
+    ).toBe(false);
   });
 });

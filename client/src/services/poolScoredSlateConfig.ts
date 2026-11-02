@@ -51,12 +51,29 @@ export function isTargetAffectedSlateScope(scope?: ScopedPoolSlateKey | null): b
 
 /**
  * Checked-in repository of explicit pool-scored slate configurations.
- * Real Week 8 entry remains absent until authoritative commissioner-selected
- * or recorded accepted slate identity evidence is verified, ensuring production
- * safely fails closed to Provisional.
+ * Scoped by `${poolId}:${season}:${seasonType}:${weekNumber}`.
+ * Week 8 entry confirmed by commissioner Jack (HAG-52).
  */
 const CHECKED_IN_SCOPED_SLATES: Record<string, ScopedPoolSlateEntry> = {
-  // Real Week 8 entry intentionally absent per HAG52-SLATE-2026-11-02-01.
+  '9b893bef-3b5a-4ffa-951d-8ba27f9c9782:2026:2:8': {
+    poolId: TARGET_AFFECTED_POOL_ID,
+    season: TARGET_AFFECTED_SEASON,
+    seasonType: TARGET_AFFECTED_SEASON_TYPE,
+    weekNumber: TARGET_AFFECTED_WEEK_NUMBER,
+    version: 1,
+    scoredEventIds: [
+      '401873023', // CAR @ GB
+      '401873024', // ARI @ DAL (DAL -7.5)
+      '401873025', // ATL @ TB
+      '401873026', // BAL @ BUF
+      '401873027', // CLE @ PIT
+      '401873028', // IND @ JAX (JAX -10.5)
+      '401873029', // LV @ NYJ
+      '401873030', // MIN @ DET (Tiebreaker, Total 34)
+      '401873031', // TEN @ CIN (CIN -10.5)
+    ],
+    description: 'Week 8 commissioner-confirmed 9-game pool slate (HAG-52)',
+  },
 };
 
 export function formatScopeKey(scope: ScopedPoolSlateKey): string | null {
@@ -78,12 +95,12 @@ export function formatScopeKey(scope: ScopedPoolSlateKey): string | null {
   return `${scope.poolId}:${scope.season}:${scope.seasonType}:${scope.weekNumber}`;
 }
 
-let testScopedSlatesOverride: Record<string, ScopedPoolSlateEntry> | null = null;
+let testScopedSlatesOverride: Record<string, ScopedPoolSlateEntry | null> | null = null;
 
 /**
  * Injects synthetic fixtures for regression testing without mutating production registry.
  */
-export function setTestScopedSlatesOverride(overrides: Record<string, ScopedPoolSlateEntry> | null): void {
+export function setTestScopedSlatesOverride(overrides: Record<string, ScopedPoolSlateEntry | null> | null): void {
   testScopedSlatesOverride = overrides;
 }
 
