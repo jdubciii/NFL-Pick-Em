@@ -942,24 +942,21 @@ export const RadarPage: React.FC = () => {
 
               return (
                 <React.Fragment key={p.userId}>
-                  {/* Visual Divider before The Drop / The Pit */}
+                  {/* Visual divider at the one-shot to two-shot Drop boundary. */}
                   {(() => {
                     const prevMember = idx > 0 ? provisionalResult[idx - 1] : null;
-                    const isTiedWithPrev = prevMember && (
-                      p.provisionalRank === prevMember.provisionalRank ||
-                      p.totalProvisionalPoints === prevMember.totalProvisionalPoints ||
-                      p.tier === prevMember.tier
-                    );
+                    const isTiedWithPrev = prevMember && p.provisionalRank === prevMember.provisionalRank;
                     const showDropBoundary = Boolean(
                       prevMember &&
                       !isTiedWithPrev &&
-                      (p.tier !== prevMember.tier || (p.projectedPenalty ?? 0) > (prevMember.projectedPenalty ?? 0)) &&
-                      (p.tier === 'THE_DROP' || p.tier === 'PIT' || (p.projectedPenalty ?? 0) >= 2)
+                      prevMember.projectedPenalty === 1 &&
+                      p.tier === 'THE_DROP' &&
+                      p.projectedPenalty === 2
                     );
                     return showDropBoundary ? (
                       <div className="my-1 border-t-2 border-dashed border-rose-500/40 relative text-center">
                         <span className="absolute -top-2 left-1/2 -translate-x-1/2 bg-slate-950 px-2 text-[8px] font-black text-rose-400 uppercase tracking-widest">
-                          ▼ THE DROP // THE PIT BOUNDARY ▼
+                          ▼ THE DROP (1 SHOT → 2 SHOTS STEP) ▼
                         </span>
                       </div>
                     ) : null;
