@@ -1047,7 +1047,13 @@ export function WallOfShamePage({
 
       // The scored league slate is the accepted matrix/manifest, not every NFL game
       // in the calendar week. The existing wrapup path above stays authoritative.
-      const scoredSlateGames = selectAcceptedScoredSlateGames(gamesList, acceptedEventIds);
+      const slateScope = {
+        poolId: targetPoolId,
+        season: targetSeason,
+        seasonType: targetSeasonType,
+        weekNumber: targetWeek,
+      };
+      const scoredSlateGames = selectAcceptedScoredSlateGames(gamesList, acceptedEventIds, slateScope);
       const isFinalPosted = isWeeklyScoredSlateFinal(
         scoredSlateGames || [],
         liveScores,

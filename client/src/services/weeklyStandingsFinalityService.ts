@@ -1,5 +1,12 @@
 import type { LiveGame } from './liveScoreService';
 import { isFinalStatus, type SlateGame, type TiebreakerData } from './sweatProjectionService';
+import {
+  getScopedPoolSlateConfig,
+  isTargetAffectedSlateScope,
+  type ScopedPoolSlateKey,
+} from './poolScoredSlateConfig';
+
+export type { ScopedPoolSlateKey };
 
 export interface WeeklyTiebreakerSnapshot {
   verified: boolean;
@@ -12,10 +19,15 @@ export interface WeeklyTiebreakerSnapshot {
  * A calendar week can contain games outside the league's scored slate. Match
  * the accepted manifest exactly before deciding whether weekly standings are
  * final; stale status on an unscored game must not hold the league open.
+ *
+ * Governed by Architect Ruling HAG52-SLATE-2026-11-02-01:
+ * Validates the explicit scoped pool slate against the accepted NFL manifest.
+ * Missing picks never shrink the list; outside manifest games do not gate finality.
  */
 export function selectAcceptedScoredSlateGames(
   games: readonly SlateGame[],
   eventIds: readonly string[] | null | undefined,
+  scope?: ScopedPoolSlateKey | null,
 ): SlateGame[] | null {
   if (!eventIds?.length || new Set(eventIds.map(String)).size !== eventIds.length) return null;
   const byEventId = new Map<string, SlateGame>();
@@ -24,7 +36,47 @@ export function selectAcceptedScoredSlateGames(
     if (!id || byEventId.has(id)) return null;
     byEventId.set(id, game);
   }
-  const selected = eventIds.map((id) => byEventId.get(String(id)));
+
+  const isAffectedScope = isTargetAffectedSlateScope(scope);
+  const scopedConfig = getScopedPoolSlateConfig(scope);
+  let targetEventIds: readonly string[];
+
+  if (scopedConfig) {
+    if (
+      scopedConfig.poolId !== scope?.poolId ||
+      scopedConfig.season !== scope?.season ||
+      scopedConfig.seasonType !== scope?.seasonType ||
+      scopedConfig.weekNumber !== scope?.weekNumber
+    ) {
+      return null;
+    }
+
+    const { scoredEventIds, weekNumber } = scopedConfig;
+    if (!scoredEventIds || scoredEventIds.length === 0) return null;
+
+    const idSet = new Set(scoredEventIds.map(String));
+    if (idSet.size !== scoredEventIds.length) return null;
+
+    if (weekNumber === 8 && scoredEventIds.length !== 9) return null;
+
+    const manifestSet = new Set(eventIds.map(String));
+    for (const id of scoredEventIds) {
+      if (!manifestSet.has(String(id))) {
+        return null;
+      }
+    }
+
+    targetEventIds = scoredEventIds;
+  } else if (isAffectedScope) {
+    // For the affected pool/week, absent or malformed config fails closed to null/Provisional
+    // regardless of whether all 14 manifest games are final.
+    return null;
+  } else {
+    // Preserves existing behavior outside target scope
+    targetEventIds = eventIds;
+  }
+
+  const selected = targetEventIds.map((id) => byEventId.get(String(id)));
   return selected.every((game): game is SlateGame => Boolean(game)) ? selected : null;
 }
 

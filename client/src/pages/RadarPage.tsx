@@ -33,6 +33,18 @@ import {
   ProjectionSnapshot,
 } from '../services/sweatReceiptService';
 
+export function getRadarStatusPill(isFinalPosted: boolean): string {
+  return isFinalPosted ? 'FINAL STANDINGS' : 'PROJECTION';
+}
+
+export function getRadarSectionHeader(isFinalPosted: boolean): string {
+  return isFinalPosted ? 'WEEKLY FINAL STANDINGS' : 'SUNDAY SWEAT PROVISIONAL STANDINGS';
+}
+
+export function getRadarModalPhaseLabel(phase: string, isFinalPosted: boolean): string {
+  return `${phase} · ${isFinalPosted ? 'FINAL STANDINGS' : 'PROVISIONAL'}`;
+}
+
 export const RadarPage: React.FC = () => {
   const { user, token } = useAuth();
   const activeWeek = getCurrentNFLWeek();
@@ -329,9 +341,16 @@ export const RadarPage: React.FC = () => {
     });
   }, [picks, simulationFlippedPicks, user?.id]);
 
+  const slateScope = useMemo(() => ({
+    poolId: activePoolId,
+    season: 2026,
+    seasonType: 2,
+    weekNumber: activeWeek,
+  }), [activePoolId, activeWeek]);
+
   const scoredSlateGames = useMemo(
-    () => selectAcceptedScoredSlateGames(games, acceptedEventIds),
-    [games, acceptedEventIds],
+    () => selectAcceptedScoredSlateGames(games, acceptedEventIds, slateScope),
+    [games, acceptedEventIds, slateScope],
   );
 
   const tiebreakerSnapshot = useMemo(() => resolveWeeklyTiebreakerSnapshot(
@@ -613,7 +632,7 @@ export const RadarPage: React.FC = () => {
             <div className={`px-2 py-0.5 rounded-full border font-bold text-[10px] ${isFinalPosted
               ? 'border-emerald-500/50 bg-emerald-950 text-emerald-300'
               : 'border-cyan-500/30 bg-cyan-500/15 text-cyan-400'}`}>
-              <span>{isFinalPosted ? 'FINAL STANDINGS' : 'PROJECTION'}</span>
+              <span>{getRadarStatusPill(isFinalPosted)}</span>
             </div>
           )
         }
@@ -888,7 +907,7 @@ export const RadarPage: React.FC = () => {
           <div className="space-y-2 font-mono">
             <div className="flex justify-between items-center px-1 mb-1">
               <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
-                {isFinalPosted ? 'WEEKLY FINAL STANDINGS' : 'SUNDAY SWEAT PROVISIONAL STANDINGS'}
+                {getRadarSectionHeader(isFinalPosted)}
               </span>
               <button
                 onClick={handleToggleSimulation}
@@ -1033,7 +1052,7 @@ export const RadarPage: React.FC = () => {
         onClose={() => setIsBigBoardOpen(false)}
         activeWeek={activeWeek}
         poolTitle="MAIN LEAGUE"
-        phaseLabel={`${sundaySlatePhaseLabel(sundaySlatePhase)} · ${isFinalPosted ? 'FINAL STANDINGS' : 'PROVISIONAL'}`}
+        phaseLabel={getRadarModalPhaseLabel(sundaySlatePhaseLabel(sundaySlatePhase), isFinalPosted)}
         isSimulation={isSimulationActive}
         members={members}
         standings={provisionalResult}
