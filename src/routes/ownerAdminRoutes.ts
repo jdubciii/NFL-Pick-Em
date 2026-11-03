@@ -606,6 +606,34 @@ ownerAdminRouter.post('/:pool_id/owner/tiebreaker-designation', requireAuth, req
         newValue: { newDesignation: newDesignation.eventId, reason: envelope.reason },
       });
 
+      // Final in-transaction freeze/lock checks after awaited writes and before commit (HAG57 Section 16 & 20)
+      const postWriteNow = new Date();
+      if (targetGame.kickoffTime && new Date(targetGame.kickoffTime) <= postWriteNow) {
+        const err: any = new Error('KICKOFF_PASSED: Target game kickoff deadline passed during write transaction.');
+        err.statusCode = 422;
+        err.code = 'KICKOFF_PASSED';
+        throw err;
+      }
+      if (currentDesig.game?.kickoffTime && new Date(currentDesig.game.kickoffTime) <= postWriteNow) {
+        const err: any = new Error('KICKOFF_PASSED: Existing designated game kickoff deadline passed during write transaction.');
+        err.statusCode = 422;
+        err.code = 'KICKOFF_PASSED';
+        throw err;
+      }
+      const postWritePredictions = await tx.weeklySubmission.count({
+        where: {
+          poolId,
+          weekNumber,
+          tieBreakerPrediction: { not: null },
+        },
+      });
+      if (postWritePredictions > 0) {
+        const err: any = new Error('DESIGNATION_FROZEN: Prediction was received concurrently during write transaction.');
+        err.statusCode = 409;
+        err.code = 'DESIGNATION_FROZEN';
+        throw err;
+      }
+
       const newRevision = computePoolSettingsRevision(updatedPool);
       return { designation: newDesignation, newRevision };
     });
@@ -635,59 +663,185 @@ ownerAdminRouter.put('/:pool_id/owner/slate', requireAuth, requireOwner, require
 // ============================================================================
 // 4. SIMULATION ENDPOINT: /api/pools/:pool_id/owner/simulations/preview
 // Pure in-memory synthetic evaluator; zero persistence or transport writes.
+// Strictly validates bounds: team codes, match IDs, scores, tiebreakers, picks.
 // ============================================================================
 
-ownerAdminRouter.post('/:pool_id/owner/simulations/preview', requireAuth, requireOwner, requirePoolOwnerAccess, (req: Request, res: Response): void => {
-  const { scenario, members, simulatedClock } = req.body || {};
+export const VALID_NFL_TEAMS = new Set([
+  'ARI', 'ATL', 'BAL', 'BUF', 'CAR', 'CHI', 'CIN', 'CLE',
+  'DAL', 'DEN', 'DET', 'GB', 'HOU', 'IND', 'JAX', 'KC',
+  'LAC', 'LAR', 'LV', 'MIA', 'MIN', 'NE', 'NO', 'NYG',
+  'NYJ', 'PHI', 'PIT', 'SEA', 'SF', 'TB', 'TEN', 'WAS'
+]);
+
+export function validateSimulationPayload(body: any): { error?: string } {
+  if (!body || typeof body !== 'object') {
+    return { error: 'Simulation body must be a valid JSON object.' };
+  }
+
+  const { scenario, members, simulatedClock } = body;
+
+  if (simulatedClock !== undefined && simulatedClock !== null) {
+    if (typeof simulatedClock !== 'string' || isNaN(Date.parse(simulatedClock))) {
+      return { error: `malformed simulatedClock: '${simulatedClock}'. Must be a valid ISO 8601 date string.` };
+    }
+  }
 
   if (!Array.isArray(scenario) || scenario.length === 0 || scenario.length > 32) {
-    res.status(422).json({
-      error: 'scenario must be an array of 1 to 32 synthetic matches.',
-      code: 'INVALID_SIMULATION',
-    });
-    return;
+    return { error: 'scenario must be an array of 1 to 32 synthetic matches.' };
   }
 
   if (!Array.isArray(members) || members.length === 0 || members.length > 10) {
+    return { error: 'members must be an array of 1 to 10 synthetic participants.' };
+  }
+
+  const seenMatchIds = new Set<string>();
+  const matchTeamMap = new Map<string, { home: string; away: string }>();
+
+  for (let i = 0; i < scenario.length; i++) {
+    const m = scenario[i];
+    if (!m || typeof m !== 'object') {
+      return { error: `scenario[${i}] must be an object.` };
+    }
+
+    const rawId = m.id !== undefined && m.id !== null ? String(m.id).trim() : '';
+    if (!rawId || !/^[a-zA-Z0-9_-]{1,64}$/.test(rawId)) {
+      return { error: `scenario[${i}] has invalid or missing synthetic match ID '${rawId}'. Must match ^[a-zA-Z0-9_-]{1,64}$.` };
+    }
+    if (seenMatchIds.has(rawId)) {
+      return { error: `duplicate synthetic match ID '${rawId}' found in scenario.` };
+    }
+    seenMatchIds.add(rawId);
+
+    const home = String(m.homeTeam || m.homeTeamId || '').trim().toUpperCase();
+    const away = String(m.awayTeam || m.awayTeamId || '').trim().toUpperCase();
+
+    if (!VALID_NFL_TEAMS.has(home)) {
+      return { error: `scenario[${i}] has invalid home team code '${home}'. Must be one of 32 standard NFL abbreviations.` };
+    }
+    if (!VALID_NFL_TEAMS.has(away)) {
+      return { error: `scenario[${i}] has invalid away team code '${away}'. Must be one of 32 standard NFL abbreviations.` };
+    }
+    if (home === away) {
+      return { error: `scenario[${i}] homeTeam and awayTeam cannot be identical ('${home}').` };
+    }
+
+    matchTeamMap.set(rawId, { home, away });
+
+    if (m.homeScore !== undefined && m.homeScore !== null) {
+      if (typeof m.homeScore !== 'number' || !Number.isInteger(m.homeScore) || m.homeScore < 0 || m.homeScore > 150) {
+        return { error: `scenario[${i}] homeScore must be an integer between 0 and 150.` };
+      }
+    }
+
+    if (m.awayScore !== undefined && m.awayScore !== null) {
+      if (typeof m.awayScore !== 'number' || !Number.isInteger(m.awayScore) || m.awayScore < 0 || m.awayScore > 150) {
+        return { error: `scenario[${i}] awayScore must be an integer between 0 and 150.` };
+      }
+    }
+
+    if (m.status !== undefined && m.status !== null) {
+      const st = String(m.status).toUpperCase();
+      if (st !== 'SCHEDULED' && st !== 'IN_PROGRESS' && st !== 'FINAL') {
+        return { error: `scenario[${i}] status '${m.status}' is invalid. Must be SCHEDULED, IN_PROGRESS, or FINAL.` };
+      }
+    }
+  }
+
+  const seenMemberIds = new Set<string>();
+
+  for (let i = 0; i < members.length; i++) {
+    const mem = members[i];
+    if (!mem || typeof mem !== 'object') {
+      return { error: `members[${i}] must be an object.` };
+    }
+
+    const uid = String(mem.userId || mem.id || '').trim();
+    if (!uid || !/^[a-zA-Z0-9_-]{1,64}$/.test(uid)) {
+      return { error: `members[${i}] has invalid or missing synthetic member ID '${uid}'. Must match ^[a-zA-Z0-9_-]{1,64}$.` };
+    }
+    if (seenMemberIds.has(uid)) {
+      return { error: `duplicate synthetic member ID '${uid}' found in members.` };
+    }
+    seenMemberIds.add(uid);
+
+    if (mem.tiebreakerPrediction !== undefined && mem.tiebreakerPrediction !== null) {
+      if (
+        typeof mem.tiebreakerPrediction !== 'number' ||
+        !Number.isFinite(mem.tiebreakerPrediction) ||
+        !Number.isInteger(mem.tiebreakerPrediction) ||
+        mem.tiebreakerPrediction < 0 ||
+        mem.tiebreakerPrediction > 200
+      ) {
+        return { error: `members[${i}] (${uid}) tiebreakerPrediction must be a finite integer between 0 and 200.` };
+      }
+    }
+
+    if (mem.picks !== undefined && mem.picks !== null) {
+      if (!Array.isArray(mem.picks)) {
+        return { error: `members[${i}] (${uid}) picks must be an array.` };
+      }
+
+      const seenPicksForGame = new Set<string>();
+      for (let pIdx = 0; pIdx < mem.picks.length; pIdx++) {
+        const p = mem.picks[pIdx];
+        if (!p || typeof p !== 'object') {
+          return { error: `members[${i}] pick[${pIdx}] must be an object.` };
+        }
+        const gid = String(p.gameId || '').trim();
+        if (!gid || !seenMatchIds.has(gid)) {
+          return { error: `members[${i}] pick[${pIdx}] references unknown match ID '${gid}'.` };
+        }
+        if (seenPicksForGame.has(gid)) {
+          return { error: `members[${i}] duplicate pick for match '${gid}'.` };
+        }
+        seenPicksForGame.add(gid);
+
+        const selTeam = String(p.selectedTeam || '').trim().toUpperCase();
+        const teams = matchTeamMap.get(gid)!;
+        if (selTeam !== teams.home && selTeam !== teams.away) {
+          return { error: `members[${i}] pick[${pIdx}] selected team '${selTeam}' is neither home ('${teams.home}') nor away ('${teams.away}') in match '${gid}'.` };
+        }
+      }
+    }
+  }
+
+  return {};
+}
+
+ownerAdminRouter.post('/:pool_id/owner/simulations/preview', requireAuth, requireOwner, requirePoolOwnerAccess, (req: Request, res: Response): void => {
+  const validation = validateSimulationPayload(req.body);
+  if (validation.error) {
     res.status(422).json({
-      error: 'members must be an array of 1 to 10 synthetic participants.',
+      error: `INVALID_SIMULATION: ${validation.error}`,
       code: 'INVALID_SIMULATION',
     });
     return;
   }
 
-  // Validate synthetic bounds: non-negative integer scores, valid precision
-  for (const m of scenario) {
-    if (m.homeScore != null && (!Number.isInteger(m.homeScore) || m.homeScore < 0)) {
-      res.status(422).json({ error: 'Scores must be non-negative integers.', code: 'INVALID_SIMULATION' });
-      return;
-    }
-    if (m.awayScore != null && (!Number.isInteger(m.awayScore) || m.awayScore < 0)) {
-      res.status(422).json({ error: 'Scores must be non-negative integers.', code: 'INVALID_SIMULATION' });
-      return;
-    }
-  }
+  const { scenario, members, simulatedClock } = req.body;
 
   // Build SlateGame and LiveGame fixtures for pure simulation
   const slateGames: SlateGame[] = scenario.map((m: any, idx: number) => ({
     id: String(m.id || `sim-game-${idx + 1}`),
-    homeTeam: String(m.homeTeamId || m.homeTeam || 'HOME'),
-    awayTeam: String(m.awayTeamId || m.awayTeam || 'AWAY'),
+    homeTeam: String(m.homeTeamId || m.homeTeam).trim().toUpperCase(),
+    awayTeam: String(m.awayTeamId || m.awayTeam).trim().toUpperCase(),
     spread: typeof m.spread === 'number' ? m.spread : undefined,
     kickoffTime: m.kickoffTime || new Date(simulatedClock || Date.now()).toISOString(),
   }));
 
   const liveGames: LiveGame[] = scenario.map((m: any, idx: number) => {
-    const gid = String(m.id || `sim-game-${idx + 1}`);
+    const gid = String(m.id || `sim-game-${idx + 1}`).trim();
+    const homeTeamCode = String(m.homeTeamId || m.homeTeam).trim().toUpperCase();
+    const awayTeamCode = String(m.awayTeamId || m.awayTeam).trim().toUpperCase();
     const homeScore = m.homeScore != null ? String(m.homeScore) : '0';
     const awayScore = m.awayScore != null ? String(m.awayScore) : '0';
     const status = m.status === 'FINAL' ? 'FINAL' : m.status === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'SCHEDULED';
     return {
       id: gid,
-      name: `${m.awayTeamId || 'AWAY'} @ ${m.homeTeamId || 'HOME'}`,
-      shortName: `${m.awayTeamId || 'AWAY'} @ ${m.homeTeamId || 'HOME'}`,
-      homeTeam: { code: String(m.homeTeamId || 'HOME'), name: String(m.homeTeamId || 'HOME'), score: homeScore },
-      awayTeam: { code: String(m.awayTeamId || 'AWAY'), name: String(m.awayTeamId || 'AWAY'), score: awayScore },
+      name: `${awayTeamCode} @ ${homeTeamCode}`,
+      shortName: `${awayTeamCode} @ ${homeTeamCode}`,
+      homeTeam: { code: homeTeamCode, name: homeTeamCode, score: homeScore },
+      awayTeam: { code: awayTeamCode, name: awayTeamCode, score: awayScore },
       status,
       clock: status === 'FINAL' ? 'FINAL' : '0:00',
       period: status === 'FINAL' ? 4 : 1,
@@ -695,19 +849,19 @@ ownerAdminRouter.post('/:pool_id/owner/simulations/preview', requireAuth, requir
   });
 
   const userRefs: UserStandingRef[] = members.map((m: any, idx: number) => ({
-    id: String(m.userId || `sim-user-${idx + 1}`),
-    name: String(m.userName || `Sim Member ${idx + 1}`),
+    id: String(m.userId || m.id || `sim-user-${idx + 1}`).trim(),
+    name: String(m.userName || m.name || `Sim Member ${idx + 1}`),
   }));
 
   const picks: UserPickItem[] = [];
   for (const m of members) {
-    const uid = String(m.userId || m.id);
+    const uid = String(m.userId || m.id).trim();
     if (Array.isArray(m.picks)) {
       for (const p of m.picks) {
         picks.push({
           userId: uid,
-          gameId: String(p.gameId),
-          selectedTeam: String(p.selectedTeam),
+          gameId: String(p.gameId).trim(),
+          selectedTeam: String(p.selectedTeam).trim().toUpperCase(),
           isSubmitted: true,
         });
       }
@@ -716,7 +870,7 @@ ownerAdminRouter.post('/:pool_id/owner/simulations/preview', requireAuth, requir
 
   const userPredictions: Record<string, number> = {};
   for (const m of members) {
-    const uid = String(m.userId || m.id);
+    const uid = String(m.userId || m.id).trim();
     if (m.tiebreakerPrediction != null) {
       userPredictions[uid] = Number(m.tiebreakerPrediction);
     }

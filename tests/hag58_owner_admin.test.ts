@@ -25,6 +25,13 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
   let baseUrl: string;
   let mockPrisma: any;
   let jackAuthToken: string;
+  let committedDbState: {
+    pools: Record<string, any>;
+    memberships: Record<string, any>;
+    auditLogs: any[];
+    weeklySubmissions: any[];
+    picks: any[];
+  };
 
   beforeAll(async () => {
     await new Promise<void>((resolve) => {
@@ -78,31 +85,49 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       adminId: JACK_UUID,
     };
 
+    committedDbState = {
+      pools: {
+        [POOL_ID]: JSON.parse(JSON.stringify(basePool)),
+      },
+      memberships: {
+        [`${POOL_ID}:${JACK_UUID}`]: {
+          poolId: POOL_ID,
+          userId: JACK_UUID,
+          status: 'ACTIVE',
+          role: 'COMMISSIONER',
+        },
+      },
+      auditLogs: [],
+      weeklySubmissions: [],
+      picks: [],
+    };
+
     mockPrisma = {
       pool: {
-        findUnique: vi.fn().mockResolvedValue(basePool),
-        update: vi.fn().mockImplementation(async ({ data }: any) => ({
-          ...basePool,
-          ...data,
-        })),
+        findUnique: vi.fn(async ({ where }: any) => {
+          return committedDbState.pools[where.id] ? { ...committedDbState.pools[where.id] } : null;
+        }),
+        update: vi.fn(async ({ where, data }: any) => {
+          if (!committedDbState.pools[where.id]) throw new Error('Pool not found');
+          committedDbState.pools[where.id] = { ...committedDbState.pools[where.id], ...data };
+          return { ...committedDbState.pools[where.id] };
+        }),
       },
       poolMembership: {
-        findUnique: vi.fn().mockImplementation(async ({ where }: any) => ({
-          poolId: where?.poolId_userId?.poolId || POOL_ID,
-          userId: where?.poolId_userId?.userId || JACK_UUID,
-          status: 'ACTIVE',
-          role: 'COMMISSIONER',
-        })),
-        findFirst: vi.fn().mockImplementation(async ({ where }: any) => ({
-          poolId: where?.poolId || POOL_ID,
-          userId: where?.userId || JACK_UUID,
-          status: 'ACTIVE',
-          role: 'COMMISSIONER',
-        })),
+        findUnique: vi.fn(async ({ where }: any) => {
+          const key = where?.poolId_userId ? `${where.poolId_userId.poolId}:${where.poolId_userId.userId}` : '';
+          return committedDbState.memberships[key] ? { ...committedDbState.memberships[key] } : null;
+        }),
+        findFirst: vi.fn(async ({ where }: any) => {
+          const key = `${where.poolId}:${where.userId}`;
+          const m = committedDbState.memberships[key];
+          if (m && (!where.status || m.status === where.status)) return { ...m };
+          return null;
+        }),
         count: vi.fn().mockResolvedValue(10),
       },
       user: {
-        findUnique: vi.fn().mockImplementation(async ({ where }: any) => ({
+        findUnique: vi.fn(async ({ where }: any) => ({
           id: where.id,
           email: 'jack.w.cone@gmail.com',
           role: 'ADMIN',
@@ -110,21 +135,84 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         })),
       },
       weeklySubmission: {
-        count: vi.fn().mockResolvedValue(0),
+        count: vi.fn(async ({ where }: any) => {
+          return committedDbState.weeklySubmissions.filter((s: any) =>
+            s.poolId === where.poolId &&
+            s.weekNumber === where.weekNumber &&
+            (where.tieBreakerPrediction?.not === null ? s.tieBreakerPrediction != null : true)
+          ).length;
+        }),
       },
       pick: {
-        count: vi.fn().mockResolvedValue(0),
+        count: vi.fn(async () => committedDbState.picks.length),
       },
       game: {
         findMany: vi.fn().mockResolvedValue([]),
       },
       auditLog: {
-        create: vi.fn().mockResolvedValue({ id: 'audit-log-uuid' }),
+        create: vi.fn(async ({ data }: any) => {
+          const entry = { id: `audit-${Date.now()}`, ...data };
+          committedDbState.auditLogs.push(entry);
+          return entry;
+        }),
       },
-      $transaction: vi.fn(async (cb: (tx: any) => any) => {
-        return cb(mockPrisma);
-      }),
       $queryRawUnsafe: vi.fn().mockResolvedValue([{ id: POOL_ID }]),
+      $transaction: vi.fn(async (cb: (tx: any) => any) => {
+        // Create transactional sandbox clone
+        const txState = {
+          pools: JSON.parse(JSON.stringify(committedDbState.pools)),
+          memberships: JSON.parse(JSON.stringify(committedDbState.memberships)),
+          auditLogs: [...committedDbState.auditLogs],
+          weeklySubmissions: [...committedDbState.weeklySubmissions],
+          picks: [...committedDbState.picks],
+        };
+
+        const tx = {
+          $queryRawUnsafe: vi.fn(async (query: string, ...args: any[]) => {
+            return mockPrisma.$queryRawUnsafe(query, ...args);
+          }),
+          pool: {
+            findUnique: vi.fn(async ({ where }: any) => {
+              return txState.pools[where.id] ? { ...txState.pools[where.id] } : null;
+            }),
+            update: vi.fn(async ({ where, data }: any) => {
+              if (!txState.pools[where.id]) throw new Error('Pool not found');
+              txState.pools[where.id] = { ...txState.pools[where.id], ...data };
+              return { ...txState.pools[where.id] };
+            }),
+          },
+          poolMembership: {
+            findFirst: vi.fn(async ({ where }: any) => {
+              return mockPrisma.poolMembership.findFirst({ where });
+            }),
+          },
+          auditLog: {
+            create: vi.fn(async ({ data }: any) => {
+              const res = await mockPrisma.auditLog.create({ data });
+              txState.auditLogs.push(res);
+              return res;
+            }),
+          },
+          weeklySubmission: {
+            count: vi.fn(async ({ where }: any) => {
+              return mockPrisma.weeklySubmission.count({ where });
+            }),
+          },
+          pick: {
+            count: vi.fn(async () => mockPrisma.pick.count()),
+          },
+        };
+
+        // Execute transaction callback
+        const result = await cb(tx);
+        // On success: COMMIT state!
+        committedDbState.pools = txState.pools;
+        committedDbState.memberships = txState.memberships;
+        committedDbState.auditLogs = txState.auditLogs;
+        committedDbState.weeklySubmissions = txState.weeklySubmissions;
+        committedDbState.picks = txState.picks;
+        return result;
+      }),
     };
 
     setPrismaClientForTesting(mockPrisma);
@@ -319,9 +407,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
     });
 
     it('enforces mandatory audit log: aborts transaction if auditLog.create is unavailable or fails', async () => {
-      const pool = { id: POOL_ID, name: 'Current Name', settings: {}, status: 'ACTIVE', adminId: JACK_UUID };
-      const currentRev = computePoolSettingsRevision(pool);
-      mockPrisma.pool.findUnique.mockResolvedValue(pool);
+      const currentRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
       mockPrisma.auditLog.create.mockRejectedValueOnce(new Error('Audit table constraint violation'));
 
       const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/details`, {
@@ -331,13 +417,84 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
           Authorization: `Bearer ${jackAuthToken}`,
         },
         body: JSON.stringify({
-          name: 'Renamed Pool',
+          name: 'Renamed Pool Should Rollback',
           expectedRevision: currentRev,
           reason: 'Valid reason',
         }),
       });
 
       expect(res.status).toBe(500);
+      // Assert zero committed mutation on the transaction-aware fake state
+      expect(committedDbState.pools[POOL_ID].name).toBe('Main Championship Pool');
+      expect(committedDbState.auditLogs).toHaveLength(0);
+    });
+
+    it('successfully commits details mutation to database state when all transaction checks pass', async () => {
+      const currentRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/details`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          name: 'Committed New Name',
+          expectedRevision: currentRev,
+          reason: 'Valid audit reason for change',
+        }),
+      });
+      const data: any = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.name).toBe('Committed New Name');
+      expect(committedDbState.pools[POOL_ID].name).toBe('Committed New Name');
+      expect(committedDbState.auditLogs).toHaveLength(1);
+      expect(committedDbState.auditLogs[0].action).toBe('OWNER_ADMIN_UPDATE_DETAILS');
+    });
+
+    it('POST /tiebreaker-designation rolls back and returns 409 DESIGNATION_FROZEN if predictions received before commit', async () => {
+      // Mock game list for week 9
+      mockPrisma.game.findMany.mockResolvedValueOnce([
+        {
+          id: 'game-future-tb',
+          externalGameId: '401873099',
+          homeTeamId: 'DET',
+          awayTeamId: 'GB',
+          kickoffTime: new Date(Date.now() + 86400000).toISOString(),
+          seasonYear: 2026,
+          weekNumber: 9,
+        },
+      ]);
+      const currentRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+
+      // Seed a weekly submission in state to trigger freeze
+      committedDbState.weeklySubmissions.push({
+        poolId: POOL_ID,
+        weekNumber: 9,
+        tieBreakerPrediction: 45,
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/tiebreaker-designation`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          season: 2026,
+          weekNumber: 9,
+          targetGameId: '401873099',
+          expectedRevision: currentRev,
+          reason: 'Change to DET vs GB',
+        }),
+      });
+      const data: any = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(data.code).toBe('DESIGNATION_FROZEN');
+      // Assert zero committed settings change
+      expect(committedDbState.pools[POOL_ID].settings?.tiebreaker_designations).toBeUndefined();
     });
 
     it('enforces in-transaction actor membership recheck: fails with 403 if membership revoked mid-transaction', async () => {
@@ -406,22 +563,43 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(resolved).toBe('https://nfl-pick-em-api.onrender.com');
     });
 
-    it('scopedExpressFetch routes relative /api calls to configured HTTPS Render origin from Pages', async () => {
+    it('scopedExpressFetch routes relative /api calls to configured HTTPS Render origin from Pages, attaches session token, and fails closed in production', async () => {
       let dispatchedUrl = '';
-      const customFetch = async (input: RequestInfo | URL) => {
+      let dispatchedHeaders: Headers | undefined;
+      const customFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
         dispatchedUrl = input.toString();
+        dispatchedHeaders = new Headers(init?.headers);
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       };
 
       const res = await scopedExpressFetch('/api/pools/0f497f1b-9002-49bd-ad2a-68ae34cb8afd/owner/overview', {
         apiOrigin: 'https://nfl-pick-em-api.onrender.com',
         isProd: true,
-        sessionToken: 'test-token',
+        sessionToken: 'test-verified-token',
         originalFetch: customFetch as any,
       });
 
       expect(res.status).toBe(200);
       expect(dispatchedUrl).toBe('https://nfl-pick-em-api.onrender.com/api/pools/0f497f1b-9002-49bd-ad2a-68ae34cb8afd/owner/overview');
+      expect(dispatchedHeaders?.get('Authorization')).toBe('Bearer test-verified-token');
+
+      // Actual production API base failure path: missing VITE_API_URL in production throws
+      await expect(
+        scopedExpressFetch('/api/pools/0f497f1b-9002-49bd-ad2a-68ae34cb8afd/owner/overview', {
+          apiOrigin: '',
+          isProd: true,
+          originalFetch: customFetch as any,
+        })
+      ).rejects.toThrow('APPROVED_HTTPS_API_REQUIRED_IN_PRODUCTION: VITE_API_URL is missing');
+
+      // Actual production API base failure path: non-HTTPS origin in production throws
+      await expect(
+        scopedExpressFetch('/api/pools/0f497f1b-9002-49bd-ad2a-68ae34cb8afd/owner/overview', {
+          apiOrigin: 'http://insecure-backend.com',
+          isProd: true,
+          originalFetch: customFetch as any,
+        })
+      ).rejects.toThrow('APPROVED_HTTPS_API_REQUIRED_IN_PRODUCTION: Non-HTTPS origin rejected');
     });
 
     it('GET /api/pools/:pool_id/presentation-flags defaults closed to false/false when unconfigured', async () => {
@@ -538,38 +716,116 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(result[1].totalProvisionalPoints).toBe(0);
     });
 
-    it('POST /api/pools/:pool_id/owner/simulations/preview rejects invalid simulation input bounds', async () => {
-      // Case A: negative score
-      const resNeg = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/simulations/preview`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jackAuthToken}`,
-        },
-        body: JSON.stringify({
-          scenario: [{ id: 'sim-1', homeScore: -5, awayScore: 10 }],
-          members: [{ userId: 'u1', userName: 'User 1' }],
-        }),
-      });
-      const dataNeg: any = await resNeg.json();
-      expect(resNeg.status).toBe(422);
-      expect(dataNeg.code).toBe('INVALID_SIMULATION');
+    it('POST /api/pools/:pool_id/owner/simulations/preview rejects invalid synthetic input bounds with HTTP 422', async () => {
+      const validMatch = { id: 'sim-1', homeTeam: 'DET', awayTeam: 'MIN', homeScore: 24, awayScore: 21, status: 'FINAL' };
+      const validMember = {
+        userId: 'u1',
+        userName: 'User 1',
+        tiebreakerPrediction: 45,
+        picks: [{ gameId: 'sim-1', selectedTeam: 'DET' }],
+      };
 
-      // Case B: non-integer score
-      const resFloat = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/simulations/preview`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jackAuthToken}`,
-        },
-        body: JSON.stringify({
-          scenario: [{ id: 'sim-1', homeScore: 14.5, awayScore: 10 }],
-          members: [{ userId: 'u1', userName: 'User 1' }],
-        }),
-      });
-      const dataFloat: any = await resFloat.json();
-      expect(resFloat.status).toBe(422);
-      expect(dataFloat.code).toBe('INVALID_SIMULATION');
+      const testDenial = async (body: any, label: string) => {
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/simulations/preview`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${jackAuthToken}`,
+          },
+          body: JSON.stringify(body),
+        });
+        const data: any = await res.json();
+        expect(res.status, `Expected 422 for ${label}`).toBe(422);
+        expect(data.code).toBe('INVALID_SIMULATION');
+      };
+
+      // 1. Negative score
+      await testDenial({ scenario: [{ ...validMatch, homeScore: -5 }], members: [validMember] }, 'negative score');
+
+      // 2. Oversized score (> 150)
+      await testDenial({ scenario: [{ ...validMatch, homeScore: 151 }], members: [validMember] }, 'oversized score');
+
+      // 3. Fractional score
+      await testDenial({ scenario: [{ ...validMatch, awayScore: 21.5 }], members: [validMember] }, 'fractional score');
+
+      // 4. Invalid team code
+      await testDenial({ scenario: [{ ...validMatch, homeTeam: 'XYZ' }], members: [validMember] }, 'invalid home team code');
+      await testDenial({ scenario: [{ ...validMatch, awayTeam: 'BAD' }], members: [validMember] }, 'invalid away team code');
+
+      // 5. Identical home and away teams
+      await testDenial({ scenario: [{ ...validMatch, homeTeam: 'DET', awayTeam: 'DET' }], members: [validMember] }, 'identical teams');
+
+      // 6. Malformed synthetic match ID
+      await testDenial({ scenario: [{ ...validMatch, id: 'bad id with spaces!' }], members: [validMember] }, 'malformed match ID');
+
+      // 7. Duplicate synthetic match ID
+      await testDenial({
+        scenario: [validMatch, { ...validMatch, homeTeam: 'GB', awayTeam: 'CHI' }],
+        members: [validMember],
+      }, 'duplicate match ID');
+
+      // 8. Malformed synthetic member ID
+      await testDenial({
+        scenario: [validMatch],
+        members: [{ ...validMember, userId: 'bad id with spaces!' }],
+      }, 'malformed member ID');
+
+      // 9. Duplicate synthetic member ID
+      await testDenial({
+        scenario: [validMatch],
+        members: [validMember, { ...validMember, userName: 'User 2' }],
+      }, 'duplicate member ID');
+
+      // 10. Malformed simulatedClock
+      await testDenial({
+        scenario: [validMatch],
+        members: [validMember],
+        simulatedClock: 'not-a-valid-date-string',
+      }, 'malformed simulatedClock');
+
+      // 11. Nonfinite or fractional tiebreaker prediction
+      await testDenial({
+        scenario: [validMatch],
+        members: [{ ...validMember, tiebreakerPrediction: 'fifty' as any }],
+      }, 'non-numeric tiebreaker prediction');
+      await testDenial({
+        scenario: [validMatch],
+        members: [{ ...validMember, tiebreakerPrediction: 45.5 }],
+      }, 'fractional tiebreaker prediction');
+
+      // 12. Out-of-bounds tiebreaker prediction (> 200 or < 0)
+      await testDenial({
+        scenario: [validMatch],
+        members: [{ ...validMember, tiebreakerPrediction: 201 }],
+      }, 'oversized tiebreaker prediction');
+      await testDenial({
+        scenario: [validMatch],
+        members: [{ ...validMember, tiebreakerPrediction: -1 }],
+      }, 'negative tiebreaker prediction');
+
+      // 13. Pick references unknown match ID
+      await testDenial({
+        scenario: [validMatch],
+        members: [{ ...validMember, picks: [{ gameId: 'unknown-game', selectedTeam: 'DET' }] }],
+      }, 'unknown match ID in pick');
+
+      // 14. Pick selectedTeam not in match
+      await testDenial({
+        scenario: [validMatch],
+        members: [{ ...validMember, picks: [{ gameId: 'sim-1', selectedTeam: 'KC' }] }],
+      }, 'team not in match in pick');
+
+      // 15. Duplicate pick for same match
+      await testDenial({
+        scenario: [validMatch],
+        members: [{
+          ...validMember,
+          picks: [
+            { gameId: 'sim-1', selectedTeam: 'DET' },
+            { gameId: 'sim-1', selectedTeam: 'MIN' },
+          ],
+        }],
+      }, 'duplicate pick for same match');
     });
 
     it('POST /api/pools/:pool_id/owner/simulations/preview computes pure simulation and marks isFinal when all final', async () => {
