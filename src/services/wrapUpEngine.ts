@@ -548,12 +548,12 @@ export async function executeWeeklyWrapUpForPool(
     // 0a: Advisory lock — must succeed; any error propagates (rolls back transaction)
     await tx.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1));`, weeklyLockKey);
 
-    // 0b: Pool row lock — must return exactly one ACTIVE row
+    // 0b: Pool row lock — must return exactly one ACTIVE row (length !== 1 denies)
     const lockedPoolRows: any[] = await tx.$queryRawUnsafe(
       `SELECT id, status FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
       poolId
     );
-    if (!lockedPoolRows || lockedPoolRows.length === 0) {
+    if (!lockedPoolRows || lockedPoolRows.length !== 1) {
       return {
         applied: false,
         reason: 'SHARED_POOL_GATE_UNAVAILABLE',
@@ -690,22 +690,21 @@ export async function executeWeeklyWrapUpForPool(
       };
     }
 
-    // Helper to purge in-flight incomplete claim marker on refusal (Zero writes on refusal)
+    // Helper to purge in-flight incomplete claim marker on refusal.
+    // MUST NOT swallow errors: if DELETE fails, the error propagates out of the
+    // transaction callback, causing Prisma to roll back — which also undoes the
+    // INSERT claim. Swallowing would let the transaction commit with an orphaned claim.
     const cleanupIncompleteClaim = async () => {
-      try {
-        if (hasSeasonCol) {
-          await tx.$queryRawUnsafe(
-            `DELETE FROM public.weekly_wrapups WHERE pool_id = $1::uuid AND season = $2::int AND week_number = $3::int AND summary IS NULL;`,
-            poolId, season, weekNumber
-          );
-        } else {
-          await tx.$queryRawUnsafe(
-            `DELETE FROM public.weekly_wrapups WHERE pool_id = $1::uuid AND week_number = $2::int AND summary IS NULL;`,
-            poolId, weekNumber
-          );
-        }
-      } catch {
-        // ignore
+      if (hasSeasonCol) {
+        await tx.$queryRawUnsafe(
+          `DELETE FROM public.weekly_wrapups WHERE pool_id = $1::uuid AND season = $2::int AND week_number = $3::int AND summary IS NULL;`,
+          poolId, season, weekNumber
+        );
+      } else {
+        await tx.$queryRawUnsafe(
+          `DELETE FROM public.weekly_wrapups WHERE pool_id = $1::uuid AND week_number = $2::int AND summary IS NULL;`,
+          poolId, weekNumber
+        );
       }
     };
 

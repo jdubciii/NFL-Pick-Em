@@ -4011,6 +4011,130 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(result.games).toHaveLength(0);
       expect(result.reasonsIfNotReady?.some((r) => r.includes('MALFORMED_SLATE_CONFIG'))).toBe(true);
     });
+
+    it('proves executeWeeklyWrapUpForPool fails closed with SHARED_POOL_GATE_UNAVAILABLE when pool FOR UPDATE returns multiple rows (length !== 1)', async () => {
+      // Arrange: FOR UPDATE returns 2 rows (unexpected duplicate) — length !== 1 must deny
+      const mockDbDuplicatePool: any = {
+        $transaction: async (cb: any) => cb(mockDbDuplicatePool),
+        $queryRaw: vi.fn().mockResolvedValue([]),
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('pg_advisory_xact_lock')) {
+            return [{ pg_advisory_xact_lock: null }];
+          }
+          if (sql.includes('FOR UPDATE')) {
+            // Two rows returned — violates exactly-one invariant
+            return [
+              { id: 'pool-dup-a', status: 'ACTIVE' },
+              { id: 'pool-dup-b', status: 'ACTIVE' },
+            ];
+          }
+          return [];
+        }),
+        pool: { findUnique: vi.fn().mockResolvedValue(null) },
+        acceptedSlateManifest: { findFirst: vi.fn().mockResolvedValue(null) },
+        game: { findMany: vi.fn().mockResolvedValue([]) },
+        weeklySubmission: { findMany: vi.fn().mockResolvedValue([]) },
+        outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        inboxMessage: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      };
+
+      const result = await executeWeeklyWrapUpForPool('pool-dup-test', 7, {
+        season: 2026,
+        seasonType: 2,
+        prismaClient: mockDbDuplicatePool,
+      });
+
+      expect(result.applied).toBe(false);
+      expect(result.reason).toBe('SHARED_POOL_GATE_UNAVAILABLE');
+      // No settlement writes: pool.findUnique (Step 2) must never be called
+      expect(mockDbDuplicatePool.pool.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('proves executeWeeklyWrapUpForPool rolls back the full transaction when cleanup DELETE fails after claim insert', async () => {
+      // Arrange: a mock where:
+      //   - All Step 0 locks succeed (advisory lock + pool FOR UPDATE returns 1 ACTIVE row)
+      //   - to_regclass succeeds (table exists)
+      //   - information_schema check says no season col
+      //   - INSERT INTO weekly_wrapups succeeds (claim granted)
+      //   - pool.findUnique returns a valid pool with 1 member (Step 2 succeeds)
+      //   - game.findMany returns empty (triggers cleanupIncompleteClaim path via MALFORMED_SLATE_CONFIG
+      //     from the resolver: no manifest → AUTHORITATIVE_SLATE_UNAVAILABLE → cleanup called)
+      //   - DELETE (cleanup) throws → error propagates out of $transaction callback
+      //
+      // The outer db.$transaction is a passthrough; since the callback throws,
+      // the returned promise must reject — proving rollback semantics.
+
+      const POOL_ID_CLEANUP = 'pool-cleanup-test-uuid';
+      const insertedClaims: string[] = [];
+      const deletedClaims: string[] = [];
+
+      const mockDbCleanupFails: any = {
+        $transaction: async (cb: any) => {
+          // Real Prisma rolls back on callback throw. Here we simply propagate.
+          return cb(mockDbCleanupFails);
+        },
+        $queryRaw: vi.fn().mockResolvedValue([{ to_regclass: 'public.weekly_wrapups' }]),
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
+          if (sql.includes('pg_advisory_xact_lock')) {
+            return [{ pg_advisory_xact_lock: null }];
+          }
+          if (sql.includes('FOR UPDATE')) {
+            return [{ id: POOL_ID_CLEANUP, status: 'ACTIVE' }];
+          }
+          if (sql.includes('to_regclass')) {
+            return [{ to_regclass: 'public.weekly_wrapups' }];
+          }
+          if (sql.includes('information_schema.columns')) {
+            // No season column → hasSeasonCol = false
+            return [];
+          }
+          if (sql.includes('INSERT INTO public.weekly_wrapups')) {
+            insertedClaims.push(sql);
+            return [{ pool_id: POOL_ID_CLEANUP, week_number: 7 }]; // Claim granted
+          }
+          if (sql.includes('DELETE FROM public.weekly_wrapups')) {
+            deletedClaims.push(sql);
+            throw new Error('simulated DELETE failure — disk full');
+          }
+          return [];
+        }),
+        pool: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: POOL_ID_CLEANUP,
+            settings: {},
+            memberships: [
+              {
+                userId: 'user-cleanup-1',
+                status: 'ACTIVE',
+                user: { id: 'user-cleanup-1', notificationPreference: null },
+              },
+            ],
+          }),
+        },
+        // No manifest → resolvePoolScopedGamesForWrapUp returns AUTHORITATIVE_SLATE_UNAVAILABLE
+        // → cleanupIncompleteClaim is called → DELETE throws → transaction rolls back
+        acceptedSlateManifest: { findFirst: vi.fn().mockResolvedValue(null) },
+        game: { findMany: vi.fn().mockResolvedValue([]) },
+        weeklySubmission: { findMany: vi.fn().mockResolvedValue([]) },
+        outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        inboxMessage: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      };
+
+      // The transaction callback throws because cleanup DELETE fails → outer promise rejects
+      await expect(
+        executeWeeklyWrapUpForPool(POOL_ID_CLEANUP, 7, {
+          season: 2026,
+          seasonType: 2,
+          prismaClient: mockDbCleanupFails,
+        })
+      ).rejects.toThrow('simulated DELETE failure — disk full');
+
+      // Claim was inserted (proves we reached Step 1)
+      expect(insertedClaims.length).toBeGreaterThan(0);
+      // DELETE was attempted (proves cleanupIncompleteClaim was called)
+      expect(deletedClaims.length).toBeGreaterThan(0);
+      // The rejection proves the transaction rolled back — no silent commit of orphaned claim
+    });
   });
 
   describe('3. Built Pages URL Behavior, API Base Resolution & Presentation Flags', () => {
