@@ -91,6 +91,129 @@ export function updateMatchTeamWithPickSync(
   return { updatedMatches, updatedMembers };
 }
 
+export function computeSimulationStandings(
+  simMatches: any[],
+  simMembers: any[],
+  simulatedClock: string
+): {
+  standings: any[];
+  slateGames: SlateGame[];
+  liveScores: LiveGame[];
+  allSimFinal: boolean;
+  actualTotal: number | null;
+} {
+  const clockMs = simulatedClock ? new Date(simulatedClock).getTime() : Date.now();
+
+  const effectiveMatches = simMatches.map((m: any, idx: number) => {
+    const rawStatus = m.status != null ? String(m.status).trim().toUpperCase() : 'SCHEDULED';
+    const mKickoffMs = m.kickoffTime ? new Date(m.kickoffTime).getTime() : NaN;
+    const isPastKickoff = isNaN(mKickoffMs) || clockMs >= mKickoffMs;
+    const effectiveStatus: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL' =
+      !isPastKickoff
+        ? 'SCHEDULED'
+        : rawStatus === 'FINAL'
+          ? 'FINAL'
+          : rawStatus === 'IN_PROGRESS'
+            ? 'IN_PROGRESS'
+            : 'SCHEDULED';
+
+    const homeTeamCode = String(m.homeTeam || m.homeTeamId || '').trim().toUpperCase();
+    const awayTeamCode = String(m.awayTeam || m.awayTeamId || '').trim().toUpperCase();
+    const homeScore = m.homeScore != null ? String(m.homeScore) : '0';
+    const awayScore = m.awayScore != null ? String(m.awayScore) : '0';
+    const kickoffTime = m.kickoffTime || new Date(simulatedClock || Date.now()).toISOString();
+
+    return {
+      id: String(m.id || `sim-game-${idx + 1}`).trim(),
+      homeTeamCode,
+      awayTeamCode,
+      homeScore,
+      awayScore,
+      kickoffTime,
+      effectiveStatus,
+      rawMatch: m,
+    };
+  });
+
+  const slateGames: SlateGame[] = effectiveMatches.map((em) => ({
+    id: em.id,
+    homeTeam: em.homeTeamCode,
+    awayTeam: em.awayTeamCode,
+    spread: typeof em.rawMatch.spread === 'number' ? em.rawMatch.spread : undefined,
+    kickoffTime: em.kickoffTime,
+    status: em.effectiveStatus,
+    isFinal: em.effectiveStatus === 'FINAL',
+    homeScore: em.effectiveStatus !== 'SCHEDULED' ? Number(em.homeScore) : undefined,
+    awayScore: em.effectiveStatus !== 'SCHEDULED' ? Number(em.awayScore) : undefined,
+  }));
+
+  const liveScores: LiveGame[] = effectiveMatches.map((em) => ({
+    id: em.id,
+    name: `${em.awayTeamCode} @ ${em.homeTeamCode}`,
+    shortName: `${em.awayTeamCode} @ ${em.homeTeamCode}`,
+    homeTeam: { code: em.homeTeamCode, name: em.homeTeamCode, score: em.homeScore },
+    awayTeam: { code: em.awayTeamCode, name: em.awayTeamCode, score: em.awayScore },
+    status: em.effectiveStatus,
+    clock: em.effectiveStatus === 'FINAL' ? 'FINAL' : '0:00',
+    period: em.effectiveStatus === 'FINAL' ? 4 : 1,
+  }));
+
+  const userRefs: UserStandingRef[] = simMembers.map((m: any, idx: number) => ({
+    id: String(m.userId || m.id || `sim-user-${idx + 1}`).trim(),
+    name: String(m.userName || m.name || `Sim Member ${idx + 1}`),
+    email: `${String(m.userName || m.name || `member${idx + 1}`)}@simulation.local`,
+  }));
+
+  const userPicks: UserPickItem[] = [];
+  for (const m of simMembers) {
+    const uid = String(m.userId || m.id).trim();
+    if (Array.isArray(m.picks)) {
+      for (const p of m.picks) {
+        userPicks.push({
+          userId: uid,
+          gameId: String(p.gameId).trim(),
+          selectedTeam: String(p.selectedTeam).trim().toUpperCase(),
+          isSubmitted: true,
+        });
+      }
+    }
+  }
+
+  const userPredictions: Record<string, number> = {};
+  for (const m of simMembers) {
+    const uid = String(m.userId || m.id).trim();
+    if (m.tb != null || m.tiebreakerPrediction != null) {
+      userPredictions[uid] = Number(m.tb ?? m.tiebreakerPrediction);
+    }
+  }
+
+  // Supply actual tiebreaker total ONLY when designated synthetic game is effectively FINAL
+  const tbMatch = effectiveMatches[0];
+  const actualTotal =
+    tbMatch &&
+    tbMatch.effectiveStatus === 'FINAL' &&
+    tbMatch.rawMatch.homeScore != null &&
+    tbMatch.rawMatch.awayScore != null
+      ? Number(tbMatch.rawMatch.homeScore) + Number(tbMatch.rawMatch.awayScore)
+      : null;
+
+  const tiebreakerData: TiebreakerData = {
+    actualTotalScore: actualTotal ?? undefined,
+    userPredictions,
+  };
+
+  const standingsResult = calculateProvisionalStandings(userRefs, slateGames, liveScores, userPicks, tiebreakerData);
+  const allSimFinal = effectiveMatches.every((em) => em.effectiveStatus === 'FINAL');
+
+  return {
+    standings: standingsResult.standings || (Array.isArray(standingsResult) ? standingsResult : []),
+    slateGames,
+    liveScores,
+    allSimFinal,
+    actualTotal,
+  };
+}
+
 export const OwnerAdminApp: React.FC = () => {
   const { user, session, loading } = useAuth();
   const [activeTab, setActiveTab] = useState<'overview' | 'games' | 'rules' | 'simulation'>('overview');
@@ -457,82 +580,12 @@ export const OwnerAdminApp: React.FC = () => {
     setSimMembers(simMembers.map((mem) => mem.id === memberId ? { ...mem, name } : mem));
   };
 
-  // Calculate pure in-memory simulation standings
-  const runSimulation = () => {
-    const clockMs = simulatedClock ? new Date(simulatedClock).getTime() : Date.now();
-
-    const slateGames: SlateGame[] = simMatches.map((m) => {
-      const kickoffTime = m.kickoffTime || new Date(simulatedClock || Date.now()).toISOString();
-      return {
-        id: m.id,
-        homeTeam: m.homeTeam,
-        awayTeam: m.awayTeam,
-        homeScore: m.homeScore,
-        awayScore: m.awayScore,
-        status: m.status,
-        isFinal: m.status === 'FINAL',
-        kickoffTime,
-      };
-    });
-
-    const userRefs: UserStandingRef[] = simMembers.map((m) => ({
-      id: m.id,
-      name: m.name,
-      email: `${m.name}@simulation.local`,
-    }));
-
-    const userPicks: UserPickItem[] = [];
-    for (const m of simMembers) {
-      for (const p of m.picks) {
-        userPicks.push({
-          userId: m.id,
-          gameId: p.gameId,
-          selectedTeam: p.selectedTeam,
-          isSubmitted: true,
-        });
-      }
-    }
-
-    const tb = simMatches[0];
-    const actualTotal = tb?.homeScore != null && tb?.awayScore != null ? Number(tb.homeScore) + Number(tb.awayScore) : null;
-
-    const liveScores: LiveGame[] = simMatches.map((m) => {
-      const rawStatus = m.status === 'FINAL' ? 'FINAL' : m.status === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'SCHEDULED';
-      // Kickoff lock behavior: if simulatedClock is before kickoffTime, the game has not started yet
-      const mKickoffMs = m.kickoffTime ? new Date(m.kickoffTime).getTime() : NaN;
-      const isPastKickoff = isNaN(mKickoffMs) || clockMs >= mKickoffMs;
-      const effectiveStatus: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL' =
-        !isPastKickoff ? 'SCHEDULED' : rawStatus;
-
-      return {
-        id: m.id,
-        name: `${m.awayTeam} @ ${m.homeTeam}`,
-        shortName: `${m.awayTeam} @ ${m.homeTeam}`,
-        homeTeam: { code: m.homeTeam, name: m.homeTeam, score: String(m.homeScore ?? 0) },
-        awayTeam: { code: m.awayTeam, name: m.awayTeam, score: String(m.awayScore ?? 0) },
-        status: effectiveStatus,
-        clock: effectiveStatus === 'FINAL' ? 'FINAL' : '0:00',
-        period: effectiveStatus === 'FINAL' ? 4 : 1,
-      };
-    });
-
-    const userPredictions: Record<string, number> = {};
-    for (const m of simMembers) {
-      if (m.tb != null) {
-        userPredictions[m.id] = Number(m.tb);
-      }
-    }
-
-    const tiebreakerData: TiebreakerData = {
-      actualTotalScore: actualTotal ?? undefined,
-      userPredictions,
-    };
-
-    return calculateProvisionalStandings(userRefs, slateGames, liveScores, userPicks, tiebreakerData);
-  };
-
-  const simStandings = runSimulation();
-  const allSimFinal = simMatches.every((m) => m.status === 'FINAL');
+  // Calculate pure in-memory simulation standings using shared pure engine
+  const { standings: simStandings, allSimFinal } = computeSimulationStandings(
+    simMatches,
+    simMembers,
+    simulatedClock
+  );
 
   // Loading state
   if (loading) {

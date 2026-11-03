@@ -23,6 +23,7 @@ import {
   generateNextMatchId,
   generateNextMemberId,
   updateMatchTeamWithPickSync,
+  computeSimulationStandings,
 } from '../client/src/owner/OwnerAdminApp';
 
 describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () => {
@@ -1028,16 +1029,75 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(m3PickAfter?.selectedTeam).toBe('CHI');
     });
 
-    it('connects simulatedClock to fixture kickoff lock behavior: changing clock before/after kickoff alters calculated standings', async () => {
+    it('client pure-calculation: connects simulatedClock to effective status, points, finality, and pending tiebreakers', () => {
       const matchFixture = [
-        { id: 'match-1', homeTeam: 'DET', awayTeam: 'MIN', homeScore: 24, awayScore: 20, status: 'FINAL', kickoffTime: '2026-11-01T17:00:00.000Z' },
-        { id: 'match-2', homeTeam: 'GB', awayTeam: 'CAR', homeScore: 30, awayScore: 10, status: 'FINAL', kickoffTime: '2026-11-01T17:00:00.000Z' },
+        { id: 'sim-tb', homeTeam: 'DET', awayTeam: 'MIN', homeScore: 31, awayScore: 28, status: 'FINAL', spread: 0, kickoffTime: '2026-11-01T17:00:00.000Z' },
+        { id: 'sim-g2', homeTeam: 'GB', awayTeam: 'CAR', homeScore: 24, awayScore: 10, status: 'FINAL', spread: 0, kickoffTime: '2026-11-01T17:00:00.000Z' },
       ];
       const memberFixture = [
-        { userId: 'u1', userName: 'Jack', tiebreakerPrediction: 44, picks: [{ gameId: 'match-1', selectedTeam: 'DET' }, { gameId: 'match-2', selectedTeam: 'GB' }] },
+        { id: 'u1', name: 'Alice', tb: 50, picks: [{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'GB' }] },
+        { id: 'u2', name: 'Bob', tb: 60, picks: [{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'GB' }] },
       ];
 
-      // Case A: simulatedClock is 5 hours BEFORE kickoff (2026-11-01T12:00:00.000Z)
+      // 1. Before kickoff: 12:00:00.000Z
+      const stateBefore = computeSimulationStandings(matchFixture, memberFixture, '2026-11-01T12:00:00.000Z');
+
+      // Assert effective status is SCHEDULED across slate and live fixtures
+      expect(stateBefore.allSimFinal).toBe(false);
+      expect(stateBefore.slateGames[0].status).toBe('SCHEDULED');
+      expect(stateBefore.slateGames[0].isFinal).toBe(false);
+      expect(stateBefore.liveScores[0].status).toBe('SCHEDULED');
+
+      // Assert actualTotal is null because TB game is not effectively FINAL
+      expect(stateBefore.actualTotal).toBeNull();
+
+      // Zero banked or live points before kickoff
+      expect(stateBefore.standings[0].totalProvisionalPoints).toBe(0);
+      expect(stateBefore.standings[1].totalProvisionalPoints).toBe(0);
+
+      // Pending tiebreaker: tie remains unresolved before kickoff (equal rank 1, isTied: true)
+      expect(stateBefore.standings[0].provisionalRank).toBe(1);
+      expect(stateBefore.standings[1].provisionalRank).toBe(1);
+      expect(stateBefore.standings[0].isTied).toBe(true);
+      expect(stateBefore.standings[1].isTied).toBe(true);
+
+      // 2. After kickoff: 20:00:00.000Z
+      const stateAfter = computeSimulationStandings(matchFixture, memberFixture, '2026-11-01T20:00:00.000Z');
+
+      // Assert effective status is FINAL across slate and live fixtures
+      expect(stateAfter.allSimFinal).toBe(true);
+      expect(stateAfter.slateGames[0].status).toBe('FINAL');
+      expect(stateAfter.slateGames[0].isFinal).toBe(true);
+      expect(stateAfter.liveScores[0].status).toBe('FINAL');
+
+      // Assert actualTotal is supplied (31 + 28 = 59)
+      expect(stateAfter.actualTotal).toBe(59);
+
+      // Both members scored 2 points
+      expect(stateAfter.standings[0].totalProvisionalPoints).toBe(2);
+      expect(stateAfter.standings[1].totalProvisionalPoints).toBe(2);
+
+      // Tiebreaker resolved: Bob (tb 60, diff 1 from 59) beats Alice (tb 50, diff 9 from 59)
+      expect(stateAfter.standings[0].userId).toBe('u2');
+      expect(stateAfter.standings[0].provisionalRank).toBe(1);
+      expect(stateAfter.standings[0].isTied).toBe(false);
+
+      expect(stateAfter.standings[1].userId).toBe('u1');
+      expect(stateAfter.standings[1].provisionalRank).toBe(2);
+      expect(stateAfter.standings[1].isTied).toBe(false);
+    });
+
+    it('server route: connects simulatedClock to effective status, points, finality, and pending tiebreakers on POST /simulations/preview', async () => {
+      const matchFixture = [
+        { id: 'sim-tb', homeTeam: 'DET', awayTeam: 'MIN', homeScore: 31, awayScore: 28, status: 'FINAL', spread: 0, kickoffTime: '2026-11-01T17:00:00.000Z' },
+        { id: 'sim-g2', homeTeam: 'GB', awayTeam: 'CAR', homeScore: 24, awayScore: 10, status: 'FINAL', spread: 0, kickoffTime: '2026-11-01T17:00:00.000Z' },
+      ];
+      const memberFixture = [
+        { userId: 'u1', userName: 'Alice', tiebreakerPrediction: 50, picks: [{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'GB' }] },
+        { userId: 'u2', userName: 'Bob', tiebreakerPrediction: 60, picks: [{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'GB' }] },
+      ];
+
+      // Case A: 5 hours BEFORE kickoff
       const resBefore = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/simulations/preview`, {
         method: 'POST',
         headers: {
@@ -1054,10 +1114,17 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
 
       expect(resBefore.status).toBe(200);
       expect(dataBefore.isFinal).toBe(false);
-      // Matches have not kicked off yet at 12:00 UTC; effective status is SCHEDULED, 0 points scored
+      expect(dataBefore.tiebreakerTotal).toBeNull();
       expect(dataBefore.standings[0].totalProvisionalPoints).toBe(0);
+      expect(dataBefore.standings[1].totalProvisionalPoints).toBe(0);
 
-      // Case B: simulatedClock is 3 hours AFTER kickoff (2026-11-01T20:00:00.000Z)
+      // Tied with rank 1 before kickoff
+      expect(dataBefore.standings[0].provisionalRank).toBe(1);
+      expect(dataBefore.standings[1].provisionalRank).toBe(1);
+      expect(dataBefore.standings[0].isTied).toBe(true);
+      expect(dataBefore.standings[1].isTied).toBe(true);
+
+      // Case B: 3 hours AFTER kickoff
       const resAfter = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/simulations/preview`, {
         method: 'POST',
         headers: {
@@ -1074,11 +1141,18 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
 
       expect(resAfter.status).toBe(200);
       expect(dataAfter.isFinal).toBe(true);
-      // Kickoff has passed; matches are FINAL and 2 points are scored
+      expect(dataAfter.tiebreakerTotal).toBe(59);
       expect(dataAfter.standings[0].totalProvisionalPoints).toBe(2);
+      expect(dataAfter.standings[1].totalProvisionalPoints).toBe(2);
 
-      // Proves changing simulatedClock directly altered the calculated result
-      expect(dataAfter.standings[0].totalProvisionalPoints).not.toBe(dataBefore.standings[0].totalProvisionalPoints);
+      // Tiebreaker resolved: Bob wins rank 1, Alice gets rank 2
+      expect(dataAfter.standings[0].userId).toBe('u2');
+      expect(dataAfter.standings[0].provisionalRank).toBe(1);
+      expect(dataAfter.standings[0].isTied).toBe(false);
+
+      expect(dataAfter.standings[1].userId).toBe('u1');
+      expect(dataAfter.standings[1].provisionalRank).toBe(2);
+      expect(dataAfter.standings[1].isTied).toBe(false);
     });
   });
 

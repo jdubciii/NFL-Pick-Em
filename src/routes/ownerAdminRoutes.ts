@@ -853,27 +853,9 @@ ownerAdminRouter.post('/:pool_id/owner/simulations/preview', requireAuth, requir
   const { scenario, members, simulatedClock } = req.body;
   const clockMs = simulatedClock ? new Date(simulatedClock).getTime() : Date.now();
 
-  // Build SlateGame and LiveGame fixtures for pure simulation
-  const slateGames: SlateGame[] = scenario.map((m: any, idx: number) => {
-    const rawKickoff = m.kickoffTime || new Date(simulatedClock || Date.now()).toISOString();
-    return {
-      id: String(m.id || `sim-game-${idx + 1}`).trim(),
-      homeTeam: String(m.homeTeam || m.homeTeamId).trim().toUpperCase(),
-      awayTeam: String(m.awayTeam || m.awayTeamId).trim().toUpperCase(),
-      spread: typeof m.spread === 'number' ? m.spread : undefined,
-      kickoffTime: rawKickoff,
-    };
-  });
-
-  const liveGames: LiveGame[] = scenario.map((m: any, idx: number) => {
-    const gid = String(m.id || `sim-game-${idx + 1}`).trim();
-    const homeTeamCode = String(m.homeTeam || m.homeTeamId).trim().toUpperCase();
-    const awayTeamCode = String(m.awayTeam || m.awayTeamId).trim().toUpperCase();
-    const homeScore = m.homeScore != null ? String(m.homeScore) : '0';
-    const awayScore = m.awayScore != null ? String(m.awayScore) : '0';
+  // Derive one effective per-game status from simulatedClock and chosen status
+  const effectiveMatches = scenario.map((m: any, idx: number) => {
     const rawStatus = m.status != null ? String(m.status).trim().toUpperCase() : 'SCHEDULED';
-
-    // Kickoff lock behavior: if simulatedClock is before kickoffTime, matchup has not kicked off yet
     const mKickoffMs = m.kickoffTime ? new Date(m.kickoffTime).getTime() : NaN;
     const isPastKickoff = isNaN(mKickoffMs) || clockMs >= mKickoffMs;
     const effectiveStatus: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL' =
@@ -885,17 +867,47 @@ ownerAdminRouter.post('/:pool_id/owner/simulations/preview', requireAuth, requir
             ? 'IN_PROGRESS'
             : 'SCHEDULED';
 
+    const homeTeamCode = String(m.homeTeam || m.homeTeamId).trim().toUpperCase();
+    const awayTeamCode = String(m.awayTeam || m.awayTeamId).trim().toUpperCase();
+    const homeScore = m.homeScore != null ? String(m.homeScore) : '0';
+    const awayScore = m.awayScore != null ? String(m.awayScore) : '0';
+    const rawKickoff = m.kickoffTime || new Date(simulatedClock || Date.now()).toISOString();
+
     return {
-      id: gid,
-      name: `${awayTeamCode} @ ${homeTeamCode}`,
-      shortName: `${awayTeamCode} @ ${homeTeamCode}`,
-      homeTeam: { code: homeTeamCode, name: homeTeamCode, score: homeScore },
-      awayTeam: { code: awayTeamCode, name: awayTeamCode, score: awayScore },
-      status: effectiveStatus,
-      clock: effectiveStatus === 'FINAL' ? 'FINAL' : '0:00',
-      period: effectiveStatus === 'FINAL' ? 4 : 1,
+      id: String(m.id || `sim-game-${idx + 1}`).trim(),
+      homeTeamCode,
+      awayTeamCode,
+      homeScore,
+      awayScore,
+      rawKickoff,
+      effectiveStatus,
+      rawMatch: m,
     };
   });
+
+  // Build SlateGame and LiveGame fixtures using effectiveStatus consistently
+  const slateGames: SlateGame[] = effectiveMatches.map((em: any) => ({
+    id: em.id,
+    homeTeam: em.homeTeamCode,
+    awayTeam: em.awayTeamCode,
+    spread: typeof em.rawMatch.spread === 'number' ? em.rawMatch.spread : undefined,
+    kickoffTime: em.rawKickoff,
+    status: em.effectiveStatus,
+    isFinal: em.effectiveStatus === 'FINAL',
+    homeScore: em.effectiveStatus !== 'SCHEDULED' ? Number(em.homeScore) : undefined,
+    awayScore: em.effectiveStatus !== 'SCHEDULED' ? Number(em.awayScore) : undefined,
+  }));
+
+  const liveGames: LiveGame[] = effectiveMatches.map((em: any) => ({
+    id: em.id,
+    name: `${em.awayTeamCode} @ ${em.homeTeamCode}`,
+    shortName: `${em.awayTeamCode} @ ${em.homeTeamCode}`,
+    homeTeam: { code: em.homeTeamCode, name: em.homeTeamCode, score: em.homeScore },
+    awayTeam: { code: em.awayTeamCode, name: em.awayTeamCode, score: em.awayScore },
+    status: em.effectiveStatus,
+    clock: em.effectiveStatus === 'FINAL' ? 'FINAL' : '0:00',
+    period: em.effectiveStatus === 'FINAL' ? 4 : 1,
+  }));
 
   const userRefs: UserStandingRef[] = members.map((m: any, idx: number) => ({
     id: String(m.userId || m.id || `sim-user-${idx + 1}`).trim(),
@@ -925,10 +937,14 @@ ownerAdminRouter.post('/:pool_id/owner/simulations/preview', requireAuth, requir
     }
   }
 
-  const tbGame = scenario[0];
+  // Supply actual tiebreaker total ONLY when designated synthetic game is effectively FINAL
+  const tbMatch = effectiveMatches[0];
   const actualTotal =
-    tbGame?.homeScore != null && tbGame?.awayScore != null
-      ? Number(tbGame.homeScore) + Number(tbGame.awayScore)
+    tbMatch &&
+    tbMatch.effectiveStatus === 'FINAL' &&
+    tbMatch.rawMatch.homeScore != null &&
+    tbMatch.rawMatch.awayScore != null
+      ? Number(tbMatch.rawMatch.homeScore) + Number(tbMatch.rawMatch.awayScore)
       : undefined;
 
   const tiebreakerData: TiebreakerData = {
@@ -938,7 +954,7 @@ ownerAdminRouter.post('/:pool_id/owner/simulations/preview', requireAuth, requir
 
   // Compute actual provisional / final standings using real production logic
   const standingsResult = calculateProvisionalStandings(userRefs, slateGames, liveGames, picks, tiebreakerData);
-  const allFinal = liveGames.every((g) => g.status === 'FINAL');
+  const allFinal = effectiveMatches.every((em: any) => em.effectiveStatus === 'FINAL');
 
   res.status(200).json({
     simulation: true,
@@ -948,6 +964,7 @@ ownerAdminRouter.post('/:pool_id/owner/simulations/preview', requireAuth, requir
     standings: standingsResult.standings || standingsResult,
     gameCount: slateGames.length,
     memberCount: userRefs.length,
+    tiebreakerTotal: actualTotal ?? null,
     notice: 'SYNTHETIC_SIMULATION: Results computed in-memory using pure production standings engine without persistence.',
   });
 });
