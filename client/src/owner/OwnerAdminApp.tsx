@@ -948,11 +948,14 @@ export const OwnerAdminApp: React.FC = () => {
               )}
             </div>
 
-            {/* Future Slate Editor */}
+            {/* Future Slate Editor (Disabled pending shared scored-slate resolver wiring and QA enablement) */}
             <div className="bg-slate-900 border border-slate-800 p-5 rounded space-y-4">
               <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider">
                 Future Pool Slate Editor (PUT /api/pools/:pool_id/owner/slate)
               </h2>
+              <div className="bg-rose-950/40 border border-rose-800/80 p-3 rounded text-xs text-rose-300 font-mono">
+                🔒 <strong>Slate Modification Disabled (HAG58-SLATE-2026-11-03-01 Contract Guard):</strong> Live custom slate writing is disabled pending verified writer proof and live external grant audit.
+              </div>
 
               {slateStatus && (
                 <div
@@ -966,24 +969,24 @@ export const OwnerAdminApp: React.FC = () => {
                 </div>
               )}
 
-              <form onSubmit={handleUpdateSlate} className="space-y-3 max-w-xl">
+              <form onSubmit={handleUpdateSlate} className="space-y-3 max-w-xl opacity-60">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-mono text-slate-400 mb-1">Season</label>
                     <input
                       type="number"
                       value={slateSeason}
-                      onChange={(e) => setSlateSeason(parseInt(e.target.value, 10))}
-                      className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 font-mono"
+                      disabled
+                      className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-400 font-mono"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-mono text-slate-400 mb-1">Week Number (Future &gt; 8)</label>
+                    <label className="block text-xs font-mono text-slate-400 mb-1">Week Number (Future)</label>
                     <input
                       type="number"
                       value={slateWeek}
-                      onChange={(e) => setSlateWeek(parseInt(e.target.value, 10))}
-                      className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 font-mono"
+                      disabled
+                      className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-400 font-mono"
                     />
                   </div>
                 </div>
@@ -993,10 +996,10 @@ export const OwnerAdminApp: React.FC = () => {
                   </label>
                   <textarea
                     value={slateEventIds}
-                    onChange={(e) => setSlateEventIds(e.target.value)}
-                    placeholder="401873032, 401873033..."
+                    disabled
+                    placeholder="Disabled"
                     rows={2}
-                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs font-mono text-slate-200"
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs font-mono text-slate-400"
                   />
                 </div>
                 <div>
@@ -1004,17 +1007,17 @@ export const OwnerAdminApp: React.FC = () => {
                   <input
                     type="text"
                     value={slateReason}
-                    onChange={(e) => setSlateReason(e.target.value)}
-                    placeholder="e.g. Setting Week 9 custom 10-game slate"
-                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 font-mono"
+                    disabled
+                    placeholder="Disabled"
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-400 font-mono"
                   />
                 </div>
                 <button
                   type="submit"
-                  disabled={slateSubmitting}
-                  className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider rounded transition"
+                  disabled={true}
+                  className="px-4 py-2 bg-slate-800 text-slate-500 font-bold text-xs uppercase tracking-wider rounded cursor-not-allowed"
                 >
-                  {slateSubmitting ? 'Updating Slate...' : 'Update Pool Slate'}
+                  Slate Modification Disabled
                 </button>
               </form>
             </div>

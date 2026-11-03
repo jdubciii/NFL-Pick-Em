@@ -25,6 +25,7 @@ export interface ScopedSlateProjectionScope {
   season: number;
   seasonType: number;
   weekNumber: number;
+  revision?: string;
 }
 
 export type ScopedSlateResolution =
@@ -57,24 +58,37 @@ export type ScopedSlateResolution =
 const projectionCache = new Map<string, { resolution: ScopedSlateResolution; cachedAt: number }>();
 
 export function getScopedSlateCacheKey(scope: ScopedSlateProjectionScope, revision?: string): string {
-  return `${scope.poolId}:${scope.season}:${scope.seasonType}:${scope.weekNumber}:${revision || 'latest'}`;
+  const rev = revision !== undefined ? revision : (scope.revision || 'latest');
+  return `${scope.poolId}:${scope.season}:${scope.seasonType}:${scope.weekNumber}:${rev}`;
 }
 
-export function invalidateScopedSlateCache(poolId?: string): void {
-  if (!poolId) {
+export function invalidateScopedSlateCache(poolId?: string, scope?: ScopedSlateProjectionScope): void {
+  if (!poolId && !scope) {
     projectionCache.clear();
     return;
   }
-  for (const key of projectionCache.keys()) {
-    if (key.startsWith(`${poolId}:`)) {
-      projectionCache.delete(key);
+  if (scope) {
+    const scopePrefix = `${scope.poolId}:${scope.season}:${scope.seasonType}:${scope.weekNumber}:`;
+    for (const key of projectionCache.keys()) {
+      if (key.startsWith(scopePrefix)) {
+        projectionCache.delete(key);
+      }
+    }
+    return;
+  }
+  if (poolId) {
+    for (const key of projectionCache.keys()) {
+      if (key.startsWith(`${poolId}:`)) {
+        projectionCache.delete(key);
+      }
     }
   }
 }
 
 export async function fetchScopedSlateProjection(
   scope: ScopedSlateProjectionScope,
-  authToken?: string | null
+  authToken?: string | null,
+  options?: { fetchFn?: any; apiOrigin?: string }
 ): Promise<ScopedSlateResolution> {
   // 1. Unshadowable HAG-52 historical configuration check (Section 42 & 54)
   if (
@@ -120,10 +134,12 @@ export async function fetchScopedSlateProjection(
       weekNumber: String(scope.weekNumber),
     });
 
-    const res = await scopedExpressFetch(`/api/pools/${scope.poolId}/scoped-slate?${query.toString()}`, {
+    const fetchFn = options?.fetchFn || scopedExpressFetch;
+    const res = await fetchFn(`/api/pools/${scope.poolId}/scoped-slate?${query.toString()}`, {
       method: 'GET',
       headers,
       sessionToken: authToken,
+      ...(options?.apiOrigin ? { apiOrigin: options.apiOrigin } : {}),
     });
 
     if (!res.ok) {
@@ -164,8 +180,12 @@ export async function fetchScopedSlateProjection(
         frozenAt: data.frozenAt || null,
         description: data.description,
       };
-      const cacheKeyWithRev = getScopedSlateCacheKey(scope, resolution.revision);
-      projectionCache.set(cacheKeyWithRev, { resolution, cachedAt: Date.now() });
+      const cacheKeyLatest = getScopedSlateCacheKey(scope, 'latest');
+      projectionCache.set(cacheKeyLatest, { resolution, cachedAt: Date.now() });
+      if (resolution.revision) {
+        const cacheKeyWithRev = getScopedSlateCacheKey(scope, resolution.revision);
+        projectionCache.set(cacheKeyWithRev, { resolution, cachedAt: Date.now() });
+      }
       return resolution;
     }
 
@@ -175,6 +195,8 @@ export async function fetchScopedSlateProjection(
         scope,
         defaultPolicy: 'FULL_MANIFEST',
       };
+      const cacheKeyLatest = getScopedSlateCacheKey(scope, 'latest');
+      projectionCache.set(cacheKeyLatest, { resolution, cachedAt: Date.now() });
       const cacheKeyWithRev = getScopedSlateCacheKey(scope, 'no-custom');
       projectionCache.set(cacheKeyWithRev, { resolution, cachedAt: Date.now() });
       return resolution;

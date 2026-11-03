@@ -11,7 +11,7 @@ import {
   setSupabaseAuthClientForTesting,
   createSyntheticSupabaseToken,
 } from '../src/middleware/auth';
-import { computePoolSettingsRevision } from '../src/routes/ownerAdminRoutes';
+import { computePoolSettingsRevision, executeFutureSlateMutationInternal } from '../src/routes/ownerAdminRoutes';
 import { normalizeApiOrigin, scopedExpressFetch } from '../client/src/lib/apiClient';
 import { fetchPresentationFlags, DEFAULT_PRESENTATION_FLAGS } from '../client/src/services/presentationFlagsService';
 import { calculateProvisionalStandings, type SlateGame, type UserStandingRef, type UserPickItem, type TiebreakerData } from '../src/services/sweatProjectionService';
@@ -205,6 +205,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         }),
       },
       penaltyLedger: {
+        count: vi.fn(async () => 0),
         create: vi.fn(async ({ data }: any) => ({ id: `pl-${Date.now()}`, ...data })),
         aggregate: vi.fn(async () => ({ _sum: { delta: 0 } })),
       },
@@ -212,6 +213,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         upsert: vi.fn(async () => ({})),
       },
       pickResult: {
+        count: vi.fn(async () => 0),
         upsert: vi.fn(async ({ where, update, create }: any) => ({ ...create, ...update })),
       },
       auditLog: {
@@ -222,6 +224,9 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         }),
       },
       $queryRawUnsafe: vi.fn(async (query: string, ...args: any[]) => {
+        if (query.includes('SELECT NOW()')) {
+          return [{ now: new Date().toISOString() }];
+        }
         if (query.includes('FROM public.picks')) {
           return [{ count: committedDbState.picks.length }];
         }
@@ -322,6 +327,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
             }),
           },
           penaltyLedger: {
+            count: vi.fn(async (args?: any) => mockPrisma.penaltyLedger.count(args)),
             create: vi.fn(async ({ data }: any) => ({ id: `pl-${Date.now()}`, ...data })),
             aggregate: vi.fn(async () => ({ _sum: { delta: 0 } })),
           },
@@ -329,6 +335,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
             upsert: vi.fn(async () => ({})),
           },
           pickResult: {
+            count: vi.fn(async (args?: any) => mockPrisma.pickResult.count(args)),
             upsert: vi.fn(async ({ where, update, create }: any) => ({ ...create, ...update })),
           },
         };
@@ -674,7 +681,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(mockPrisma.pool.update).not.toHaveBeenCalled();
     });
 
-    it('PUT /slate rejects historical past/current weeks (season <= 2026 week <= 8) with HTTP 422 HISTORICAL_SLATE_PROTECTED', async () => {
+    it('PUT /slate remains fail-closed and disabled with HTTP 501 SLATE_MUTATION_DISABLED', async () => {
       const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
         method: 'PUT',
         headers: {
@@ -684,19 +691,36 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         body: JSON.stringify({
           season: 2026,
           seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040'],
+          expectedRevision: 'any-rev',
+          reason: 'Attempted slate write',
+        }),
+      });
+      const data: any = await res.json();
+      expect(res.status).toBe(501);
+      expect(data.code).toBe('SLATE_MUTATION_DISABLED');
+      expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+    });
+
+    it('executeFutureSlateMutationInternal rejects historical past/current weeks (season <= 2026 week <= 8) with HTTP 409 HISTORICAL_SLATE_PROTECTED', async () => {
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
           weekNumber: 8,
           eventIds: ['401873023', '401873024'],
           expectedRevision: 'any-rev',
           reason: 'Attempted historical slate edit',
-        }),
+        })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'HISTORICAL_SLATE_PROTECTED',
       });
-      const data: any = await res.json();
-      expect(res.status).toBe(422);
-      expect(data.code).toBe('HISTORICAL_SLATE_PROTECTED');
       expect(mockPrisma.pool.update).not.toHaveBeenCalled();
     });
 
-    it('PUT /slate rejects stale settings revision with HTTP 409 STALE_REVISION', async () => {
+    it('executeFutureSlateMutationInternal rejects stale settings revision with HTTP 409 STALE_REVISION', async () => {
       const week9Events = [
         { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: new Date(Date.now() + 86400000).toISOString(), isKickoffConfirmed: true },
         { externalGameId: '401873041', homeTeamId: 'SF', awayTeamId: 'LAR', kickoffTime: new Date(Date.now() + 90000000).toISOString(), isKickoffConfirmed: true },
@@ -718,28 +742,23 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         reasons: [],
       });
 
-      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jackAuthToken}`,
-        },
-        body: JSON.stringify({
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
           season: 2026,
           seasonType: 2,
           weekNumber: 9,
           eventIds: ['401873040', '401873041'],
           expectedRevision: 'stale-or-wrong-revision-hash',
           reason: 'Stale attempt',
-        }),
+        })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'STALE_REVISION',
       });
-      const data: any = await res.json();
-      expect(res.status).toBe(409);
-      expect(data.code).toBe('STALE_REVISION');
       expect(mockPrisma.pool.update).not.toHaveBeenCalled();
     });
 
-    it('PUT /slate rejects when provider observation is unverified or scope mismatches with HTTP 422', async () => {
+    it('executeFutureSlateMutationInternal rejects when provider observation is unverified or scope mismatches with HTTP 422', async () => {
       const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
 
       vi.spyOn(authoritativeSlateService, 'fetchAuthoritativeESPNScoreboard').mockResolvedValue({
@@ -757,27 +776,22 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         reasons: ['FETCH_ERROR: Network timeout'],
       });
 
-      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jackAuthToken}`,
-        },
-        body: JSON.stringify({
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
           season: 2026,
           seasonType: 2,
           weekNumber: 9,
           eventIds: ['401873040'],
           expectedRevision: poolRev,
           reason: 'Unverified observation attempt',
-        }),
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'UNVERIFIED_PROVIDER_OBSERVATION',
       });
-      const data: any = await res.json();
-      expect(res.status).toBe(422);
-      expect(data.code).toBe('UNVERIFIED_PROVIDER_OBSERVATION');
     });
 
-    it('PUT /slate rejects expired provider observation (>60s) with HTTP 422 EXPIRED_PROVIDER_OBSERVATION', async () => {
+    it('executeFutureSlateMutationInternal rejects expired provider observation (>60s) with HTTP 422 EXPIRED_PROVIDER_OBSERVATION', async () => {
       const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
       const week9Events = [
         { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: new Date(Date.now() + 86400000).toISOString(), isKickoffConfirmed: true },
@@ -800,27 +814,22 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         reasons: [],
       });
 
-      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jackAuthToken}`,
-        },
-        body: JSON.stringify({
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
           season: 2026,
           seasonType: 2,
           weekNumber: 9,
           eventIds: ['401873040'],
           expectedRevision: poolRev,
           reason: 'Expired observation attempt',
-        }),
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'EXPIRED_PROVIDER_OBSERVATION',
       });
-      const data: any = await res.json();
-      expect(res.status).toBe(422);
-      expect(data.code).toBe('EXPIRED_PROVIDER_OBSERVATION');
     });
 
-    it('PUT /slate rejects unaccepted manifest with HTTP 422 UNACCEPTED_MANIFEST', async () => {
+    it('executeFutureSlateMutationInternal rejects unaccepted manifest with HTTP 422 UNACCEPTED_MANIFEST', async () => {
       const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
       const week9Events = [
         { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: new Date(Date.now() + 86400000).toISOString(), isKickoffConfirmed: true },
@@ -845,27 +854,22 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       // No accepted manifest in DB!
       vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue(null);
 
-      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jackAuthToken}`,
-        },
-        body: JSON.stringify({
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
           season: 2026,
           seasonType: 2,
           weekNumber: 9,
           eventIds: ['401873040'],
           expectedRevision: poolRev,
           reason: 'Unaccepted manifest attempt',
-        }),
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'UNACCEPTED_MANIFEST',
       });
-      const data: any = await res.json();
-      expect(res.status).toBe(422);
-      expect(data.code).toBe('UNACCEPTED_MANIFEST');
     });
 
-    it('PUT /slate rejects manifest fingerprint mismatch with HTTP 422 MANIFEST_FINGERPRINT_MISMATCH', async () => {
+    it('executeFutureSlateMutationInternal rejects manifest fingerprint mismatch with HTTP 422 MANIFEST_FINGERPRINT_MISMATCH', async () => {
       const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
       const week9Events = [
         { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: new Date(Date.now() + 86400000).toISOString(), isKickoffConfirmed: true },
@@ -900,27 +904,22 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         observationTime: new Date().toISOString(),
       });
 
-      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jackAuthToken}`,
-        },
-        body: JSON.stringify({
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
           season: 2026,
           seasonType: 2,
           weekNumber: 9,
           eventIds: ['401873040'],
           expectedRevision: poolRev,
           reason: 'Fingerprint mismatch attempt',
-        }),
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'MANIFEST_FINGERPRINT_MISMATCH',
       });
-      const data: any = await res.json();
-      expect(res.status).toBe(422);
-      expect(data.code).toBe('MANIFEST_FINGERPRINT_MISMATCH');
     });
 
-    it('PUT /slate rejects rogue event ID not in accepted manifest with HTTP 422 INVALID_SLATE_SELECTION', async () => {
+    it('executeFutureSlateMutationInternal rejects rogue event ID not in accepted manifest with HTTP 422 INVALID_SLATE_SELECTION', async () => {
       const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
       const week9Events = [
         { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: new Date(Date.now() + 86400000).toISOString(), isKickoffConfirmed: true },
@@ -954,27 +953,22 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         observationTime: new Date().toISOString(),
       });
 
-      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jackAuthToken}`,
-        },
-        body: JSON.stringify({
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
           season: 2026,
           seasonType: 2,
           weekNumber: 9,
           eventIds: ['999999999'], // Rogue ID!
           expectedRevision: poolRev,
           reason: 'Rogue event attempt',
-        }),
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'INVALID_SLATE_SELECTION',
       });
-      const data: any = await res.json();
-      expect(res.status).toBe(422);
-      expect(data.code).toBe('INVALID_SLATE_SELECTION');
     });
 
-    it('PUT /slate rejects when participation freeze evidence is recorded with HTTP 409 SLATE_FROZEN', async () => {
+    it('executeFutureSlateMutationInternal rejects when participation freeze evidence is recorded with HTTP 409 SLATE_FROZEN', async () => {
       const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
       const week9Events = [
         { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: new Date(Date.now() + 86400000).toISOString(), isKickoffConfirmed: true },
@@ -1028,30 +1022,25 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       };
 
       const freshRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
-      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jackAuthToken}`,
-        },
-        body: JSON.stringify({
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
           season: 2026,
           seasonType: 2,
           weekNumber: 9,
           eventIds: ['401873040'],
           expectedRevision: freshRev,
           reason: 'Freeze test',
-        }),
+        })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'SLATE_FROZEN',
       });
-      const data: any = await res.json();
-      expect(res.status).toBe(409);
-      expect(data.code).toBe('SLATE_FROZEN');
 
       // Clean up freeze for subsequent tests
       delete committedDbState.pools[POOL_ID].settings.owner_admin_v1.freezes[2026][2][9];
     });
 
-    it('PUT /slate rejects when submission rows exist (including season collision test) with HTTP 409 SLATE_FROZEN', async () => {
+    it('executeFutureSlateMutationInternal rejects when submission rows exist (including season collision test) with HTTP 409 SLATE_FROZEN', async () => {
       const week9Events = [
         { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: new Date(Date.now() + 86400000).toISOString(), isKickoffConfirmed: true },
       ];
@@ -1088,27 +1077,22 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       mockPrisma.weeklySubmission.count.mockResolvedValueOnce(1);
 
       const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
-      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jackAuthToken}`,
-        },
-        body: JSON.stringify({
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
           season: 2026,
           seasonType: 2,
           weekNumber: 9,
           eventIds: ['401873040'],
           expectedRevision: poolRev,
           reason: 'Submission collision test',
-        }),
+        })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'SLATE_FROZEN',
       });
-      const data: any = await res.json();
-      expect(res.status).toBe(409);
-      expect(data.code).toBe('SLATE_FROZEN');
     });
 
-    it('PUT /slate rejects when earliest lock deadline across slate union has passed with HTTP 422 KICKOFF_PASSED', async () => {
+    it('executeFutureSlateMutationInternal rejects when earliest lock deadline across slate union has passed with HTTP 422 KICKOFF_PASSED', async () => {
       const week9Events = [
         // Kickoff was 10 minutes ago!
         { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: new Date(Date.now() - 600000).toISOString(), isKickoffConfirmed: true },
@@ -1143,27 +1127,22 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       });
 
       const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
-      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jackAuthToken}`,
-        },
-        body: JSON.stringify({
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
           season: 2026,
           seasonType: 2,
           weekNumber: 9,
           eventIds: ['401873040'],
           expectedRevision: poolRev,
           reason: 'Passed kickoff attempt',
-        }),
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'KICKOFF_PASSED',
       });
-      const data: any = await res.json();
-      expect(res.status).toBe(422);
-      expect(data.code).toBe('KICKOFF_PASSED');
     });
 
-    it('PUT /slate atomic success with absent Game rows: observation supplies kickoffs and teams, updates settings with evidence snapshot and fingerprint, logs audit, returns 200', async () => {
+    it('executeFutureSlateMutationInternal atomic success with absent Game rows: observation supplies kickoffs and teams, updates settings with evidence snapshot and fingerprint, logs audit, returns 200', async () => {
       const futureDate1 = new Date(Date.now() + 86400000).toISOString();
       const futureDate2 = new Date(Date.now() + 90000000).toISOString();
       const futureDate3 = new Date(Date.now() + 95000000).toISOString();
@@ -1207,27 +1186,18 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       mockPrisma.pick.count.mockResolvedValue(0);
 
       const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
-      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${jackAuthToken}`,
-        },
-        body: JSON.stringify({
-          season: 2026,
-          seasonType: 2,
-          weekNumber: 9,
-          eventIds: ['401873040', '401873041'],
-          expectedRevision: poolRev,
-          reason: 'Configuring Week 9 custom 2-game slate',
-        }),
+      const result = await executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        eventIds: ['401873040', '401873041'],
+        expectedRevision: poolRev,
+        reason: 'Configuring Week 9 custom 2-game slate',
       });
-      const data: any = await res.json();
-      expect(res.status).toBe(200);
-      expect(data.success).toBe(true);
-      expect(data.slate.eventIds).toEqual(['401873040', '401873041']);
-      expect(data.slate.fingerprint).toBe(week9Fingerprint);
-      expect(data.slate.evidenceSnapshot).toHaveLength(2);
+
+      expect(result.slate.eventIds).toEqual(['401873040', '401873041']);
+      expect(result.slate.fingerprint).toBe(week9Fingerprint);
+      expect(result.slate.evidenceSnapshot).toHaveLength(2);
       expect(committedDbState.pools[POOL_ID].settings.owner_admin_v1.slates[2026][2][9].eventIds).toEqual(['401873040', '401873041']);
       expect(mockPrisma.auditLog.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1236,6 +1206,678 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
           }),
         })
       );
+    });
+
+    // ------------------------------------------------------------------------
+    // FOCUSED PROOFS FOR FINDINGS 1, 2, 3, 4 (God QA Message 2026-11-03T19-23-42)
+    // ------------------------------------------------------------------------
+
+    it('Finding 1 Proof: resolves canonical games and candidate IDs for picks without week column, queries under lock, and denies if query throws', async () => {
+      const futureDate1 = new Date(Date.now() + 86400000).toISOString();
+      const week9Events = [
+        { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: futureDate1, isKickoffConfirmed: true },
+      ];
+      const week9Fingerprint = authoritativeSlateService.computeManifestFingerprint(2026, 2, 9, week9Events);
+
+      vi.spyOn(authoritativeSlateService, 'fetchAuthoritativeESPNScoreboard').mockResolvedValue({
+        status: 'VERIFIED',
+        provider: 'ESPN',
+        league: 'NFL',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        observationTime: new Date().toISOString(),
+        adapterVersion: '1.0',
+        eventCount: 1,
+        events: week9Events,
+        manifestFingerprint: week9Fingerprint,
+        reasons: [],
+      });
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: ['401873040'],
+        acceptedAt: new Date().toISOString(),
+        acceptedBy: JACK_UUID,
+        manifestFingerprint: week9Fingerprint,
+        observationTime: new Date().toISOString(),
+      });
+
+      // Canonical game lookup returns canonical row with UUID id
+      mockPrisma.game.findMany.mockResolvedValueOnce([
+        {
+          id: 'game-uuid-canonical-1',
+          externalGameId: '401873040',
+          homeTeamId: 'KC',
+          awayTeamId: 'LV',
+          kickoffTime: futureDate1,
+          status: 'SCHEDULED',
+        },
+      ]);
+
+      // Mock pick.count to inspect the where clause passed by executeFutureSlateMutationInternal
+      let observedWhereClause: any = null;
+      mockPrisma.pick.count.mockImplementationOnce(async ({ where }: any) => {
+        observedWhereClause = where;
+        return 0;
+      });
+
+      const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+      await executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        eventIds: ['401873040'],
+        expectedRevision: poolRev,
+        reason: 'Testing Finding 1 pick query',
+      });
+
+      // Proves Prisma Pick query does NOT use week column (which would throw Prisma validation error)
+      expect(observedWhereClause).toBeDefined();
+      expect(observedWhereClause.week).toBeUndefined();
+      expect(observedWhereClause.poolId).toBe(POOL_ID);
+      // Proves it includes both canonical UUID and external game ID
+      expect(observedWhereClause.OR).toEqual([
+        { gameId: { in: expect.arrayContaining(['401873040', 'game-uuid-canonical-1']) } },
+        { game: { externalGameId: { in: ['401873040'] } } },
+      ]);
+
+      // Proves fail-closed: if pick query throws, it is NOT swallowed as zero!
+      mockPrisma.pick.count.mockRejectedValueOnce(new Error('DATABASE_PICK_QUERY_FAILED'));
+      const freshRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040'],
+          expectedRevision: freshRev,
+          reason: 'Testing Finding 1 query failure',
+        })
+      ).rejects.toThrow('DATABASE_PICK_QUERY_FAILED');
+
+      // Proves existing picks (including null selections) freeze the slate
+      mockPrisma.pick.count.mockResolvedValueOnce(1);
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040'],
+          expectedRevision: freshRev,
+          reason: 'Testing Finding 1 pick freeze',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'SLATE_FROZEN',
+      });
+    });
+
+    it('Finding 2 Proof: canonical game lookup failure throws and denies without swallowing to empty array', async () => {
+      const futureDate = new Date(Date.now() + 86400000).toISOString();
+      const week9Events = [
+        { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: futureDate, isKickoffConfirmed: true },
+      ];
+      const week9Fingerprint = authoritativeSlateService.computeManifestFingerprint(2026, 2, 9, week9Events);
+
+      vi.spyOn(authoritativeSlateService, 'fetchAuthoritativeESPNScoreboard').mockResolvedValue({
+        status: 'VERIFIED',
+        provider: 'ESPN',
+        league: 'NFL',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        observationTime: new Date().toISOString(),
+        adapterVersion: '1.0',
+        eventCount: 1,
+        events: week9Events,
+        manifestFingerprint: week9Fingerprint,
+        reasons: [],
+      });
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: ['401873040'],
+        acceptedAt: new Date().toISOString(),
+        acceptedBy: JACK_UUID,
+        manifestFingerprint: week9Fingerprint,
+        observationTime: new Date().toISOString(),
+      });
+
+      mockPrisma.game.findMany.mockRejectedValueOnce(new Error('PRISMA_CANONICAL_GAME_LOOKUP_TIMEOUT'));
+
+      const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040'],
+          expectedRevision: poolRev,
+          reason: 'Testing Finding 2 game lookup fail closed',
+        })
+      ).rejects.toThrow('PRISMA_CANONICAL_GAME_LOOKUP_TIMEOUT');
+    });
+
+    it('Finding 2 Proof: unconfirmed kickoff (isKickoffConfirmed !== true) denies with HTTP 422 UNCONFIRMED_KICKOFF', async () => {
+      const futureDate = new Date(Date.now() + 86400000).toISOString();
+      const week9Events = [
+        { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: futureDate, isKickoffConfirmed: false }, // Unconfirmed!
+      ];
+      const week9Fingerprint = authoritativeSlateService.computeManifestFingerprint(2026, 2, 9, week9Events);
+
+      vi.spyOn(authoritativeSlateService, 'fetchAuthoritativeESPNScoreboard').mockResolvedValue({
+        status: 'VERIFIED',
+        provider: 'ESPN',
+        league: 'NFL',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        observationTime: new Date().toISOString(),
+        adapterVersion: '1.0',
+        eventCount: 1,
+        events: week9Events,
+        manifestFingerprint: week9Fingerprint,
+        reasons: [],
+      });
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: ['401873040'],
+        acceptedAt: new Date().toISOString(),
+        acceptedBy: JACK_UUID,
+        manifestFingerprint: week9Fingerprint,
+        observationTime: new Date().toISOString(),
+      });
+
+      const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040'],
+          expectedRevision: poolRev,
+          reason: 'Testing Finding 2 unconfirmed kickoff',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'UNCONFIRMED_KICKOFF',
+      });
+    });
+
+    it('Finding 2 Proof: team identity or kickoff timestamp mismatch between DB Game and observation denies with HTTP 422 CANONICAL_GAME_MISMATCH', async () => {
+      const futureDate = new Date(Date.now() + 86400000).toISOString();
+      const week9Events = [
+        { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: futureDate, isKickoffConfirmed: true },
+      ];
+      const week9Fingerprint = authoritativeSlateService.computeManifestFingerprint(2026, 2, 9, week9Events);
+
+      vi.spyOn(authoritativeSlateService, 'fetchAuthoritativeESPNScoreboard').mockResolvedValue({
+        status: 'VERIFIED',
+        provider: 'ESPN',
+        league: 'NFL',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        observationTime: new Date().toISOString(),
+        adapterVersion: '1.0',
+        eventCount: 1,
+        events: week9Events,
+        manifestFingerprint: week9Fingerprint,
+        reasons: [],
+      });
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: ['401873040'],
+        acceptedAt: new Date().toISOString(),
+        acceptedBy: JACK_UUID,
+        manifestFingerprint: week9Fingerprint,
+        observationTime: new Date().toISOString(),
+      });
+
+      // 1. Team identity mismatch: DB says awayTeamId is DEN, observation says LV
+      mockPrisma.game.findMany.mockResolvedValueOnce([
+        {
+          id: 'game-uuid-1',
+          externalGameId: '401873040',
+          homeTeamId: 'KC',
+          awayTeamId: 'DEN', // Mismatch!
+          kickoffTime: futureDate,
+          status: 'SCHEDULED',
+        },
+      ]);
+
+      const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040'],
+          expectedRevision: poolRev,
+          reason: 'Testing Finding 2 team mismatch',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'CANONICAL_GAME_MISMATCH',
+      });
+
+      // 2. Kickoff timestamp mismatch: DB kickoff differs by > 60 seconds
+      mockPrisma.game.findMany.mockResolvedValueOnce([
+        {
+          id: 'game-uuid-1',
+          externalGameId: '401873040',
+          homeTeamId: 'KC',
+          awayTeamId: 'LV',
+          kickoffTime: new Date(Date.now() + 86400000 + 120000).toISOString(), // 2 minutes off!
+          status: 'SCHEDULED',
+        },
+      ]);
+
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040'],
+          expectedRevision: poolRev,
+          reason: 'Testing Finding 2 time mismatch',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'CANONICAL_GAME_MISMATCH',
+      });
+    });
+
+    it('Finding 2 Proof: missing or non-numeric lock_offset in pool settings denies with HTTP 422 INVALID_LOCK_OFFSET and does not default to 0', async () => {
+      const futureDate = new Date(Date.now() + 86400000).toISOString();
+      const week9Events = [
+        { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: futureDate, isKickoffConfirmed: true },
+      ];
+      const week9Fingerprint = authoritativeSlateService.computeManifestFingerprint(2026, 2, 9, week9Events);
+
+      vi.spyOn(authoritativeSlateService, 'fetchAuthoritativeESPNScoreboard').mockResolvedValue({
+        status: 'VERIFIED',
+        provider: 'ESPN',
+        league: 'NFL',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        observationTime: new Date().toISOString(),
+        adapterVersion: '1.0',
+        eventCount: 1,
+        events: week9Events,
+        manifestFingerprint: week9Fingerprint,
+        reasons: [],
+      });
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: ['401873040'],
+        acceptedAt: new Date().toISOString(),
+        acceptedBy: JACK_UUID,
+        manifestFingerprint: week9Fingerprint,
+        observationTime: new Date().toISOString(),
+      });
+
+      // Remove lock_offset from pool settings
+      delete committedDbState.pools[POOL_ID].settings.lock_offset;
+      const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040'],
+          expectedRevision: poolRev,
+          reason: 'Testing Finding 2 invalid lock offset',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'INVALID_LOCK_OFFSET',
+      });
+
+      // Restore lock_offset
+      committedDbState.pools[POOL_ID].settings.lock_offset = 0;
+    });
+
+    it('Finding 2 Proof: database clock query failure denies with HTTP 500 DATABASE_CLOCK_UNAVAILABLE without falling back to Date.now()', async () => {
+      const futureDate = new Date(Date.now() + 86400000).toISOString();
+      const week9Events = [
+        { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: futureDate, isKickoffConfirmed: true },
+      ];
+      const week9Fingerprint = authoritativeSlateService.computeManifestFingerprint(2026, 2, 9, week9Events);
+
+      vi.spyOn(authoritativeSlateService, 'fetchAuthoritativeESPNScoreboard').mockResolvedValue({
+        status: 'VERIFIED',
+        provider: 'ESPN',
+        league: 'NFL',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        observationTime: new Date().toISOString(),
+        adapterVersion: '1.0',
+        eventCount: 1,
+        events: week9Events,
+        manifestFingerprint: week9Fingerprint,
+        reasons: [],
+      });
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: ['401873040'],
+        acceptedAt: new Date().toISOString(),
+        acceptedBy: JACK_UUID,
+        manifestFingerprint: week9Fingerprint,
+        observationTime: new Date().toISOString(),
+      });
+
+      // Mock $queryRawUnsafe to return empty when SELECT NOW() is called
+      const origQuery = mockPrisma.$queryRawUnsafe;
+      mockPrisma.$queryRawUnsafe = vi.fn(async (q: string, ...args: any[]) => {
+        if (q.includes('SELECT NOW()')) {
+          return []; // Query failed!
+        }
+        return origQuery(q, ...args);
+      });
+
+      const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040'],
+          expectedRevision: poolRev,
+          reason: 'Testing Finding 2 clock failure',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 500,
+        code: 'DATABASE_CLOCK_UNAVAILABLE',
+      });
+
+      mockPrisma.$queryRawUnsafe = origQuery;
+    });
+
+    it('Finding 2 Proof: retains prior earlier deadlines across slate union to prevent deadline rollback', async () => {
+      // Prior slate had an early game that kicked off 5 minutes from now
+      const earlyPriorKickoff = new Date(Date.now() + 300000).toISOString();
+      const futureGameKickoff = new Date(Date.now() + 86400000).toISOString();
+
+      committedDbState.pools[POOL_ID].settings = {
+        lock_offset: 10, // 10 minute lock offset
+        owner_admin_v1: {
+          slates: {
+            2026: {
+              2: {
+                9: {
+                  eventIds: ['401873040'],
+                  evidenceSnapshot: [
+                    { id: '401873040', kickoffTime: earlyPriorKickoff, isKickoffConfirmed: true },
+                  ],
+                  version: 1,
+                },
+              },
+            },
+          },
+        },
+      };
+
+      const week9Events = [
+        { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: earlyPriorKickoff, isKickoffConfirmed: true },
+        { externalGameId: '401873041', homeTeamId: 'SF', awayTeamId: 'LAR', kickoffTime: futureGameKickoff, isKickoffConfirmed: true },
+      ];
+      const week9Fingerprint = authoritativeSlateService.computeManifestFingerprint(2026, 2, 9, week9Events);
+
+      vi.spyOn(authoritativeSlateService, 'fetchAuthoritativeESPNScoreboard').mockResolvedValue({
+        status: 'VERIFIED',
+        provider: 'ESPN',
+        league: 'NFL',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        observationTime: new Date().toISOString(),
+        adapterVersion: '1.0',
+        eventCount: 2,
+        events: week9Events,
+        manifestFingerprint: week9Fingerprint,
+        reasons: [],
+      });
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: ['401873040', '401873041'],
+        acceptedAt: new Date().toISOString(),
+        acceptedBy: JACK_UUID,
+        manifestFingerprint: week9Fingerprint,
+        observationTime: new Date().toISOString(),
+      });
+
+      // Proposed slate attempts to drop '401873040' and only include the tomorrow game '401873041'
+      // But because '401873040' is in the union (from prior effective slate), its earlier deadline (300s - 600s = passed)
+      // must NOT be bypassed or rolled back!
+      const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873041'], // Trying to drop the game whose lock deadline passed
+          expectedRevision: poolRev,
+          reason: 'Testing Finding 2 retained union deadline',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'KICKOFF_PASSED',
+      });
+
+      // Restore base pool settings
+      committedDbState.pools[POOL_ID].settings = { lock_offset: 0 };
+    });
+
+    it('Finding 3 Proof: settled penalty ledger records or settled pick results deny with HTTP 409 SLATE_FROZEN', async () => {
+      const futureDate = new Date(Date.now() + 86400000).toISOString();
+      const week9Events = [
+        { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: futureDate, isKickoffConfirmed: true },
+      ];
+      const week9Fingerprint = authoritativeSlateService.computeManifestFingerprint(2026, 2, 9, week9Events);
+
+      vi.spyOn(authoritativeSlateService, 'fetchAuthoritativeESPNScoreboard').mockResolvedValue({
+        status: 'VERIFIED',
+        provider: 'ESPN',
+        league: 'NFL',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        observationTime: new Date().toISOString(),
+        adapterVersion: '1.0',
+        eventCount: 1,
+        events: week9Events,
+        manifestFingerprint: week9Fingerprint,
+        reasons: [],
+      });
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: ['401873040'],
+        acceptedAt: new Date().toISOString(),
+        acceptedBy: JACK_UUID,
+        manifestFingerprint: week9Fingerprint,
+        observationTime: new Date().toISOString(),
+      });
+
+      // 1. Settled PenaltyLedger rows exist
+      mockPrisma.penaltyLedger.count.mockResolvedValueOnce(1);
+      const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040'],
+          expectedRevision: poolRev,
+          reason: 'Testing Finding 3 penalty ledger freeze',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'SLATE_FROZEN',
+      });
+
+      // 2. Settled PickResult rows exist
+      mockPrisma.pickResult.count.mockResolvedValueOnce(1);
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040'],
+          expectedRevision: poolRev,
+          reason: 'Testing Finding 3 pick result freeze',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'SLATE_FROZEN',
+      });
+    });
+
+    it('Finding 3 Proof: strict transactional lock-order concurrency serialization on public.pools row', async () => {
+      // Proves executeFutureSlateMutationInternal and executeSerializedPickMutation share identical pool-level lock order
+      const futureDate = new Date(Date.now() + 86400000);
+      mockPrisma._gameStore = [
+        {
+          id: 'g-game-10-1',
+          externalGameId: '401873060',
+          homeTeamId: 'KC',
+          awayTeamId: 'LV',
+          kickoffTime: futureDate,
+          canonicalKickoffTime: futureDate,
+          status: 'SCHEDULED',
+          week: 10,
+        },
+      ];
+
+      const lockCalls: string[] = [];
+      const origQuery = mockPrisma.$queryRawUnsafe;
+      mockPrisma.$queryRawUnsafe = vi.fn(async (q: string, ...args: any[]) => {
+        if (q.includes('FOR UPDATE')) {
+          lockCalls.push(q);
+        }
+        return origQuery(q, ...args);
+      });
+
+      // Pick mutation acquires SELECT ... FROM public.pools ... FOR UPDATE
+      await mockPrisma.$transaction(async (tx: any) => {
+        return executeSerializedPickMutation(tx, {
+          poolId: POOL_ID,
+          userId: JACK_UUID,
+          gameId: 'g-game-10-1',
+          week: 10,
+          selectedTeamId: 'KC',
+        });
+      });
+
+      expect(lockCalls.length).toBeGreaterThan(0);
+      expect(lockCalls[0]).toContain('FROM public.pools WHERE id = $1::uuid FOR UPDATE');
+
+      mockPrisma.$queryRawUnsafe = origQuery;
+    });
+
+    it('Finding 4 Proof: client scoped slate cache indexes by both :latest and :revision, hits cache, and supports invalidation', async () => {
+      invalidateScopedSlateCache();
+
+      const scope = {
+        poolId: 'pool-cache-test',
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        poolSettings: {
+          owner_admin_v1: {
+            slates: {
+              2026: {
+                2: {
+                  9: {
+                    eventIds: ['401873040', '401873041'],
+                    version: 1,
+                  },
+                },
+              },
+            },
+          },
+        },
+      };
+
+      let fetchCount = 0;
+      const mockFetch = vi.fn(async () => {
+        fetchCount++;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            status: 'VALID_CONFIG',
+            revision: 'rev-slate-hash-001',
+            eventIds: ['401873040', '401873041'],
+            version: 1,
+            isFrozen: false,
+          }),
+        } as any;
+      });
+
+      try {
+        // 1. Initial lookup -> triggers network fetch, stores under both :latest and :rev-slate-hash-001
+        const res1 = await fetchScopedSlateProjection(scope, null, { fetchFn: mockFetch });
+        expect(res1.status).toBe('VALID_CONFIG');
+        expect(fetchCount).toBe(1);
+
+        // 2. Lookup with :latest (omitted revision) -> cache hit (no fetch)
+        const res2 = await fetchScopedSlateProjection(scope, null, { fetchFn: mockFetch });
+        expect(res2.status).toBe('VALID_CONFIG');
+        expect(fetchCount).toBe(1);
+
+        // 3. Lookup with matching revision -> cache hit (no fetch)
+        const res3 = await fetchScopedSlateProjection({ ...scope, revision: 'rev-slate-hash-001' }, null, { fetchFn: mockFetch });
+        expect(res3.status).toBe('VALID_CONFIG');
+        expect(fetchCount).toBe(1);
+
+        // 4. Lookup with DIFFERENT revision -> cache miss -> triggers fetch
+        const res4 = await fetchScopedSlateProjection({ ...scope, revision: 'different-stale-rev' }, null, { fetchFn: mockFetch });
+        expect(res4.status).toBe('VALID_CONFIG');
+        expect(fetchCount).toBe(2);
+
+        // 5. Invalidate pool cache -> subsequent lookup triggers fetch
+        invalidateScopedSlateCache('pool-cache-test');
+        const res5 = await fetchScopedSlateProjection(scope, null, { fetchFn: mockFetch });
+        expect(res5.status).toBe('VALID_CONFIG');
+        expect(fetchCount).toBe(3);
+      } finally {
+        invalidateScopedSlateCache();
+      }
     });
 
     it('wires custom pool slate into server getGamesForWeek and client selectAcceptedScoredSlateGames', async () => {

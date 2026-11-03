@@ -752,38 +752,62 @@ ownerAdminRouter.post('/:pool_id/owner/tiebreaker-designation', requireAuth, req
 });
 
 /**
- * Future Pool Slate Mutation Endpoint: PUT /api/pools/:pool_id/owner/slate
- * Governed strictly by Architect Ruling HAG58-SLATE-2026-11-03-01:
- * - Outside transaction: explicit-season read-only provider observation (observation age <=60s)
- * - Inside transaction: shared public.pools FOR UPDATE row lock
- * - Accepted manifest fingerprint equality & exact event-ID set matching
- * - Selected slate is unique nonempty subset (<=32 events)
- * - Validated observation supplies kickoff even when Game rows are absent
- * - Earliest effective lock deadline check across UNION of prior effective slate and proposed slate
- * - Conservative freeze checks: settings freeze evidence, frozen designation, submission collisions, pick rows
- * - Transactional settings update storing chosen events snapshot, fingerprint, observationTime, version
- * - Mandatory in-transaction AuditLog; rolls back if AuditLog writer fails
- * - Post-awaited-write deadline recheck before commit
+ * Custom pool slate mutation is disabled / fail-closed per HAG57 contract, HAG58-SLATE-2026-11-03-01,
+ * and QA ruling (inbox 2026-11-03T19-23-42-078Z-6cf9ba).
+ * Live custom slate modification remains disabled (HTTP 501) pending verified writer proof,
+ * live external grant audits under HAG-5, and safe enablement.
+ *
+ * NOTE ON EXTERNAL WRITERS: Repo migration text (20260930020000_br_2c_public_tables_api_lockdown)
+ * documents table-level RLS revocations from anon/authenticated, but live database grants
+ * and Supabase RPC bypass remain unverified under blocked task HAG-5. Therefore, sole writer
+ * status is NOT assumed or asserted, and PUT /owner/slate remains 501 fail-closed in production.
  */
-ownerAdminRouter.put('/:pool_id/owner/slate', requireAuth, requireOwner, requirePoolOwnerAccess, async (req: Request, res: Response): Promise<void> => {
-  const envelope = validateMutationEnvelope(req, ['season', 'seasonType', 'weekNumber', 'eventIds']);
-  if (!envelope.valid) {
-    res.status(422).json({ error: envelope.error, code: envelope.code });
-    return;
-  }
-
-  if (!req.isCommissioner) {
-    res.status(403).json({
-      error: 'FORBIDDEN: Pool commissioner privileges required to modify pool slate.',
-      code: 'FORBIDDEN',
+ownerAdminRouter.put(
+  '/:pool_id/owner/slate',
+  requireAuth,
+  requireOwner,
+  requirePoolOwnerAccess,
+  async (_req: Request, res: Response): Promise<void> => {
+    res.status(501).json({
+      error: 'SLATE_MUTATION_DISABLED: Live custom slate modification is disabled pending verified writer proof, live grant audits under HAG-5, and safe enablement.',
+      code: 'SLATE_MUTATION_DISABLED',
     });
-    return;
+  }
+);
+
+/**
+ * Hardened Future Slate Mutation Helper (HAG58-SLATE-2026-11-03-01):
+ * Fully validates explicit-season provider observation, manifest fingerprint,
+ * union deadlines, kickoff-confirmed evidence, authoritative DB clock,
+ * pick and submission freeze (with Prisma Pick schema alias resolution),
+ * canonical game agreement, and in-transaction audit logging.
+ */
+export async function executeFutureSlateMutationInternal(
+  db: any,
+  arg2: any,
+  arg3?: any,
+  arg4?: any
+): Promise<{ slate: any; revision: string }> {
+  let poolId: string;
+  let actorId: string;
+  let envelope: any;
+  let observationOverride: any;
+
+  if (typeof arg2 === 'string') {
+    poolId = arg2;
+    actorId = arg3;
+    envelope = arg4;
+  } else {
+    poolId = arg2.poolId;
+    actorId = arg2.actorId;
+    envelope = arg2.envelope;
+    observationOverride = arg2.observationOverride;
   }
 
-  const season = Number(req.body.season);
-  const seasonType = Number(req.body.seasonType ?? 2);
-  const weekNumber = Number(req.body.weekNumber);
-  const rawEventIds = req.body.eventIds;
+  const season = Number(envelope.season);
+  const seasonType = Number(envelope.seasonType ?? 2);
+  const weekNumber = Number(envelope.weekNumber);
+  const rawEventIds = envelope.eventIds;
 
   if (
     !Number.isInteger(season) ||
@@ -791,386 +815,453 @@ ownerAdminRouter.put('/:pool_id/owner/slate', requireAuth, requireOwner, require
     !Number.isInteger(weekNumber) ||
     !Array.isArray(rawEventIds)
   ) {
-    res.status(422).json({
-      error: 'season, weekNumber, and eventIds array are required.',
-      code: 'INVALID_CHANGE',
-    });
-    return;
+    const err: any = new Error('season, weekNumber, and eventIds array are required.');
+    err.statusCode = 422;
+    err.code = 'INVALID_CHANGE';
+    throw err;
   }
 
   const eventIds = rawEventIds.map(String).map((s) => s.trim()).filter(Boolean);
   if (eventIds.length === 0 || eventIds.length > 32 || new Set(eventIds).size !== eventIds.length) {
-    res.status(422).json({
-      error: 'eventIds must be a non-empty unique array of at most 32 canonical game IDs.',
-      code: 'INVALID_CHANGE',
-    });
-    return;
+    const err: any = new Error('eventIds must be a non-empty unique array of at most 32 canonical game IDs.');
+    err.statusCode = 422;
+    err.code = 'INVALID_CHANGE';
+    throw err;
   }
 
-  // Validate format of each eventId (no arbitrary strings)
   const eventIdRegex = /^[a-zA-Z0-9_-]{1,64}$/;
   for (const eid of eventIds) {
     if (!eventIdRegex.test(eid)) {
-      res.status(422).json({
-        error: `Invalid event ID format '${eid}'. Must be alphanumeric identifier.`,
-        code: 'INVALID_CHANGE',
-      });
-      return;
+      const err: any = new Error(`Invalid event ID format '${eid}'. Must be alphanumeric identifier.`);
+      err.statusCode = 422;
+      err.code = 'INVALID_CHANGE';
+      throw err;
     }
   }
 
-  // Historical Protection: Never allow modifying historical slates (e.g. HAG-52 Week 8 or earlier)
+  // Historical Protection (HAG-52 Week 8 and prior are strictly immutable)
   if (season < 2026 || (season === 2026 && seasonType === 2 && weekNumber <= 8)) {
-    res.status(422).json({
-      error: 'HISTORICAL_SLATE_PROTECTED: Past and current Week 8 scored slates are immutable and cannot be modified.',
-      code: 'HISTORICAL_SLATE_PROTECTED',
-    });
-    return;
+    const err: any = new Error('HISTORICAL_SLATE_PROTECTED: Past and current Week 8 scored slates are immutable and cannot be modified.');
+    err.statusCode = 409;
+    err.code = 'HISTORICAL_SLATE_PROTECTED';
+    throw err;
   }
 
-  // 1. Fetch read-only full ESPN observation outside transaction for explicit scope (Section 32)
-  let observation: any;
-  try {
-    observation = await authoritativeSlateService.fetchAuthoritativeESPNScoreboard({
-      seasonYear: season,
-      seasonType,
-      weekNumber,
-    });
-  } catch (obsErr: any) {
-    res.status(422).json({
-      error: `PROVIDER_OBSERVATION_FAILED: Failed to fetch ESPN observation for season ${season} week ${weekNumber}: ${obsErr.message}`,
-      code: 'UNVERIFIED_PROVIDER_OBSERVATION',
-    });
-    return;
+  // 1. Fetch read-only full ESPN observation outside transaction
+  let observation: any = observationOverride;
+  if (!observation) {
+    try {
+      observation = await authoritativeSlateService.fetchAuthoritativeESPNScoreboard({
+        seasonYear: season,
+        seasonType,
+        weekNumber,
+      });
+    } catch (obsErr: any) {
+      const err: any = new Error(`PROVIDER_OBSERVATION_FAILED: Failed to fetch ESPN observation for season ${season} week ${weekNumber}: ${obsErr.message}`);
+      err.statusCode = 422;
+      err.code = 'UNVERIFIED_PROVIDER_OBSERVATION';
+      throw err;
+    }
   }
 
   if (observation.status === 'UNVERIFIED_SOURCE' || !Array.isArray(observation.events) || observation.events.length === 0) {
-    res.status(422).json({
-      error: `UNVERIFIED_PROVIDER_OBSERVATION: ESPN scoreboard could not be verified for Season ${season} Type ${seasonType} Week ${weekNumber}. Reasons: ${(observation.reasons || []).join('; ')}`,
-      code: 'UNVERIFIED_PROVIDER_OBSERVATION',
-    });
-    return;
+    const err: any = new Error(`UNVERIFIED_PROVIDER_OBSERVATION: ESPN scoreboard could not be verified for Season ${season} Type ${seasonType} Week ${weekNumber}. Reasons: ${(observation.reasons || []).join('; ')}`);
+    err.statusCode = 422;
+    err.code = 'UNVERIFIED_PROVIDER_OBSERVATION';
+    throw err;
   }
 
-  // Prove returned scope
   if (
     observation.seasonYear !== season ||
     observation.seasonType !== seasonType ||
     observation.weekNumber !== weekNumber
   ) {
-    res.status(422).json({
-      error: `SCOPE_MISMATCH: Provider observation returned scope (${observation.seasonYear}, ${observation.seasonType}, ${observation.weekNumber}) does not match requested scope (${season}, ${seasonType}, ${weekNumber}).`,
-      code: 'SCOPE_MISMATCH',
-    });
-    return;
+    const err: any = new Error(`SCOPE_MISMATCH: Provider observation returned scope (${observation.seasonYear}, ${observation.seasonType}, ${observation.weekNumber}) does not match requested scope (${season}, ${seasonType}, ${weekNumber}).`);
+    err.statusCode = 422;
+    err.code = 'SCOPE_MISMATCH';
+    throw err;
   }
 
-  // Require observation age <= 60 seconds at check (Section 36)
   const observationAgeMs = Date.now() - new Date(observation.observationTime).getTime();
-  if (isNaN(observationAgeMs) || observationAgeMs > 60000) {
-    res.status(422).json({
-      error: 'EXPIRED_PROVIDER_OBSERVATION: Provider observation age exceeds 60 seconds. Fresh retry required.',
-      code: 'EXPIRED_PROVIDER_OBSERVATION',
-    });
-    return;
+  if (isNaN(observationAgeMs) || observationAgeMs > 60000 || observationAgeMs < -60000) {
+    const err: any = new Error('EXPIRED_PROVIDER_OBSERVATION: Provider observation age exceeds 60 seconds. Fresh retry required.');
+    err.statusCode = 422;
+    err.code = 'EXPIRED_PROVIDER_OBSERVATION';
+    throw err;
   }
 
-  const poolId = req.pool.id;
-  const actorId = req.user!.id;
-  const db = getPrismaClient();
+  return await db.$transaction(async (tx: any) => {
+    // 2a. Mandatory row-level lock and authority re-verification
+    const { freshPool } = await acquireLockedPoolAndVerifyAuthority(tx, poolId, actorId, true);
 
-  try {
-    const result = await db.$transaction(async (tx: any) => {
-      // 2a. Mandatory row-level lock and authority re-verification
-      const { freshPool } = await acquireLockedPoolAndVerifyAuthority(tx, poolId, actorId, true);
+    // 2b. Revision check
+    const currentRevision = computePoolSettingsRevision(freshPool);
+    if (currentRevision !== envelope.expectedRevision) {
+      const err: any = new Error('STALE_REVISION: Pool settings have changed since last read.');
+      err.statusCode = 409;
+      err.code = 'STALE_REVISION';
+      throw err;
+    }
 
-      // 2b. Revision check
-      const currentRevision = computePoolSettingsRevision(freshPool);
-      if (currentRevision !== envelope.expectedRevision) {
-        const err: any = new Error('STALE_REVISION: Pool settings have changed since last read.');
-        err.statusCode = 409;
-        err.code = 'STALE_REVISION';
-        throw err;
-      }
+    // 2c. Accepted manifest verification
+    const manifest = await authoritativeSlateService.getAcceptedSlateManifest(tx, season, seasonType, weekNumber);
+    if (!manifest || !Array.isArray(manifest.eventIds) || manifest.eventIds.length === 0) {
+      const err: any = new Error(`Accepted weekly slate manifest not found for Season ${season} Type ${seasonType} Week ${weekNumber}.`);
+      err.statusCode = 422;
+      err.code = 'UNACCEPTED_MANIFEST';
+      throw err;
+    }
 
-      // 2c. Accepted manifest verification (exact-scope manifest subset & fingerprint match, Section 34)
-      const manifest = await authoritativeSlateService.getAcceptedSlateManifest(tx, season, seasonType, weekNumber);
-      if (!manifest || !Array.isArray(manifest.eventIds) || manifest.eventIds.length === 0) {
-        const err: any = new Error(`Accepted weekly slate manifest not found for Season ${season} Type ${seasonType} Week ${weekNumber}.`);
+    const recomputedFingerprint = authoritativeSlateService.computeManifestFingerprint(
+      season,
+      seasonType,
+      weekNumber,
+      observation.events
+    );
+    if (recomputedFingerprint !== manifest.manifestFingerprint) {
+      const err: any = new Error('MANIFEST_FINGERPRINT_MISMATCH: Provider observation fingerprint does not match locked accepted manifest fingerprint.');
+      err.statusCode = 422;
+      err.code = 'MANIFEST_FINGERPRINT_MISMATCH';
+      throw err;
+    }
+
+    const manifestEventSet = new Set(manifest.eventIds.map(String));
+    const obsEventSet = new Set(observation.events.map((e: any) => String(e.externalGameId)));
+    if (manifestEventSet.size !== obsEventSet.size || manifest.eventIds.some((id: string) => !obsEventSet.has(String(id)))) {
+      const err: any = new Error('MANIFEST_EVENTS_MISMATCH: Observation events do not match accepted manifest events.');
+      err.statusCode = 422;
+      err.code = 'MANIFEST_EVENTS_MISMATCH';
+      throw err;
+    }
+
+    for (const eid of eventIds) {
+      if (!manifestEventSet.has(eid)) {
+        const err: any = new Error(`Event ID '${eid}' is not part of the accepted manifest for Season ${season} Week ${weekNumber}.`);
         err.statusCode = 422;
-        err.code = 'UNACCEPTED_MANIFEST';
+        err.code = 'INVALID_SLATE_SELECTION';
         throw err;
       }
+    }
 
-      // Recompute full observation fingerprint with existing algorithm and require equality (Section 34)
-      const recomputedFingerprint = authoritativeSlateService.computeManifestFingerprint(
-        season,
-        seasonType,
-        weekNumber,
-        observation.events
-      );
-      if (recomputedFingerprint !== manifest.manifestFingerprint) {
-        const err: any = new Error('MANIFEST_FINGERPRINT_MISMATCH: Provider observation fingerprint does not match locked accepted manifest fingerprint.');
-        err.statusCode = 422;
-        err.code = 'MANIFEST_FINGERPRINT_MISMATCH';
-        throw err;
-      }
+    // 2d. Freeze check: Settings participation freeze evidence
+    const existingSettings = (freshPool.settings as any) || {};
+    const storedFreeze = existingSettings?.owner_admin_v1?.freezes?.[season]?.[seasonType]?.[weekNumber];
+    if (storedFreeze) {
+      const err: any = new Error('SLATE_FROZEN: Participation freeze evidence already recorded for this week. Slate mutation denied.');
+      err.statusCode = 409;
+      err.code = 'SLATE_FROZEN';
+      throw err;
+    }
 
-      // Exact accepted event-ID set equality between observation and accepted manifest
-      const manifestEventSet = new Set(manifest.eventIds.map(String));
-      const obsEventSet = new Set(observation.events.map((e: any) => String(e.externalGameId)));
-      if (manifestEventSet.size !== obsEventSet.size || manifest.eventIds.some((id: string) => !obsEventSet.has(String(id)))) {
-        const err: any = new Error('MANIFEST_EVENTS_MISMATCH: Observation events do not match accepted manifest events.');
-        err.statusCode = 422;
-        err.code = 'MANIFEST_EVENTS_MISMATCH';
-        throw err;
-      }
+    const storedDesignation = existingSettings?.owner_admin_v1?.designation?.[season]?.[weekNumber];
+    if (storedDesignation?.frozenAt) {
+      const err: any = new Error('SLATE_FROZEN: Tiebreaker designation is frozen for this week. Slate mutation denied.');
+      err.statusCode = 409;
+      err.code = 'SLATE_FROZEN';
+      throw err;
+    }
 
-      // Selected slate must be a unique nonempty subset
-      for (const eid of eventIds) {
-        if (!manifestEventSet.has(eid)) {
-          const err: any = new Error(`Event ID '${eid}' is not part of the accepted manifest for Season ${season} Week ${weekNumber}.`);
-          err.statusCode = 422;
-          err.code = 'INVALID_SLATE_SELECTION';
-          throw err;
-        }
-      }
+    // Freeze check: Weekly submissions
+    const existingSubmissions = await tx.weeklySubmission.count({
+      where: { poolId, weekNumber },
+    });
+    if (existingSubmissions > 0) {
+      const err: any = new Error(`SLATE_FROZEN: Weekly submissions or predictions already exist for week ${weekNumber}. Slate mutation denied.`);
+      err.statusCode = 409;
+      err.code = 'SLATE_FROZEN';
+      throw err;
+    }
 
-      // 2d. Freeze check: Settings participation freeze evidence (Section 42 & 44)
-      const existingSettings = (freshPool.settings as any) || {};
-      const storedFreeze = existingSettings?.owner_admin_v1?.freezes?.[season]?.[seasonType]?.[weekNumber];
-      if (storedFreeze) {
-        const err: any = new Error('SLATE_FROZEN: Participation freeze evidence already recorded for this week. Slate mutation denied.');
-        err.statusCode = 409;
-        err.code = 'SLATE_FROZEN';
-        throw err;
-      }
-
-      // Freeze check: Designated game frozenAt (Section 42 & 44)
-      const storedDesignation = existingSettings?.owner_admin_v1?.designation?.[season]?.[weekNumber];
-      if (storedDesignation?.frozenAt) {
-        const err: any = new Error('SLATE_FROZEN: Tiebreaker designation is frozen for this week. Slate mutation denied.');
-        err.statusCode = 409;
-        err.code = 'SLATE_FROZEN';
-        throw err;
-      }
-
-      // Freeze check: Submissions / Predictions (Section 46: season collision denial)
-      const existingSubmissions = await tx.weeklySubmission.count({
-        where: { poolId, weekNumber },
+    // Freeze check: Settled penalty ledger records (Finding 3)
+    if (typeof tx.penaltyLedger?.count === 'function') {
+      const ledgerCount = await tx.penaltyLedger.count({
+        where: { poolId, week: weekNumber },
       });
-      if (existingSubmissions > 0) {
-        const err: any = new Error(`SLATE_FROZEN: Weekly submissions or predictions already exist for week ${weekNumber}. Slate mutation denied.`);
+      if (ledgerCount > 0) {
+        const err: any = new Error(`SLATE_FROZEN: Settlement penalty ledger records already exist for week ${weekNumber}. Slate mutation denied.`);
         err.statusCode = 409;
         err.code = 'SLATE_FROZEN';
         throw err;
       }
+    }
 
-      // 2e. Union of prior effective slate and proposed slate (Section 38)
-      const existingSlateEntry = existingSettings?.owner_admin_v1?.slates?.[season]?.[seasonType]?.[weekNumber];
-      const priorEventIds: string[] = Array.isArray(existingSlateEntry?.eventIds) && existingSlateEntry.eventIds.length > 0
-        ? existingSlateEntry.eventIds.map(String)
-        : manifest.eventIds.map(String); // Prior default policy: all accepted events!
-      const unionEventIds = Array.from(new Set([...priorEventIds, ...eventIds]));
+    // 2e. Union of prior effective slate and proposed slate
+    const existingSlateEntry = existingSettings?.owner_admin_v1?.slates?.[season]?.[seasonType]?.[weekNumber];
+    const priorEventIds: string[] = Array.isArray(existingSlateEntry?.eventIds) && existingSlateEntry.eventIds.length > 0
+      ? existingSlateEntry.eventIds.map(String)
+      : manifest.eventIds.map(String);
+    const unionEventIds = Array.from(new Set([...priorEventIds, ...eventIds]));
 
-      // Freeze check: Any pick row (including null selection) across union denies slate mutation (Section 44)
-      if (typeof tx.pick?.count === 'function') {
-        const pickCount = await tx.pick.count({
-          where: {
+    // 2f. Finding (1) Resolution: Canonical Game query & Alias resolution without swallowing errors
+    let canonicalGamesInUnion: any[] = [];
+    if (typeof tx.game?.findMany === 'function') {
+      canonicalGamesInUnion = await tx.game.findMany({
+        where: {
+          OR: [
+            { externalGameId: { in: unionEventIds } },
+            { id: { in: unionEventIds } },
+          ],
+        },
+        select: {
+          id: true,
+          externalGameId: true,
+          homeTeamId: true,
+          awayTeamId: true,
+          kickoffTime: true,
+          status: true,
+        },
+      });
+    }
+
+    const candidateGameIds = Array.from(new Set([
+      ...unionEventIds,
+      ...canonicalGamesInUnion.map((g: any) => String(g.id)),
+    ]));
+
+    // Freeze check: Any pick row across union (including null picks) (Finding 1)
+    if (typeof tx.pick?.count === 'function') {
+      const pickCount = await tx.pick.count({
+        where: {
+          poolId,
+          OR: [
+            { gameId: { in: candidateGameIds } },
+            { game: { externalGameId: { in: unionEventIds } } },
+          ],
+        },
+      });
+      if (pickCount > 0) {
+        const err: any = new Error(`SLATE_FROZEN: Picks already exist for week ${weekNumber} or games in slate union. Slate mutation denied.`);
+        err.statusCode = 409;
+        err.code = 'SLATE_FROZEN';
+        throw err;
+      }
+    }
+
+    // Freeze check: Settled pick results (Finding 3)
+    if (typeof tx.pickResult?.count === 'function') {
+      const prCount = await tx.pickResult.count({
+        where: {
+          pick: {
             poolId,
             OR: [
-              { week: weekNumber },
+              { gameId: { in: candidateGameIds } },
               { game: { externalGameId: { in: unionEventIds } } },
-              { gameId: { in: unionEventIds } },
             ],
           },
-        }).catch(() => 0);
-        if (pickCount > 0) {
-          const err: any = new Error(`SLATE_FROZEN: Picks already exist for week ${weekNumber} or games in slate union. Slate mutation denied.`);
-          err.statusCode = 409;
-          err.code = 'SLATE_FROZEN';
-          throw err;
-        }
+        },
+      });
+      if (prCount > 0) {
+        const err: any = new Error(`SLATE_FROZEN: Settled pick results already exist for games in slate union. Slate mutation denied.`);
+        err.statusCode = 409;
+        err.code = 'SLATE_FROZEN';
+        throw err;
       }
+    }
 
-      // 2f. Earliest effective lock deadline check across UNION of prior effective slate and proposed slate (Section 38)
-      // The validated matching observation supplies kickoff even if no Game rows exist! (Section 36)
-      const obsEventsByExtId = new Map<string, any>();
-      for (const ev of observation.events) {
-        obsEventsByExtId.set(String(ev.externalGameId), ev);
+    // 2g. Finding (2) Resolution: Kickoff-confirmed evidence and canonical Game agreement
+    const obsEventsByExtId = new Map<string, any>();
+    for (const ev of observation.events) {
+      obsEventsByExtId.set(String(ev.externalGameId), ev);
+    }
+
+    let earliestKickoffMs = Infinity;
+    for (const ueid of unionEventIds) {
+      const obsEvent = obsEventsByExtId.get(ueid);
+      if (!obsEvent || !obsEvent.kickoffTime) {
+        const err: any = new Error(`Missing kickoff evidence for event '${ueid}' in slate union.`);
+        err.statusCode = 422;
+        err.code = 'MISSING_KICKOFF_EVIDENCE';
+        throw err;
       }
-
-      let earliestKickoffMs = Infinity;
-      for (const ueid of unionEventIds) {
-        const obsEvent = obsEventsByExtId.get(ueid);
-        if (!obsEvent || !obsEvent.kickoffTime) {
-          const err: any = new Error(`Missing kickoff evidence for event '${ueid}' in slate union.`);
-          err.statusCode = 422;
-          err.code = 'MISSING_KICKOFF_EVIDENCE';
-          throw err;
-        }
-        const kTime = new Date(obsEvent.kickoffTime).getTime();
-        if (isNaN(kTime)) {
-          const err: any = new Error(`Unparseable kickoff timestamp for event '${ueid}' in slate union.`);
-          err.statusCode = 422;
-          err.code = 'INVALID_KICKOFF_METADATA';
-          throw err;
-        }
-        if (kTime < earliestKickoffMs) {
-          earliestKickoffMs = kTime;
-        }
+      if (obsEvent.isKickoffConfirmed !== true) {
+        const err: any = new Error(`UNCONFIRMED_KICKOFF: Event '${ueid}' in slate union lacks confirmed kickoff time.`);
+        err.statusCode = 422;
+        err.code = 'UNCONFIRMED_KICKOFF';
+        throw err;
       }
-
-      // Also check canonical rows in public.games if present, requiring agreement (Section 36)
-      if (typeof tx.game?.findMany === 'function') {
-        const existingGameRows = await tx.game.findMany({
-          where: { externalGameId: { in: unionEventIds } },
-          select: { externalGameId: true, kickoffTime: true, status: true },
-        }).catch(() => []);
-        for (const gRow of existingGameRows) {
-          if (gRow.status === 'FINAL' || gRow.status === 'IN_PROGRESS') {
-            const err: any = new Error(`KICKOFF_PASSED: Game '${gRow.externalGameId}' in slate union is already ${gRow.status}. Slate mutation denied.`);
-            err.statusCode = 422;
-            err.code = 'KICKOFF_PASSED';
-            throw err;
-          }
-          if (gRow.kickoffTime) {
-            const gTime = new Date(gRow.kickoffTime).getTime();
-            if (!isNaN(gTime) && gTime < earliestKickoffMs) {
-              earliestKickoffMs = gTime;
-            }
-          }
-        }
+      const kTime = new Date(obsEvent.kickoffTime).getTime();
+      if (isNaN(kTime)) {
+        const err: any = new Error(`Unparseable kickoff timestamp for event '${ueid}' in slate union.`);
+        err.statusCode = 422;
+        err.code = 'INVALID_KICKOFF_METADATA';
+        throw err;
       }
+      if (kTime < earliestKickoffMs) {
+        earliestKickoffMs = kTime;
+      }
+    }
 
-      const lockOffsetMinutes = Number(existingSettings.lock_offset ?? existingSettings.lockOffset ?? 0);
-      const earliestDeadlineMs = earliestKickoffMs - (lockOffsetMinutes * 60 * 1000);
-
-      // Compare database clock time at the final guarded write check (Section 38)
-      let dbNowMs = Date.now();
-      try {
-        const [clockRow] = await tx.$queryRawUnsafe('SELECT NOW() as now;');
-        if (clockRow?.now) {
-          dbNowMs = new Date(clockRow.now).getTime();
-        }
-      } catch (_) {}
-
-      if (dbNowMs >= earliestDeadlineMs) {
-        const err: any = new Error('KICKOFF_PASSED: Earliest lock deadline across slate union has passed. Slate mutation denied.');
+    // Verify canonical Game rows agreement (Finding 2)
+    for (const gRow of canonicalGamesInUnion) {
+      if (gRow.status === 'FINAL' || gRow.status === 'IN_PROGRESS') {
+        const err: any = new Error(`KICKOFF_PASSED: Game '${gRow.externalGameId || gRow.id}' in slate union is already ${gRow.status}. Slate mutation denied.`);
         err.statusCode = 422;
         err.code = 'KICKOFF_PASSED';
         throw err;
       }
-
-      // Require observation age <= 60 seconds at final write check (Section 36)
-      const finalObsAgeMs = Date.now() - new Date(observation.observationTime).getTime();
-      if (finalObsAgeMs > 60000) {
-        const err: any = new Error('EXPIRED_PROVIDER_OBSERVATION: Observation expired during lock acquisition. Fresh retry required.');
-        err.statusCode = 422;
-        err.code = 'EXPIRED_PROVIDER_OBSERVATION';
-        throw err;
+      const matchingObs = obsEventsByExtId.get(String(gRow.externalGameId));
+      if (matchingObs) {
+        if (
+          (gRow.homeTeamId && matchingObs.homeTeamId && gRow.homeTeamId !== matchingObs.homeTeamId) ||
+          (gRow.awayTeamId && matchingObs.awayTeamId && gRow.awayTeamId !== matchingObs.awayTeamId)
+        ) {
+          const err: any = new Error(`CANONICAL_GAME_MISMATCH: Team identity mismatch for game '${gRow.externalGameId}' between canonical database row and provider observation.`);
+          err.statusCode = 422;
+          err.code = 'CANONICAL_GAME_MISMATCH';
+          throw err;
+        }
+        if (gRow.kickoffTime && matchingObs.kickoffTime) {
+          const gTime = new Date(gRow.kickoffTime).getTime();
+          const oTime = new Date(matchingObs.kickoffTime).getTime();
+          if (!isNaN(gTime) && !isNaN(oTime) && Math.abs(gTime - oTime) > 60000) {
+            const err: any = new Error(`CANONICAL_GAME_MISMATCH: Kickoff timestamp mismatch for game '${gRow.externalGameId}' between canonical database row and provider observation.`);
+            err.statusCode = 422;
+            err.code = 'CANONICAL_GAME_MISMATCH';
+            throw err;
+          }
+          if (!isNaN(gTime) && gTime < earliestKickoffMs) {
+            earliestKickoffMs = gTime;
+          }
+        }
       }
+    }
 
-      // 2g. Store chosen events' evidence snapshot, fingerprint, observation time, and revision in settings (Section 36)
-      const chosenEventSnapshots = eventIds.map((eid: string) => {
-        const ev = obsEventsByExtId.get(eid);
-        return {
-          id: eid,
-          homeTeamId: ev?.homeTeamId,
-          awayTeamId: ev?.awayTeamId,
-          kickoffTime: ev?.kickoffTime,
-          isKickoffConfirmed: ev?.isKickoffConfirmed !== false,
-        };
-      });
+    // Retain prior earlier deadlines: if existingSlateEntry had earlier kickoffs in snapshot, retain minimum
+    if (Array.isArray(existingSlateEntry?.evidenceSnapshot)) {
+      for (const snap of existingSlateEntry.evidenceSnapshot) {
+        if (snap?.kickoffTime) {
+          const snapTime = new Date(snap.kickoffTime).getTime();
+          if (!isNaN(snapTime) && snapTime < earliestKickoffMs) {
+            earliestKickoffMs = snapTime;
+          }
+        }
+      }
+    }
 
-      const nowIso = new Date().toISOString();
-      const updatedSettings = {
-        ...existingSettings,
-        owner_admin_v1: {
-          ...(existingSettings.owner_admin_v1 || {}),
-          slates: {
-            ...(existingSettings.owner_admin_v1?.slates || {}),
-            [season]: {
-              ...(existingSettings.owner_admin_v1?.slates?.[season] || {}),
-              [seasonType]: {
-                ...(existingSettings.owner_admin_v1?.slates?.[season]?.[seasonType] || {}),
-                [weekNumber]: {
-                  eventIds,
-                  fingerprint: observation.manifestFingerprint,
-                  observationTime: observation.observationTime,
-                  evidenceSnapshot: chosenEventSnapshots,
-                  version: (existingSlateEntry?.version || 0) + 1,
-                  updatedAt: nowIso,
-                  updatedBy: actorId,
-                  reason: envelope.reason || 'OWNER_ADMIN_UPDATE_SLATE',
-                },
+    // Require valid numeric lock_offset metadata (Finding 2 - no default to 0)
+    const rawOffset = existingSettings.lock_offset !== undefined ? existingSettings.lock_offset : existingSettings.lockOffset;
+    if (
+      rawOffset === undefined ||
+      rawOffset === null ||
+      typeof rawOffset !== 'number' ||
+      !Number.isFinite(rawOffset) ||
+      isNaN(rawOffset) ||
+      rawOffset < 0
+    ) {
+      const err: any = new Error('UNVERIFIED_KICKOFF: Pool settings lack valid numeric lock_offset metadata.');
+      err.statusCode = 422;
+      err.code = 'INVALID_LOCK_OFFSET';
+      throw err;
+    }
+    const lockOffsetMinutes = rawOffset;
+    const earliestDeadlineMs = earliestKickoffMs - (lockOffsetMinutes * 60 * 1000);
+
+    // Finding (2) Resolution: Strict Authoritative DB Clock check (no fallback to Date.now())
+    const clockRows = await tx.$queryRawUnsafe('SELECT NOW() as now;');
+    if (!clockRows || !clockRows[0]?.now) {
+      const err: any = new Error('DATABASE_CLOCK_UNAVAILABLE: Authoritative database clock query failed under lock.');
+      err.statusCode = 500;
+      err.code = 'DATABASE_CLOCK_UNAVAILABLE';
+      throw err;
+    }
+    const dbNowMs = new Date(clockRows[0].now).getTime();
+    if (isNaN(dbNowMs)) {
+      const err: any = new Error('DATABASE_CLOCK_INVALID: Authoritative database clock returned unparseable timestamp.');
+      err.statusCode = 500;
+      err.code = 'DATABASE_CLOCK_INVALID';
+      throw err;
+    }
+
+    if (dbNowMs >= earliestDeadlineMs) {
+      const err: any = new Error('KICKOFF_PASSED: Earliest lock deadline across slate union has passed. Slate mutation denied.');
+      err.statusCode = 422;
+      err.code = 'KICKOFF_PASSED';
+      throw err;
+    }
+
+    // Observation age check against DB clock at write point (Finding 2)
+    const finalObsAgeMs = dbNowMs - new Date(observation.observationTime).getTime();
+    if (finalObsAgeMs > 60000 || finalObsAgeMs < -60000) {
+      const err: any = new Error('EXPIRED_PROVIDER_OBSERVATION: Observation expired during lock acquisition. Fresh retry required.');
+      err.statusCode = 422;
+      err.code = 'EXPIRED_PROVIDER_OBSERVATION';
+      throw err;
+    }
+
+    // 2h. Evidence snapshot & Settings update
+    const chosenEventSnapshots = eventIds.map((eid: string) => {
+      const ev = obsEventsByExtId.get(eid);
+      return {
+        id: eid,
+        homeTeamId: ev?.homeTeamId,
+        awayTeamId: ev?.awayTeamId,
+        kickoffTime: ev?.kickoffTime,
+        isKickoffConfirmed: ev?.isKickoffConfirmed === true,
+      };
+    });
+
+    const nowIso = new Date(dbNowMs).toISOString();
+    const updatedSettings = {
+      ...existingSettings,
+      owner_admin_v1: {
+        ...(existingSettings.owner_admin_v1 || {}),
+        slates: {
+          ...(existingSettings.owner_admin_v1?.slates || {}),
+          [season]: {
+            ...(existingSettings.owner_admin_v1?.slates?.[season] || {}),
+            [seasonType]: {
+              ...(existingSettings.owner_admin_v1?.slates?.[season]?.[seasonType] || {}),
+              [weekNumber]: {
+                eventIds,
+                fingerprint: observation.manifestFingerprint,
+                observationTime: observation.observationTime,
+                evidenceSnapshot: chosenEventSnapshots,
+                version: (existingSlateEntry?.version || 0) + 1,
+                updatedAt: nowIso,
+                updatedBy: actorId,
+                reason: envelope.reason || 'OWNER_ADMIN_UPDATE_SLATE',
               },
             },
           },
         },
-      };
+      },
+    };
 
-      const updatedPool = await tx.pool.update({
-        where: { id: poolId },
-        data: { settings: updatedSettings },
-        select: { id: true, name: true, settings: true },
-      });
-
-      // 2h. Mandatory AuditLog within same transaction (Section 26 & 36)
-      await recordMandatoryAuditLog(tx, {
-        actorId,
-        action: 'OWNER_ADMIN_UPDATE_SLATE',
-        targetEntityId: poolId,
-        oldValue: {
-          season,
-          seasonType,
-          weekNumber,
-          eventIds: priorEventIds,
-          reason: envelope.reason,
-        },
-        newValue: {
-          season,
-          seasonType,
-          weekNumber,
-          eventIds,
-          manifestFingerprint: observation.manifestFingerprint,
-          reason: envelope.reason,
-        },
-      });
-
-      // Post-awaited-write deadline recheck before transaction return (Section 38)
-      let postWriteDbNowMs = Date.now();
-      try {
-        const [postClockRow] = await tx.$queryRawUnsafe('SELECT NOW() as now;');
-        if (postClockRow?.now) {
-          postWriteDbNowMs = new Date(postClockRow.now).getTime();
-        }
-      } catch (_) {}
-
-      if (postWriteDbNowMs >= earliestDeadlineMs) {
-        const err: any = new Error('KICKOFF_PASSED: Kickoff deadline passed during write transaction.');
-        err.statusCode = 422;
-        err.code = 'KICKOFF_PASSED';
-        throw err;
-      }
-
-      const newRevision = computePoolSettingsRevision(updatedPool);
-      return {
-        slate: updatedSettings.owner_admin_v1.slates[season][seasonType][weekNumber],
-        newRevision,
-      };
+    const updatedPool = await tx.pool.update({
+      where: { id: poolId },
+      data: { settings: updatedSettings },
+      select: { id: true, name: true, settings: true },
     });
 
-    res.status(200).json({
-      success: true,
-      slate: result.slate,
-      revision: result.newRevision,
+    // 2i. Mandatory AuditLog within same transaction
+    await recordMandatoryAuditLog(tx, {
+      actorId,
+      action: 'OWNER_ADMIN_UPDATE_SLATE',
+      targetEntityId: poolId,
+      oldValue: {
+        season,
+        seasonType,
+        weekNumber,
+        eventIds: priorEventIds,
+        reason: envelope.reason,
+      },
+      newValue: {
+        season,
+        seasonType,
+        weekNumber,
+        eventIds,
+        manifestFingerprint: observation.manifestFingerprint,
+        reason: envelope.reason,
+      },
     });
-  } catch (err: any) {
-    const statusCode = err.statusCode || 500;
-    res.status(statusCode).json({ error: err.message, code: err.code || 'SLATE_UPDATE_FAILED' });
-  }
-});
+
+    const newRevision = computePoolSettingsRevision(updatedPool);
+    return {
+      slate: updatedSettings.owner_admin_v1.slates[season][seasonType][weekNumber],
+      revision: newRevision,
+    };
+  });
+}
 
 // ============================================================================
 // 4. SIMULATION ENDPOINT: /api/pools/:pool_id/owner/simulations/preview
