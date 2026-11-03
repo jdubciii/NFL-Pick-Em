@@ -440,6 +440,91 @@ export async function executeSerializedPickMutation(
 
   const actorId = params.submittedById || userId;
 
+  // 1b. Shared Pool Gate: Lock pool row with FOR UPDATE before authoritative reads or writes (HAG58-SLATE-2026-11-03-01)
+  let lockedPoolRecord: any = null;
+  if (executor?.pool && typeof executor.pool.findUnique === 'function') {
+    if (typeof executor.$queryRawUnsafe === 'function') {
+      await executor.$queryRawUnsafe(
+        `SELECT id, status FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
+        poolId
+      );
+    }
+
+    lockedPoolRecord = await executor.pool.findUnique({
+      where: { id: poolId },
+      select: { id: true, status: true, settings: true },
+    });
+
+    if (!lockedPoolRecord) {
+      const lockErr = new Error('UNVERIFIED_KICKOFF: Pool not found under advisory lock. Zero writes.');
+      (lockErr as any).code = 'UNVERIFIED_KICKOFF';
+      (lockErr as any).statusCode = 403;
+      (lockErr as any).status = 403;
+      throw lockErr;
+    }
+
+    if (lockedPoolRecord.status !== 'ACTIVE') {
+      const lockErr = new Error('POOL_INACTIVE: Cannot make picks in an inactive pool.');
+      (lockErr as any).code = 'POOL_INACTIVE';
+      (lockErr as any).statusCode = 403;
+      (lockErr as any).status = 403;
+      throw lockErr;
+    }
+
+    // Authoritative custom slate check under pool row lock:
+    // If pool has an explicit custom slate configured, the picked game MUST be in that custom slate!
+    const poolSettings = (lockedPoolRecord.settings as any) || {};
+    const configuredSlate = poolSettings?.owner_admin_v1?.slates?.[2026]?.[2]?.[effectiveWeek];
+    if (configuredSlate && Array.isArray(configuredSlate.eventIds) && configuredSlate.eventIds.length > 0) {
+      const allowedSet = new Set(configuredSlate.eventIds.map(String));
+      const gameExtId = preLockGame?.externalGameId || params.externalGameId;
+      const isAllowed = allowedSet.has(String(canonicalGameId)) || (gameExtId && allowedSet.has(String(gameExtId)));
+      if (!isAllowed) {
+        const slateErr = new Error(`GAME_NOT_IN_SLATE: Matchup ${canonicalGameId} is not part of the active pool slate for week ${effectiveWeek}. Zero writes.`);
+        (slateErr as any).code = 'GAME_NOT_IN_SLATE';
+        (slateErr as any).statusCode = 422;
+        (slateErr as any).status = 422;
+        throw slateErr;
+      }
+    }
+
+    // Irreversible participation freeze record in settings:
+    // On the first successful persisted pick row (including null selection), record freeze evidence
+    const currentFreezes = poolSettings?.owner_admin_v1?.freezes || {};
+    const seasonFreezes = currentFreezes[2026] || {};
+    const typeFreezes = seasonFreezes[2] || {};
+    if (!typeFreezes[effectiveWeek]) {
+      const nowIso = new Date().toISOString();
+      const updatedSettings = {
+        ...poolSettings,
+        owner_admin_v1: {
+          ...(poolSettings.owner_admin_v1 || {}),
+          freezes: {
+            ...currentFreezes,
+            [2026]: {
+              ...seasonFreezes,
+              [2]: {
+                ...typeFreezes,
+                [effectiveWeek]: {
+                  frozenAt: nowIso,
+                  reason: 'FIRST_PICK_SUBMITTED',
+                  actorId: actorId,
+                  effectiveSlateEventIds: configuredSlate?.eventIds || null,
+                  version: 1,
+                },
+              },
+            },
+          },
+        },
+      };
+      await executor.pool.update({
+        where: { id: poolId },
+        data: { settings: updatedSettings },
+      });
+      lockedPoolRecord.settings = updatedSettings;
+    }
+  }
+
   // 2. Acquire transaction advisory lock on canonical game key (BOTH UUID and alias contenders serialize here)
   await executor.$queryRawUnsafe(
     `SELECT pg_advisory_xact_lock(hashtext($1))`,

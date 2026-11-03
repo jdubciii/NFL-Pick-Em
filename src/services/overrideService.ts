@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import prisma from '../db/client';
+import { executeSerializedPickMutation } from '../routes/picks';
 
 export type OverrideType = 'PICK' | 'PENALTY' | 'SCORE_ADJUSTMENT' | 'CUSTOM';
 export type ClockFn = () => Date;
@@ -232,25 +233,13 @@ export async function executeProposal(
           throw new Error('userId and gameId are required for PICK override');
         }
 
-        result = await tx.pick.upsert({
-          where: {
-            poolId_userId_gameId: {
-              poolId,
-              userId,
-              gameId,
-            },
-          },
-          update: {
-            selectedTeamId,
-            submittedById: commissionerUserId,
-          },
-          create: {
-            poolId,
-            userId,
-            gameId,
-            selectedTeamId,
-            submittedById: commissionerUserId,
-          },
+        result = await executeSerializedPickMutation(tx, {
+          poolId,
+          userId,
+          gameId,
+          selectedTeamId,
+          submittedById: commissionerUserId,
+          validateParticipants: true,
         });
       } else if (type === 'PENALTY' || type === 'SCORE_ADJUSTMENT') {
         const userId = data.userId || targetEntityId;
@@ -390,25 +379,13 @@ export async function applyOverride(
           where: { id: gameId },
         });
 
-        result = await tx.pick.upsert({
-          where: {
-            poolId_userId_gameId: {
-              poolId,
-              userId,
-              gameId,
-            },
-          },
-          update: {
-            selectedTeamId,
-            submittedById: commissionerId,
-          },
-          create: {
-            poolId,
-            userId,
-            gameId,
-            selectedTeamId,
-            submittedById: commissionerId,
-          },
+        result = await executeSerializedPickMutation(tx, {
+          poolId,
+          userId,
+          gameId,
+          selectedTeamId,
+          submittedById: commissionerId,
+          validateParticipants: true,
         });
 
         // Re-grade finalized game if applicable

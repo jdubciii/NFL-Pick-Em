@@ -106,6 +106,108 @@ ownerAdminRouter.get('/:pool_id/presentation-flags', requireAuth, requirePoolMem
 });
 
 // ============================================================================
+// 1b. MEMBER READ-ONLY PROJECTION: /api/pools/:pool_id/scoped-slate
+// ACTIVE-member guarded scoped slate projection (HAG58-SLATE-2026-11-03-01)
+// Strictly read-only; returns VALID_CONFIG, VERIFIED_NO_CUSTOM_CONFIG, or UNAVAILABLE
+// ============================================================================
+ownerAdminRouter.get('/:pool_id/scoped-slate', requireAuth, requirePoolMember, async (req: Request, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'private, no-cache, no-store');
+  const pool = req.pool;
+  const poolId = pool.id;
+
+  const rawSeason = req.query.season;
+  const rawSeasonType = req.query.seasonType;
+  const rawWeekNumber = req.query.weekNumber;
+
+  const season = rawSeason !== undefined ? Number(rawSeason) : 2026;
+  const seasonType = rawSeasonType !== undefined ? Number(rawSeasonType) : 2;
+  const weekNumber = rawWeekNumber !== undefined ? Number(rawWeekNumber) : null;
+
+  if (weekNumber == null || !Number.isInteger(weekNumber) || weekNumber < 1 || weekNumber > 18) {
+    res.status(400).json({ error: 'INVALID_SCOPE: weekNumber must be an integer between 1 and 18.' });
+    return;
+  }
+
+  // 1. Unshadowable HAG-52 historical scope check (Section 42 & 54)
+  if (
+    poolId === '9b893bef-3b5a-4ffa-951d-8ba27f9c9782' &&
+    season === 2026 &&
+    seasonType === 2 &&
+    weekNumber === 8
+  ) {
+    res.status(200).json({
+      status: 'VALID_CONFIG',
+      scope: { poolId, season, seasonType, weekNumber },
+      eventIds: [
+        '401873023', '401873024', '401873025', '401873026', '401873027',
+        '401873028', '401873029', '401873030', '401873031',
+      ],
+      version: 1,
+      revision: 'hag52-historical-week8',
+      isFrozen: true,
+      frozenAt: '2026-11-02T02:49:00.000Z',
+      description: 'Week 8 commissioner-confirmed 9-game pool slate (HAG-52)',
+    });
+    return;
+  }
+
+  const settings = (pool.settings as any) || {};
+  const customSlate = settings?.owner_admin_v1?.slates?.[season]?.[seasonType]?.[weekNumber];
+  const freezeRecord = settings?.owner_admin_v1?.freezes?.[season]?.[seasonType]?.[weekNumber];
+
+  if (customSlate) {
+    // Validate customSlate integrity:
+    // eventIds must be array of strings, non-empty, <= 32, distinct, valid IDs
+    if (
+      !Array.isArray(customSlate.eventIds) ||
+      customSlate.eventIds.length === 0 ||
+      customSlate.eventIds.length > 32
+    ) {
+      res.status(200).json({
+        status: 'UNAVAILABLE',
+        error: 'MALFORMED_CONFIG',
+        details: 'Custom slate eventIds must be a non-empty array with at most 32 events.',
+      });
+      return;
+    }
+
+    const eventIds = customSlate.eventIds.map((id: any) => String(id).trim());
+    const validIdRegex = /^[0-9a-zA-Z_-]{1,64}$/;
+    const allValid = eventIds.every((id: string) => id.length > 0 && validIdRegex.test(id));
+    const uniqueIds = new Set(eventIds);
+
+    if (!allValid || uniqueIds.size !== eventIds.length) {
+      res.status(200).json({
+        status: 'UNAVAILABLE',
+        error: 'MALFORMED_CONFIG',
+        details: 'Custom slate contains invalid or duplicate event IDs.',
+      });
+      return;
+    }
+
+    const revision = computePoolSettingsRevision(pool);
+    res.status(200).json({
+      status: 'VALID_CONFIG',
+      scope: { poolId, season, seasonType, weekNumber },
+      eventIds,
+      version: customSlate.version || 1,
+      revision,
+      isFrozen: Boolean(freezeRecord),
+      frozenAt: freezeRecord?.frozenAt || null,
+      description: `Custom pool slate for ${season} W${weekNumber}`,
+    });
+    return;
+  }
+
+  // No custom slate configured -> established default policy (Section 54)
+  res.status(200).json({
+    status: 'VERIFIED_NO_CUSTOM_CONFIG',
+    scope: { poolId, season, seasonType, weekNumber },
+    defaultPolicy: 'FULL_MANIFEST',
+  });
+});
+
+// ============================================================================
 // 2. OWNER PROJECTIONS: /api/pools/:pool_id/owner/*
 // Strictly read-only; zero database mutations on GET.
 // ============================================================================

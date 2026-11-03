@@ -129,7 +129,18 @@ export async function getGamesForWeek(
 
   // Scored-slate resolver integration: resolve custom pool slate if poolId is provided
   let customSlateEventIds: string[] | null = null;
-  if (poolId && typeof dbClient.pool?.findUnique === 'function') {
+  // Unshadowable HAG-52 historical scope check (Section 42 & 54): settings cannot shadow Week 8
+  if (
+    poolId === '9b893bef-3b5a-4ffa-951d-8ba27f9c9782' &&
+    season === 2026 &&
+    seasonType === 2 &&
+    weekNumber === 8
+  ) {
+    customSlateEventIds = [
+      '401873023', '401873024', '401873025', '401873026', '401873027',
+      '401873028', '401873029', '401873030', '401873031',
+    ];
+  } else if (poolId && typeof dbClient.pool?.findUnique === 'function') {
     // Finding 4: If pool settings lookup fails, FAIL CLOSED — do NOT silently fall back to full manifest!
     const poolRecord = await dbClient.pool.findUnique({
       where: { id: poolId },
@@ -562,21 +573,54 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
         },
       });
 
-      // 6. Freeze Rule: freeze designation atomically upon first valid non-null prediction
-      if (shouldUpdatePrediction && resolvedPrediction !== null && !designation.isFrozen) {
-        const updatedSettings = freezeDesignation({
-          currentSettings,
-          season,
-          week: weekNumber,
-          designatedEventId: designation.eventId!,
-          firstPredictionUserId: userId,
-          games: games as any,
-        });
+      // 6. Freeze Rule: freeze designation and record irreversible participation freeze atomically upon first valid non-null prediction (Decision #66 & HAG58-SLATE-2026-11-03-01)
+      if (shouldUpdatePrediction && resolvedPrediction !== null) {
+        let updatedSettings = designation.isFrozen
+          ? currentSettings
+          : freezeDesignation({
+              currentSettings,
+              season,
+              week: weekNumber,
+              designatedEventId: designation.eventId!,
+              firstPredictionUserId: userId,
+              games: games as any,
+            });
 
-        await tx.pool.update({
-          where: { id: poolId },
-          data: { settings: updatedSettings },
-        });
+        const currentFreezes = updatedSettings?.owner_admin_v1?.freezes || {};
+        const seasonFreezes = currentFreezes[season] || {};
+        const typeFreezes = seasonFreezes[2] || {};
+        if (!typeFreezes[weekNumber]) {
+          const nowIso = new Date().toISOString();
+          updatedSettings = {
+            ...updatedSettings,
+            owner_admin_v1: {
+              ...(updatedSettings.owner_admin_v1 || {}),
+              freezes: {
+                ...currentFreezes,
+                [season]: {
+                  ...seasonFreezes,
+                  [2]: {
+                    ...typeFreezes,
+                    [weekNumber]: {
+                      frozenAt: nowIso,
+                      reason: 'FIRST_PREDICTION_SUBMITTED',
+                      actorId: userId,
+                      designatedEventId: designation.eventId,
+                      version: 1,
+                    },
+                  },
+                },
+              },
+            },
+          };
+        }
+
+        if (updatedSettings !== currentSettings || !designation.isFrozen) {
+          await tx.pool.update({
+            where: { id: poolId },
+            data: { settings: updatedSettings },
+          });
+        }
       }
 
       return { submission, designation, effectivePrediction: resolvedPrediction };

@@ -28,6 +28,7 @@ export interface ScopedPoolSlateKey {
   seasonType?: number | null;
   weekNumber?: number | null;
   poolSettings?: any;
+  projection?: any;
 }
 
 export interface ScopedPoolSlateEntry {
@@ -55,7 +56,7 @@ export function isTargetAffectedSlateScope(scope?: ScopedPoolSlateKey | null): b
  * Scoped by `${poolId}:${season}:${seasonType}:${weekNumber}`.
  * Week 8 entry confirmed by commissioner Jack (HAG-52) and frozen at runtime.
  */
-const CHECKED_IN_SCOPED_SLATES: Record<string, ScopedPoolSlateEntry> = Object.freeze({
+export const CHECKED_IN_SCOPED_SLATES: Record<string, ScopedPoolSlateEntry> = Object.freeze({
   '9b893bef-3b5a-4ffa-951d-8ba27f9c9782:2026:2:8': Object.freeze({
     poolId: TARGET_AFFECTED_POOL_ID,
     season: TARGET_AFFECTED_SEASON,
@@ -135,9 +136,9 @@ export function clearTestScopedSlatesOverride(): void {
  * Validates that entry fields strictly match the requested scope and its key.
  * Checks:
  * 1. Test override
- * 2. Injected poolSettings in scope (owner_admin_v1.slates[season][seasonType][weekNumber])
- * 3. Dynamic scoped slate registry
- * 4. Checked-in repository (e.g. Week 8 9-game confirmed slate)
+ * 2. Unshadowable checked-in repository (Week 8 9-game confirmed slate)
+ * 3. Scoped projection in scope (from fetchScopedSlateProjection)
+ * 4. Injected poolSettings in scope (legacy / test fallback)
  * Returns null if no explicit configuration entry exists or if integrity validation fails.
  */
 export function getScopedPoolSlateConfig(scope?: ScopedPoolSlateKey | null): ScopedPoolSlateEntry | null {
@@ -160,7 +161,42 @@ export function getScopedPoolSlateConfig(scope?: ScopedPoolSlateKey | null): Sco
     return entry;
   }
 
-  // 1. Dynamic configured pool slate from poolSettings
+  // 1. Unshadowable checked-in repository (Week 8 HAG-52) ALWAYS outranks dynamic or settings! (Section 42 & 54)
+  if (isTargetAffectedSlateScope(scope)) {
+    const entry = CHECKED_IN_SCOPED_SLATES[key] || null;
+    if (entry) {
+      if (
+        entry.poolId !== scope.poolId ||
+        entry.season !== scope.season ||
+        entry.seasonType !== scope.seasonType ||
+        entry.weekNumber !== scope.weekNumber ||
+        formatScopeKey(entry) !== key
+      ) {
+        return null;
+      }
+      return entry;
+    }
+  }
+
+  // 2. Direct projection in scope (from fetchScopedSlateProjection, Section 52 & 54)
+  if (scope.projection) {
+    if (scope.projection.status === 'VALID_CONFIG') {
+      const p = scope.projection;
+      return {
+        poolId: scope.poolId!,
+        season: scope.season!,
+        seasonType: scope.seasonType!,
+        weekNumber: scope.weekNumber!,
+        version: p.version ?? 1,
+        scoredEventIds: Object.freeze(p.eventIds.map(String)),
+        description: `Scoped pool slate for ${scope.season} W${scope.weekNumber}`,
+      };
+    }
+    // If VERIFIED_NO_CUSTOM_CONFIG or UNAVAILABLE, return null
+    return null;
+  }
+
+  // 3. Fallback: poolSettings in scope (legacy / tests)
   const configuredSlates = scope.poolSettings?.owner_admin_v1?.slates;
   const customSlate =
     scope.season != null && scope.seasonType != null && scope.weekNumber != null
@@ -168,37 +204,20 @@ export function getScopedPoolSlateConfig(scope?: ScopedPoolSlateKey | null): Sco
       : null;
 
   if (customSlate && Array.isArray(customSlate.eventIds) && customSlate.eventIds.length > 0) {
-    const entry: ScopedPoolSlateEntry = {
-      poolId: scope.poolId!,
-      season: scope.season!,
-      seasonType: scope.seasonType!,
-      weekNumber: scope.weekNumber!,
-      version: customSlate.version ?? 1,
-      scoredEventIds: Object.freeze(customSlate.eventIds.map(String)),
-      description: `Configured pool slate for ${scope.season} W${scope.weekNumber}`,
-    };
-    return entry;
+    const distinct = new Set(customSlate.eventIds.map(String));
+    if (distinct.size === customSlate.eventIds.length && customSlate.eventIds.length <= 32) {
+      const entry: ScopedPoolSlateEntry = {
+        poolId: scope.poolId!,
+        season: scope.season!,
+        seasonType: scope.seasonType!,
+        weekNumber: scope.weekNumber!,
+        version: customSlate.version ?? 1,
+        scoredEventIds: Object.freeze(customSlate.eventIds.map(String)),
+        description: `Configured pool slate for ${scope.season} W${scope.weekNumber}`,
+      };
+      return entry;
+    }
   }
 
-  // 2. Dynamic registry
-  if (DYNAMIC_SCOPED_SLATES.has(key)) {
-    return DYNAMIC_SCOPED_SLATES.get(key)!;
-  }
-
-  // 3. Checked-in repository (Week 8)
-  const entry = CHECKED_IN_SCOPED_SLATES[key] || null;
-  if (!entry) return null;
-
-  // Strict field validation: verify entry fields match requested scope and formatted key
-  if (
-    entry.poolId !== scope.poolId ||
-    entry.season !== scope.season ||
-    entry.seasonType !== scope.seasonType ||
-    entry.weekNumber !== scope.weekNumber ||
-    formatScopeKey(entry) !== key
-  ) {
-    return null;
-  }
-
-  return entry;
+  return null;
 }

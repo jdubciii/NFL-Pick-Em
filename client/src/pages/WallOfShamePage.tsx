@@ -22,6 +22,7 @@ import { getCurrentNFLWeek } from '../services/nflCalendarService';
 import { evaluateSlateLockSummary } from '../services/lockEnforcementService';
 import { resolveAuthoritativeSlate } from '../services/authoritativeSlateClientService';
 import { isWeeklyScoredSlateFinal, selectAcceptedScoredSlateGames } from '../services/weeklyStandingsFinalityService';
+import { fetchScopedSlateProjection } from '../services/scopedSlateService';
 
 export interface WallOfShamePageProps {
   poolId?: string;
@@ -172,10 +173,10 @@ export function WallOfShamePage({
       }));
 
       // 2. Parallel authoritative data fetch for resolved scope
-      const [membersResult, wrapupResult, matrixResult, liveScores, manifestResult] = await Promise.all([
+      const [membersResult, wrapupResult, matrixResult, liveScores, manifestResult, slateResolution] = await Promise.all([
         supabase
           .from('pool_memberships')
-          .select('user_id, role, users(id, email, display_name), pools(settings)')
+          .select('user_id, role, users(id, email, display_name)')
           .eq('pool_id', targetPoolId)
           .eq('status', 'ACTIVE'),
         supabase
@@ -195,6 +196,12 @@ export function WallOfShamePage({
           .eq('season_type', targetSeasonType)
           .eq('week_number', targetWeek)
           .maybeSingle()).catch(() => ({ data: null, error: new Error('Manifest unavailable') })),
+        fetchScopedSlateProjection({
+          poolId: targetPoolId,
+          season: targetSeason,
+          seasonType: targetSeasonType,
+          weekNumber: targetWeek,
+        }),
       ]);
 
       if (reqGenRef.current !== currentGen) return;
@@ -1047,27 +1054,30 @@ export function WallOfShamePage({
 
       // The scored league slate is the accepted matrix/manifest, not every NFL game
       // in the calendar week. The existing wrapup path above stays authoritative.
-      const poolSettings = (membersResult.data?.[0]?.pools as any)?.settings || null;
       const slateScope = {
         poolId: targetPoolId,
         season: targetSeason,
         seasonType: targetSeasonType,
         weekNumber: targetWeek,
-        poolSettings: poolSettings || undefined,
+        projection: slateResolution,
       };
-      const scoredSlateGames = selectAcceptedScoredSlateGames(gamesList, acceptedEventIds, slateScope);
-      const isFinalPosted = isWeeklyScoredSlateFinal(
-        scoredSlateGames || [],
-        liveScores,
-        {
-          verified: tiebreakerVerified,
-          offered: tiebreakerOffered,
-          eventId: designatedTiebreakerEventId,
-          data: tiebreakerData,
-        },
-        Boolean(scoredSlateGames),
-        targetSeason === 2026 && targetWeek === 8,
-      );
+      const scoredSlateGames = slateResolution?.status === 'UNAVAILABLE'
+        ? null
+        : selectAcceptedScoredSlateGames(gamesList, acceptedEventIds, slateScope);
+      const isFinalPosted = scoredSlateGames && slateResolution?.status !== 'UNAVAILABLE'
+        ? isWeeklyScoredSlateFinal(
+            scoredSlateGames,
+            liveScores,
+            {
+              verified: tiebreakerVerified,
+              offered: tiebreakerOffered,
+              eventId: designatedTiebreakerEventId,
+              data: tiebreakerData,
+            },
+            Boolean(scoredSlateGames),
+            targetSeason === 2026 && targetWeek === 8,
+          )
+        : false;
 
       const mappedLadder = standings.map((entry) => {
         let tier = 'DANGER_LOW';

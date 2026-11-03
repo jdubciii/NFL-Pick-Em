@@ -20,6 +20,7 @@ import { WatchPartyBigBoardModal } from '../components/radar/WatchPartyBigBoardM
 import { AppHeader } from '../components/common/AppHeader';
 import { deriveSundaySlatePhase, sundaySlatePhaseLabel } from '../services/radarSundaySlatePhase';
 import { isWeeklyScoredSlateFinal, resolveWeeklyTiebreakerSnapshot, selectAcceptedScoredSlateGames } from '../services/weeklyStandingsFinalityService';
+import { fetchScopedSlateProjection, type ScopedSlateResolution } from '../services/scopedSlateService';
 import {
   buildPersonalRootingQueue,
   evaluateLateGameEscape,
@@ -95,7 +96,12 @@ export const RadarPage: React.FC = () => {
   const [picksLoaded, setPicksLoaded] = useState(false);
   const [tiebreakerResponse, setTiebreakerResponse] = useState<unknown>(null);
   const [acceptedEventIds, setAcceptedEventIds] = useState<string[] | null>(null);
-  const [poolSettings, setPoolSettings] = useState<any>(null);
+  const [slateResolution, setSlateResolution] = useState<ScopedSlateResolution | null>(null);
+
+  // Clear slate resolution state on pool or week switch
+  useEffect(() => {
+    setSlateResolution(null);
+  }, [activePoolId, activeWeek]);
 
   // Track live scores with fallback to retain last-good telemetry
   useEffect(() => {
@@ -201,15 +207,26 @@ export const RadarPage: React.FC = () => {
         // 1. Query all active members in the pool (Step 2)
         const { data: activeMembers } = await supabase
           .from('pool_memberships')
-          .select('user_id, role, users(id, email, display_name), pools(settings)')
+          .select('user_id, role, users(id, email, display_name)')
           .eq('pool_id', activePoolId)
           .eq('status', 'ACTIVE');
 
         if (!isMounted) return;
 
+        // Fetch ACTIVE-member-guarded scoped slate projection (HAG58-SLATE-2026-11-03-01)
+        if (activePoolId && activeWeek) {
+          const resolution = await fetchScopedSlateProjection({
+            poolId: activePoolId,
+            season: 2026,
+            seasonType: 2,
+            weekNumber: activeWeek,
+          });
+          if (isMounted) {
+            setSlateResolution(resolution);
+          }
+        }
+
         if (activeMembers && activeMembers.length > 0) {
-          const fetchedSettings = (activeMembers[0] as any)?.pools?.settings || null;
-          setPoolSettings(fetchedSettings);
           const currentMembership: any = activeMembers.find((m: any) => m.user_id === user?.id);
           const currentU: any = Array.isArray(currentMembership?.users) ? currentMembership.users[0] : currentMembership?.users;
           const currentDisplayName = currentU?.display_name || (user?.email ? user.email.split('@')[0] : 'You');
@@ -349,13 +366,15 @@ export const RadarPage: React.FC = () => {
     season: 2026,
     seasonType: 2,
     weekNumber: activeWeek,
-    poolSettings: poolSettings || undefined,
-  }), [activePoolId, activeWeek, poolSettings]);
+    projection: slateResolution,
+  }), [activePoolId, activeWeek, slateResolution]);
 
-  const scoredSlateGames = useMemo(
-    () => selectAcceptedScoredSlateGames(games, acceptedEventIds, slateScope),
-    [games, acceptedEventIds, slateScope],
-  );
+  const scoredSlateGames = useMemo(() => {
+    if (slateResolution?.status === 'UNAVAILABLE') {
+      return null;
+    }
+    return selectAcceptedScoredSlateGames(games, acceptedEventIds, slateScope);
+  }, [games, acceptedEventIds, slateScope, slateResolution]);
 
   const tiebreakerSnapshot = useMemo(() => resolveWeeklyTiebreakerSnapshot(
     tiebreakerResponse,
@@ -365,7 +384,7 @@ export const RadarPage: React.FC = () => {
   ), [tiebreakerResponse, members, games, liveScores]);
   const tiebreakers: TiebreakerData | undefined = tiebreakerSnapshot.data;
 
-  const isFinalPosted = !isSimulationActive && picksLoaded && isWeeklyScoredSlateFinal(
+  const isFinalPosted = !isSimulationActive && picksLoaded && slateResolution?.status !== 'UNAVAILABLE' && isWeeklyScoredSlateFinal(
     scoredSlateGames || [], liveScores, tiebreakerSnapshot,
     Boolean(scoredSlateGames), activeWeek === 8,
   );
