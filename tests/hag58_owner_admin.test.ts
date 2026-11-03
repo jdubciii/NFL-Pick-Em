@@ -27,7 +27,7 @@ import {
 } from '../client/src/owner/OwnerAdminApp';
 import * as authoritativeSlateService from '../src/services/authoritativeSlateService';
 import { getGamesForWeek } from '../src/routes/poolTiebreakerRoutes';
-import { selectAcceptedScoredSlateGames } from '../client/src/services/weeklyStandingsFinalityService';
+import { selectAcceptedScoredSlateGames, isWeeklyScoredSlateFinal } from '../client/src/services/weeklyStandingsFinalityService';
 import { getScopedPoolSlateConfig } from '../client/src/services/poolScoredSlateConfig';
 
 describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () => {
@@ -825,6 +825,134 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
 
       const games = await getGamesForWeek(9, 2026, POOL_ID, mockPrisma);
       expect(games).toEqual([]);
+    });
+
+    it('proves member settings flow in RadarPage and WallOfShamePage respects custom pool slate and isolates finality without PUT /slate', () => {
+      // 1. Synthetic Supabase pool_memberships response structure matching RadarPage and WallOfShamePage query:
+      // select('user_id, role, users(id, email, display_name), pools(settings)')
+      const customSlateEventIds = ['401873040', '401873041'];
+      const unselectedManifestEventId = '401873042';
+      const allManifestEventIds = [...customSlateEventIds, unselectedManifestEventId];
+
+      const poolSettingsFromMembership = {
+        owner_admin_v1: {
+          slates: {
+            2026: {
+              2: {
+                9: {
+                  eventIds: customSlateEventIds,
+                  version: 1,
+                  updatedAt: '2026-11-03T12:00:00Z',
+                },
+              },
+            },
+          },
+        },
+      };
+
+      const mockMembershipData = [
+        {
+          user_id: JACK_UUID,
+          role: 'ADMIN',
+          users: { id: JACK_UUID, email: 'jack@test.com', display_name: 'Jack' },
+          pools: { settings: poolSettingsFromMembership },
+        },
+      ];
+
+      // Extract settings as done in RadarPage and WallOfShamePage
+      const extractedSettings = (mockMembershipData[0] as any)?.pools?.settings || null;
+      expect(extractedSettings).toEqual(poolSettingsFromMembership);
+
+      // Construct scope with extracted settings
+      const scope = {
+        poolId: POOL_ID,
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        poolSettings: extractedSettings,
+      };
+
+      // Mock games from API/Supabase: 3 games total in NFL manifest
+      // 2 games in custom slate are FINAL with valid scores
+      // 1 unselected game in manifest is SCHEDULED/NOT FINAL
+      const clientGames: SlateGame[] = [
+        {
+          id: '401873040',
+          externalGameId: '401873040',
+          homeTeam: 'KC',
+          awayTeam: 'LV',
+          status: 'STATUS_FINAL',
+          homeScore: 24,
+          awayScore: 17,
+        },
+        {
+          id: '401873041',
+          externalGameId: '401873041',
+          homeTeam: 'SF',
+          awayTeam: 'LAR',
+          status: 'STATUS_FINAL',
+          homeScore: 21,
+          awayScore: 20,
+        },
+        {
+          id: '401873042',
+          externalGameId: '401873042',
+          homeTeam: 'BAL',
+          awayTeam: 'CIN',
+          status: 'STATUS_SCHEDULED', // Unfinished outside game
+        },
+      ];
+
+      // A: selectAcceptedScoredSlateGames scopes games to only the 2 custom slate games
+      const scoredSlateGames = selectAcceptedScoredSlateGames(clientGames, allManifestEventIds, scope);
+      expect(scoredSlateGames).not.toBeNull();
+      expect(scoredSlateGames).toHaveLength(2);
+      expect(scoredSlateGames!.map((g) => g.externalGameId)).toEqual(customSlateEventIds);
+
+      // B: isWeeklyScoredSlateFinal evaluates ONLY the custom slate games
+      // Since both custom slate games are final, and tiebreaker is verified (or not offered), finality succeeds
+      const tiebreaker: WeeklyTiebreakerSnapshot = { verified: true, offered: false };
+      const isFinalWithCustomSlate = isWeeklyScoredSlateFinal(
+        scoredSlateGames!,
+        [],
+        tiebreaker,
+        true, // isVerifiedLeagueSlate
+        false
+      );
+      expect(isFinalWithCustomSlate).toBe(true);
+
+      // C: Counter-factual proof: Without the custom slate scoping (default full manifest),
+      // the unfinished game '401873042' holds finality open (returns false)
+      const unscopedGames = selectAcceptedScoredSlateGames(clientGames, allManifestEventIds, {
+        poolId: POOL_ID,
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        // poolSettings omitted -> defaults to allManifestEventIds
+      });
+      expect(unscopedGames).toHaveLength(3);
+      const isFinalWithoutCustomSlate = isWeeklyScoredSlateFinal(
+        unscopedGames!,
+        [],
+        tiebreaker,
+        true,
+        false
+      );
+      expect(isFinalWithoutCustomSlate).toBe(false);
+
+      // D: If one of the custom slate games is NOT final, custom slate also correctly evaluates to false
+      const nonFinalCustomGames: SlateGame[] = [
+        { ...clientGames[0], status: 'STATUS_IN_PROGRESS' },
+        clientGames[1],
+      ];
+      const isFinalPending = isWeeklyScoredSlateFinal(
+        nonFinalCustomGames,
+        [],
+        tiebreaker,
+        true,
+        false
+      );
+      expect(isFinalPending).toBe(false);
     });
   });
 

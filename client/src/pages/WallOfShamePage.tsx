@@ -175,7 +175,7 @@ export function WallOfShamePage({
       const [membersResult, wrapupResult, matrixResult, liveScores, manifestResult] = await Promise.all([
         supabase
           .from('pool_memberships')
-          .select('user_id, role, users(id, email, display_name)')
+          .select('user_id, role, users(id, email, display_name), pools(settings)')
           .eq('pool_id', targetPoolId)
           .eq('status', 'ACTIVE'),
         supabase
@@ -1047,11 +1047,13 @@ export function WallOfShamePage({
 
       // The scored league slate is the accepted matrix/manifest, not every NFL game
       // in the calendar week. The existing wrapup path above stays authoritative.
+      const poolSettings = (membersResult.data?.[0]?.pools as any)?.settings || null;
       const slateScope = {
         poolId: targetPoolId,
         season: targetSeason,
         seasonType: targetSeasonType,
         weekNumber: targetWeek,
+        poolSettings: poolSettings || undefined,
       };
       const scoredSlateGames = selectAcceptedScoredSlateGames(gamesList, acceptedEventIds, slateScope);
       const isFinalPosted = isWeeklyScoredSlateFinal(

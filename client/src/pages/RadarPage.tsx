@@ -95,6 +95,7 @@ export const RadarPage: React.FC = () => {
   const [picksLoaded, setPicksLoaded] = useState(false);
   const [tiebreakerResponse, setTiebreakerResponse] = useState<unknown>(null);
   const [acceptedEventIds, setAcceptedEventIds] = useState<string[] | null>(null);
+  const [poolSettings, setPoolSettings] = useState<any>(null);
 
   // Track live scores with fallback to retain last-good telemetry
   useEffect(() => {
@@ -200,13 +201,15 @@ export const RadarPage: React.FC = () => {
         // 1. Query all active members in the pool (Step 2)
         const { data: activeMembers } = await supabase
           .from('pool_memberships')
-          .select('user_id, role, users(id, email, display_name)')
+          .select('user_id, role, users(id, email, display_name), pools(settings)')
           .eq('pool_id', activePoolId)
           .eq('status', 'ACTIVE');
 
         if (!isMounted) return;
 
         if (activeMembers && activeMembers.length > 0) {
+          const fetchedSettings = (activeMembers[0] as any)?.pools?.settings || null;
+          setPoolSettings(fetchedSettings);
           const currentMembership: any = activeMembers.find((m: any) => m.user_id === user?.id);
           const currentU: any = Array.isArray(currentMembership?.users) ? currentMembership.users[0] : currentMembership?.users;
           const currentDisplayName = currentU?.display_name || (user?.email ? user.email.split('@')[0] : 'You');
@@ -346,7 +349,8 @@ export const RadarPage: React.FC = () => {
     season: 2026,
     seasonType: 2,
     weekNumber: activeWeek,
-  }), [activePoolId, activeWeek]);
+    poolSettings: poolSettings || undefined,
+  }), [activePoolId, activeWeek, poolSettings]);
 
   const scoredSlateGames = useMemo(
     () => selectAcceptedScoredSlateGames(games, acceptedEventIds, slateScope),
