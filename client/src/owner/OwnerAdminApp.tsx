@@ -4,29 +4,30 @@ import { supabase } from '../lib/supabase';
 import { scopedExpressFetch } from '../lib/apiClient';
 import { calculateProvisionalStandings, type SlateGame, type UserStandingRef, type UserPickItem, type TiebreakerData } from '../services/sweatProjectionService';
 import type { LiveGame } from '../services/liveScoreService';
+import { isKickoffLocked, evaluateSlateLockSummary } from '../services/lockEnforcementService';
 import { getRadarStatusPill, getRadarSectionHeader } from '../pages/RadarPage';
 
 const DEFAULT_POOL_ID = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
 
-export const DEFAULT_SIM_MATCHES = [
-  { id: 'sim-tb', homeTeam: 'DET', awayTeam: 'MIN', homeScore: 31, awayScore: 28, status: 'FINAL', spread: 0 },
-  { id: 'sim-g2', homeTeam: 'GB', awayTeam: 'CAR', homeScore: 24, awayScore: 10, status: 'FINAL', spread: 0 },
-  { id: 'sim-g3', homeTeam: 'DAL', awayTeam: 'ARI', homeScore: 27, awayScore: 20, status: 'FINAL', spread: 0 },
-  { id: 'sim-g4', homeTeam: 'CIN', awayTeam: 'TEN', homeScore: 17, awayScore: 14, status: 'FINAL', spread: 0 },
-];
+export const DEFAULT_SIM_MATCHES = Object.freeze([
+  Object.freeze({ id: 'sim-tb', homeTeam: 'DET', awayTeam: 'MIN', homeScore: 31, awayScore: 28, status: 'FINAL', spread: 0, kickoffTime: '2026-11-01T17:00:00.000Z' }),
+  Object.freeze({ id: 'sim-g2', homeTeam: 'GB', awayTeam: 'CAR', homeScore: 24, awayScore: 10, status: 'FINAL', spread: 0, kickoffTime: '2026-11-01T17:00:00.000Z' }),
+  Object.freeze({ id: 'sim-g3', homeTeam: 'DAL', awayTeam: 'ARI', homeScore: 27, awayScore: 20, status: 'FINAL', spread: 0, kickoffTime: '2026-11-01T20:25:00.000Z' }),
+  Object.freeze({ id: 'sim-g4', homeTeam: 'CIN', awayTeam: 'TEN', homeScore: 17, awayScore: 14, status: 'FINAL', spread: 0, kickoffTime: '2026-11-01T20:25:00.000Z' }),
+]);
 
-export const DEFAULT_SIM_MEMBERS = [
-  { id: 'm1', name: 'jack.w.cone', picks: [{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'GB' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 58 },
-  { id: 'm2', name: 'chrisbrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'GB' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'TEN' }], tb: 52 },
-  { id: 'm3', name: 'davebrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'GB' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 50 },
-  { id: 'm4', name: 'daveculp', picks: [{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 48 },
-  { id: 'm5', name: 'edbrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'GB' }, { gameId: 'sim-g3', selectedTeam: 'ARI' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 60 },
-  { id: 'm6', name: 'justinbrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 55 },
-  { id: 'm7', name: 'markbrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'TEN' }], tb: 54 },
-  { id: 'm8', name: 'mattbrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'ARI' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 40 },
-  { id: 'm9', name: 'ryanculp', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'ARI' }, { gameId: 'sim-g4', selectedTeam: 'TEN' }], tb: 38 },
-  { id: 'm10', name: 'sambrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'ARI' }, { gameId: 'sim-g4', selectedTeam: 'TEN' }], tb: 30 },
-];
+export const DEFAULT_SIM_MEMBERS = Object.freeze([
+  Object.freeze({ id: 'm1', name: 'jack.w.cone', picks: Object.freeze([{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'GB' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }]), tb: 58 }),
+  Object.freeze({ id: 'm2', name: 'chrisbrickner', picks: Object.freeze([{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'GB' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'TEN' }]), tb: 52 }),
+  Object.freeze({ id: 'm3', name: 'davebrickner', picks: Object.freeze([{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'GB' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }]), tb: 50 }),
+  Object.freeze({ id: 'm4', name: 'daveculp', picks: Object.freeze([{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }]), tb: 48 }),
+  Object.freeze({ id: 'm5', name: 'edbrickner', picks: Object.freeze([{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'GB' }, { gameId: 'sim-g3', selectedTeam: 'ARI' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }]), tb: 60 }),
+  Object.freeze({ id: 'm6', name: 'justinbrickner', picks: Object.freeze([{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }]), tb: 55 }),
+  Object.freeze({ id: 'm7', name: 'markbrickner', picks: Object.freeze([{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'TEN' }]), tb: 54 }),
+  Object.freeze({ id: 'm8', name: 'mattbrickner', picks: Object.freeze([{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'ARI' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }]), tb: 40 }),
+  Object.freeze({ id: 'm9', name: 'ryanculp', picks: Object.freeze([{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'ARI' }, { gameId: 'sim-g4', selectedTeam: 'TEN' }]), tb: 38 }),
+  Object.freeze({ id: 'm10', name: 'sambrickner', picks: Object.freeze([{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'ARI' }, { gameId: 'sim-g4', selectedTeam: 'TEN' }]), tb: 30 }),
+]);
 
 export const DEFAULT_SIM_CLOCK = '2026-11-01T20:00:00.000Z';
 
@@ -36,6 +37,59 @@ export const NFL_TEAMS = [
   'LAC', 'LAR', 'LV', 'MIA', 'MIN', 'NE', 'NO', 'NYG',
   'NYJ', 'PHI', 'PIT', 'SEA', 'SF', 'TB', 'TEN', 'WAS'
 ];
+
+export function cloneDefaultSimMatches(): any[] {
+  return JSON.parse(JSON.stringify(DEFAULT_SIM_MATCHES));
+}
+
+export function cloneDefaultSimMembers(): any[] {
+  return JSON.parse(JSON.stringify(DEFAULT_SIM_MEMBERS));
+}
+
+export function generateNextMatchId(existingMatches: { id: string }[]): string {
+  const existingIds = new Set(existingMatches.map((m) => m.id));
+  let counter = 2;
+  while (existingIds.has(`sim-g${counter}`)) {
+    counter++;
+  }
+  return `sim-g${counter}`;
+}
+
+export function generateNextMemberId(existingMembers: { id: string }[]): string {
+  const existingIds = new Set(existingMembers.map((m) => m.id));
+  let counter = 1;
+  while (existingIds.has(`m${counter}`)) {
+    counter++;
+  }
+  return `m${counter}`;
+}
+
+export function updateMatchTeamWithPickSync(
+  matches: any[],
+  members: any[],
+  matchId: string,
+  side: 'home' | 'away',
+  newTeam: string
+): { updatedMatches: any[]; updatedMembers: any[] } {
+  let oldTeam = '';
+  const updatedMatches = matches.map((m) => {
+    if (m.id !== matchId) return m;
+    oldTeam = side === 'home' ? m.homeTeam : m.awayTeam;
+    return side === 'home' ? { ...m, homeTeam: newTeam } : { ...m, awayTeam: newTeam };
+  });
+
+  const updatedMembers = members.map((mem) => {
+    const updatedPicks = (mem.picks || []).map((p: any) => {
+      if (p.gameId === matchId && p.selectedTeam === oldTeam) {
+        return { ...p, selectedTeam: newTeam };
+      }
+      return p;
+    });
+    return { ...mem, picks: updatedPicks };
+  });
+
+  return { updatedMatches, updatedMembers };
+}
 
 export const OwnerAdminApp: React.FC = () => {
   const { user, session, loading } = useAuth();
@@ -90,9 +144,9 @@ export const OwnerAdminApp: React.FC = () => {
   const [slateSubmitting, setSlateSubmitting] = useState(false);
   const [slateStatus, setSlateStatus] = useState<{ success?: boolean; message?: string } | null>(null);
 
-  // Simulation state
-  const [simMatches, setSimMatches] = useState<any[]>(DEFAULT_SIM_MATCHES);
-  const [simMembers, setSimMembers] = useState<any[]>(DEFAULT_SIM_MEMBERS);
+  // Simulation state (deep-cloned on mount so default constants are never mutated)
+  const [simMatches, setSimMatches] = useState<any[]>(() => cloneDefaultSimMatches());
+  const [simMembers, setSimMembers] = useState<any[]>(() => cloneDefaultSimMembers());
   const [simulatedClock, setSimulatedClock] = useState<string>(DEFAULT_SIM_CLOCK);
   const [finishPrompt, setFinishPrompt] = useState<string | null>(null);
 
@@ -308,41 +362,79 @@ export const OwnerAdminApp: React.FC = () => {
   };
 
   const handleResetSimulation = () => {
-    setSimMatches(JSON.parse(JSON.stringify(DEFAULT_SIM_MATCHES)));
-    setSimMembers(JSON.parse(JSON.stringify(DEFAULT_SIM_MEMBERS)));
+    setSimMatches(cloneDefaultSimMatches());
+    setSimMembers(cloneDefaultSimMembers());
     setSimulatedClock(DEFAULT_SIM_CLOCK);
     setFinishPrompt(null);
   };
 
   const handleAddMatch = () => {
     if (simMatches.length >= 32) return;
-    const newId = `sim-g${simMatches.length + 1}`;
-    const newMatch = { id: newId, homeTeam: 'KC', awayTeam: 'LV', homeScore: 0, awayScore: 0, status: 'SCHEDULED', spread: 0 };
-    setSimMatches([...simMatches, newMatch]);
+    const newId = generateNextMatchId(simMatches);
+    const newMatch = {
+      id: newId,
+      homeTeam: 'KC',
+      awayTeam: 'LV',
+      homeScore: 0,
+      awayScore: 0,
+      status: 'SCHEDULED',
+      spread: 0,
+      kickoffTime: '2026-11-01T20:25:00.000Z',
+    };
+    setSimMatches((prev) => [...prev, newMatch]);
   };
 
   const handleRemoveMatch = (matchId: string) => {
     if (simMatches.length <= 1) return;
-    setSimMatches(simMatches.filter((m) => m.id !== matchId));
-    setSimMembers(simMembers.map((mem) => ({
-      ...mem,
-      picks: mem.picks.filter((p: any) => p.gameId !== matchId),
-    })));
+    setSimMatches((prev) => prev.filter((m) => m.id !== matchId));
+    setSimMembers((prev) =>
+      prev.map((mem) => ({
+        ...mem,
+        picks: (mem.picks || []).filter((p: any) => p.gameId !== matchId),
+      }))
+    );
   };
 
   const handleAddMember = () => {
     if (simMembers.length >= 10) return;
-    const newId = `m${simMembers.length + 1}`;
+    const newId = generateNextMemberId(simMembers);
     const defaultPicks = simMatches.map((m) => ({ gameId: m.id, selectedTeam: m.homeTeam }));
-    setSimMembers([
-      ...simMembers,
-      { id: newId, name: `Member ${simMembers.length + 1}`, picks: defaultPicks, tb: 45 },
+    setSimMembers((prev) => [
+      ...prev,
+      { id: newId, name: `Member ${newId}`, picks: defaultPicks, tb: 45 },
     ]);
   };
 
   const handleRemoveMember = (memberId: string) => {
     if (simMembers.length <= 1) return;
-    setSimMembers(simMembers.filter((m) => m.id !== memberId));
+    setSimMembers((prev) => prev.filter((m) => m.id !== memberId));
+  };
+
+  const handleUpdateMatchTeam = (matchId: string, side: 'home' | 'away', newTeam: string) => {
+    const { updatedMatches, updatedMembers } = updateMatchTeamWithPickSync(
+      simMatches,
+      simMembers,
+      matchId,
+      side,
+      newTeam
+    );
+    setSimMatches(updatedMatches);
+    setSimMembers(updatedMembers);
+  };
+
+  const handleUpdateMatchStatus = (matchId: string, newStatus: string) => {
+    setSimMatches((prev) =>
+      prev.map((m) => (m.id === matchId ? { ...m, status: newStatus } : m))
+    );
+  };
+
+  const handleUpdateMatchScore = (matchId: string, side: 'home' | 'away', scoreVal: string) => {
+    const val = scoreVal === '' ? null : Number(scoreVal);
+    setSimMatches((prev) =>
+      prev.map((m) =>
+        m.id === matchId ? { ...m, [side === 'home' ? 'homeScore' : 'awayScore']: val } : m
+      )
+    );
   };
 
   const handleUpdatePick = (memberId: string, gameId: string, selectedTeam: string) => {
@@ -367,15 +459,21 @@ export const OwnerAdminApp: React.FC = () => {
 
   // Calculate pure in-memory simulation standings
   const runSimulation = () => {
-    const slateGames: SlateGame[] = simMatches.map((m) => ({
-      id: m.id,
-      homeTeam: m.homeTeam,
-      awayTeam: m.awayTeam,
-      homeScore: m.homeScore,
-      awayScore: m.awayScore,
-      status: m.status,
-      isFinal: m.status === 'FINAL',
-    }));
+    const clockMs = simulatedClock ? new Date(simulatedClock).getTime() : Date.now();
+
+    const slateGames: SlateGame[] = simMatches.map((m) => {
+      const kickoffTime = m.kickoffTime || new Date(simulatedClock || Date.now()).toISOString();
+      return {
+        id: m.id,
+        homeTeam: m.homeTeam,
+        awayTeam: m.awayTeam,
+        homeScore: m.homeScore,
+        awayScore: m.awayScore,
+        status: m.status,
+        isFinal: m.status === 'FINAL',
+        kickoffTime,
+      };
+    });
 
     const userRefs: UserStandingRef[] = simMembers.map((m) => ({
       id: m.id,
@@ -398,20 +496,31 @@ export const OwnerAdminApp: React.FC = () => {
     const tb = simMatches[0];
     const actualTotal = tb?.homeScore != null && tb?.awayScore != null ? Number(tb.homeScore) + Number(tb.awayScore) : null;
 
-    const liveScores: LiveGame[] = simMatches.map((m) => ({
-      id: m.id,
-      name: `${m.awayTeam} @ ${m.homeTeam}`,
-      shortName: `${m.awayTeam} @ ${m.homeTeam}`,
-      homeTeam: { code: m.homeTeam, name: m.homeTeam, score: String(m.homeScore ?? 0) },
-      awayTeam: { code: m.awayTeam, name: m.awayTeam, score: String(m.awayScore ?? 0) },
-      status: m.status === 'FINAL' ? 'FINAL' : m.status === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'SCHEDULED',
-      clock: m.status === 'FINAL' ? 'FINAL' : '0:00',
-      period: m.status === 'FINAL' ? 4 : 1,
-    }));
+    const liveScores: LiveGame[] = simMatches.map((m) => {
+      const rawStatus = m.status === 'FINAL' ? 'FINAL' : m.status === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'SCHEDULED';
+      // Kickoff lock behavior: if simulatedClock is before kickoffTime, the game has not started yet
+      const mKickoffMs = m.kickoffTime ? new Date(m.kickoffTime).getTime() : NaN;
+      const isPastKickoff = isNaN(mKickoffMs) || clockMs >= mKickoffMs;
+      const effectiveStatus: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL' =
+        !isPastKickoff ? 'SCHEDULED' : rawStatus;
+
+      return {
+        id: m.id,
+        name: `${m.awayTeam} @ ${m.homeTeam}`,
+        shortName: `${m.awayTeam} @ ${m.homeTeam}`,
+        homeTeam: { code: m.homeTeam, name: m.homeTeam, score: String(m.homeScore ?? 0) },
+        awayTeam: { code: m.awayTeam, name: m.awayTeam, score: String(m.awayScore ?? 0) },
+        status: effectiveStatus,
+        clock: effectiveStatus === 'FINAL' ? 'FINAL' : '0:00',
+        period: effectiveStatus === 'FINAL' ? 4 : 1,
+      };
+    });
 
     const userPredictions: Record<string, number> = {};
     for (const m of simMembers) {
-      userPredictions[m.id] = m.tb;
+      if (m.tb != null) {
+        userPredictions[m.id] = Number(m.tb);
+      }
     }
 
     const tiebreakerData: TiebreakerData = {
@@ -1023,15 +1132,25 @@ export const OwnerAdminApp: React.FC = () => {
                 </button>
               </div>
 
-              <div className="flex items-center space-x-2 text-xs font-mono">
-                <label className="text-slate-400">Simulated Clock:</label>
-                <input
-                  type="text"
-                  value={simulatedClock}
-                  onChange={(e) => setSimulatedClock(e.target.value)}
-                  className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200 font-mono text-xs w-56"
-                  placeholder="YYYY-MM-DDTHH:MM:SSZ"
-                />
+              <div className="flex flex-wrap items-center gap-3 text-xs font-mono">
+                {(() => {
+                  const lockSummary = evaluateSlateLockSummary(simMatches, [], 0, new Date(simulatedClock));
+                  return (
+                    <span className="text-[10px] px-2 py-0.5 rounded font-bold font-mono bg-slate-950 text-cyan-300 border border-slate-700">
+                      {lockSummary.phaseLabel} ({lockSummary.lockedCount}/{simMatches.length} locked)
+                    </span>
+                  );
+                })()}
+                <div className="flex items-center space-x-2">
+                  <label className="text-slate-400">Simulated Clock:</label>
+                  <input
+                    type="text"
+                    value={simulatedClock}
+                    onChange={(e) => setSimulatedClock(e.target.value)}
+                    className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200 font-mono text-xs w-56"
+                    placeholder="YYYY-MM-DDTHH:MM:SSZ"
+                  />
+                </div>
               </div>
             </div>
 
@@ -1063,112 +1182,100 @@ export const OwnerAdminApp: React.FC = () => {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {simMatches.map((m, idx) => (
-                  <div key={m.id} className="bg-slate-950 border border-slate-800 p-3 rounded space-y-2">
-                    <div className="flex justify-between items-center">
-                      <span className="text-[10px] font-mono text-slate-500 font-bold">
-                        {m.id} {idx === 0 && <span className="text-amber-400 font-black">⚡(TB)</span>}
-                      </span>
-                      <div className="flex items-center space-x-1">
-                        <select
-                          value={m.status}
-                          onChange={(e) => {
-                            const updated = [...simMatches];
-                            updated[idx].status = e.target.value;
-                            setSimMatches(updated);
-                          }}
-                          className="bg-slate-900 border border-slate-700 rounded text-[10px] px-1.5 py-0.5 text-slate-200 font-mono"
-                        >
-                          <option value="FINAL">FINAL</option>
-                          <option value="IN_PROGRESS">IN_PROGRESS</option>
-                          <option value="SCHEDULED">SCHEDULED</option>
-                        </select>
-                        {simMatches.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveMatch(m.id)}
-                            className="text-rose-400 hover:text-rose-300 text-[10px] px-1 font-bold font-mono"
-                            title="Remove Match"
+                {simMatches.map((m, idx) => {
+                  const isLocked = isKickoffLocked(m.kickoffTime || '2026-11-01T17:00:00.000Z', new Date(simulatedClock));
+                  return (
+                    <div key={m.id} className="bg-slate-950 border border-slate-800 p-3 rounded space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-mono text-slate-500 font-bold">
+                          {m.id} {idx === 0 && <span className="text-amber-400 font-black">⚡(TB)</span>}
+                        </span>
+                        <div className="flex items-center space-x-1">
+                          <select
+                            value={m.status}
+                            onChange={(e) => handleUpdateMatchStatus(m.id, e.target.value)}
+                            className="bg-slate-900 border border-slate-700 rounded text-[10px] px-1.5 py-0.5 text-slate-200 font-mono"
                           >
-                            ✕
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div>
-                        <label className="text-[10px] font-mono text-slate-400 block mb-0.5">Away Team</label>
-                        <select
-                          value={m.awayTeam}
-                          onChange={(e) => {
-                            const newAway = e.target.value;
-                            const updated = [...simMatches];
-                            updated[idx].awayTeam = newAway;
-                            setSimMatches(updated);
-                          }}
-                          className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 font-mono text-slate-200 text-xs"
-                        >
-                          {NFL_TEAMS.map((t) => (
-                            <option key={t} value={t} disabled={t === m.homeTeam}>
-                              {t}
-                            </option>
-                          ))}
-                        </select>
+                            <option value="FINAL">FINAL</option>
+                            <option value="IN_PROGRESS">IN_PROGRESS</option>
+                            <option value="SCHEDULED">SCHEDULED</option>
+                          </select>
+                          {simMatches.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveMatch(m.id)}
+                              className="text-rose-400 hover:text-rose-300 text-[10px] px-1 font-bold font-mono"
+                              title="Remove Match"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
                       </div>
 
-                      <div>
-                        <label className="text-[10px] font-mono text-slate-400 block mb-0.5">Home Team</label>
-                        <select
-                          value={m.homeTeam}
-                          onChange={(e) => {
-                            const newHome = e.target.value;
-                            const updated = [...simMatches];
-                            updated[idx].homeTeam = newHome;
-                            setSimMatches(updated);
-                          }}
-                          className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 font-mono text-slate-200 text-xs"
-                        >
-                          {NFL_TEAMS.map((t) => (
-                            <option key={t} value={t} disabled={t === m.awayTeam}>
-                              {t}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <label className="text-[10px] font-mono text-slate-400 block mb-0.5">Away Team</label>
+                          <select
+                            value={m.awayTeam}
+                            onChange={(e) => handleUpdateMatchTeam(m.id, 'away', e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 font-mono text-slate-200 text-xs"
+                          >
+                            {NFL_TEAMS.map((t) => (
+                              <option key={t} value={t} disabled={t === m.homeTeam}>
+                                {t}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
 
-                    <div className="flex items-center space-x-2 text-xs pt-1">
-                      <div className="flex-1">
-                        <label className="text-[10px] font-mono text-slate-400 block mb-0.5">Away Score</label>
-                        <input
-                          type="number"
-                          value={m.awayScore ?? ''}
-                          onChange={(e) => {
-                            const updated = [...simMatches];
-                            updated[idx].awayScore = e.target.value === '' ? null : Number(e.target.value);
-                            setSimMatches(updated);
-                          }}
-                          className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center font-mono text-slate-100"
-                        />
+                        <div>
+                          <label className="text-[10px] font-mono text-slate-400 block mb-0.5">Home Team</label>
+                          <select
+                            value={m.homeTeam}
+                            onChange={(e) => handleUpdateMatchTeam(m.id, 'home', e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 font-mono text-slate-200 text-xs"
+                          >
+                            {NFL_TEAMS.map((t) => (
+                              <option key={t} value={t} disabled={t === m.awayTeam}>
+                                {t}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
-                      <span className="text-slate-500 pt-3">–</span>
-                      <div className="flex-1">
-                        <label className="text-[10px] font-mono text-slate-400 block mb-0.5">Home Score</label>
-                        <input
-                          type="number"
-                          value={m.homeScore ?? ''}
-                          onChange={(e) => {
-                            const updated = [...simMatches];
-                            updated[idx].homeScore = e.target.value === '' ? null : Number(e.target.value);
-                            setSimMatches(updated);
-                          }}
-                          className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center font-mono text-slate-100"
-                        />
+
+                      <div className="flex items-center space-x-2 text-xs pt-1">
+                        <div className="flex-1">
+                          <label className="text-[10px] font-mono text-slate-400 block mb-0.5">Away Score</label>
+                          <input
+                            type="number"
+                            value={m.awayScore ?? ''}
+                            onChange={(e) => handleUpdateMatchScore(m.id, 'away', e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center font-mono text-slate-100"
+                          />
+                        </div>
+                        <span className="text-slate-500 pt-3">–</span>
+                        <div className="flex-1">
+                          <label className="text-[10px] font-mono text-slate-400 block mb-0.5">Home Score</label>
+                          <input
+                            type="number"
+                            value={m.homeScore ?? ''}
+                            onChange={(e) => handleUpdateMatchScore(m.id, 'home', e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center font-mono text-slate-100"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 pt-1 border-t border-slate-900">
+                        <span>Kickoff: {m.kickoffTime ? new Date(m.kickoffTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '17:00'}</span>
+                        <span className={isLocked ? 'text-amber-400 font-bold' : 'text-emerald-400'}>
+                          {isLocked ? '🔒 Kickoff Passed' : '🟢 Pregame (Open)'}
+                        </span>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 

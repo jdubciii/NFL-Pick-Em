@@ -15,6 +15,15 @@ import { computePoolSettingsRevision } from '../src/routes/ownerAdminRoutes';
 import { normalizeApiOrigin, scopedExpressFetch } from '../client/src/lib/apiClient';
 import { fetchPresentationFlags, DEFAULT_PRESENTATION_FLAGS } from '../client/src/services/presentationFlagsService';
 import { calculateProvisionalStandings, type SlateGame, type UserStandingRef, type UserPickItem, type TiebreakerData } from '../src/services/sweatProjectionService';
+import {
+  DEFAULT_SIM_MATCHES,
+  DEFAULT_SIM_MEMBERS,
+  cloneDefaultSimMatches,
+  cloneDefaultSimMembers,
+  generateNextMatchId,
+  generateNextMemberId,
+  updateMatchTeamWithPickSync,
+} from '../client/src/owner/OwnerAdminApp';
 
 describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () => {
   const JACK_UUID = 'e3242a19-1131-4fc5-9886-7730f10ef69b';
@@ -924,6 +933,152 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(resInProgress.status).toBe(200);
       expect(dataInProgress.simulation).toBe(true);
       expect(dataInProgress.isFinal).toBe(false);
+    });
+
+    it('proves deep clone immutability and simulation reset: mutations do not corrupt defaults, reset restores pristine fixtures', () => {
+      // 1. Verify defaults are deeply frozen
+      expect(Object.isFrozen(DEFAULT_SIM_MATCHES)).toBe(true);
+      expect(Object.isFrozen(DEFAULT_SIM_MATCHES[0])).toBe(true);
+      expect(Object.isFrozen(DEFAULT_SIM_MEMBERS)).toBe(true);
+
+      // 2. Clone matches and mutate cloned objects
+      const clonedMatches = cloneDefaultSimMatches();
+      expect(clonedMatches[0].homeScore).toBe(31);
+      expect(clonedMatches[0].status).toBe('FINAL');
+
+      clonedMatches[0].homeScore = 99;
+      clonedMatches[0].status = 'IN_PROGRESS';
+      clonedMatches[0].homeTeam = 'KC';
+
+      // 3. Verify original DEFAULT_SIM_MATCHES is 100% unmutated
+      expect(DEFAULT_SIM_MATCHES[0].homeScore).toBe(31);
+      expect(DEFAULT_SIM_MATCHES[0].status).toBe('FINAL');
+      expect(DEFAULT_SIM_MATCHES[0].homeTeam).toBe('DET');
+
+      // 4. Verify reset restoration
+      const resetMatches = cloneDefaultSimMatches();
+      expect(resetMatches[0].homeScore).toBe(31);
+      expect(resetMatches[0].status).toBe('FINAL');
+      expect(resetMatches[0].homeTeam).toBe('DET');
+    });
+
+    it('generates collision-free stable IDs across add/remove/add sequences and keeps picks consistent on team change', () => {
+      // 1. Match ID sequence: start with 4, remove middle, add, remove another, add
+      let matches = cloneDefaultSimMatches(); // ['sim-tb', 'sim-g2', 'sim-g3', 'sim-g4']
+      expect(matches).toHaveLength(4);
+
+      matches = matches.filter((m) => m.id !== 'sim-g3');
+      const nextMatchId1 = generateNextMatchId(matches);
+      expect(['sim-tb', 'sim-g2', 'sim-g4']).not.toContain(nextMatchId1);
+
+      matches.push({ id: nextMatchId1, homeTeam: 'KC', awayTeam: 'LV' });
+      matches = matches.filter((m) => m.id !== 'sim-g2');
+      const nextMatchId2 = generateNextMatchId(matches);
+      expect(matches.map((m) => m.id)).not.toContain(nextMatchId2);
+      matches.push({ id: nextMatchId2, homeTeam: 'DAL', awayTeam: 'PHI' });
+
+      const matchIdSet = new Set(matches.map((m) => m.id));
+      expect(matchIdSet.size).toBe(matches.length);
+
+      // 2. Member ID sequence: start with 10, remove middle, add, remove, add
+      let members = cloneDefaultSimMembers();
+      expect(members).toHaveLength(10);
+
+      members = members.filter((m) => m.id !== 'm5');
+      const nextMemberId1 = generateNextMemberId(members);
+      expect(members.map((m) => m.id)).not.toContain(nextMemberId1);
+
+      members.push({ id: nextMemberId1, name: 'New Member', picks: [] });
+      members = members.filter((m) => m.id !== 'm2');
+      const nextMemberId2 = generateNextMemberId(members);
+      expect(members.map((m) => m.id)).not.toContain(nextMemberId2);
+      members.push({ id: nextMemberId2, name: 'Another Member', picks: [] });
+
+      const memberIdSet = new Set(members.map((m) => m.id));
+      expect(memberIdSet.size).toBe(members.length);
+
+      // 3. Team change pick synchronization:
+      // m1 picked DET (home), m3 picked MIN (away) for sim-tb
+      const freshMatches = cloneDefaultSimMatches();
+      const freshMembers = cloneDefaultSimMembers();
+
+      const m1PickBefore = freshMembers.find((m) => m.id === 'm1')?.picks.find((p: any) => p.gameId === 'sim-tb');
+      const m3PickBefore = freshMembers.find((m) => m.id === 'm3')?.picks.find((p: any) => p.gameId === 'sim-tb');
+      expect(m1PickBefore?.selectedTeam).toBe('DET');
+      expect(m3PickBefore?.selectedTeam).toBe('MIN');
+
+      // Change away team from MIN to CHI
+      const { updatedMatches, updatedMembers } = updateMatchTeamWithPickSync(
+        freshMatches,
+        freshMembers,
+        'sim-tb',
+        'away',
+        'CHI'
+      );
+
+      const simTbUpdated = updatedMatches.find((m) => m.id === 'sim-tb');
+      expect(simTbUpdated?.awayTeam).toBe('CHI');
+
+      const m1PickAfter = updatedMembers.find((m) => m.id === 'm1')?.picks.find((p: any) => p.gameId === 'sim-tb');
+      const m3PickAfter = updatedMembers.find((m) => m.id === 'm3')?.picks.find((p: any) => p.gameId === 'sim-tb');
+
+      // m1 (home DET) is unaffected
+      expect(m1PickAfter?.selectedTeam).toBe('DET');
+      // m3 (old away MIN) was synchronized to new away team CHI
+      expect(m3PickAfter?.selectedTeam).toBe('CHI');
+    });
+
+    it('connects simulatedClock to fixture kickoff lock behavior: changing clock before/after kickoff alters calculated standings', async () => {
+      const matchFixture = [
+        { id: 'match-1', homeTeam: 'DET', awayTeam: 'MIN', homeScore: 24, awayScore: 20, status: 'FINAL', kickoffTime: '2026-11-01T17:00:00.000Z' },
+        { id: 'match-2', homeTeam: 'GB', awayTeam: 'CAR', homeScore: 30, awayScore: 10, status: 'FINAL', kickoffTime: '2026-11-01T17:00:00.000Z' },
+      ];
+      const memberFixture = [
+        { userId: 'u1', userName: 'Jack', tiebreakerPrediction: 44, picks: [{ gameId: 'match-1', selectedTeam: 'DET' }, { gameId: 'match-2', selectedTeam: 'GB' }] },
+      ];
+
+      // Case A: simulatedClock is 5 hours BEFORE kickoff (2026-11-01T12:00:00.000Z)
+      const resBefore = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/simulations/preview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          scenario: matchFixture,
+          members: memberFixture,
+          simulatedClock: '2026-11-01T12:00:00.000Z',
+        }),
+      });
+      const dataBefore: any = await resBefore.json();
+
+      expect(resBefore.status).toBe(200);
+      expect(dataBefore.isFinal).toBe(false);
+      // Matches have not kicked off yet at 12:00 UTC; effective status is SCHEDULED, 0 points scored
+      expect(dataBefore.standings[0].totalProvisionalPoints).toBe(0);
+
+      // Case B: simulatedClock is 3 hours AFTER kickoff (2026-11-01T20:00:00.000Z)
+      const resAfter = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/simulations/preview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          scenario: matchFixture,
+          members: memberFixture,
+          simulatedClock: '2026-11-01T20:00:00.000Z',
+        }),
+      });
+      const dataAfter: any = await resAfter.json();
+
+      expect(resAfter.status).toBe(200);
+      expect(dataAfter.isFinal).toBe(true);
+      // Kickoff has passed; matches are FINAL and 2 points are scored
+      expect(dataAfter.standings[0].totalProvisionalPoints).toBe(2);
+
+      // Proves changing simulatedClock directly altered the calculated result
+      expect(dataAfter.standings[0].totalProvisionalPoints).not.toBe(dataBefore.standings[0].totalProvisionalPoints);
     });
   });
 

@@ -851,15 +851,19 @@ ownerAdminRouter.post('/:pool_id/owner/simulations/preview', requireAuth, requir
   }
 
   const { scenario, members, simulatedClock } = req.body;
+  const clockMs = simulatedClock ? new Date(simulatedClock).getTime() : Date.now();
 
   // Build SlateGame and LiveGame fixtures for pure simulation
-  const slateGames: SlateGame[] = scenario.map((m: any, idx: number) => ({
-    id: String(m.id || `sim-game-${idx + 1}`).trim(),
-    homeTeam: String(m.homeTeam || m.homeTeamId).trim().toUpperCase(),
-    awayTeam: String(m.awayTeam || m.awayTeamId).trim().toUpperCase(),
-    spread: typeof m.spread === 'number' ? m.spread : undefined,
-    kickoffTime: m.kickoffTime || new Date(simulatedClock || Date.now()).toISOString(),
-  }));
+  const slateGames: SlateGame[] = scenario.map((m: any, idx: number) => {
+    const rawKickoff = m.kickoffTime || new Date(simulatedClock || Date.now()).toISOString();
+    return {
+      id: String(m.id || `sim-game-${idx + 1}`).trim(),
+      homeTeam: String(m.homeTeam || m.homeTeamId).trim().toUpperCase(),
+      awayTeam: String(m.awayTeam || m.awayTeamId).trim().toUpperCase(),
+      spread: typeof m.spread === 'number' ? m.spread : undefined,
+      kickoffTime: rawKickoff,
+    };
+  });
 
   const liveGames: LiveGame[] = scenario.map((m: any, idx: number) => {
     const gid = String(m.id || `sim-game-${idx + 1}`).trim();
@@ -868,17 +872,28 @@ ownerAdminRouter.post('/:pool_id/owner/simulations/preview', requireAuth, requir
     const homeScore = m.homeScore != null ? String(m.homeScore) : '0';
     const awayScore = m.awayScore != null ? String(m.awayScore) : '0';
     const rawStatus = m.status != null ? String(m.status).trim().toUpperCase() : 'SCHEDULED';
-    const status: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL' =
-      rawStatus === 'FINAL' ? 'FINAL' : rawStatus === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'SCHEDULED';
+
+    // Kickoff lock behavior: if simulatedClock is before kickoffTime, matchup has not kicked off yet
+    const mKickoffMs = m.kickoffTime ? new Date(m.kickoffTime).getTime() : NaN;
+    const isPastKickoff = isNaN(mKickoffMs) || clockMs >= mKickoffMs;
+    const effectiveStatus: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL' =
+      !isPastKickoff
+        ? 'SCHEDULED'
+        : rawStatus === 'FINAL'
+          ? 'FINAL'
+          : rawStatus === 'IN_PROGRESS'
+            ? 'IN_PROGRESS'
+            : 'SCHEDULED';
+
     return {
       id: gid,
       name: `${awayTeamCode} @ ${homeTeamCode}`,
       shortName: `${awayTeamCode} @ ${homeTeamCode}`,
       homeTeam: { code: homeTeamCode, name: homeTeamCode, score: homeScore },
       awayTeam: { code: awayTeamCode, name: awayTeamCode, score: awayScore },
-      status,
-      clock: status === 'FINAL' ? 'FINAL' : '0:00',
-      period: status === 'FINAL' ? 4 : 1,
+      status: effectiveStatus,
+      clock: effectiveStatus === 'FINAL' ? 'FINAL' : '0:00',
+      period: effectiveStatus === 'FINAL' ? 4 : 1,
     };
   });
 
