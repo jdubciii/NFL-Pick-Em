@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { scopedExpressFetch } from '../lib/apiClient';
 
 export interface PresentationFlags {
   f_sweat_radar: boolean;
@@ -40,9 +41,10 @@ export async function fetchPresentationFlags(poolId: string, authToken?: string 
       }
     }
 
-    const res = await fetch(`/api/pools/${poolId}/presentation-flags`, {
+    const res = await scopedExpressFetch(`/api/pools/${poolId}/presentation-flags`, {
       method: 'GET',
       headers,
+      sessionToken: authToken,
     });
 
     if (!res.ok) {

@@ -1,14 +1,18 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import request from 'supertest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import jwt from 'jsonwebtoken';
 import { app } from '../src/server';
 import {
   requireOwner,
   requirePoolOwnerAccess,
   setPrismaClientForTesting,
+  setSupabaseAuthClientForTesting,
+  createSyntheticSupabaseToken,
 } from '../src/middleware/auth';
 import { computePoolSettingsRevision } from '../src/routes/ownerAdminRoutes';
+import { normalizeApiOrigin, scopedExpressFetch } from '../client/src/lib/apiClient';
 import { fetchPresentationFlags, DEFAULT_PRESENTATION_FLAGS } from '../client/src/services/presentationFlagsService';
 import { calculateProvisionalStandings, type SlateGame, type UserStandingRef, type UserPickItem, type TiebreakerData } from '../src/services/sweatProjectionService';
 
@@ -16,41 +20,111 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
   const JACK_UUID = 'e3242a19-1131-4fc5-9886-7730f10ef69b';
   const NON_JACK_UUID = 'a1111111-2222-3333-4444-555555555555';
   const POOL_ID = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
-  const FOREIGN_POOL_ID = 'f9999999-8888-7777-6666-555555555555';
 
+  let server: http.Server;
+  let baseUrl: string;
   let mockPrisma: any;
+  let jackAuthToken: string;
+
+  beforeAll(async () => {
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, () => {
+        const addr = server.address() as any;
+        baseUrl = `http://127.0.0.1:${addr.port}`;
+        resolve();
+      });
+    });
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
 
   beforeEach(() => {
     process.env.OWNER_AUTH_USER_ID = JACK_UUID;
 
+    jackAuthToken = createSyntheticSupabaseToken({
+      id: JACK_UUID,
+      email: 'jack.w.cone@gmail.com',
+      role: 'ADMIN',
+    });
+
+    const mockAuthClient = {
+      auth: {
+        getUser: vi.fn().mockImplementation(async (token: string) => {
+          const decoded: any = jwt.decode(token);
+          if (!decoded || !decoded.sub) return { data: { user: null }, error: new Error('Invalid token') };
+          return {
+            data: {
+              user: {
+                id: decoded.sub,
+                email: decoded.email || `${decoded.sub}@example.com`,
+                user_metadata: {},
+                app_metadata: { role: decoded.role || 'USER' },
+              },
+            },
+            error: null,
+          };
+        }),
+      },
+    };
+    setSupabaseAuthClientForTesting(mockAuthClient as any);
+
+    const basePool = {
+      id: POOL_ID,
+      name: 'Main Championship Pool',
+      settings: {},
+      status: 'ACTIVE',
+      adminId: JACK_UUID,
+    };
+
     mockPrisma = {
       pool: {
-        findUnique: vi.fn(),
-        update: vi.fn(),
+        findUnique: vi.fn().mockResolvedValue(basePool),
+        update: vi.fn().mockImplementation(async ({ data }: any) => ({
+          ...basePool,
+          ...data,
+        })),
       },
       poolMembership: {
-        findUnique: vi.fn(),
-        count: vi.fn(),
+        findUnique: vi.fn().mockImplementation(async ({ where }: any) => ({
+          poolId: where?.poolId_userId?.poolId || POOL_ID,
+          userId: where?.poolId_userId?.userId || JACK_UUID,
+          status: 'ACTIVE',
+          role: 'COMMISSIONER',
+        })),
+        findFirst: vi.fn().mockImplementation(async ({ where }: any) => ({
+          poolId: where?.poolId || POOL_ID,
+          userId: where?.userId || JACK_UUID,
+          status: 'ACTIVE',
+          role: 'COMMISSIONER',
+        })),
+        count: vi.fn().mockResolvedValue(10),
       },
       user: {
-        findUnique: vi.fn(),
+        findUnique: vi.fn().mockImplementation(async ({ where }: any) => ({
+          id: where.id,
+          email: 'jack.w.cone@gmail.com',
+          role: 'ADMIN',
+          status: 'ACTIVE',
+        })),
       },
       weeklySubmission: {
-        count: vi.fn(),
+        count: vi.fn().mockResolvedValue(0),
       },
       pick: {
-        count: vi.fn(),
+        count: vi.fn().mockResolvedValue(0),
       },
       game: {
-        findMany: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
       },
       auditLog: {
-        create: vi.fn(),
+        create: vi.fn().mockResolvedValue({ id: 'audit-log-uuid' }),
       },
       $transaction: vi.fn(async (cb: (tx: any) => any) => {
         return cb(mockPrisma);
       }),
-      $queryRawUnsafe: vi.fn(),
+      $queryRawUnsafe: vi.fn().mockResolvedValue([{ id: POOL_ID }]),
     };
 
     setPrismaClientForTesting(mockPrisma);
@@ -157,7 +231,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
     });
   });
 
-  describe('2. Revision Fingerprinting & Strict Mutations', () => {
+  describe('2. Revision Fingerprinting, Mandatory Controls & Route Denials', () => {
     it('computes deterministic SHA-256 revision from pool settings and name', () => {
       const poolA = { name: 'Main Pool', settings: { key: 'val' } };
       const poolB = { name: 'Main Pool', settings: { key: 'val' } };
@@ -172,85 +246,237 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(revA).not.toBe(revC);
     });
 
-    it('rejects stale expectedRevision with 409 STALE_REVISION on PATCH details', async () => {
-      const currentPool = { id: POOL_ID, name: 'Old Name', settings: {}, status: 'ACTIVE', adminId: JACK_UUID };
-      mockPrisma.pool.findUnique.mockResolvedValue(currentPool);
-      mockPrisma.poolMembership.findUnique.mockResolvedValue({ poolId: POOL_ID, userId: JACK_UUID, status: 'ACTIVE' });
+    it('rejects stale expectedRevision with HTTP 409 STALE_REVISION on PATCH details and does not update', async () => {
+      const pool = { id: POOL_ID, name: 'Current Name', settings: {}, status: 'ACTIVE', adminId: JACK_UUID };
+      mockPrisma.pool.findUnique.mockResolvedValue(pool);
 
-      // Simulate authenticated route test via direct middleware/route invocation
-      const req: any = {
-        user: { id: JACK_UUID },
-        params: { pool_id: POOL_ID },
-        pool: currentPool,
-        body: {
-          name: 'New Name',
-          reason: 'Valid audit reason',
-          expectedRevision: 'stale-or-wrong-revision-hash',
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/details`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
         },
-      };
+        body: JSON.stringify({
+          name: 'Renamed Pool',
+          expectedRevision: 'stale-revision-000000000000000000000000000000000000000000000000000000000000',
+          reason: 'Valid audit reason for update',
+        }),
+      });
+      const data: any = await res.json();
 
-      const res: any = {
-        setHeader: vi.fn(),
-        status: vi.fn().mockReturnThis(),
-        json: vi.fn(),
-      };
+      expect(res.status).toBe(409);
+      expect(data.code).toBe('STALE_REVISION');
+      expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+      expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+    });
 
-      // Call route handler through Express app with synthetic token
-      const authHeader = `Bearer synthetic-token`;
-      // Use supertest or direct verification:
-      // Verify revision mismatch logic directly
-      const realRev = computePoolSettingsRevision(currentPool);
-      expect(req.body.expectedRevision).not.toBe(realRev);
+    it('rejects stale expectedRevision with HTTP 409 STALE_REVISION on PATCH flags', async () => {
+      const pool = { id: POOL_ID, name: 'Current Name', settings: {}, status: 'ACTIVE', adminId: JACK_UUID };
+      mockPrisma.pool.findUnique.mockResolvedValue(pool);
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/flags`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          flags: { f_sweat_radar: true, f_league_press_box: false },
+          expectedRevision: 'stale-flags-revision-1234',
+          reason: 'Enabling sweat radar',
+        }),
+      });
+      const data: any = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(data.code).toBe('STALE_REVISION');
+      expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+      expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('enforces mandatory row lock: fails transaction if $queryRawUnsafe is unavailable or fails', async () => {
+      const pool = { id: POOL_ID, name: 'Current Name', settings: {}, status: 'ACTIVE', adminId: JACK_UUID };
+      const currentRev = computePoolSettingsRevision(pool);
+      mockPrisma.pool.findUnique.mockResolvedValue(pool);
+      mockPrisma.$queryRawUnsafe.mockRejectedValueOnce(new Error('Lock deadlock or DB failure'));
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/details`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          name: 'Renamed Pool',
+          expectedRevision: currentRev,
+          reason: 'Valid reason',
+        }),
+      });
+
+      expect(res.status).toBe(500);
+      expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+      expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('enforces mandatory audit log: aborts transaction if auditLog.create is unavailable or fails', async () => {
+      const pool = { id: POOL_ID, name: 'Current Name', settings: {}, status: 'ACTIVE', adminId: JACK_UUID };
+      const currentRev = computePoolSettingsRevision(pool);
+      mockPrisma.pool.findUnique.mockResolvedValue(pool);
+      mockPrisma.auditLog.create.mockRejectedValueOnce(new Error('Audit table constraint violation'));
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/details`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          name: 'Renamed Pool',
+          expectedRevision: currentRev,
+          reason: 'Valid reason',
+        }),
+      });
+
+      expect(res.status).toBe(500);
+    });
+
+    it('enforces in-transaction actor membership recheck: fails with 403 if membership revoked mid-transaction', async () => {
+      const pool = { id: POOL_ID, name: 'Current Name', settings: {}, status: 'ACTIVE', adminId: JACK_UUID };
+      const currentRev = computePoolSettingsRevision(pool);
+      mockPrisma.pool.findUnique.mockResolvedValue(pool);
+      // In-transaction findFirst returns null (revoked membership)
+      mockPrisma.poolMembership.findFirst.mockResolvedValueOnce(null);
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/details`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          name: 'Renamed Pool',
+          expectedRevision: currentRev,
+          reason: 'Valid reason',
+        }),
+      });
+      const data: any = await res.json();
+
+      expect(res.status).toBe(403);
+      expect(data.code).toBe('ACTIVE_MEMBERSHIP_REQUIRED');
+      expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+    });
+
+    it('enforces disabled PUT /slate endpoint: returns HTTP 501 SLATE_MUTATION_DISABLED', async () => {
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040', '401873041'],
+          expectedRevision: 'any-revision',
+          reason: 'Custom slate proposal',
+        }),
+      });
+      const data: any = await res.json();
+
+      expect(res.status).toBe(501);
+      expect(data.code).toBe('SLATE_MUTATION_DISABLED');
+      expect(mockPrisma.pool.update).not.toHaveBeenCalled();
     });
   });
 
-  describe('3. Presentation Flags Projection & Consumer Wiring', () => {
+  describe('3. Built Pages URL Behavior, API Base Resolution & Presentation Flags', () => {
+    it('normalizeApiOrigin strictly requires HTTPS VITE_API_URL in production', () => {
+      // Missing in prod throws fail-closed error
+      expect(() => normalizeApiOrigin(undefined, true)).toThrow('APPROVED_HTTPS_API_REQUIRED_IN_PRODUCTION');
+
+      // Non-HTTPS in prod throws
+      expect(() => normalizeApiOrigin('http://insecure-backend.com', true)).toThrow('APPROVED_HTTPS_API_REQUIRED_IN_PRODUCTION');
+
+      // Loopback/LAN in prod throws
+      expect(() => normalizeApiOrigin('http://192.168.1.5:3000', true)).toThrow('APPROVED_HTTPS_API_REQUIRED_IN_PRODUCTION');
+
+      // Approved HTTPS origin succeeds
+      const resolved = normalizeApiOrigin('https://nfl-pick-em-api.onrender.com', true);
+      expect(resolved).toBe('https://nfl-pick-em-api.onrender.com');
+    });
+
+    it('scopedExpressFetch routes relative /api calls to configured HTTPS Render origin from Pages', async () => {
+      let dispatchedUrl = '';
+      const customFetch = async (input: RequestInfo | URL) => {
+        dispatchedUrl = input.toString();
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+
+      const res = await scopedExpressFetch('/api/pools/0f497f1b-9002-49bd-ad2a-68ae34cb8afd/owner/overview', {
+        apiOrigin: 'https://nfl-pick-em-api.onrender.com',
+        isProd: true,
+        sessionToken: 'test-token',
+        originalFetch: customFetch as any,
+      });
+
+      expect(res.status).toBe(200);
+      expect(dispatchedUrl).toBe('https://nfl-pick-em-api.onrender.com/api/pools/0f497f1b-9002-49bd-ad2a-68ae34cb8afd/owner/overview');
+    });
+
     it('GET /api/pools/:pool_id/presentation-flags defaults closed to false/false when unconfigured', async () => {
       const pool = { id: POOL_ID, name: 'Main Pool', settings: {}, status: 'ACTIVE', adminId: JACK_UUID };
       mockPrisma.pool.findUnique.mockResolvedValue(pool);
-      mockPrisma.poolMembership.findUnique.mockResolvedValue({ poolId: POOL_ID, userId: JACK_UUID, status: 'ACTIVE' });
 
-      const res: any = {
-        setHeader: vi.fn(),
-        status: vi.fn().mockReturnThis(),
-        json: vi.fn(),
-      };
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/presentation-flags`, {
+        headers: { Authorization: `Bearer ${jackAuthToken}` },
+      });
+      const data: any = await res.json();
 
-      const req: any = {
-        user: { id: JACK_UUID },
-        params: { pool_id: POOL_ID },
-        pool,
-      };
-
-      // Direct projection check
-      const flags = pool.settings?.owner_admin_v1?.presentationFlags;
-      expect(flags).toBeUndefined();
-
-      // Client service helper fail-closed contract check
-      const fallback = DEFAULT_PRESENTATION_FLAGS;
-      expect(fallback.f_sweat_radar).toBe(false);
-      expect(fallback.f_league_press_box).toBe(false);
-      expect(fallback.configured).toBe(false);
+      expect(res.status).toBe(200);
+      expect(data.f_sweat_radar).toBe(false);
+      expect(data.f_league_press_box).toBe(false);
+      expect(data.configured).toBe(false);
     });
 
-    it('presentation flags projection returns configured booleans when persisted', () => {
-      const configuredSettings = {
-        owner_admin_v1: {
-          presentationFlags: {
-            f_sweat_radar: true,
-            f_league_press_box: false,
-            updatedAt: '2026-11-03T15:00:00Z',
+    it('GET /api/pools/:pool_id/presentation-flags returns configured booleans when persisted', async () => {
+      const pool = {
+        id: POOL_ID,
+        name: 'Main Pool',
+        settings: {
+          owner_admin_v1: {
+            presentationFlags: {
+              f_sweat_radar: true,
+              f_league_press_box: false,
+              updatedAt: '2026-11-03T15:00:00Z',
+            },
           },
         },
+        status: 'ACTIVE',
+        adminId: JACK_UUID,
       };
+      mockPrisma.pool.findUnique.mockResolvedValue(pool);
 
-      const flags = configuredSettings.owner_admin_v1.presentationFlags;
-      expect(flags.f_sweat_radar).toBe(true);
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/presentation-flags`, {
+        headers: { Authorization: `Bearer ${jackAuthToken}` },
+      });
+      const data: any = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.f_sweat_radar).toBe(true);
+      expect(data.f_league_press_box).toBe(false);
+      expect(data.configured).toBe(true);
+    });
+
+    it('fetchPresentationFlags client service defaults closed on error', async () => {
+      const flags = await fetchPresentationFlags('non-existent-pool-id', 'invalid-token');
+      expect(flags.f_sweat_radar).toBe(false);
       expect(flags.f_league_press_box).toBe(false);
+      expect(flags.configured).toBe(false);
     });
   });
 
-  describe('4. Simulation Engine (Actual Production Logic & Isolation)', () => {
+  describe('4. Simulation Engine & Input Validation', () => {
     it('computes competition ranks, shot penalties, and The Drop boundary using real production logic', () => {
       const scenarioGames: SlateGame[] = [
         { id: 'tb-det', homeTeam: 'DET', awayTeam: 'MIN', spread: 0, kickoffTime: '2026-11-01T17:00:00Z' },
@@ -312,8 +538,64 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(result[1].totalProvisionalPoints).toBe(0);
     });
 
-    it('runs pure in-memory simulation without persistence or network transport calls', () => {
-      // Assert mockPrisma was never called during pure calculation
+    it('POST /api/pools/:pool_id/owner/simulations/preview rejects invalid simulation input bounds', async () => {
+      // Case A: negative score
+      const resNeg = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/simulations/preview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          scenario: [{ id: 'sim-1', homeScore: -5, awayScore: 10 }],
+          members: [{ userId: 'u1', userName: 'User 1' }],
+        }),
+      });
+      const dataNeg: any = await resNeg.json();
+      expect(resNeg.status).toBe(422);
+      expect(dataNeg.code).toBe('INVALID_SIMULATION');
+
+      // Case B: non-integer score
+      const resFloat = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/simulations/preview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          scenario: [{ id: 'sim-1', homeScore: 14.5, awayScore: 10 }],
+          members: [{ userId: 'u1', userName: 'User 1' }],
+        }),
+      });
+      const dataFloat: any = await resFloat.json();
+      expect(resFloat.status).toBe(422);
+      expect(dataFloat.code).toBe('INVALID_SIMULATION');
+    });
+
+    it('POST /api/pools/:pool_id/owner/simulations/preview computes pure simulation and marks isFinal when all final', async () => {
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/simulations/preview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          scenario: [
+            { id: 'tb-det', homeTeamId: 'DET', awayTeamId: 'MIN', homeScore: 31, awayScore: 28, status: 'FINAL' },
+            { id: 'g-gb', homeTeamId: 'GB', awayTeamId: 'CAR', homeScore: 24, awayScore: 10, status: 'FINAL' },
+          ],
+          members: [
+            { userId: 'u1', userName: 'Jack', tiebreakerPrediction: 58, picks: [{ gameId: 'tb-det', selectedTeam: 'DET' }, { gameId: 'g-gb', selectedTeam: 'GB' }] },
+            { userId: 'u2', userName: 'Chris', tiebreakerPrediction: 50, picks: [{ gameId: 'tb-det', selectedTeam: 'MIN' }, { gameId: 'g-gb', selectedTeam: 'CAR' }] },
+          ],
+        }),
+      });
+      const data: any = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.simulation).toBe(true);
+      expect(data.isFinal).toBe(true);
+      expect(data.standings).toHaveLength(2);
       expect(mockPrisma.pool.update).not.toHaveBeenCalled();
       expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
     });

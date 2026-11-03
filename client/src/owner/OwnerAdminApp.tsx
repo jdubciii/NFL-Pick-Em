@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { scopedExpressFetch } from '../lib/apiClient';
 import { calculateProvisionalStandings, type SlateGame, type UserStandingRef, type UserPickItem, type TiebreakerData } from '../services/sweatProjectionService';
 import type { LiveGame } from '../services/liveScoreService';
 import { getRadarStatusPill, getRadarSectionHeader } from '../pages/RadarPage';
@@ -11,6 +12,10 @@ export const OwnerAdminApp: React.FC = () => {
   const { user, session, loading } = useAuth();
   const [activeTab, setActiveTab] = useState<'overview' | 'games' | 'rules' | 'simulation'>('overview');
   const [poolId, setPoolId] = useState<string>(DEFAULT_POOL_ID);
+
+  // Explicit scope selection (Season and Week)
+  const [selectedSeason, setSelectedSeason] = useState<number>(2026);
+  const [selectedWeek, setSelectedWeek] = useState<number>(8);
 
   // Auth form state for owner login
   const [email, setEmail] = useState('');
@@ -83,7 +88,7 @@ export const OwnerAdminApp: React.FC = () => {
     setOverviewLoading(true);
     setOverviewError(null);
     try {
-      const res = await fetch(`/api/pools/${poolId}/owner/overview`, {
+      const res = await scopedExpressFetch(`/api/pools/${poolId}/owner/overview`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       if (!res.ok) {
@@ -102,12 +107,12 @@ export const OwnerAdminApp: React.FC = () => {
     }
   }, [poolId, session?.access_token]);
 
-  // Fetch games
+  // Fetch games for explicit selected season and week scope
   const fetchGames = useCallback(async () => {
     if (!session?.access_token) return;
     setGamesLoading(true);
     try {
-      const res = await fetch(`/api/pools/${poolId}/owner/games?season=2026&week=8`, {
+      const res = await scopedExpressFetch(`/api/pools/${poolId}/owner/games?season=${selectedSeason}&week=${selectedWeek}`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       if (res.ok) {
@@ -119,14 +124,14 @@ export const OwnerAdminApp: React.FC = () => {
     } finally {
       setGamesLoading(false);
     }
-  }, [poolId, session?.access_token]);
+  }, [poolId, session?.access_token, selectedSeason, selectedWeek]);
 
-  // Fetch rules
+  // Fetch rules for explicit selected season and week scope
   const fetchRules = useCallback(async () => {
     if (!session?.access_token) return;
     setRulesLoading(true);
     try {
-      const res = await fetch(`/api/pools/${poolId}/owner/rules?season=2026&week=8`, {
+      const res = await scopedExpressFetch(`/api/pools/${poolId}/owner/rules?season=${selectedSeason}&week=${selectedWeek}`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       if (res.ok) {
@@ -138,7 +143,7 @@ export const OwnerAdminApp: React.FC = () => {
     } finally {
       setRulesLoading(false);
     }
-  }, [poolId, session?.access_token]);
+  }, [poolId, session?.access_token, selectedSeason, selectedWeek]);
 
   useEffect(() => {
     if (session?.access_token) {
@@ -169,7 +174,7 @@ export const OwnerAdminApp: React.FC = () => {
     setNameSubmitting(true);
     setNameStatus(null);
     try {
-      const res = await fetch(`/api/pools/${poolId}/owner/details`, {
+      const res = await scopedExpressFetch(`/api/pools/${poolId}/owner/details`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -199,7 +204,7 @@ export const OwnerAdminApp: React.FC = () => {
     setFlagsSubmitting(true);
     setFlagsStatus(null);
     try {
-      const res = await fetch(`/api/pools/${poolId}/owner/flags`, {
+      const res = await scopedExpressFetch(`/api/pools/${poolId}/owner/flags`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -236,16 +241,16 @@ export const OwnerAdminApp: React.FC = () => {
     setOverrideSubmitting(true);
     setOverrideStatus(null);
     try {
-      const res = await fetch(`/api/pools/${poolId}/owner/tiebreaker-designation`, {
+      const res = await scopedExpressFetch(`/api/pools/${poolId}/owner/tiebreaker-designation`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session?.access_token}`,
         },
         body: JSON.stringify({
-          season: 2026,
+          season: selectedSeason,
           seasonType: 2,
-          weekNumber: 8,
+          weekNumber: selectedWeek,
           targetGameId: overrideTargetId,
           reason: overrideReason,
           expectedRevision: overview?.currentRevision,
@@ -265,41 +270,13 @@ export const OwnerAdminApp: React.FC = () => {
     }
   };
 
-  // Handle future slate submission
+  // Handle future slate submission (Disabled per HAG-57 / HAG-59)
   const handleUpdateSlate = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSlateSubmitting(true);
-    setSlateStatus(null);
-    try {
-      const eventIds = slateEventIds.split(',').map((s) => s.trim()).filter(Boolean);
-      const res = await fetch(`/api/pools/${poolId}/owner/slate`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session?.access_token}`,
-        },
-        body: JSON.stringify({
-          season: Number(slateSeason),
-          seasonType: 2,
-          weekNumber: Number(slateWeek),
-          eventIds,
-          reason: slateReason,
-          expectedRevision: overview?.currentRevision,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to update slate.');
-      setSlateStatus({
-        success: true,
-        message: `Future slate saved for Week ${slateWeek}: ${eventIds.length} games. Revision: ${data.revision.slice(0, 10)}...`,
-      });
-      setSlateReason('');
-      fetchOverview();
-    } catch (err: any) {
-      setSlateStatus({ success: false, message: err.message });
-    } finally {
-      setSlateSubmitting(false);
-    }
+    setSlateStatus({
+      success: false,
+      message: 'SLATE_MUTATION_DISABLED: Live custom slate modification is disabled pending shared scored-slate resolver wiring and pick serialization contract.',
+    });
   };
 
   // Calculate pure in-memory simulation standings
@@ -532,6 +509,41 @@ export const OwnerAdminApp: React.FC = () => {
         </button>
       </nav>
 
+      {/* Scope Selector Bar (Season & Week) */}
+      <div className="bg-slate-900 border-b border-slate-800 px-6 py-2.5 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center space-x-4">
+          <span className="text-[11px] font-mono uppercase tracking-wider text-slate-400 font-semibold">Active Scope:</span>
+          <div className="flex items-center space-x-1.5">
+            <span className="text-xs font-mono text-slate-400">Season</span>
+            <select
+              value={selectedSeason}
+              onChange={(e) => setSelectedSeason(Number(e.target.value))}
+              className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none focus:border-rose-500"
+            >
+              <option value={2026}>2026</option>
+              <option value={2025}>2025</option>
+            </select>
+          </div>
+          <div className="flex items-center space-x-1.5">
+            <span className="text-xs font-mono text-slate-400">Week</span>
+            <select
+              value={selectedWeek}
+              onChange={(e) => setSelectedWeek(Number(e.target.value))}
+              className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none focus:border-rose-500"
+            >
+              {Array.from({ length: 18 }, (_, i) => i + 1).map((w) => (
+                <option key={w} value={w}>
+                  Week {w}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="text-[11px] font-mono text-slate-400">
+          Viewing: <span className="text-slate-200 font-bold">Season {selectedSeason} Week {selectedWeek}</span>
+        </div>
+      </div>
+
       {/* Main Workspace Area */}
       <main className="flex-1 p-6 max-w-6xl w-full mx-auto space-y-6">
         {/* TAB 1: OVERVIEW & DETAILS */}
@@ -628,12 +640,12 @@ export const OwnerAdminApp: React.FC = () => {
             {/* Authoritative Games List */}
             <div className="bg-slate-900 border border-slate-800 p-5 rounded space-y-4">
               <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider">
-                Authoritative Week 8 Games & Statuses
+                Authoritative Games & Statuses (Season {selectedSeason} Week {selectedWeek})
               </h2>
               {gamesLoading ? (
-                <p className="text-xs font-mono text-slate-500">Loading authoritative games...</p>
+                <p className="text-xs font-mono text-slate-500">Loading authoritative games for Season {selectedSeason} Week {selectedWeek}...</p>
               ) : gamesList.length === 0 ? (
-                <p className="text-xs font-mono text-slate-500">No games resolved for this week.</p>
+                <p className="text-xs font-mono text-slate-500">No games resolved for Season {selectedSeason} Week {selectedWeek}.</p>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                   {gamesList.map((g) => (
@@ -660,15 +672,14 @@ export const OwnerAdminApp: React.FC = () => {
               )}
             </div>
 
-            {/* Future Slate Editor */}
+            {/* Future Slate Editor (Disabled pending shared scored-slate resolver wiring) */}
             <div className="bg-slate-900 border border-slate-800 p-5 rounded space-y-4">
               <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider">
                 Future Pool Slate Editor (PUT /api/pools/:pool_id/owner/slate)
               </h2>
-              <p className="text-xs text-slate-400">
-                Safe game-selection control: Explicitly configure canonical ESPN event IDs for future weeks.
-                Must be an accepted manifest subset, before earliest kickoff, and before any pick rows or predictions exist.
-              </p>
+              <div className="bg-rose-950/40 border border-rose-800/80 p-3 rounded text-xs text-rose-300 font-mono">
+                🔒 <strong>Slate Modification Disabled (HAG-57 / HAG-59 Contract Guard):</strong> Live custom slate writing is disabled pending shared scored-slate resolver wiring and pick serialization contracts.
+              </div>
 
               {slateStatus && (
                 <div
@@ -682,15 +693,15 @@ export const OwnerAdminApp: React.FC = () => {
                 </div>
               )}
 
-              <form onSubmit={handleUpdateSlate} className="space-y-3 max-w-xl">
+              <form onSubmit={handleUpdateSlate} className="space-y-3 max-w-xl opacity-60">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-mono text-slate-400 mb-1">Season</label>
                     <input
                       type="number"
                       value={slateSeason}
-                      onChange={(e) => setSlateSeason(Number(e.target.value))}
-                      className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-100"
+                      disabled
+                      className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-400 font-mono"
                     />
                   </div>
                   <div>
@@ -698,10 +709,8 @@ export const OwnerAdminApp: React.FC = () => {
                     <input
                       type="number"
                       value={slateWeek}
-                      onChange={(e) => setSlateWeek(Number(e.target.value))}
-                      min={9}
-                      max={18}
-                      className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-100"
+                      disabled
+                      className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-400 font-mono"
                     />
                   </div>
                 </div>
@@ -711,11 +720,10 @@ export const OwnerAdminApp: React.FC = () => {
                   </label>
                   <textarea
                     value={slateEventIds}
-                    onChange={(e) => setSlateEventIds(e.target.value)}
-                    placeholder="401873040, 401873041, 401873042..."
+                    disabled
+                    placeholder="Disabled"
                     rows={2}
-                    required
-                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs font-mono text-slate-100"
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs font-mono text-slate-400"
                   />
                 </div>
                 <div>
@@ -723,18 +731,17 @@ export const OwnerAdminApp: React.FC = () => {
                   <input
                     type="text"
                     value={slateReason}
-                    onChange={(e) => setSlateReason(e.target.value)}
-                    placeholder="e.g. Scoping Week 9 slate to 9 selected regional games"
-                    required
-                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-100"
+                    disabled
+                    placeholder="Disabled"
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-400 font-mono"
                   />
                 </div>
                 <button
                   type="submit"
-                  disabled={slateSubmitting || !slateReason.trim() || !slateEventIds.trim()}
-                  className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs uppercase tracking-wider rounded disabled:opacity-50"
+                  disabled={true}
+                  className="px-4 py-2 bg-slate-800 text-slate-500 font-bold text-xs uppercase tracking-wider rounded cursor-not-allowed"
                 >
-                  {slateSubmitting ? 'Saving Slate...' : 'Save Future Pool Slate'}
+                  Slate Modification Disabled
                 </button>
               </form>
             </div>

@@ -239,8 +239,94 @@ ownerAdminRouter.get('/:pool_id/owner/flags', requireAuth, requireOwner, require
 
 // ============================================================================
 // 3. OWNER MUTATIONS: /api/pools/:pool_id/owner/*
-// Transactional with row lock, expectedRevision check, strict allowlist, and AuditLog.
+// Transactional with mandatory row lock, in-tx authority/membership recheck,
+// expectedRevision verification, strict allowlist, and mandatory AuditLog.
 // ============================================================================
+
+/**
+ * Mandatory row-level locking and in-transaction authority re-verification.
+ * Fails closed if row lock, active pool, active membership, or commissioner status is unavailable.
+ */
+async function acquireLockedPoolAndVerifyAuthority(
+  tx: any,
+  poolId: string,
+  actorId: string,
+  requireCommish: boolean = true
+): Promise<{ freshPool: any; membership: any; isCommissioner: boolean }> {
+  if (!tx || typeof tx.$queryRawUnsafe !== 'function') {
+    const err: any = new Error('TRANSACTION_LOCK_UNAVAILABLE: Mandatory row-level locking is unavailable.');
+    err.statusCode = 500;
+    err.code = 'TRANSACTION_LOCK_UNAVAILABLE';
+    throw err;
+  }
+
+  await tx.$queryRawUnsafe(
+    'SELECT id, name, settings, status, admin_id FROM public.pools WHERE id = $1::uuid FOR UPDATE;',
+    poolId
+  );
+
+  const freshPool = await tx.pool.findUnique({
+    where: { id: poolId },
+  });
+
+  if (!freshPool || freshPool.status !== 'ACTIVE') {
+    const err: any = new Error('Pool not found or inactive.');
+    err.statusCode = 404;
+    err.code = 'POOL_NOT_FOUND';
+    throw err;
+  }
+
+  if (!tx.poolMembership || typeof tx.poolMembership.findFirst !== 'function') {
+    const err: any = new Error('MEMBERSHIP_SERVICE_UNAVAILABLE: Unable to verify active membership.');
+    err.statusCode = 500;
+    err.code = 'MEMBERSHIP_SERVICE_UNAVAILABLE';
+    throw err;
+  }
+
+  const membership = await tx.poolMembership.findFirst({
+    where: { poolId, userId: actorId, status: 'ACTIVE' },
+  });
+
+  if (!membership) {
+    const err: any = new Error('FORBIDDEN: Active pool membership required.');
+    err.statusCode = 403;
+    err.code = 'ACTIVE_MEMBERSHIP_REQUIRED';
+    throw err;
+  }
+
+  const isCommissioner = freshPool.adminId === actorId || membership.role === 'COMMISSIONER';
+  if (requireCommish && !isCommissioner) {
+    const err: any = new Error('FORBIDDEN: Pool commissioner privileges required.');
+    err.statusCode = 403;
+    err.code = 'FORBIDDEN';
+    throw err;
+  }
+
+  return { freshPool, membership, isCommissioner };
+}
+
+/**
+ * Mandatory audit log creation. Never silently skipped.
+ */
+async function recordMandatoryAuditLog(
+  tx: any,
+  entry: {
+    actorId: string;
+    action: string;
+    targetEntityId: string;
+    oldValue: any;
+    newValue: any;
+  }
+): Promise<void> {
+  if (!tx || !tx.auditLog || typeof tx.auditLog.create !== 'function') {
+    const err: any = new Error('AUDIT_LOG_UNAVAILABLE: Mandatory audit log writer is unavailable.');
+    err.statusCode = 500;
+    err.code = 'AUDIT_LOG_UNAVAILABLE';
+    throw err;
+  }
+
+  await tx.auditLog.create({ data: entry });
+}
 
 ownerAdminRouter.patch('/:pool_id/owner/details', requireAuth, requireOwner, requirePoolOwnerAccess, async (req: Request, res: Response): Promise<void> => {
   const envelope = validateMutationEnvelope(req, ['name']);
@@ -259,27 +345,12 @@ ownerAdminRouter.patch('/:pool_id/owner/details', requireAuth, requireOwner, req
   }
   const newName = rawName.trim();
   const poolId = req.pool.id;
+  const actorId = req.user!.id;
   const db = getPrismaClient();
 
   try {
     const result = await db.$transaction(async (tx: any) => {
-      if (typeof tx.$queryRawUnsafe === 'function') {
-        await tx.$queryRawUnsafe(
-          'SELECT id, name, settings, status, admin_id FROM public.pools WHERE id = $1::uuid FOR UPDATE;',
-          poolId
-        );
-      }
-
-      const freshPool = await tx.pool.findUnique({
-        where: { id: poolId },
-      });
-
-      if (!freshPool || freshPool.status !== 'ACTIVE') {
-        const err: any = new Error('Pool not found or inactive.');
-        err.statusCode = 404;
-        err.code = 'POOL_NOT_FOUND';
-        throw err;
-      }
+      const { freshPool } = await acquireLockedPoolAndVerifyAuthority(tx, poolId, actorId, true);
 
       const currentRevision = computePoolSettingsRevision(freshPool);
       if (currentRevision !== envelope.expectedRevision) {
@@ -294,17 +365,13 @@ ownerAdminRouter.patch('/:pool_id/owner/details', requireAuth, requireOwner, req
         data: { name: newName },
       });
 
-      if (tx.auditLog && typeof tx.auditLog.create === 'function') {
-        await tx.auditLog.create({
-          data: {
-            actorId: req.user!.id,
-            action: 'OWNER_ADMIN_UPDATE_DETAILS',
-            targetEntityId: poolId,
-            oldValue: { name: freshPool.name, reason: envelope.reason },
-            newValue: { name: newName, reason: envelope.reason },
-          },
-        });
-      }
+      await recordMandatoryAuditLog(tx, {
+        actorId,
+        action: 'OWNER_ADMIN_UPDATE_DETAILS',
+        targetEntityId: poolId,
+        oldValue: { name: freshPool.name, reason: envelope.reason },
+        newValue: { name: newName, reason: envelope.reason },
+      });
 
       const newRevision = computePoolSettingsRevision(updatedPool);
       return { pool: updatedPool, newRevision };
@@ -358,27 +425,12 @@ ownerAdminRouter.patch('/:pool_id/owner/flags', requireAuth, requireOwner, requi
   }
 
   const poolId = req.pool.id;
+  const actorId = req.user!.id;
   const db = getPrismaClient();
 
   try {
     const result = await db.$transaction(async (tx: any) => {
-      if (typeof tx.$queryRawUnsafe === 'function') {
-        await tx.$queryRawUnsafe(
-          'SELECT id, name, settings, status, admin_id FROM public.pools WHERE id = $1::uuid FOR UPDATE;',
-          poolId
-        );
-      }
-
-      const freshPool = await tx.pool.findUnique({
-        where: { id: poolId },
-      });
-
-      if (!freshPool || freshPool.status !== 'ACTIVE') {
-        const err: any = new Error('Pool not found or inactive.');
-        err.statusCode = 404;
-        err.code = 'POOL_NOT_FOUND';
-        throw err;
-      }
+      const { freshPool } = await acquireLockedPoolAndVerifyAuthority(tx, poolId, actorId, true);
 
       const currentRevision = computePoolSettingsRevision(freshPool);
       if (currentRevision !== envelope.expectedRevision) {
@@ -411,17 +463,13 @@ ownerAdminRouter.patch('/:pool_id/owner/flags', requireAuth, requireOwner, requi
         data: { settings: updatedSettings },
       });
 
-      if (tx.auditLog && typeof tx.auditLog.create === 'function') {
-        await tx.auditLog.create({
-          data: {
-            actorId: req.user!.id,
-            action: 'OWNER_ADMIN_UPDATE_FLAGS',
-            targetEntityId: poolId,
-            oldValue: { presentationFlags: oldFlags, reason: envelope.reason },
-            newValue: { presentationFlags: newFlags, reason: envelope.reason },
-          },
-        });
-      }
+      await recordMandatoryAuditLog(tx, {
+        actorId,
+        action: 'OWNER_ADMIN_UPDATE_FLAGS',
+        targetEntityId: poolId,
+        oldValue: { presentationFlags: oldFlags, reason: envelope.reason },
+        newValue: { presentationFlags: newFlags, reason: envelope.reason },
+      });
 
       const newRevision = computePoolSettingsRevision(updatedPool);
       return { newFlags, newRevision };
@@ -466,27 +514,12 @@ ownerAdminRouter.post('/:pool_id/owner/tiebreaker-designation', requireAuth, req
   }
 
   const poolId = req.pool.id;
+  const actorId = req.user!.id;
   const db = getPrismaClient();
 
   try {
     const result = await db.$transaction(async (tx: any) => {
-      if (typeof tx.$queryRawUnsafe === 'function') {
-        await tx.$queryRawUnsafe(
-          'SELECT id, name, settings, status, admin_id FROM public.pools WHERE id = $1::uuid FOR UPDATE;',
-          poolId
-        );
-      }
-
-      const freshPool = await tx.pool.findUnique({
-        where: { id: poolId },
-      });
-
-      if (!freshPool || freshPool.status !== 'ACTIVE') {
-        const err: any = new Error('Pool not found or inactive.');
-        err.statusCode = 404;
-        err.code = 'POOL_NOT_FOUND';
-        throw err;
-      }
+      const { freshPool } = await acquireLockedPoolAndVerifyAuthority(tx, poolId, actorId, true);
 
       const currentRevision = computePoolSettingsRevision(freshPool);
       if (currentRevision !== envelope.expectedRevision) {
@@ -555,7 +588,7 @@ ownerAdminRouter.post('/:pool_id/owner/tiebreaker-designation', requireAuth, req
         week: weekNumber,
         targetGameId,
         games: games as any,
-        requestingUserId: req.user!.id,
+        requestingUserId: actorId,
         poolAdminId: freshPool.adminId,
         isUserActiveMember: true,
       });
@@ -565,17 +598,13 @@ ownerAdminRouter.post('/:pool_id/owner/tiebreaker-designation', requireAuth, req
         data: { settings: updatedSettings },
       });
 
-      if (tx.auditLog && typeof tx.auditLog.create === 'function') {
-        await tx.auditLog.create({
-          data: {
-            actorId: req.user!.id,
-            action: 'OWNER_ADMIN_TIEBREAKER_DESIGNATION',
-            targetEntityId: poolId,
-            oldValue: { previousDesignation: currentDesig.eventId, reason: envelope.reason },
-            newValue: { newDesignation: newDesignation.eventId, reason: envelope.reason },
-          },
-        });
-      }
+      await recordMandatoryAuditLog(tx, {
+        actorId,
+        action: 'OWNER_ADMIN_TIEBREAKER_DESIGNATION',
+        targetEntityId: poolId,
+        oldValue: { previousDesignation: currentDesig.eventId, reason: envelope.reason },
+        newValue: { newDesignation: newDesignation.eventId, reason: envelope.reason },
+      });
 
       const newRevision = computePoolSettingsRevision(updatedPool);
       return { designation: newDesignation, newRevision };
@@ -592,199 +621,15 @@ ownerAdminRouter.post('/:pool_id/owner/tiebreaker-designation', requireAuth, req
   }
 });
 
-ownerAdminRouter.put('/:pool_id/owner/slate', requireAuth, requireOwner, requirePoolOwnerAccess, async (req: Request, res: Response): Promise<void> => {
-  const envelope = validateMutationEnvelope(req, ['season', 'seasonType', 'weekNumber', 'eventIds']);
-  if (!envelope.valid) {
-    res.status(422).json({ error: envelope.error, code: envelope.code });
-    return;
-  }
-
-  if (!req.isCommissioner) {
-    res.status(403).json({
-      error: 'FORBIDDEN: Pool commissioner privileges required to modify pool slate.',
-      code: 'FORBIDDEN',
-    });
-    return;
-  }
-
-  const season = Number(req.body.season);
-  const seasonType = Number(req.body.seasonType || 2);
-  const weekNumber = Number(req.body.weekNumber);
-  const rawEventIds = req.body.eventIds;
-
-  if (!Number.isInteger(season) || !Number.isInteger(weekNumber) || !Array.isArray(rawEventIds)) {
-    res.status(422).json({
-      error: 'season, weekNumber, and eventIds array are required.',
-      code: 'INVALID_CHANGE',
-    });
-    return;
-  }
-
-  const eventIds = rawEventIds.map(String).map((s) => s.trim()).filter(Boolean);
-  if (eventIds.length === 0 || eventIds.length > 32 || new Set(eventIds).size !== eventIds.length) {
-    res.status(422).json({
-      error: 'eventIds must be a non-empty unique array of at most 32 canonical game IDs.',
-      code: 'INVALID_CHANGE',
-    });
-    return;
-  }
-
-  // Historical Protection: Never allow modifying historical slates (e.g. HAG-52 Week 8)
-  if (season === 2026 && seasonType === 2 && weekNumber <= 8) {
-    res.status(422).json({
-      error: 'HISTORICAL_SLATE_PROTECTED: Past and current Week 8 scored slates are immutable and cannot be modified.',
-      code: 'HISTORICAL_SLATE_PROTECTED',
-    });
-    return;
-  }
-
-  const poolId = req.pool.id;
-  const db = getPrismaClient();
-
-  try {
-    const result = await db.$transaction(async (tx: any) => {
-      if (typeof tx.$queryRawUnsafe === 'function') {
-        await tx.$queryRawUnsafe(
-          'SELECT id, name, settings, status, admin_id FROM public.pools WHERE id = $1::uuid FOR UPDATE;',
-          poolId
-        );
-      }
-
-      const freshPool = await tx.pool.findUnique({
-        where: { id: poolId },
-      });
-
-      if (!freshPool || freshPool.status !== 'ACTIVE') {
-        const err: any = new Error('Pool not found or inactive.');
-        err.statusCode = 404;
-        err.code = 'POOL_NOT_FOUND';
-        throw err;
-      }
-
-      const currentRevision = computePoolSettingsRevision(freshPool);
-      if (currentRevision !== envelope.expectedRevision) {
-        const err: any = new Error('STALE_REVISION: Pool settings have changed since last read.');
-        err.statusCode = 409;
-        err.code = 'STALE_REVISION';
-        throw err;
-      }
-
-      // 1. Verify accepted manifest subset
-      const manifest = await authoritativeSlateService.getAcceptedSlateManifest(tx, season, seasonType, weekNumber);
-      if (!manifest || !Array.isArray(manifest.eventIds)) {
-        const err: any = new Error(`Accepted weekly slate manifest not found for Season ${season} Type ${seasonType} Week ${weekNumber}.`);
-        err.statusCode = 422;
-        err.code = 'UNACCEPTED_MANIFEST';
-        throw err;
-      }
-
-      const manifestEventSet = new Set(manifest.eventIds.map(String));
-      for (const eid of eventIds) {
-        if (!manifestEventSet.has(eid)) {
-          const err: any = new Error(`Event ID '${eid}' is not part of the accepted manifest for this week.`);
-          err.statusCode = 422;
-          err.code = 'UNACCEPTED_MANIFEST_GAMES';
-          throw err;
-        }
-      }
-
-      // 2. Check picks and predictions
-      const existingSubmissions = await tx.weeklySubmission.count({
-        where: { poolId, weekNumber },
-      });
-      if (existingSubmissions > 0) {
-        const err: any = new Error('PREDICTIONS_EXIST: Cannot modify slate after predictions or submission rows exist for this week.');
-        err.statusCode = 409;
-        err.code = 'PREDICTIONS_EXIST';
-        throw err;
-      }
-
-      const existingGames = await getGamesForWeek(weekNumber, season, poolId, tx);
-      const gameIds = existingGames.map((g: any) => g.id).filter(Boolean);
-      if (gameIds.length > 0) {
-        const existingPicks = await tx.pick.count({
-          where: {
-            poolId,
-            gameId: { in: gameIds },
-          },
-        });
-        if (existingPicks > 0) {
-          const err: any = new Error('PICKS_EXIST: Cannot modify slate after picks have been submitted for this week.');
-          err.statusCode = 409;
-          err.code = 'PICKS_EXIST';
-          throw err;
-        }
-      }
-
-      // 3. Check earliest kickoff across union of old and proposed
-      const now = new Date();
-      for (const g of existingGames) {
-        if (g.kickoffTime && new Date(g.kickoffTime) <= now) {
-          const err: any = new Error('KICKOFF_PASSED: Cannot modify slate after earliest game kickoff has passed.');
-          err.statusCode = 422;
-          err.code = 'KICKOFF_PASSED';
-          throw err;
-        }
-      }
-
-      const existingSettings = (freshPool.settings as any) || {};
-      const ownerAdminV1 = existingSettings.owner_admin_v1 || {};
-      const slates = ownerAdminV1.slates || {};
-      const seasonSlates = slates[season] || {};
-      const seasonTypeSlates = seasonSlates[seasonType] || {};
-
-      const newScopeEntry = {
-        eventIds,
-        updatedAt: new Date().toISOString(),
-      };
-
-      const updatedSettings = {
-        ...existingSettings,
-        owner_admin_v1: {
-          ...ownerAdminV1,
-          slates: {
-            ...slates,
-            [season]: {
-              ...seasonSlates,
-              [seasonType]: {
-                ...seasonTypeSlates,
-                [weekNumber]: newScopeEntry,
-              },
-            },
-          },
-        },
-      };
-
-      const updatedPool = await tx.pool.update({
-        where: { id: poolId },
-        data: { settings: updatedSettings },
-      });
-
-      if (tx.auditLog && typeof tx.auditLog.create === 'function') {
-        await tx.auditLog.create({
-          data: {
-            actorId: req.user!.id,
-            action: 'OWNER_ADMIN_UPDATE_SLATE',
-            targetEntityId: poolId,
-            oldValue: { scope: `${season}:${seasonType}:${weekNumber}`, reason: envelope.reason },
-            newValue: { eventIds, reason: envelope.reason },
-          },
-        });
-      }
-
-      const newRevision = computePoolSettingsRevision(updatedPool);
-      return { eventIds, newRevision };
-    });
-
-    res.status(200).json({
-      success: true,
-      slate: { season, seasonType, weekNumber, eventIds: result.eventIds },
-      revision: result.newRevision,
-    });
-  } catch (err: any) {
-    const statusCode = err.statusCode || 500;
-    res.status(statusCode).json({ error: err.message, code: err.code || 'SLATE_UPDATE_FAILED' });
-  }
+/**
+ * Custom pool slate mutation is disabled / fail-closed pending shared scored-slate resolver wiring
+ * and serialization against pick/prediction creation (Finding 3 / HAG57 contract).
+ */
+ownerAdminRouter.put('/:pool_id/owner/slate', requireAuth, requireOwner, requirePoolOwnerAccess, async (_req: Request, res: Response): Promise<void> => {
+  res.status(501).json({
+    error: 'SLATE_MUTATION_DISABLED: Live custom slate modification is disabled pending shared scored-slate resolver wiring and pick serialization contract.',
+    code: 'SLATE_MUTATION_DISABLED',
+  });
 });
 
 // ============================================================================
