@@ -4120,7 +4120,14 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         inboxMessage: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
       };
 
-      // The transaction callback throws because cleanup DELETE fails → outer promise rejects
+      // LIMITATION NOTE (HAG58-SLATE-2026-11-03-01):
+      // This mock uses a passthrough $transaction (cb => cb(mockDb)), not a real
+      // PostgreSQL transaction. The test proves that:
+      //   (a) the callback throws when DELETE fails (cleanupIncompleteClaim propagates errors), and
+      //   (b) the outer promise rejects — which in real Prisma causes rollback.
+      // It does NOT prove actual PostgreSQL transaction rollback semantics, isolation level,
+      // or that the INSERT is physically undone on a live database. That proof requires a real
+      // PostgreSQL integration fixture (see the skipped test immediately below).
       await expect(
         executeWeeklyWrapUpForPool(POOL_ID_CLEANUP, 7, {
           season: 2026,
@@ -4129,11 +4136,63 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         })
       ).rejects.toThrow('simulated DELETE failure — disk full');
 
-      // Claim was inserted (proves we reached Step 1)
+      // Claim was inserted (proves we reached Step 1 before the error)
       expect(insertedClaims.length).toBeGreaterThan(0);
-      // DELETE was attempted (proves cleanupIncompleteClaim was called)
+      // DELETE was attempted (proves cleanupIncompleteClaim was called with propagating error)
       expect(deletedClaims.length).toBeGreaterThan(0);
-      // The rejection proves the transaction rolled back — no silent commit of orphaned claim
+      // The outer promise rejects — in real Prisma $transaction this causes DB rollback.
+    });
+
+    // -------------------------------------------------------------------------
+    // Real PostgreSQL integration fixture (HAG58-SLATE-2026-11-03-01 requirement)
+    // Skipped when DATABASE_URL is absent; run against a live/test PostgreSQL instance.
+    // Proves actual DB rollback when cleanupIncompleteClaim DELETE fails:
+    //   1. Begin transaction.
+    //   2. INSERT weekly_wrapups claim row (pool_id, season, week_number, summary IS NULL).
+    //   3. Revoke DELETE permission on weekly_wrapups for the session role (or simulate
+    //      with a BEFORE DELETE trigger that raises) to make cleanup fail.
+    //   4. Assert the transaction aborts and the claim row is NOT present after commit attempt.
+    //   5. Restore permission.
+    // This cannot be provided in the current environment (no DATABASE_URL configured);
+    // it is recorded here as the pending contract fixture per HAG58-SLATE-2026-11-03-01.
+    // -------------------------------------------------------------------------
+    it.skip('INTEGRATION(real-pg): proves physical DB rollback when cleanupIncompleteClaim DELETE fails', async () => {
+      // Requires: process.env.DATABASE_URL pointing to a test PostgreSQL instance
+      // with public.weekly_wrapups and public.pools tables and an ACTIVE test pool row.
+      //
+      // Steps:
+      //   const { PrismaClient } = await import('@prisma/client');
+      //   const realPrisma = new PrismaClient();
+      //   // Create a BEFORE DELETE trigger that raises for the cleanup query pattern
+      //   await realPrisma.$executeRawUnsafe(`
+      //     CREATE OR REPLACE FUNCTION raise_on_incomplete_delete()
+      //     RETURNS trigger LANGUAGE plpgsql AS $$
+      //     BEGIN
+      //       IF NEW IS NULL AND OLD.summary IS NULL THEN
+      //         RAISE EXCEPTION 'simulated cleanup DELETE failure';
+      //       END IF;
+      //       RETURN OLD;
+      //     END; $$;
+      //     DROP TRIGGER IF EXISTS block_incomplete_delete ON public.weekly_wrapups;
+      //     CREATE TRIGGER block_incomplete_delete BEFORE DELETE ON public.weekly_wrapups
+      //       FOR EACH ROW EXECUTE FUNCTION raise_on_incomplete_delete();
+      //   `);
+      //   try {
+      //     await expect(executeWeeklyWrapUpForPool(TEST_POOL_ID, TEST_WEEK, {
+      //       season: TEST_SEASON, seasonType: 2, prismaClient: realPrisma,
+      //     })).rejects.toThrow('simulated cleanup DELETE failure');
+      //     // Physical proof: row must not exist (transaction was rolled back)
+      //     const rows = await realPrisma.$queryRawUnsafe(
+      //       `SELECT 1 FROM public.weekly_wrapups WHERE pool_id = $1::uuid AND week_number = $2::int;`,
+      //       TEST_POOL_ID, TEST_WEEK
+      //     );
+      //     expect(rows).toHaveLength(0); // Proves physical rollback
+      //   } finally {
+      //     await realPrisma.$executeRawUnsafe(
+      //       `DROP TRIGGER IF EXISTS block_incomplete_delete ON public.weekly_wrapups;`
+      //     );
+      //     await realPrisma.$disconnect();
+      //   }
     });
   });
 
