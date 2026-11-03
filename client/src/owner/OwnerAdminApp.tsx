@@ -8,6 +8,35 @@ import { getRadarStatusPill, getRadarSectionHeader } from '../pages/RadarPage';
 
 const DEFAULT_POOL_ID = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
 
+export const DEFAULT_SIM_MATCHES = [
+  { id: 'sim-tb', homeTeam: 'DET', awayTeam: 'MIN', homeScore: 31, awayScore: 28, status: 'FINAL', spread: 0 },
+  { id: 'sim-g2', homeTeam: 'GB', awayTeam: 'CAR', homeScore: 24, awayScore: 10, status: 'FINAL', spread: 0 },
+  { id: 'sim-g3', homeTeam: 'DAL', awayTeam: 'ARI', homeScore: 27, awayScore: 20, status: 'FINAL', spread: 0 },
+  { id: 'sim-g4', homeTeam: 'CIN', awayTeam: 'TEN', homeScore: 17, awayScore: 14, status: 'FINAL', spread: 0 },
+];
+
+export const DEFAULT_SIM_MEMBERS = [
+  { id: 'm1', name: 'jack.w.cone', picks: [{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'GB' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 58 },
+  { id: 'm2', name: 'chrisbrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'GB' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'TEN' }], tb: 52 },
+  { id: 'm3', name: 'davebrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'GB' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 50 },
+  { id: 'm4', name: 'daveculp', picks: [{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 48 },
+  { id: 'm5', name: 'edbrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'GB' }, { gameId: 'sim-g3', selectedTeam: 'ARI' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 60 },
+  { id: 'm6', name: 'justinbrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 55 },
+  { id: 'm7', name: 'markbrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'TEN' }], tb: 54 },
+  { id: 'm8', name: 'mattbrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'ARI' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 40 },
+  { id: 'm9', name: 'ryanculp', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'ARI' }, { gameId: 'sim-g4', selectedTeam: 'TEN' }], tb: 38 },
+  { id: 'm10', name: 'sambrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'ARI' }, { gameId: 'sim-g4', selectedTeam: 'TEN' }], tb: 30 },
+];
+
+export const DEFAULT_SIM_CLOCK = '2026-11-01T20:00:00.000Z';
+
+export const NFL_TEAMS = [
+  'ARI', 'ATL', 'BAL', 'BUF', 'CAR', 'CHI', 'CIN', 'CLE',
+  'DAL', 'DEN', 'DET', 'GB', 'HOU', 'IND', 'JAX', 'KC',
+  'LAC', 'LAR', 'LV', 'MIA', 'MIN', 'NE', 'NO', 'NYG',
+  'NYJ', 'PHI', 'PIT', 'SEA', 'SF', 'TB', 'TEN', 'WAS'
+];
+
 export const OwnerAdminApp: React.FC = () => {
   const { user, session, loading } = useAuth();
   const [activeTab, setActiveTab] = useState<'overview' | 'games' | 'rules' | 'simulation'>('overview');
@@ -62,25 +91,10 @@ export const OwnerAdminApp: React.FC = () => {
   const [slateStatus, setSlateStatus] = useState<{ success?: boolean; message?: string } | null>(null);
 
   // Simulation state
-  const [simMatches, setSimMatches] = useState<any[]>([
-    { id: 'sim-tb', homeTeam: 'DET', awayTeam: 'MIN', homeScore: 31, awayScore: 28, status: 'FINAL' },
-    { id: 'sim-g2', homeTeam: 'GB', awayTeam: 'CAR', homeScore: 24, awayScore: 10, status: 'FINAL' },
-    { id: 'sim-g3', homeTeam: 'DAL', awayTeam: 'ARI', homeScore: 27, awayScore: 20, status: 'FINAL' },
-    { id: 'sim-g4', homeTeam: 'CIN', awayTeam: 'TEN', homeScore: 17, awayScore: 14, status: 'FINAL' },
-  ]);
-
-  const [simMembers] = useState<any[]>([
-    { id: 'm1', name: 'jack.w.cone', picks: [{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'GB' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 58 },
-    { id: 'm2', name: 'chrisbrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'GB' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'TEN' }], tb: 52 },
-    { id: 'm3', name: 'davebrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'GB' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 50 },
-    { id: 'm4', name: 'daveculp', picks: [{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 48 },
-    { id: 'm5', name: 'edbrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'DET' }, { gameId: 'sim-g2', selectedTeam: 'GB' }, { gameId: 'sim-g3', selectedTeam: 'ARI' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 60 },
-    { id: 'm6', name: 'justinbrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 55 },
-    { id: 'm7', name: 'markbrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'DAL' }, { gameId: 'sim-g4', selectedTeam: 'TEN' }], tb: 54 },
-    { id: 'm8', name: 'mattbrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'ARI' }, { gameId: 'sim-g4', selectedTeam: 'CIN' }], tb: 40 },
-    { id: 'm9', name: 'ryanculp', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'ARI' }, { gameId: 'sim-g4', selectedTeam: 'TEN' }], tb: 38 },
-    { id: 'm10', name: 'sambrickner', picks: [{ gameId: 'sim-tb', selectedTeam: 'MIN' }, { gameId: 'sim-g2', selectedTeam: 'CAR' }, { gameId: 'sim-g3', selectedTeam: 'ARI' }, { gameId: 'sim-g4', selectedTeam: 'TEN' }], tb: 30 },
-  ]);
+  const [simMatches, setSimMatches] = useState<any[]>(DEFAULT_SIM_MATCHES);
+  const [simMembers, setSimMembers] = useState<any[]>(DEFAULT_SIM_MEMBERS);
+  const [simulatedClock, setSimulatedClock] = useState<string>(DEFAULT_SIM_CLOCK);
+  const [finishPrompt, setFinishPrompt] = useState<string | null>(null);
 
   // Fetch overview
   const fetchOverview = useCallback(async () => {
@@ -277,6 +291,78 @@ export const OwnerAdminApp: React.FC = () => {
       success: false,
       message: 'SLATE_MUTATION_DISABLED: Live custom slate modification is disabled pending shared scored-slate resolver wiring and pick serialization contract.',
     });
+  };
+
+  // Simulation handlers (pure in-memory, zero persistence or transport writes)
+  const handleFinishWeek = () => {
+    const missing = simMatches.find(
+      (m) => m.homeScore === null || m.homeScore === undefined || isNaN(Number(m.homeScore)) ||
+             m.awayScore === null || m.awayScore === undefined || isNaN(Number(m.awayScore))
+    );
+    if (missing) {
+      setFinishPrompt(`⚠️ Missing score for matchup ${missing.awayTeam} @ ${missing.homeTeam}. Please provide both home and away scores before marking the week FINAL.`);
+      return;
+    }
+    setFinishPrompt(null);
+    setSimMatches(simMatches.map((m) => ({ ...m, status: 'FINAL' })));
+  };
+
+  const handleResetSimulation = () => {
+    setSimMatches(JSON.parse(JSON.stringify(DEFAULT_SIM_MATCHES)));
+    setSimMembers(JSON.parse(JSON.stringify(DEFAULT_SIM_MEMBERS)));
+    setSimulatedClock(DEFAULT_SIM_CLOCK);
+    setFinishPrompt(null);
+  };
+
+  const handleAddMatch = () => {
+    if (simMatches.length >= 32) return;
+    const newId = `sim-g${simMatches.length + 1}`;
+    const newMatch = { id: newId, homeTeam: 'KC', awayTeam: 'LV', homeScore: 0, awayScore: 0, status: 'SCHEDULED', spread: 0 };
+    setSimMatches([...simMatches, newMatch]);
+  };
+
+  const handleRemoveMatch = (matchId: string) => {
+    if (simMatches.length <= 1) return;
+    setSimMatches(simMatches.filter((m) => m.id !== matchId));
+    setSimMembers(simMembers.map((mem) => ({
+      ...mem,
+      picks: mem.picks.filter((p: any) => p.gameId !== matchId),
+    })));
+  };
+
+  const handleAddMember = () => {
+    if (simMembers.length >= 10) return;
+    const newId = `m${simMembers.length + 1}`;
+    const defaultPicks = simMatches.map((m) => ({ gameId: m.id, selectedTeam: m.homeTeam }));
+    setSimMembers([
+      ...simMembers,
+      { id: newId, name: `Member ${simMembers.length + 1}`, picks: defaultPicks, tb: 45 },
+    ]);
+  };
+
+  const handleRemoveMember = (memberId: string) => {
+    if (simMembers.length <= 1) return;
+    setSimMembers(simMembers.filter((m) => m.id !== memberId));
+  };
+
+  const handleUpdatePick = (memberId: string, gameId: string, selectedTeam: string) => {
+    setSimMembers(simMembers.map((mem) => {
+      if (mem.id !== memberId) return mem;
+      const existing = mem.picks.find((p: any) => p.gameId === gameId);
+      const newPicks = existing
+        ? mem.picks.map((p: any) => p.gameId === gameId ? { ...p, selectedTeam } : p)
+        : [...mem.picks, { gameId, selectedTeam }];
+      return { ...mem, picks: newPicks };
+    }));
+  };
+
+  const handleUpdateTb = (memberId: string, tbValue: string) => {
+    const val = tbValue === '' ? null : Number(tbValue);
+    setSimMembers(simMembers.map((mem) => mem.id === memberId ? { ...mem, tb: val } : mem));
+  };
+
+  const handleUpdateMemberName = (memberId: string, name: string) => {
+    setSimMembers(simMembers.map((mem) => mem.id === memberId ? { ...mem, name } : mem));
   };
 
   // Calculate pure in-memory simulation standings
@@ -918,73 +1004,265 @@ export const OwnerAdminApp: React.FC = () => {
               This sandbox is pure in-memory: zero database writes, zero live game mutation, zero network transport calls.
             </div>
 
+            {/* Top Toolbar: Finish Week, Reset, and Simulated Clock */}
+            <div className="bg-slate-900 border border-slate-800 p-4 rounded flex flex-wrap gap-4 items-center justify-between">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleFinishWeek}
+                  className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white font-mono text-xs font-bold rounded transition"
+                >
+                  Finish Week (Set Final)
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetSimulation}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-mono text-xs rounded transition"
+                >
+                  Reset Local Simulation State
+                </button>
+              </div>
+
+              <div className="flex items-center space-x-2 text-xs font-mono">
+                <label className="text-slate-400">Simulated Clock:</label>
+                <input
+                  type="text"
+                  value={simulatedClock}
+                  onChange={(e) => setSimulatedClock(e.target.value)}
+                  className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200 font-mono text-xs w-56"
+                  placeholder="YYYY-MM-DDTHH:MM:SSZ"
+                />
+              </div>
+            </div>
+
+            {finishPrompt && (
+              <div className="p-3 bg-amber-950/80 border border-amber-800 text-amber-200 text-xs font-mono rounded">
+                {finishPrompt}
+              </div>
+            )}
+
             {/* Match Controls */}
             <div className="bg-slate-900 border border-slate-800 p-5 rounded space-y-4">
               <div className="flex justify-between items-center">
-                <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider">
-                  Simulated Game Scores & Statuses
-                </h2>
-                <div className="space-x-2">
-                  <button
-                    onClick={() => {
-                      setSimMatches(simMatches.map((m) => ({ ...m, status: 'FINAL' })));
-                    }}
-                    className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white font-mono text-xs rounded"
-                  >
-                    Finish All Games (Set Final)
-                  </button>
-                  <button
-                    onClick={() => {
-                      setSimMatches(simMatches.map((m) => ({ ...m, status: 'IN_PROGRESS' })));
-                    }}
-                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-xs rounded"
-                  >
-                    Reset In-Progress
-                  </button>
+                <div>
+                  <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider">
+                    Simulated Matchups & Chosen Scores ({simMatches.length})
+                  </h2>
+                  <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                    Match #1 acts as the designated tiebreaker match (⚡ TB). Editable teams, spreads, scores, and status.
+                  </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={handleAddMatch}
+                  disabled={simMatches.length >= 32}
+                  className="px-3 py-1 bg-cyan-700 hover:bg-cyan-600 text-white font-mono text-xs rounded disabled:opacity-50"
+                >
+                  + Add Match
+                </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {simMatches.map((m, idx) => (
                   <div key={m.id} className="bg-slate-950 border border-slate-800 p-3 rounded space-y-2">
-                    <div className="flex justify-between items-center text-xs font-bold text-slate-300">
-                      <span>{m.awayTeam} @ {m.homeTeam} {idx === 0 && '⚡(TB)'}</span>
-                      <select
-                        value={m.status}
-                        onChange={(e) => {
-                          const updated = [...simMatches];
-                          updated[idx].status = e.target.value;
-                          setSimMatches(updated);
-                        }}
-                        className="bg-slate-900 border border-slate-700 rounded text-[10px] px-1 py-0.5 text-slate-200"
-                      >
-                        <option value="FINAL">FINAL</option>
-                        <option value="IN_PROGRESS">IN_PROGRESS</option>
-                        <option value="SCHEDULED">SCHEDULED</option>
-                      </select>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] font-mono text-slate-500 font-bold">
+                        {m.id} {idx === 0 && <span className="text-amber-400 font-black">⚡(TB)</span>}
+                      </span>
+                      <div className="flex items-center space-x-1">
+                        <select
+                          value={m.status}
+                          onChange={(e) => {
+                            const updated = [...simMatches];
+                            updated[idx].status = e.target.value;
+                            setSimMatches(updated);
+                          }}
+                          className="bg-slate-900 border border-slate-700 rounded text-[10px] px-1.5 py-0.5 text-slate-200 font-mono"
+                        >
+                          <option value="FINAL">FINAL</option>
+                          <option value="IN_PROGRESS">IN_PROGRESS</option>
+                          <option value="SCHEDULED">SCHEDULED</option>
+                        </select>
+                        {simMatches.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveMatch(m.id)}
+                            className="text-rose-400 hover:text-rose-300 text-[10px] px-1 font-bold font-mono"
+                            title="Remove Match"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center space-x-2 text-xs">
-                      <input
-                        type="number"
-                        value={m.awayScore}
-                        onChange={(e) => {
-                          const updated = [...simMatches];
-                          updated[idx].awayScore = Number(e.target.value);
-                          setSimMatches(updated);
-                        }}
-                        className="w-12 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center font-mono text-slate-100"
-                      />
-                      <span className="text-slate-500">–</span>
-                      <input
-                        type="number"
-                        value={m.homeScore}
-                        onChange={(e) => {
-                          const updated = [...simMatches];
-                          updated[idx].homeScore = Number(e.target.value);
-                          setSimMatches(updated);
-                        }}
-                        className="w-12 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center font-mono text-slate-100"
-                      />
+
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <label className="text-[10px] font-mono text-slate-400 block mb-0.5">Away Team</label>
+                        <select
+                          value={m.awayTeam}
+                          onChange={(e) => {
+                            const newAway = e.target.value;
+                            const updated = [...simMatches];
+                            updated[idx].awayTeam = newAway;
+                            setSimMatches(updated);
+                          }}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 font-mono text-slate-200 text-xs"
+                        >
+                          {NFL_TEAMS.map((t) => (
+                            <option key={t} value={t} disabled={t === m.homeTeam}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-mono text-slate-400 block mb-0.5">Home Team</label>
+                        <select
+                          value={m.homeTeam}
+                          onChange={(e) => {
+                            const newHome = e.target.value;
+                            const updated = [...simMatches];
+                            updated[idx].homeTeam = newHome;
+                            setSimMatches(updated);
+                          }}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 font-mono text-slate-200 text-xs"
+                        >
+                          {NFL_TEAMS.map((t) => (
+                            <option key={t} value={t} disabled={t === m.awayTeam}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2 text-xs pt-1">
+                      <div className="flex-1">
+                        <label className="text-[10px] font-mono text-slate-400 block mb-0.5">Away Score</label>
+                        <input
+                          type="number"
+                          value={m.awayScore ?? ''}
+                          onChange={(e) => {
+                            const updated = [...simMatches];
+                            updated[idx].awayScore = e.target.value === '' ? null : Number(e.target.value);
+                            setSimMatches(updated);
+                          }}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center font-mono text-slate-100"
+                        />
+                      </div>
+                      <span className="text-slate-500 pt-3">–</span>
+                      <div className="flex-1">
+                        <label className="text-[10px] font-mono text-slate-400 block mb-0.5">Home Score</label>
+                        <input
+                          type="number"
+                          value={m.homeScore ?? ''}
+                          onChange={(e) => {
+                            const updated = [...simMatches];
+                            updated[idx].homeScore = e.target.value === '' ? null : Number(e.target.value);
+                            setSimMatches(updated);
+                          }}
+                          className="w-full bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center font-mono text-slate-100"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Member Picks & Predictions Controls */}
+            <div className="bg-slate-900 border border-slate-800 p-5 rounded space-y-4">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider">
+                    Synthetic Members, Picks & Predictions ({simMembers.length}/10)
+                  </h2>
+                  <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                    Click a team button to change a member's pick. Edit tiebreaker total prediction (TB).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddMember}
+                  disabled={simMembers.length >= 10}
+                  className="px-3 py-1 bg-cyan-700 hover:bg-cyan-600 text-white font-mono text-xs rounded disabled:opacity-50"
+                >
+                  + Add Member
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {simMembers.map((mem) => (
+                  <div key={mem.id} className="bg-slate-950 border border-slate-800 p-3 rounded text-xs space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="text"
+                          value={mem.name}
+                          onChange={(e) => handleUpdateMemberName(mem.id, e.target.value)}
+                          className="bg-slate-900 border border-slate-700 rounded px-2 py-0.5 font-bold text-slate-100 text-xs w-36"
+                        />
+                        <span className="text-[10px] font-mono text-slate-500">ID: {mem.id}</span>
+                      </div>
+
+                      <div className="flex items-center space-x-2 font-mono">
+                        <label className="text-[10px] text-slate-400">TB Prediction:</label>
+                        <input
+                          type="number"
+                          value={mem.tb ?? ''}
+                          placeholder="None"
+                          onChange={(e) => handleUpdateTb(mem.id, e.target.value)}
+                          className="w-16 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center text-slate-100 font-mono text-xs"
+                        />
+                        {simMembers.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveMember(mem.id)}
+                            className="text-rose-400 hover:text-rose-300 text-xs font-mono ml-2"
+                            title="Remove Member"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Member's Picks Across All Matches */}
+                    <div className="flex flex-wrap gap-2 pt-1 border-t border-slate-900">
+                      {simMatches.map((m) => {
+                        const curPick = mem.picks?.find((p: any) => p.gameId === m.id);
+                        return (
+                          <div key={m.id} className="flex items-center bg-slate-900/80 border border-slate-800 rounded p-1 text-[11px] font-mono">
+                            <span className="text-slate-500 mr-1.5 text-[10px]">{m.id}:</span>
+                            <div className="flex space-x-1">
+                              <button
+                                type="button"
+                                onClick={() => handleUpdatePick(mem.id, m.id, m.awayTeam)}
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                  curPick?.selectedTeam === m.awayTeam
+                                    ? 'bg-cyan-600 text-white'
+                                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                }`}
+                              >
+                                {m.awayTeam}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleUpdatePick(mem.id, m.id, m.homeTeam)}
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                  curPick?.selectedTeam === m.homeTeam
+                                    ? 'bg-cyan-600 text-white'
+                                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                }`}
+                              >
+                                {m.homeTeam}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 ))}

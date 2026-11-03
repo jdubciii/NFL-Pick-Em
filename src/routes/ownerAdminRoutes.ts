@@ -712,6 +712,22 @@ export function validateSimulationPayload(body: any): { error?: string } {
     }
     seenMatchIds.add(rawId);
 
+    // Reject conflicting team aliases
+    if (m.homeTeam !== undefined && m.homeTeamId !== undefined) {
+      const ht = String(m.homeTeam).trim().toUpperCase();
+      const htid = String(m.homeTeamId).trim().toUpperCase();
+      if (ht !== htid) {
+        return { error: `scenario[${i}] has conflicting homeTeam ('${m.homeTeam}') and homeTeamId ('${m.homeTeamId}') aliases.` };
+      }
+    }
+    if (m.awayTeam !== undefined && m.awayTeamId !== undefined) {
+      const at = String(m.awayTeam).trim().toUpperCase();
+      const atid = String(m.awayTeamId).trim().toUpperCase();
+      if (at !== atid) {
+        return { error: `scenario[${i}] has conflicting awayTeam ('${m.awayTeam}') and awayTeamId ('${m.awayTeamId}') aliases.` };
+      }
+    }
+
     const home = String(m.homeTeam || m.homeTeamId || '').trim().toUpperCase();
     const away = String(m.awayTeam || m.awayTeamId || '').trim().toUpperCase();
 
@@ -740,7 +756,7 @@ export function validateSimulationPayload(body: any): { error?: string } {
     }
 
     if (m.status !== undefined && m.status !== null) {
-      const st = String(m.status).toUpperCase();
+      const st = String(m.status).trim().toUpperCase();
       if (st !== 'SCHEDULED' && st !== 'IN_PROGRESS' && st !== 'FINAL') {
         return { error: `scenario[${i}] status '${m.status}' is invalid. Must be SCHEDULED, IN_PROGRESS, or FINAL.` };
       }
@@ -753,6 +769,22 @@ export function validateSimulationPayload(body: any): { error?: string } {
     const mem = members[i];
     if (!mem || typeof mem !== 'object') {
       return { error: `members[${i}] must be an object.` };
+    }
+
+    // Reject conflicting member aliases
+    if (mem.userId !== undefined && mem.id !== undefined) {
+      const uid = String(mem.userId).trim();
+      const mid = String(mem.id).trim();
+      if (uid !== mid) {
+        return { error: `members[${i}] has conflicting userId ('${mem.userId}') and id ('${mem.id}') aliases.` };
+      }
+    }
+    if (mem.userName !== undefined && mem.name !== undefined) {
+      const uname = String(mem.userName).trim();
+      const mname = String(mem.name).trim();
+      if (uname !== mname) {
+        return { error: `members[${i}] has conflicting userName ('${mem.userName}') and name ('${mem.name}') aliases.` };
+      }
     }
 
     const uid = String(mem.userId || mem.id || '').trim();
@@ -822,20 +854,22 @@ ownerAdminRouter.post('/:pool_id/owner/simulations/preview', requireAuth, requir
 
   // Build SlateGame and LiveGame fixtures for pure simulation
   const slateGames: SlateGame[] = scenario.map((m: any, idx: number) => ({
-    id: String(m.id || `sim-game-${idx + 1}`),
-    homeTeam: String(m.homeTeamId || m.homeTeam).trim().toUpperCase(),
-    awayTeam: String(m.awayTeamId || m.awayTeam).trim().toUpperCase(),
+    id: String(m.id || `sim-game-${idx + 1}`).trim(),
+    homeTeam: String(m.homeTeam || m.homeTeamId).trim().toUpperCase(),
+    awayTeam: String(m.awayTeam || m.awayTeamId).trim().toUpperCase(),
     spread: typeof m.spread === 'number' ? m.spread : undefined,
     kickoffTime: m.kickoffTime || new Date(simulatedClock || Date.now()).toISOString(),
   }));
 
   const liveGames: LiveGame[] = scenario.map((m: any, idx: number) => {
     const gid = String(m.id || `sim-game-${idx + 1}`).trim();
-    const homeTeamCode = String(m.homeTeamId || m.homeTeam).trim().toUpperCase();
-    const awayTeamCode = String(m.awayTeamId || m.awayTeam).trim().toUpperCase();
+    const homeTeamCode = String(m.homeTeam || m.homeTeamId).trim().toUpperCase();
+    const awayTeamCode = String(m.awayTeam || m.awayTeamId).trim().toUpperCase();
     const homeScore = m.homeScore != null ? String(m.homeScore) : '0';
     const awayScore = m.awayScore != null ? String(m.awayScore) : '0';
-    const status = m.status === 'FINAL' ? 'FINAL' : m.status === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'SCHEDULED';
+    const rawStatus = m.status != null ? String(m.status).trim().toUpperCase() : 'SCHEDULED';
+    const status: 'SCHEDULED' | 'IN_PROGRESS' | 'FINAL' =
+      rawStatus === 'FINAL' ? 'FINAL' : rawStatus === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'SCHEDULED';
     return {
       id: gid,
       name: `${awayTeamCode} @ ${homeTeamCode}`,

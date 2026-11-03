@@ -826,6 +826,26 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
           ],
         }],
       }, 'duplicate pick for same match');
+
+      // 16. Conflicting team aliases
+      await testDenial({
+        scenario: [{ ...validMatch, homeTeam: 'DET', homeTeamId: 'GB' }],
+        members: [validMember],
+      }, 'conflicting homeTeam and homeTeamId aliases');
+      await testDenial({
+        scenario: [{ ...validMatch, awayTeam: 'MIN', awayTeamId: 'CHI' }],
+        members: [validMember],
+      }, 'conflicting awayTeam and awayTeamId aliases');
+
+      // 17. Conflicting synthetic member aliases
+      await testDenial({
+        scenario: [validMatch],
+        members: [{ ...validMember, userId: 'u1', id: 'u2' }],
+      }, 'conflicting userId and id aliases');
+      await testDenial({
+        scenario: [validMatch],
+        members: [{ ...validMember, userName: 'Alice', name: 'Bob' }],
+      }, 'conflicting userName and name aliases');
     });
 
     it('POST /api/pools/:pool_id/owner/simulations/preview computes pure simulation and marks isFinal when all final', async () => {
@@ -854,6 +874,56 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(data.standings).toHaveLength(2);
       expect(mockPrisma.pool.update).not.toHaveBeenCalled();
       expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('POST /api/pools/:pool_id/owner/simulations/preview normalizes case-folded status and consistent aliases', async () => {
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/simulations/preview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          scenario: [
+            // Case-folded 'final' and matching aliases
+            { id: 'sim-cf-1', homeTeam: 'DET', homeTeamId: 'DET', awayTeam: 'MIN', awayTeamId: 'MIN', homeScore: 24, awayScore: 20, status: 'final' },
+            { id: 'sim-cf-2', homeTeam: 'GB', awayTeam: 'CAR', homeScore: 30, awayScore: 10, status: 'Final' },
+          ],
+          members: [
+            { userId: 'u1', id: 'u1', userName: 'Jack', name: 'Jack', tiebreakerPrediction: 44, picks: [{ gameId: 'sim-cf-1', selectedTeam: 'DET' }, { gameId: 'sim-cf-2', selectedTeam: 'GB' }] },
+          ],
+        }),
+      });
+      const data: any = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.simulation).toBe(true);
+      expect(data.isFinal).toBe(true);
+      expect(data.standings).toHaveLength(1);
+      expect(data.standings[0].totalProvisionalPoints).toBe(2);
+
+      // Verify in_progress case-folded normalization
+      const resInProgress = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/simulations/preview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          scenario: [
+            { id: 'sim-cf-1', homeTeam: 'DET', awayTeam: 'MIN', homeScore: 24, awayScore: 20, status: 'final' },
+            { id: 'sim-cf-2', homeTeam: 'GB', awayTeam: 'CAR', homeScore: 30, awayScore: 10, status: 'in_progress' },
+          ],
+          members: [
+            { userId: 'u1', userName: 'Jack', tiebreakerPrediction: 44, picks: [{ gameId: 'sim-cf-1', selectedTeam: 'DET' }, { gameId: 'sim-cf-2', selectedTeam: 'GB' }] },
+          ],
+        }),
+      });
+      const dataInProgress: any = await resInProgress.json();
+
+      expect(resInProgress.status).toBe(200);
+      expect(dataInProgress.simulation).toBe(true);
+      expect(dataInProgress.isFinal).toBe(false);
     });
   });
 
