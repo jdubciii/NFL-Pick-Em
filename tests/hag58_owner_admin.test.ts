@@ -34,6 +34,8 @@ import { fetchScopedSlateProjection, invalidateScopedSlateCache } from '../clien
 import { executeSerializedPickMutation } from '../src/routes/picks';
 import { applyOverride } from '../src/services/overrideService';
 import { deriveSundaySlatePhase } from '../client/src/services/radarSundaySlatePhase';
+import { previewWeeklyWrapUpForPool, executeWeeklyWrapUpForPool, resolvePoolScopedGamesForWrapUp } from '../src/services/wrapUpEngine';
+import { GameStatus } from '@prisma/client';
 
 describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () => {
   const JACK_UUID = 'e3242a19-1131-4fc5-9886-7730f10ef69b';
@@ -3535,6 +3537,278 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       const freezeRecord = committedDbState.pools[POOL_ID].settings?.owner_admin_v1?.freezes?.[2026]?.[2]?.[10];
       expect(freezeRecord).toBeDefined();
       expect(['FIRST_PICK_SUBMITTED', 'FIRST_PICK_SUBMISSION']).toContain(freezeRecord.reason);
+    });
+
+    it('reconciles preview and execution through unified pool-scoped resolver: unaffected by extra unfinished non-pool games, while incomplete pool games block wrap-up', async () => {
+      const executedSqlQueries: string[] = [];
+
+      const gamePool1: any = {
+        id: 'g-kc-lv',
+        externalGameId: '401873040',
+        status: GameStatus.FINAL,
+        homeScore: 24,
+        awayScore: 17,
+        homeTeamId: 'KC',
+        awayTeamId: 'LV',
+        kickoffTime: new Date(Date.now() - 7200000),
+        week: 9,
+        season: 2026,
+      };
+
+      const gamePool2: any = {
+        id: 'g-det-mia',
+        externalGameId: '401873041',
+        status: GameStatus.FINAL,
+        homeScore: 31,
+        awayScore: 28,
+        homeTeamId: 'DET',
+        awayTeamId: 'MIA',
+        kickoffTime: new Date(Date.now() - 3600000),
+        week: 9,
+        season: 2026,
+      };
+
+      const gameOutside: any = {
+        id: 'g-sf-dal',
+        externalGameId: '401873042',
+        status: GameStatus.SCHEDULED,
+        homeScore: null,
+        awayScore: null,
+        homeTeamId: 'SF',
+        awayTeamId: 'DAL',
+        kickoffTime: new Date(Date.now() + 7200000),
+        week: 9,
+        season: 2026,
+      };
+
+      const allGames = [gamePool1, gamePool2, gameOutside];
+
+      const manifest = {
+        season: 2026,
+        seasonType: 2,
+        week: 9,
+        revision: 1,
+        observationTime: new Date().toISOString(),
+        manifestFingerprint: 'manifest-fp-week-9',
+        eventIds: ['401873040', '401873041', '401873042'],
+      };
+
+      const poolSettings: any = {
+        season: 2026,
+        owner_admin_v1: {
+          slates: {
+            2026: {
+              2: {
+                9: {
+                  eventIds: ['401873040', '401873041'],
+                  revision: 'rev-custom-slate-week-9',
+                },
+              },
+            },
+          },
+        },
+      };
+
+      const poolRecord = {
+        id: POOL_ID,
+        name: 'Weekly Wrap Up Pool',
+        adminId: JACK_UUID,
+        settings: poolSettings,
+        status: 'ACTIVE',
+        memberships: [
+          {
+            userId: 'user-1-uuid',
+            status: 'ACTIVE',
+            user: { id: 'user-1-uuid', notificationPreference: { emailEnabled: false } },
+          },
+          {
+            userId: 'user-2-uuid',
+            status: 'ACTIVE',
+            user: { id: 'user-2-uuid', notificationPreference: { emailEnabled: false } },
+          },
+        ],
+      };
+
+      const picksList = [
+        {
+          user_id: 'user-1-uuid',
+          game_id: '401873040',
+          selected_team: 'KC',
+          selected_team_id: 'KC',
+          home_team_id: 'KC',
+          away_team_id: 'LV',
+          home_score: 24,
+          away_score: 17,
+          status: GameStatus.FINAL,
+        },
+        // Pick for outside game (401873042) that is unfinished
+        {
+          user_id: 'user-1-uuid',
+          game_id: '401873042',
+          selected_team: 'SF',
+          selected_team_id: 'SF',
+          home_team_id: 'SF',
+          away_team_id: 'DAL',
+          home_score: null,
+          away_score: null,
+          status: GameStatus.SCHEDULED,
+        },
+        {
+          user_id: 'user-2-uuid',
+          game_id: '401873040',
+          selected_team: 'LV',
+          selected_team_id: 'LV',
+          home_team_id: 'KC',
+          away_team_id: 'LV',
+          home_score: 24,
+          away_score: 17,
+          status: GameStatus.FINAL,
+        },
+      ];
+
+      const predictionsList = [
+        { userId: 'user-1-uuid', tieBreakerPrediction: 58 },
+        { userId: 'user-2-uuid', tieBreakerPrediction: 50 },
+      ];
+
+      const mockWrapUpDb: any = {
+        $transaction: async (cb: any) => cb(mockWrapUpDb),
+        $queryRaw: vi.fn().mockImplementation(async () => {
+          return [{ to_regclass: 'public.weekly_wrapups' }];
+        }),
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
+          executedSqlQueries.push(sql);
+          if (sql.includes('to_regclass')) {
+            return [{ to_regclass: 'public.weekly_wrapups' }];
+          }
+          if (sql.includes('SELECT pool_id, week_number FROM public.weekly_wrapups') ||
+              sql.includes('SELECT pool_id, season, week_number FROM public.weekly_wrapups')) {
+            return [];
+          }
+          if (sql.includes('information_schema.columns')) {
+            return [{ column_name: 'season' }];
+          }
+          if (sql.includes('INSERT INTO public.weekly_wrapups')) {
+            return [{ pool_id: POOL_ID, season: 2026, week_number: 9 }];
+          }
+          if (sql.includes('FROM public.picks')) {
+            return picksList;
+          }
+          return [];
+        }),
+        pool: {
+          findUnique: vi.fn().mockImplementation(async () => poolRecord),
+        },
+        acceptedSlateManifest: {
+          findFirst: vi.fn().mockResolvedValue(manifest),
+          findUnique: vi.fn().mockResolvedValue(manifest),
+        },
+        game: {
+          findMany: vi.fn().mockImplementation(async () => allGames),
+        },
+        weeklySubmission: {
+          findMany: vi.fn().mockResolvedValue(predictionsList),
+        },
+        penaltyLedger: {
+          create: vi.fn().mockResolvedValue({ id: 'pen-1' }),
+          aggregate: vi.fn().mockResolvedValue({ _sum: { delta: 1 } }),
+        },
+        poolMemberStat: {
+          upsert: vi.fn().mockResolvedValue({}),
+        },
+        outboxEvent: {
+          createMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
+        inboxMessage: {
+          createMany: vi.fn().mockResolvedValue({ count: 0 }),
+        },
+      };
+
+      // 1. Preview wrap up
+      const preview = await previewWeeklyWrapUpForPool(POOL_ID, 9, {
+        season: 2026,
+        seasonType: 2,
+        prismaClient: mockWrapUpDb,
+      });
+
+      // Assertions on preview:
+      // - Must be ready to settle even though 401873042 is SCHEDULED/incomplete!
+      expect(preview.readyToSettle).toBe(true);
+      expect(preview.reasonsIfNotReady).toEqual([]);
+      // - Evaluates scoped set of 2 games
+      expect(preview.expectedGames).toBe(2);
+      expect(preview.totalGames).toBe(2);
+      expect(preview.completedGames).toBe(2);
+      expect(preview.allGamesFinal).toBe(true);
+      // - Pick scoring strictly scoped: User 1 got 1 point (401873040), outside pick (401873042) ignored
+      expect(preview.projectedStandings[0].userId).toBe('user-1-uuid');
+      expect(preview.projectedStandings[0].score).toBe(1);
+      expect(preview.projectedStandings[1].userId).toBe('user-2-uuid');
+      expect(preview.projectedStandings[1].score).toBe(0);
+
+      // 2. Execution wrap up
+      const execResult = await executeWeeklyWrapUpForPool(POOL_ID, 9, {
+        season: 2026,
+        seasonType: 2,
+        prismaClient: mockWrapUpDb,
+      });
+
+      // Assertions on execution:
+      expect(execResult.applied).toBe(true);
+
+      // Verify strict lock order in execution:
+      // 0a. pg_advisory_xact_lock on weekly slate FIRST
+      // 0b. SELECT id, status FROM public.pools WHERE id = $1::uuid FOR UPDATE SECOND
+      const advisoryLockIdx = executedSqlQueries.findIndex((q) => q.includes('pg_advisory_xact_lock'));
+      const poolRowLockIdx = executedSqlQueries.findIndex((q) => q.includes('public.pools WHERE id = $1::uuid FOR UPDATE'));
+      expect(advisoryLockIdx).toBeGreaterThanOrEqual(0);
+      expect(poolRowLockIdx).toBeGreaterThanOrEqual(0);
+      expect(advisoryLockIdx).toBeLessThan(poolRowLockIdx);
+
+      // 3. Incomplete pool game test:
+      // Changing pool game 401873040 to IN_PROGRESS must block BOTH preview and execution
+      gamePool1.status = GameStatus.IN_PROGRESS;
+      gamePool1.homeScore = null;
+      gamePool1.awayScore = null;
+
+      const previewIncomplete = await previewWeeklyWrapUpForPool(POOL_ID, 9, {
+        season: 2026,
+        seasonType: 2,
+        prismaClient: mockWrapUpDb,
+      });
+      expect(previewIncomplete.readyToSettle).toBe(false);
+      expect(previewIncomplete.reasonsIfNotReady.some((r) => r.includes('WEEK_NOT_FINAL'))).toBe(true);
+
+      const execIncomplete = await executeWeeklyWrapUpForPool(POOL_ID, 9, {
+        season: 2026,
+        seasonType: 2,
+        prismaClient: mockWrapUpDb,
+      });
+      expect(execIncomplete.applied).toBe(false);
+      expect(execIncomplete.reason).toBe('WEEK_NOT_FINAL');
+
+      // 4. Malformed custom slate test:
+      // Restoring pool game status but setting custom slate to contain an unmanifested game ID
+      gamePool1.status = GameStatus.FINAL;
+      gamePool1.homeScore = 24;
+      gamePool1.awayScore = 17;
+      poolSettings.owner_admin_v1.slates[2026][2][9].eventIds = ['401873040', '999999999']; // 999999999 not in manifest
+
+      const previewMalformed = await previewWeeklyWrapUpForPool(POOL_ID, 9, {
+        season: 2026,
+        seasonType: 2,
+        prismaClient: mockWrapUpDb,
+      });
+      expect(previewMalformed.readyToSettle).toBe(false);
+      expect(previewMalformed.reasonsIfNotReady.some((r) => r.includes('MALFORMED_SLATE_CONFIG'))).toBe(true);
+
+      const execMalformed = await executeWeeklyWrapUpForPool(POOL_ID, 9, {
+        season: 2026,
+        seasonType: 2,
+        prismaClient: mockWrapUpDb,
+      });
+      expect(execMalformed.applied).toBe(false);
+      expect(execMalformed.reason).toBe('MALFORMED_SLATE_CONFIG');
     });
   });
 
