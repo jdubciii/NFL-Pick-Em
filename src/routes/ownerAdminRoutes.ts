@@ -839,11 +839,13 @@ export async function executeFutureSlateMutationInternal(
     }
   }
 
-  // Historical Protection (HAG-52 Week 8 and prior are strictly immutable)
-  if (season < 2026 || (season === 2026 && seasonType === 2 && weekNumber <= 8)) {
-    const err: any = new Error('HISTORICAL_SLATE_PROTECTED: Past and current Week 8 scored slates are immutable and cannot be modified.');
-    err.statusCode = 409;
-    err.code = 'HISTORICAL_SLATE_PROTECTED';
+  // Historical Scope Protection & Legacy Unverified History Guard (HAG58-SLATE-2026-11-03-01 § Freeze evidence and scope limits)
+  // Restrict enablement to authoritatively future, not-yet-started scopes in the current supported season (2026 Regular Season).
+  // For legacy scopes whose past participation could have been deleted or history cannot be established, deny as HISTORICAL_SCOPE_UNVERIFIED.
+  if (season < 2026 || seasonType !== 2 || (season === 2026 && seasonType === 2 && weekNumber <= 8)) {
+    const err: any = new Error(`HISTORICAL_SCOPE_UNVERIFIED: Scope (Season ${season}, Type ${seasonType}, Week ${weekNumber}) is a legacy or completed scope whose historical participation cannot be authoritatively verified. Slate mutation denied.`);
+    err.statusCode = 422;
+    err.code = 'HISTORICAL_SCOPE_UNVERIFIED';
     throw err;
   }
 
@@ -891,10 +893,18 @@ export async function executeFutureSlateMutationInternal(
   }
 
   return await db.$transaction(async (tx: any) => {
-    // 2a. Mandatory row-level lock and authority re-verification
+    // 2a. Acquire weekly manifest transaction advisory lock FIRST (Ruling § Lock order)
+    const weeklyLockKey = `weekly_slate_${season}_${seasonType}_${weekNumber}`;
+    if (typeof tx.$queryRawUnsafe === 'function') {
+      await tx.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1));`, weeklyLockKey);
+    } else if (typeof tx.$executeRawUnsafe === 'function') {
+      await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1));`, weeklyLockKey);
+    }
+
+    // 2b. Mandatory row-level lock on pool and in-tx authority/membership re-verification
     const { freshPool } = await acquireLockedPoolAndVerifyAuthority(tx, poolId, actorId, true);
 
-    // 2b. Revision check
+    // 2c. Revision check
     const currentRevision = computePoolSettingsRevision(freshPool);
     if (currentRevision !== envelope.expectedRevision) {
       const err: any = new Error('STALE_REVISION: Pool settings have changed since last read.');
@@ -903,7 +913,7 @@ export async function executeFutureSlateMutationInternal(
       throw err;
     }
 
-    // 2c. Accepted manifest verification
+    // 2d. Accepted manifest verification under acquired locks
     const manifest = await authoritativeSlateService.getAcceptedSlateManifest(tx, season, seasonType, weekNumber);
     if (!manifest || !Array.isArray(manifest.eventIds) || manifest.eventIds.length === 0) {
       const err: any = new Error(`Accepted weekly slate manifest not found for Season ${season} Type ${seasonType} Week ${weekNumber}.`);
