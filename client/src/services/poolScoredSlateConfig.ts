@@ -154,8 +154,8 @@ export interface ScopedPoolSlateResolutionResult {
 export function resolveScopedPoolSlateConfig(scope?: ScopedPoolSlateKey | null): ScopedPoolSlateResolutionResult {
   if (!scope) {
     return {
-      status: 'VERIFIED_NO_CUSTOM_CONFIG',
-      defaultPolicy: 'FULL_MANIFEST',
+      status: 'UNAVAILABLE',
+      reason: 'SCOPE_UNDEFINED',
     };
   }
 

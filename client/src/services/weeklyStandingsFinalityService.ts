@@ -38,50 +38,52 @@ export function selectAcceptedScoredSlateGames(
     byEventId.set(id, game);
   }
 
-  // Section 58 & Finding 2: Unverified or failed reads suppress authoritative scores/finality; never default to all NFL games.
-  // Resolve scoped slate configuration via distinct 3-state resolver
-  const slateResolution = resolveScopedPoolSlateConfig(scope);
-
   let targetEventIds: readonly string[];
 
-  if (slateResolution.status === 'VALID_CONFIG') {
-    const scopedConfig = slateResolution.entry;
-    if (!scopedConfig) return null;
+  // Documented historical exception (HAG-40): callers passing manifest eventIds directly without pool scope
+  if (!scope) {
+    targetEventIds = eventIds;
+  } else {
+    // Resolve scoped slate configuration via distinct 3-state resolver
+    const slateResolution = resolveScopedPoolSlateConfig(scope);
 
-    if (
-      scope && (
+    if (slateResolution.status === 'VALID_CONFIG') {
+      const scopedConfig = slateResolution.entry;
+      if (!scopedConfig) return null;
+
+      if (
         scopedConfig.poolId !== scope.poolId ||
         scopedConfig.season !== scope.season ||
         scopedConfig.seasonType !== scope.seasonType ||
         scopedConfig.weekNumber !== scope.weekNumber
-      )
-    ) {
-      return null;
-    }
-
-    const { scoredEventIds, weekNumber } = scopedConfig;
-    if (!scoredEventIds || scoredEventIds.length === 0) return null;
-
-    const idSet = new Set(scoredEventIds.map(String));
-    if (idSet.size !== scoredEventIds.length) return null;
-
-    if (weekNumber === 8 && scoredEventIds.length !== 9) return null;
-
-    const manifestSet = new Set(eventIds.map(String));
-    for (const id of scoredEventIds) {
-      if (!manifestSet.has(String(id))) {
+      ) {
         return null;
       }
-    }
 
-    targetEventIds = scoredEventIds;
-  } else if (slateResolution.status === 'VERIFIED_NO_CUSTOM_CONFIG') {
-    // Verified default policy: all manifest games
-    targetEventIds = eventIds;
-  } else {
-    // UNAVAILABLE, MALFORMED, or UNVERIFIED: Strictly fail closed to null!
-    // Never fall back to all manifest games!
-    return null;
+      const { scoredEventIds, weekNumber } = scopedConfig;
+      if (!scoredEventIds || scoredEventIds.length === 0) return null;
+
+      const idSet = new Set(scoredEventIds.map(String));
+      if (idSet.size !== scoredEventIds.length) return null;
+
+      if (weekNumber === 8 && scoredEventIds.length !== 9) return null;
+
+      const manifestSet = new Set(eventIds.map(String));
+      for (const id of scoredEventIds) {
+        if (!manifestSet.has(String(id))) {
+          return null;
+        }
+      }
+
+      targetEventIds = scoredEventIds;
+    } else if (slateResolution.status === 'VERIFIED_NO_CUSTOM_CONFIG') {
+      // Verified default policy: all manifest games
+      targetEventIds = eventIds;
+    } else {
+      // UNAVAILABLE, MALFORMED, or UNVERIFIED: Strictly fail closed to null!
+      // Never fall back to all manifest games!
+      return null;
+    }
   }
 
   const selected = targetEventIds.map((id) => byEventId.get(String(id)));

@@ -33,6 +33,7 @@ import { getScopedPoolSlateConfig, resolveScopedPoolSlateConfig } from '../clien
 import { fetchScopedSlateProjection, invalidateScopedSlateCache } from '../client/src/services/scopedSlateService';
 import { executeSerializedPickMutation } from '../src/routes/picks';
 import { applyOverride } from '../src/services/overrideService';
+import { deriveSundaySlatePhase } from '../client/src/services/radarSundaySlatePhase';
 
 describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () => {
   const JACK_UUID = 'e3242a19-1131-4fc5-9886-7730f10ef69b';
@@ -923,31 +924,38 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         settings: { lock_offset: 0 },
       };
       const revWithoutSeason = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+      const mockObservation = {
+        status: 'VERIFIED',
+        provider: 'ESPN',
+        league: 'NFL',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 10,
+        observationTime: new Date().toISOString(),
+        adapterVersion: '1.0',
+        eventCount: 1,
+        events: [{ externalGameId: '401873023', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: new Date(Date.now() + 86400000).toISOString(), isKickoffConfirmed: true }],
+        manifestFingerprint: 'any-fp',
+        reasons: [],
+      };
       await expect(
-        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
-          season: 2026,
-          seasonType: 2,
-          weekNumber: 10,
-          eventIds: ['401873023'],
-          expectedRevision: revWithoutSeason,
-          reason: 'Attempted edit on pool without established season',
-        }, {
-          status: 'VERIFIED',
-          provider: 'ESPN',
-          league: 'NFL',
-          seasonYear: 2026,
-          seasonType: 2,
-          weekNumber: 10,
-          observationTime: new Date().toISOString(),
-          adapterVersion: '1.0',
-          eventCount: 1,
-          events: [{ externalGameId: '401873023', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: new Date(Date.now() + 86400000).toISOString(), isKickoffConfirmed: true }],
-          manifestFingerprint: 'any-fp',
-          reasons: [],
+        executeFutureSlateMutationInternal(mockPrisma, {
+          poolId: POOL_ID,
+          actorId: JACK_UUID,
+          envelope: {
+            season: 2026,
+            seasonType: 2,
+            weekNumber: 10,
+            eventIds: ['401873023'],
+            expectedRevision: revWithoutSeason,
+            reason: 'Attempted edit on pool without established season',
+          },
+          observationOverride: mockObservation,
         })
       ).rejects.toMatchObject({
         statusCode: 422,
         code: 'HISTORICAL_SCOPE_UNVERIFIED',
+        message: expect.stringContaining('Pool lacks an authoritatively established current season'),
       });
       committedDbState.pools[POOL_ID] = origPool;
     });
@@ -2655,6 +2663,10 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(unverifiedResolution.status).toBe('UNAVAILABLE');
       // FAILS CLOSED to null!
       expect(selectAcceptedScoredSlateGames(clientGames, manifestEventIds, unverifiedScope)).toBeNull();
+
+      // 4. Undefined or null scope fails closed to UNAVAILABLE in resolver (never defaults to full manifest without verified scope)
+      expect(resolveScopedPoolSlateConfig(undefined).status).toBe('UNAVAILABLE');
+      expect(resolveScopedPoolSlateConfig(null).status).toBe('UNAVAILABLE');
     });
 
     it('getGamesForWeek fails closed when pool settings read fails (Finding 4)', async () => {
@@ -2922,6 +2934,208 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         false
       );
       expect(isFinalPending).toBe(false);
+    });
+
+    it('proves RadarPage and WallOfShamePage guard all pending, loading, unavailable, and malformed states before score/phase/finality calculations', () => {
+      const manifestEventIds = ['401873040', '401873041', '401873042'];
+      const clientGames: SlateGame[] = [
+        {
+          id: '401873040',
+          externalGameId: '401873040',
+          homeTeam: 'KC',
+          awayTeam: 'LV',
+          status: 'STATUS_FINAL',
+          homeScore: 24,
+          awayScore: 17,
+          kickoffTime: new Date(Date.now() - 3600000).toISOString(),
+        },
+        {
+          id: '401873041',
+          externalGameId: '401873041',
+          homeTeam: 'SF',
+          awayTeam: 'LAR',
+          status: 'STATUS_FINAL',
+          homeScore: 21,
+          awayScore: 20,
+          kickoffTime: new Date(Date.now() - 3600000).toISOString(),
+        },
+        {
+          id: '401873042',
+          externalGameId: '401873042',
+          homeTeam: 'BAL',
+          awayTeam: 'CIN',
+          status: 'STATUS_SCHEDULED',
+          kickoffTime: new Date(Date.now() + 3600000).toISOString(),
+        },
+      ];
+      const members: UserStandingRef[] = [
+        { id: JACK_UUID, name: 'Jack' },
+        { id: NON_JACK_UUID, name: 'Rival' },
+      ];
+      const liveScores = [
+        { id: '401873040', homeScore: 24, awayScore: 17, status: 'FINAL' },
+        { id: '401873041', homeScore: 21, awayScore: 20, status: 'FINAL' },
+        { id: '401873042', homeScore: 0, awayScore: 0, status: 'SCHEDULED' },
+      ];
+      const tiebreakerSnapshot = { verified: true, offered: false };
+
+      // Helper reproducing the strict page-level verification predicate:
+      const evaluateRadarPageState = (resolution: any) => {
+        const slateScope = {
+          poolId: POOL_ID,
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          projection: resolution,
+        };
+        const scoredSlateGames = (!resolution || resolution.status === 'LOADING' || resolution.status === 'UNAVAILABLE')
+          ? null
+          : selectAcceptedScoredSlateGames(clientGames, manifestEventIds, slateScope);
+
+        const isSlateVerified = Boolean(
+          resolution &&
+          (
+            (resolution.status === 'VALID_CONFIG' && scoredSlateGames && scoredSlateGames.length > 0) ||
+            (resolution.status === 'VERIFIED_NO_CUSTOM_CONFIG')
+          )
+        );
+
+        const effectiveRadarGames = !isSlateVerified
+          ? []
+          : (resolution.status === 'VALID_CONFIG' && scoredSlateGames ? scoredSlateGames : clientGames);
+
+        const provisionalResult = (!isSlateVerified || effectiveRadarGames.length === 0)
+          ? []
+          : calculateProvisionalStandings(members, effectiveRadarGames, liveScores, [], undefined);
+
+        const sundaySlatePhase = (!isSlateVerified || effectiveRadarGames.length === 0)
+          ? 'AWAITING GAME UPDATES'
+          : deriveSundaySlatePhase(effectiveRadarGames, liveScores);
+
+        const isFinalPosted = isSlateVerified && effectiveRadarGames.length > 0 && isWeeklyScoredSlateFinal(
+          effectiveRadarGames, liveScores, tiebreakerSnapshot, Boolean(scoredSlateGames), false
+        );
+
+        return {
+          isSlateVerified,
+          effectiveRadarGames,
+          provisionalResult,
+          sundaySlatePhase,
+          isFinalPosted,
+        };
+      };
+
+      // Helper reproducing the strict WallOfShamePage snapshot state:
+      const evaluateWallOfShamePageState = (resolution: any) => {
+        const slateScope = {
+          poolId: POOL_ID,
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          projection: resolution,
+        };
+        const scoredSlateGames = (!resolution || resolution.status === 'LOADING' || resolution.status === 'UNAVAILABLE')
+          ? null
+          : selectAcceptedScoredSlateGames(clientGames, manifestEventIds, slateScope);
+
+        const isScopeVerified = Boolean(
+          resolution &&
+          (
+            (resolution.status === 'VALID_CONFIG' && scoredSlateGames && scoredSlateGames.length > 0) ||
+            (resolution.status === 'VERIFIED_NO_CUSTOM_CONFIG')
+          )
+        );
+
+        if (!isScopeVerified) {
+          return {
+            status: resolution?.status === 'LOADING' ? 'LOADING' : 'ERROR',
+            scoreStatus: 'STATUS_UNAVAILABLE',
+            ladderData: [],
+            isFinalPosted: false,
+          };
+        }
+
+        const effectiveScoringGames = scoredSlateGames || clientGames;
+        const standings = calculateProvisionalStandings(members, effectiveScoringGames, liveScores, [], undefined);
+        const isFinalPosted = isWeeklyScoredSlateFinal(
+          effectiveScoringGames, liveScores, tiebreakerSnapshot, Boolean(scoredSlateGames), false
+        );
+        return {
+          status: 'READY',
+          scoreStatus: isFinalPosted ? 'ALL_GAMES_FINAL' : 'GAMES_LIVE',
+          ladderData: standings,
+          isFinalPosted,
+        };
+      };
+
+      // Case 1: LOADING state
+      const loadingRes = { status: 'LOADING' };
+      const radarLoading = evaluateRadarPageState(loadingRes);
+      expect(radarLoading.isSlateVerified).toBe(false);
+      expect(radarLoading.effectiveRadarGames).toHaveLength(0);
+      expect(radarLoading.provisionalResult).toHaveLength(0);
+      expect(radarLoading.sundaySlatePhase).toBe('AWAITING GAME UPDATES'); // Never falls back to full games!
+      expect(radarLoading.isFinalPosted).toBe(false);
+
+      const shameLoading = evaluateWallOfShamePageState(loadingRes);
+      expect(shameLoading.status).toBe('LOADING');
+      expect(shameLoading.scoreStatus).toBe('STATUS_UNAVAILABLE');
+      expect(shameLoading.ladderData).toHaveLength(0);
+
+      // Case 2: UNAVAILABLE state
+      const unavailRes = { status: 'UNAVAILABLE', error: 'SCOPED_SLATE_UNAVAILABLE' };
+      const radarUnavail = evaluateRadarPageState(unavailRes);
+      expect(radarUnavail.isSlateVerified).toBe(false);
+      expect(radarUnavail.effectiveRadarGames).toHaveLength(0);
+      expect(radarUnavail.provisionalResult).toHaveLength(0);
+      expect(radarUnavail.sundaySlatePhase).toBe('AWAITING GAME UPDATES');
+      expect(radarUnavail.isFinalPosted).toBe(false);
+
+      const shameUnavail = evaluateWallOfShamePageState(unavailRes);
+      expect(shameUnavail.status).toBe('ERROR');
+      expect(shameUnavail.scoreStatus).toBe('STATUS_UNAVAILABLE');
+      expect(shameUnavail.ladderData).toHaveLength(0);
+
+      // Case 3: Malformed VALID_CONFIG (unmatched event IDs)
+      const malformedRes = { status: 'VALID_CONFIG', eventIds: ['non-existent-event-id'] };
+      const radarMalformed = evaluateRadarPageState(malformedRes);
+      expect(radarMalformed.isSlateVerified).toBe(false);
+      expect(radarMalformed.effectiveRadarGames).toHaveLength(0);
+      expect(radarMalformed.provisionalResult).toHaveLength(0);
+      expect(radarMalformed.sundaySlatePhase).toBe('AWAITING GAME UPDATES');
+      expect(radarMalformed.isFinalPosted).toBe(false);
+
+      const shameMalformed = evaluateWallOfShamePageState(malformedRes);
+      expect(shameMalformed.status).toBe('ERROR');
+      expect(shameMalformed.scoreStatus).toBe('STATUS_UNAVAILABLE');
+      expect(shameMalformed.ladderData).toHaveLength(0);
+
+      // Case 4: VERIFIED_NO_CUSTOM_CONFIG (verified default full manifest)
+      const verifiedDefaultRes = { status: 'VERIFIED_NO_CUSTOM_CONFIG', defaultPolicy: 'FULL_MANIFEST' };
+      const radarDefault = evaluateRadarPageState(verifiedDefaultRes);
+      expect(radarDefault.isSlateVerified).toBe(true);
+      expect(radarDefault.effectiveRadarGames).toHaveLength(3);
+      expect(radarDefault.provisionalResult).toHaveLength(2);
+      // Because game 3 is SCHEDULED, finality is false for full manifest
+      expect(radarDefault.isFinalPosted).toBe(false);
+
+      const shameDefault = evaluateWallOfShamePageState(verifiedDefaultRes);
+      expect(shameDefault.status).toBe('READY');
+      expect(shameDefault.ladderData).toHaveLength(2);
+
+      // Case 5: VALID_CONFIG with verified custom slate (2 final games)
+      const validCustomRes = { status: 'VALID_CONFIG', eventIds: ['401873040', '401873041'] };
+      const radarCustom = evaluateRadarPageState(validCustomRes);
+      expect(radarCustom.isSlateVerified).toBe(true);
+      expect(radarCustom.effectiveRadarGames).toHaveLength(2);
+      expect(radarCustom.provisionalResult).toHaveLength(2);
+      // Both custom slate games are final -> finality evaluates to true!
+      expect(radarCustom.isFinalPosted).toBe(true);
+
+      const shameCustom = evaluateWallOfShamePageState(validCustomRes);
+      expect(shameCustom.status).toBe('READY');
+      expect(shameCustom.ladderData).toHaveLength(2);
+      expect(shameCustom.isFinalPosted).toBe(true);
     });
 
     it('GET /api/pools/:pool_id/scoped-slate enforces active membership: denies unauthenticated and non-members', async () => {

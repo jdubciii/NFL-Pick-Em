@@ -1057,8 +1057,16 @@ export function WallOfShamePage({
         ? null
         : selectAcceptedScoredSlateGames(gamesList, acceptedEventIds, slateScope);
 
-      // Failed or unverified settings reads suppress authoritative scores/standings; never default to all NFL games!
-      if (slateResolution?.status === 'UNAVAILABLE' || (slateResolution?.status === 'VALID_CONFIG' && !scoredSlateGames)) {
+      // Guard all pending/loading/unavailable/malformed states before any score, phase, consequence or finality calculation!
+      const isScopeVerified = Boolean(
+        slateResolution &&
+        (
+          (slateResolution.status === 'VALID_CONFIG' && scoredSlateGames && scoredSlateGames.length > 0) ||
+          (slateResolution.status === 'VERIFIED_NO_CUSTOM_CONFIG')
+        )
+      );
+
+      if (!isScopeVerified) {
         setSnapshot((prev) => ({
           ...prev,
           userId: user?.id,
@@ -1067,7 +1075,7 @@ export function WallOfShamePage({
           seasonType: targetSeasonType,
           week: targetWeek,
           ladderData: [],
-          status: 'ERROR',
+          status: slateResolution?.status === 'LOADING' ? 'LOADING' : 'ERROR',
           scoreStatus: 'STATUS_UNAVAILABLE',
           syncTimestamp: new Date().toISOString(),
           isLiveTelemetry: false,
@@ -1087,20 +1095,18 @@ export function WallOfShamePage({
         tiebreakerData
       );
 
-      const isFinalPosted = scoredSlateGames && slateResolution?.status !== 'LOADING'
-        ? isWeeklyScoredSlateFinal(
-            scoredSlateGames,
-            liveScores,
-            {
-              verified: tiebreakerVerified,
-              offered: tiebreakerOffered,
-              eventId: designatedTiebreakerEventId,
-              data: tiebreakerData,
-            },
-            Boolean(scoredSlateGames),
-            targetSeason === 2026 && targetWeek === 8,
-          )
-        : false;
+      const isFinalPosted = isWeeklyScoredSlateFinal(
+        effectiveScoringGames,
+        liveScores,
+        {
+          verified: tiebreakerVerified,
+          offered: tiebreakerOffered,
+          eventId: designatedTiebreakerEventId,
+          data: tiebreakerData,
+        },
+        Boolean(scoredSlateGames),
+        targetSeason === 2026 && targetWeek === 8,
+      );
 
       const mappedLadder = standings.map((entry) => {
         let tier = 'DANGER_LOW';

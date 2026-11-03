@@ -386,37 +386,55 @@ export const RadarPage: React.FC = () => {
   ), [tiebreakerResponse, members, games, liveScores]);
   const tiebreakers: TiebreakerData | undefined = tiebreakerSnapshot.data;
 
-  const isFinalPosted = !isSimulationActive && picksLoaded && slateResolution?.status !== 'LOADING' && slateResolution?.status !== 'UNAVAILABLE' && isWeeklyScoredSlateFinal(
-    scoredSlateGames || [], liveScores, tiebreakerSnapshot,
+  const isSlateVerified = Boolean(
+    slateResolution &&
+    (
+      (slateResolution.status === 'VALID_CONFIG' && scoredSlateGames && scoredSlateGames.length > 0) ||
+      (slateResolution.status === 'VERIFIED_NO_CUSTOM_CONFIG')
+    )
+  );
+
+  const effectiveRadarGames: SlateGame[] = useMemo(() => {
+    if (!isSlateVerified) return [];
+    if (slateResolution?.status === 'VALID_CONFIG' && scoredSlateGames) {
+      return scoredSlateGames;
+    }
+    if (slateResolution?.status === 'VERIFIED_NO_CUSTOM_CONFIG') {
+      return games;
+    }
+    return [];
+  }, [isSlateVerified, slateResolution, scoredSlateGames, games]);
+
+  const isFinalPosted = !isSimulationActive && picksLoaded && isSlateVerified && effectiveRadarGames.length > 0 && isWeeklyScoredSlateFinal(
+    effectiveRadarGames, liveScores, tiebreakerSnapshot,
     Boolean(scoredSlateGames), activeWeek === 8,
   );
 
-  const effectiveRadarGames = useMemo(() => {
-    if (scoredSlateGames) return scoredSlateGames;
-    if (slateResolution?.status === 'VERIFIED_NO_CUSTOM_CONFIG') return games;
-    return [];
-  }, [scoredSlateGames, games, slateResolution]);
-
   // Compute Sunday Sweat standings from the same scored slate and tiebreaker inputs.
+  // Guard all pending/loading/unavailable/malformed states: NEVER fall back to full games!
   const provisionalResult: ProvisionalStandingsResult = useMemo(() => {
-    if (slateResolution?.status === 'UNAVAILABLE' || (slateResolution?.status === 'VALID_CONFIG' && !scoredSlateGames)) {
+    if (!isSlateVerified || effectiveRadarGames.length === 0) {
       const empty: any = [];
       empty.swingGame = null;
       return empty;
     }
-    const scoringGames = scoredSlateGames || games;
     return calculateProvisionalStandings(
       members,
-      scoringGames,
+      effectiveRadarGames,
       liveScores,
       effectivePicks,
       tiebreakers
     );
-  }, [members, scoredSlateGames, games, liveScores, effectivePicks, tiebreakers, slateResolution]);
+  }, [isSlateVerified, effectiveRadarGames, members, liveScores, effectivePicks, tiebreakers]);
 
   const sundaySlatePhase = useMemo(
-    () => deriveSundaySlatePhase(effectiveRadarGames.length > 0 ? effectiveRadarGames : games, liveScores, { now: phaseNow, isStale }),
-    [effectiveRadarGames, games, liveScores, phaseNow, isStale]
+    () => {
+      if (!isSlateVerified || effectiveRadarGames.length === 0) {
+        return 'AWAITING GAME UPDATES';
+      }
+      return deriveSundaySlatePhase(effectiveRadarGames, liveScores, { now: phaseNow, isStale });
+    },
+    [isSlateVerified, effectiveRadarGames, liveScores, phaseNow, isStale]
   );
 
   // Find user's standing
@@ -436,14 +454,13 @@ export const RadarPage: React.FC = () => {
 
   // Find live matchup details for the swing game
   const swingLiveMatch = useMemo(() => {
-    if (!activeSwingGame) return null;
-    const matchPool = effectiveRadarGames.length > 0 ? effectiveRadarGames : games;
-    const matchingGame = matchPool.find((g) => g.id === activeSwingGame.gameId || (g as any)?.externalGameId === activeSwingGame.gameId);
+    if (!activeSwingGame || !isSlateVerified || effectiveRadarGames.length === 0) return null;
+    const matchingGame = effectiveRadarGames.find((g) => g.id === activeSwingGame.gameId || (g as any)?.externalGameId === activeSwingGame.gameId);
     return liveScores.find((l) =>
       l.id === activeSwingGame.gameId ||
       (matchingGame && (l.id === matchingGame.id || l.id === (matchingGame as any)?.externalGameId))
     );
-  }, [activeSwingGame, liveScores, effectiveRadarGames, games]);
+  }, [activeSwingGame, liveScores, isSlateVerified, effectiveRadarGames]);
 
   // Determine active rival for head-to-head calculations
   const activeRival = useMemo(() => {
@@ -467,13 +484,13 @@ export const RadarPage: React.FC = () => {
 
   // Pass 3 & 4: Personal Rooting Queue with deterministic duel margin tracking
   const personalRootingQueue: RootingQueueItem[] = useMemo(() => {
+    if (!isSlateVerified || effectiveRadarGames.length === 0) return [];
     const activeRivalStanding = activeRival ? provisionalResult.find((s) => s.userId === activeRival.id) : null;
     const currentViewerGap = (userStanding && activeRivalStanding)
       ? userStanding.totalProvisionalPoints - activeRivalStanding.totalProvisionalPoints
       : 0;
 
-    const matchPool = effectiveRadarGames.length > 0 ? effectiveRadarGames : games;
-    const queueGames = matchPool.map((g) => {
+    const queueGames = effectiveRadarGames.map((g) => {
       const vPick = effectivePicks.find((p) => (p.gameId === g.id || p.gameId === (g as any)?.externalGameId) && p.userId === currentUserId)?.selectedTeam || '';
       const rPick = activeRival
         ? effectivePicks.find((p) => (p.gameId === g.id || p.gameId === (g as any)?.externalGameId) && p.userId === activeRival.id)?.selectedTeam
@@ -496,16 +513,15 @@ export const RadarPage: React.FC = () => {
       rivalDisplayName: activeRival?.name || 'your rival',
       currentViewerGap,
     });
-  }, [effectiveRadarGames, games, effectivePicks, currentUserId, activeRival, liveScores, userStanding, provisionalResult]);
+  }, [isSlateVerified, effectiveRadarGames, effectivePicks, currentUserId, activeRival, liveScores, userStanding, provisionalResult]);
 
   // Pass 3 & 4: Bounded Late-Game Escape Scenario with simulation exclusion & member count gating
   const escapeScenario: LateGameEscapeScenario | null = useMemo(() => {
-    if (!userStanding) return null;
+    if (!userStanding || !isSlateVerified || effectiveRadarGames.length === 0) return null;
     const leader = provisionalResult[0];
     const targetSafePoints = leader ? leader.totalProvisionalPoints : userStanding.totalProvisionalPoints;
 
-    const matchPool = effectiveRadarGames.length > 0 ? effectiveRadarGames : games;
-    const disagreementGames = matchPool
+    const disagreementGames = effectiveRadarGames
       .filter((g) => {
         const vPick = effectivePicks.find((p) => (p.gameId === g.id || p.gameId === (g as any)?.externalGameId) && p.userId === currentUserId)?.selectedTeam;
         const rPick = activeRival
@@ -534,7 +550,7 @@ export const RadarPage: React.FC = () => {
       activeMemberCount: members.length,
       isSimulation: isSimulationActive,
     });
-  }, [userStanding, provisionalResult, effectiveRadarGames, games, effectivePicks, currentUserId, activeRival, liveScores, members.length, isSimulationActive]);
+  }, [userStanding, provisionalResult, isSlateVerified, effectiveRadarGames, effectivePicks, currentUserId, activeRival, liveScores, members.length, isSimulationActive]);
 
   // Session Sweat Receipts: observe projection transitions
   useEffect(() => {
@@ -767,7 +783,7 @@ export const RadarPage: React.FC = () => {
           currentUser={currentUserRef}
           members={members}
           standings={provisionalResult}
-          games={games}
+          games={effectiveRadarGames}
           liveScores={liveScores}
           picks={effectivePicks}
           selectedRivalId={selectedRivalId}
@@ -901,7 +917,7 @@ export const RadarPage: React.FC = () => {
                     </span>
                     <span className="text-xs font-mono font-bold text-cyan-400">
                       {(() => {
-                        const matchingGame = games.find((g) => g.id === activeSwingGame.gameId || (g as any)?.externalGameId === activeSwingGame.gameId);
+                        const matchingGame = effectiveRadarGames.find((g) => g.id === activeSwingGame.gameId || (g as any)?.externalGameId === activeSwingGame.gameId);
                         const resolution = resolveRadarGameScoreAndStatus(matchingGame, swingLiveMatch, activeSwingGame.gameStatus);
                         return resolution.scoreText || activeSwingGame.matchup || 'AWAITING KICKOFF';
                       })()}
@@ -912,7 +928,7 @@ export const RadarPage: React.FC = () => {
                       Status:{' '}
                       <strong className="text-slate-200">
                         {(() => {
-                          const matchingGame = games.find((g) => g.id === activeSwingGame.gameId || (g as any)?.externalGameId === activeSwingGame.gameId);
+                          const matchingGame = effectiveRadarGames.find((g) => g.id === activeSwingGame.gameId || (g as any)?.externalGameId === activeSwingGame.gameId);
                           const resolution = resolveRadarGameScoreAndStatus(matchingGame, swingLiveMatch, activeSwingGame.gameStatus);
                           return resolution.status;
                         })()}
@@ -966,7 +982,23 @@ export const RadarPage: React.FC = () => {
               <div className="col-span-2 text-right">TOTAL</div>
             </div>
 
-            {members.length <= 1 ? (
+            {!isSlateVerified ? (
+              <div className="p-8 text-center bg-slate-900/60 border border-slate-800 rounded-2xl font-mono space-y-2">
+                <span className="text-3xl block animate-pulse">
+                  {slateResolution?.status === 'LOADING' ? '⏳' : '⚠️'}
+                </span>
+                <p className="text-sm font-bold text-slate-300">
+                  {slateResolution?.status === 'LOADING'
+                    ? 'Loading verified pool slate...'
+                    : 'Scoped pool slate unavailable'}
+                </p>
+                <p className="text-xs text-slate-500">
+                  {slateResolution?.status === 'LOADING'
+                    ? 'Authoritative slate configuration is being verified.'
+                    : 'Standings and projections are suppressed until verified slate authority is established.'}
+                </p>
+              </div>
+            ) : members.length <= 1 ? (
               <div className="p-8 text-center bg-slate-900/60 border border-slate-800 rounded-2xl font-mono space-y-2">
                 <span className="text-3xl block animate-pulse">⏳</span>
                 <p className="text-sm font-bold text-slate-300">Waiting for league members to join...</p>

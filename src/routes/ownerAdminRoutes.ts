@@ -786,7 +786,8 @@ export async function executeFutureSlateMutationInternal(
   db: any,
   arg2: any,
   arg3?: any,
-  arg4?: any
+  arg4?: any,
+  arg5?: any
 ): Promise<{ slate: any; revision: string }> {
   let poolId: string;
   let actorId: string;
@@ -797,6 +798,7 @@ export async function executeFutureSlateMutationInternal(
     poolId = arg2;
     actorId = arg3;
     envelope = arg4;
+    observationOverride = arg5;
   } else {
     poolId = arg2.poolId;
     actorId = arg2.actorId;
