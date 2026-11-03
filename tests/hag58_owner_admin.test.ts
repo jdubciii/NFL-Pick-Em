@@ -224,7 +224,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         }),
       },
       $queryRawUnsafe: vi.fn(async (query: string, ...args: any[]) => {
-        if (query.includes('SELECT NOW()')) {
+        if (query.includes('CLOCK_TIMESTAMP()') || query.includes('SELECT NOW()')) {
           return [{ now: new Date().toISOString() }];
         }
         if (query.includes('FROM public.picks')) {
@@ -1249,7 +1249,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       // Canonical game lookup returns canonical row with UUID id
       mockPrisma.game.findMany.mockResolvedValueOnce([
         {
-          id: 'game-uuid-canonical-1',
+          id: 'c0a80101-0000-0000-0000-000000000001',
           externalGameId: '401873040',
           homeTeamId: 'KC',
           awayTeamId: 'LV',
@@ -1279,9 +1279,9 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(observedWhereClause).toBeDefined();
       expect(observedWhereClause.week).toBeUndefined();
       expect(observedWhereClause.poolId).toBe(POOL_ID);
-      // Proves it includes both canonical UUID and external game ID
+      // Proves Defect 1 fix: UUID predicates receive UUIDs only; external IDs query through relation
       expect(observedWhereClause.OR).toEqual([
-        { gameId: { in: expect.arrayContaining(['401873040', 'game-uuid-canonical-1']) } },
+        { gameId: { in: ['c0a80101-0000-0000-0000-000000000001'] } },
         { game: { externalGameId: { in: ['401873040'] } } },
       ]);
 
@@ -1313,6 +1313,25 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       ).rejects.toMatchObject({
         statusCode: 409,
         code: 'SLATE_FROZEN',
+      });
+
+      // Proves Defect 1: Ambiguous multiple canonical rows for same externalGameId deny with 422 CANONICAL_GAME_AMBIGUOUS
+      mockPrisma.game.findMany.mockResolvedValueOnce([
+        { id: 'c0a80101-0000-0000-0000-000000000001', externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: futureDate1, status: 'SCHEDULED' },
+        { id: 'c0a80101-0000-0000-0000-000000000002', externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: futureDate1, status: 'SCHEDULED' },
+      ]);
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040'],
+          expectedRevision: freshRev,
+          reason: 'Testing Defect 1 ambiguity',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'CANONICAL_GAME_AMBIGUOUS',
       });
     });
 
@@ -1501,6 +1520,56 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         statusCode: 422,
         code: 'CANONICAL_GAME_MISMATCH',
       });
+
+      // 3. Defect 4: Incomplete metadata (missing homeTeamId) denies with CANONICAL_GAME_MISMATCH
+      mockPrisma.game.findMany.mockResolvedValueOnce([
+        {
+          id: 'game-uuid-1',
+          externalGameId: '401873040',
+          homeTeamId: null, // Missing!
+          awayTeamId: 'LV',
+          kickoffTime: futureDate,
+          status: 'SCHEDULED',
+        },
+      ]);
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040'],
+          expectedRevision: poolRev,
+          reason: 'Testing Defect 4 incomplete metadata',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'CANONICAL_GAME_MISMATCH',
+      });
+
+      // 4. Defect 4: Unmatched canonical row (externalGameId has no matching observation event) denies with CANONICAL_GAME_MISMATCH
+      mockPrisma.game.findMany.mockResolvedValueOnce([
+        {
+          id: 'game-uuid-1',
+          externalGameId: 'unmatched-rogue-external-id',
+          homeTeamId: 'KC',
+          awayTeamId: 'LV',
+          kickoffTime: futureDate,
+          status: 'SCHEDULED',
+        },
+      ]);
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040'],
+          expectedRevision: poolRev,
+          reason: 'Testing Defect 4 unmatched row',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'CANONICAL_GAME_MISMATCH',
+      });
     });
 
     it('Finding 2 Proof: missing or non-numeric lock_offset in pool settings denies with HTTP 422 INVALID_LOCK_OFFSET and does not default to 0', async () => {
@@ -1593,10 +1662,10 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         observationTime: new Date().toISOString(),
       });
 
-      // Mock $queryRawUnsafe to return empty when SELECT NOW() is called
+      // Mock $queryRawUnsafe to return empty when DB clock is called
       const origQuery = mockPrisma.$queryRawUnsafe;
       mockPrisma.$queryRawUnsafe = vi.fn(async (q: string, ...args: any[]) => {
-        if (q.includes('SELECT NOW()')) {
+        if (q.includes('CLOCK_TIMESTAMP()') || q.includes('SELECT NOW()')) {
           return []; // Query failed!
         }
         return origQuery(q, ...args);
@@ -1733,8 +1802,12 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         observationTime: new Date().toISOString(),
       });
 
-      // 1. Settled PenaltyLedger rows exist
-      mockPrisma.penaltyLedger.count.mockResolvedValueOnce(1);
+      // 1. Settled PenaltyLedger rows exist (Defect 2: verify weekNumber query predicate)
+      let observedPenaltyWhere: any = null;
+      mockPrisma.penaltyLedger.count.mockImplementationOnce(async ({ where }: any) => {
+        observedPenaltyWhere = where;
+        return 1;
+      });
       const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
       await expect(
         executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
@@ -1749,6 +1822,9 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         statusCode: 409,
         code: 'SLATE_FROZEN',
       });
+      expect(observedPenaltyWhere).toBeDefined();
+      expect(observedPenaltyWhere.weekNumber).toBe(9);
+      expect(observedPenaltyWhere.week).toBeUndefined();
 
       // 2. Settled PickResult rows exist
       mockPrisma.pickResult.count.mockResolvedValueOnce(1);
@@ -1765,6 +1841,73 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         statusCode: 409,
         code: 'SLATE_FROZEN',
       });
+    });
+
+    it('Defect 3 Proof: post-write advancing database clock (CLOCK_TIMESTAMP()) crossing kickoff deadline rejects with HTTP 422 KICKOFF_PASSED', async () => {
+      const futureDate1 = new Date(Date.now() + 86400000).toISOString();
+      const week9Events = [
+        { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: futureDate1, isKickoffConfirmed: true },
+      ];
+      const week9Fingerprint = authoritativeSlateService.computeManifestFingerprint(2026, 2, 9, week9Events);
+
+      vi.spyOn(authoritativeSlateService, 'fetchAuthoritativeESPNScoreboard').mockResolvedValue({
+        status: 'VERIFIED',
+        provider: 'ESPN',
+        league: 'NFL',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        observationTime: new Date().toISOString(),
+        adapterVersion: '1.0',
+        eventCount: 1,
+        events: week9Events,
+        manifestFingerprint: week9Fingerprint,
+        reasons: [],
+      });
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: ['401873040'],
+        acceptedAt: new Date().toISOString(),
+        acceptedBy: JACK_UUID,
+        manifestFingerprint: week9Fingerprint,
+        observationTime: new Date().toISOString(),
+      });
+
+      let clockCallCount = 0;
+      const origQuery = mockPrisma.$queryRawUnsafe;
+      mockPrisma.$queryRawUnsafe = vi.fn(async (q: string, ...args: any[]) => {
+        if (q.includes('CLOCK_TIMESTAMP()')) {
+          clockCallCount++;
+          if (clockCallCount === 1) {
+            return [{ now: new Date().toISOString() }];
+          } else {
+            // Post-write advancing clock has advanced past kickoff!
+            return [{ now: new Date(new Date(futureDate1).getTime() + 10000).toISOString() }];
+          }
+        }
+        return origQuery(q, ...args);
+      });
+
+      const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040'],
+          expectedRevision: poolRev,
+          reason: 'Testing Defect 3 post-write clock crossing',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'KICKOFF_PASSED',
+      });
+
+      mockPrisma.$queryRawUnsafe = origQuery;
     });
 
     it('Finding 3 Proof: strict transactional lock-order concurrency serialization on public.pools row', async () => {

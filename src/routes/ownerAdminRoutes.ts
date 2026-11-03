@@ -972,10 +972,10 @@ export async function executeFutureSlateMutationInternal(
       throw err;
     }
 
-    // Freeze check: Settled penalty ledger records (Finding 3)
+    // Freeze check: Settled penalty ledger records (Finding 3 & Defect 2: weekNumber in Prisma PenaltyLedger)
     if (typeof tx.penaltyLedger?.count === 'function') {
       const ledgerCount = await tx.penaltyLedger.count({
-        where: { poolId, week: weekNumber },
+        where: { poolId, weekNumber },
       });
       if (ledgerCount > 0) {
         const err: any = new Error(`SLATE_FROZEN: Settlement penalty ledger records already exist for week ${weekNumber}. Slate mutation denied.`);
@@ -992,16 +992,26 @@ export async function executeFutureSlateMutationInternal(
       : manifest.eventIds.map(String);
     const unionEventIds = Array.from(new Set([...priorEventIds, ...eventIds]));
 
-    // 2f. Finding (1) Resolution: Canonical Game query & Alias resolution without swallowing errors
+    // 2f. Finding (1) & Defect (1) Resolution: Type-safe Canonical Game query & Alias resolution without casting failure
+    const isUuid = (str: string): boolean =>
+      typeof str === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
+    const externalIds = unionEventIds.filter((id: string) => !isUuid(id));
+    const inputUuids = unionEventIds.filter((id: string) => isUuid(id));
+
+    const gameQueryOr: any[] = [];
+    if (externalIds.length > 0) {
+      gameQueryOr.push({ externalGameId: { in: externalIds } });
+    }
+    if (inputUuids.length > 0) {
+      gameQueryOr.push({ id: { in: inputUuids } });
+    }
+
     let canonicalGamesInUnion: any[] = [];
-    if (typeof tx.game?.findMany === 'function') {
+    if (typeof tx.game?.findMany === 'function' && gameQueryOr.length > 0) {
       canonicalGamesInUnion = await tx.game.findMany({
-        where: {
-          OR: [
-            { externalGameId: { in: unionEventIds } },
-            { id: { in: unionEventIds } },
-          ],
-        },
+        where: gameQueryOr.length === 1 ? gameQueryOr[0] : { OR: gameQueryOr },
         select: {
           id: true,
           externalGameId: true,
@@ -1013,48 +1023,79 @@ export async function executeFutureSlateMutationInternal(
       });
     }
 
-    const candidateGameIds = Array.from(new Set([
-      ...unionEventIds,
-      ...canonicalGamesInUnion.map((g: any) => String(g.id)),
-    ]));
-
-    // Freeze check: Any pick row across union (including null picks) (Finding 1)
-    if (typeof tx.pick?.count === 'function') {
-      const pickCount = await tx.pick.count({
-        where: {
-          poolId,
-          OR: [
-            { gameId: { in: candidateGameIds } },
-            { game: { externalGameId: { in: unionEventIds } } },
-          ],
-        },
-      });
-      if (pickCount > 0) {
-        const err: any = new Error(`SLATE_FROZEN: Picks already exist for week ${weekNumber} or games in slate union. Slate mutation denied.`);
-        err.statusCode = 409;
-        err.code = 'SLATE_FROZEN';
-        throw err;
+    // Fail closed on ambiguity: verify no multiple canonical rows map to the same externalGameId
+    const seenExternalIds = new Set<string>();
+    for (const gRow of canonicalGamesInUnion) {
+      if (gRow.externalGameId) {
+        if (seenExternalIds.has(gRow.externalGameId)) {
+          const err: any = new Error(`CANONICAL_GAME_AMBIGUOUS: Multiple canonical Game rows match externalGameId '${gRow.externalGameId}'. Slate mutation denied.`);
+          err.statusCode = 422;
+          err.code = 'CANONICAL_GAME_AMBIGUOUS';
+          throw err;
+        }
+        seenExternalIds.add(gRow.externalGameId);
       }
     }
 
-    // Freeze check: Settled pick results (Finding 3)
-    if (typeof tx.pickResult?.count === 'function') {
-      const prCount = await tx.pickResult.count({
-        where: {
-          pick: {
+    // Collect valid canonical UUIDs only (Game.id is UUID in Prisma schema)
+    const canonicalUuids = Array.from(new Set(
+      canonicalGamesInUnion
+        .map((g: any) => String(g.id))
+        .filter((id: string) => isUuid(id))
+    ));
+
+    // Freeze check: Any pick row across union (including null picks) (Finding 1 & Defect 1)
+    // UUID predicates strictly receive canonical UUIDs; externalGameId predicates query via game relation
+    if (typeof tx.pick?.count === 'function') {
+      const pickOrClauses: any[] = [];
+      if (canonicalUuids.length > 0) {
+        pickOrClauses.push({ gameId: { in: canonicalUuids } });
+      }
+      if (externalIds.length > 0) {
+        pickOrClauses.push({ game: { externalGameId: { in: externalIds } } });
+      }
+
+      if (pickOrClauses.length > 0) {
+        const pickCount = await tx.pick.count({
+          where: {
             poolId,
-            OR: [
-              { gameId: { in: candidateGameIds } },
-              { game: { externalGameId: { in: unionEventIds } } },
-            ],
+            ...(pickOrClauses.length === 1 ? pickOrClauses[0] : { OR: pickOrClauses }),
           },
-        },
-      });
-      if (prCount > 0) {
-        const err: any = new Error(`SLATE_FROZEN: Settled pick results already exist for games in slate union. Slate mutation denied.`);
-        err.statusCode = 409;
-        err.code = 'SLATE_FROZEN';
-        throw err;
+        });
+        if (pickCount > 0) {
+          const err: any = new Error(`SLATE_FROZEN: Picks already exist for week ${weekNumber} or games in slate union. Slate mutation denied.`);
+          err.statusCode = 409;
+          err.code = 'SLATE_FROZEN';
+          throw err;
+        }
+      }
+    }
+
+    // Freeze check: Settled pick results (Finding 3 & Defect 1)
+    if (typeof tx.pickResult?.count === 'function') {
+      const pickOrClauses: any[] = [];
+      if (canonicalUuids.length > 0) {
+        pickOrClauses.push({ gameId: { in: canonicalUuids } });
+      }
+      if (externalIds.length > 0) {
+        pickOrClauses.push({ game: { externalGameId: { in: externalIds } } });
+      }
+
+      if (pickOrClauses.length > 0) {
+        const prCount = await tx.pickResult.count({
+          where: {
+            pick: {
+              poolId,
+              ...(pickOrClauses.length === 1 ? pickOrClauses[0] : { OR: pickOrClauses }),
+            },
+          },
+        });
+        if (prCount > 0) {
+          const err: any = new Error(`SLATE_FROZEN: Settled pick results already exist for games in slate union. Slate mutation denied.`);
+          err.statusCode = 409;
+          err.code = 'SLATE_FROZEN';
+          throw err;
+        }
       }
     }
 
@@ -1091,7 +1132,7 @@ export async function executeFutureSlateMutationInternal(
       }
     }
 
-    // Verify canonical Game rows agreement (Finding 2)
+    // Verify canonical Game rows agreement (Finding 2 & Defect 4: reject incomplete or mismatched canonical evidence)
     for (const gRow of canonicalGamesInUnion) {
       if (gRow.status === 'FINAL' || gRow.status === 'IN_PROGRESS') {
         const err: any = new Error(`KICKOFF_PASSED: Game '${gRow.externalGameId || gRow.id}' in slate union is already ${gRow.status}. Slate mutation denied.`);
@@ -1099,30 +1140,47 @@ export async function executeFutureSlateMutationInternal(
         err.code = 'KICKOFF_PASSED';
         throw err;
       }
+
+      if (!gRow.externalGameId) {
+        const err: any = new Error(`CANONICAL_GAME_MISMATCH: Canonical game row '${gRow.id}' lacks externalGameId.`);
+        err.statusCode = 422;
+        err.code = 'CANONICAL_GAME_MISMATCH';
+        throw err;
+      }
+
       const matchingObs = obsEventsByExtId.get(String(gRow.externalGameId));
-      if (matchingObs) {
-        if (
-          (gRow.homeTeamId && matchingObs.homeTeamId && gRow.homeTeamId !== matchingObs.homeTeamId) ||
-          (gRow.awayTeamId && matchingObs.awayTeamId && gRow.awayTeamId !== matchingObs.awayTeamId)
-        ) {
-          const err: any = new Error(`CANONICAL_GAME_MISMATCH: Team identity mismatch for game '${gRow.externalGameId}' between canonical database row and provider observation.`);
-          err.statusCode = 422;
-          err.code = 'CANONICAL_GAME_MISMATCH';
-          throw err;
-        }
-        if (gRow.kickoffTime && matchingObs.kickoffTime) {
-          const gTime = new Date(gRow.kickoffTime).getTime();
-          const oTime = new Date(matchingObs.kickoffTime).getTime();
-          if (!isNaN(gTime) && !isNaN(oTime) && Math.abs(gTime - oTime) > 60000) {
-            const err: any = new Error(`CANONICAL_GAME_MISMATCH: Kickoff timestamp mismatch for game '${gRow.externalGameId}' between canonical database row and provider observation.`);
-            err.statusCode = 422;
-            err.code = 'CANONICAL_GAME_MISMATCH';
-            throw err;
-          }
-          if (!isNaN(gTime) && gTime < earliestKickoffMs) {
-            earliestKickoffMs = gTime;
-          }
-        }
+      if (!matchingObs) {
+        const err: any = new Error(`CANONICAL_GAME_MISMATCH: Canonical game '${gRow.externalGameId}' has no matching provider observation event.`);
+        err.statusCode = 422;
+        err.code = 'CANONICAL_GAME_MISMATCH';
+        throw err;
+      }
+
+      if (!gRow.homeTeamId || !gRow.awayTeamId || !gRow.kickoffTime) {
+        const err: any = new Error(`CANONICAL_GAME_MISMATCH: Canonical game '${gRow.externalGameId}' has incomplete metadata (missing homeTeamId, awayTeamId, or kickoffTime).`);
+        err.statusCode = 422;
+        err.code = 'CANONICAL_GAME_MISMATCH';
+        throw err;
+      }
+
+      if (gRow.homeTeamId !== matchingObs.homeTeamId || gRow.awayTeamId !== matchingObs.awayTeamId) {
+        const err: any = new Error(`CANONICAL_GAME_MISMATCH: Team identity mismatch for game '${gRow.externalGameId}' between canonical database row (${gRow.awayTeamId}@${gRow.homeTeamId}) and provider observation (${matchingObs.awayTeamId}@${matchingObs.homeTeamId}).`);
+        err.statusCode = 422;
+        err.code = 'CANONICAL_GAME_MISMATCH';
+        throw err;
+      }
+
+      const gTime = new Date(gRow.kickoffTime).getTime();
+      const oTime = new Date(matchingObs.kickoffTime).getTime();
+      if (isNaN(gTime) || isNaN(oTime) || Math.abs(gTime - oTime) > 60000) {
+        const err: any = new Error(`CANONICAL_GAME_MISMATCH: Kickoff timestamp mismatch for game '${gRow.externalGameId}' between canonical database row and provider observation.`);
+        err.statusCode = 422;
+        err.code = 'CANONICAL_GAME_MISMATCH';
+        throw err;
+      }
+
+      if (gTime < earliestKickoffMs) {
+        earliestKickoffMs = gTime;
       }
     }
 
@@ -1156,17 +1214,17 @@ export async function executeFutureSlateMutationInternal(
     const lockOffsetMinutes = rawOffset;
     const earliestDeadlineMs = earliestKickoffMs - (lockOffsetMinutes * 60 * 1000);
 
-    // Finding (2) Resolution: Strict Authoritative DB Clock check (no fallback to Date.now())
-    const clockRows = await tx.$queryRawUnsafe('SELECT NOW() as now;');
+    // Finding (2) & Defect (3) Resolution: Strict advancing Authoritative DB Clock check (CLOCK_TIMESTAMP())
+    const clockRows = await tx.$queryRawUnsafe('SELECT CLOCK_TIMESTAMP() as now;');
     if (!clockRows || !clockRows[0]?.now) {
-      const err: any = new Error('DATABASE_CLOCK_UNAVAILABLE: Authoritative database clock query failed under lock.');
+      const err: any = new Error('DATABASE_CLOCK_UNAVAILABLE: Authoritative advancing database clock query failed under lock.');
       err.statusCode = 500;
       err.code = 'DATABASE_CLOCK_UNAVAILABLE';
       throw err;
     }
     const dbNowMs = new Date(clockRows[0].now).getTime();
     if (isNaN(dbNowMs)) {
-      const err: any = new Error('DATABASE_CLOCK_INVALID: Authoritative database clock returned unparseable timestamp.');
+      const err: any = new Error('DATABASE_CLOCK_INVALID: Authoritative advancing database clock returned unparseable timestamp.');
       err.statusCode = 500;
       err.code = 'DATABASE_CLOCK_INVALID';
       throw err;
@@ -1254,6 +1312,35 @@ export async function executeFutureSlateMutationInternal(
         reason: envelope.reason,
       },
     });
+
+    // Post-awaited-write advancing authoritative DB clock, deadline, and observation recheck (Section 38 & Defect 3)
+    const postClockRows = await tx.$queryRawUnsafe('SELECT CLOCK_TIMESTAMP() as now;');
+    if (!postClockRows || !postClockRows[0]?.now) {
+      const err: any = new Error('DATABASE_CLOCK_UNAVAILABLE: Authoritative advancing database clock query failed post-write.');
+      err.statusCode = 500;
+      err.code = 'DATABASE_CLOCK_UNAVAILABLE';
+      throw err;
+    }
+    const postDbNowMs = new Date(postClockRows[0].now).getTime();
+    if (isNaN(postDbNowMs)) {
+      const err: any = new Error('DATABASE_CLOCK_INVALID: Authoritative advancing database clock returned unparseable timestamp post-write.');
+      err.statusCode = 500;
+      err.code = 'DATABASE_CLOCK_INVALID';
+      throw err;
+    }
+    if (postDbNowMs >= earliestDeadlineMs) {
+      const err: any = new Error('KICKOFF_PASSED: Kickoff deadline crossed during write transaction execution. Slate mutation denied.');
+      err.statusCode = 422;
+      err.code = 'KICKOFF_PASSED';
+      throw err;
+    }
+    const postObsAgeMs = postDbNowMs - new Date(observation.observationTime).getTime();
+    if (postObsAgeMs > 60000 || postObsAgeMs < -60000) {
+      const err: any = new Error('EXPIRED_PROVIDER_OBSERVATION: Observation expired during write transaction execution. Fresh retry required.');
+      err.statusCode = 422;
+      err.code = 'EXPIRED_PROVIDER_OBSERVATION';
+      throw err;
+    }
 
     const newRevision = computePoolSettingsRevision(updatedPool);
     return {
