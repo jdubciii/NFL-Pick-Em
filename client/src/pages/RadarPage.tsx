@@ -19,7 +19,7 @@ import { RivalryShowdown } from '../components/radar/RivalryShowdown';
 import { WatchPartyBigBoardModal } from '../components/radar/WatchPartyBigBoardModal';
 import { AppHeader } from '../components/common/AppHeader';
 import { deriveSundaySlatePhase, sundaySlatePhaseLabel } from '../services/radarSundaySlatePhase';
-import { isWeeklyScoredSlateFinal, resolveWeeklyTiebreakerSnapshot, selectAcceptedScoredSlateGames } from '../services/weeklyStandingsFinalityService';
+import { isWeeklyScoredSlateFinal, resolveWeeklyTiebreakerSnapshot, selectAcceptedScoredSlateGames, resolveEffectiveScoredSlateGames } from '../services/weeklyStandingsFinalityService';
 import { fetchScopedSlateProjection, type ScopedSlateResolution } from '../services/scopedSlateService';
 import {
   buildPersonalRootingQueue,
@@ -371,12 +371,13 @@ export const RadarPage: React.FC = () => {
     projection: slateResolution,
   }), [activePoolId, activeWeek, slateResolution]);
 
-  const scoredSlateGames = useMemo(() => {
-    if (!slateResolution || slateResolution.status === 'LOADING' || slateResolution.status === 'UNAVAILABLE') {
-      return null;
-    }
-    return selectAcceptedScoredSlateGames(games, acceptedEventIds, slateScope);
+  const slateResolutionResult = useMemo(() => {
+    return resolveEffectiveScoredSlateGames(games, acceptedEventIds, slateScope, slateResolution);
   }, [games, acceptedEventIds, slateScope, slateResolution]);
+
+  const isSlateVerified = slateResolutionResult.isVerified;
+  const scoredSlateGames = slateResolutionResult.isVerified ? slateResolutionResult.effectiveGames : null;
+  const effectiveRadarGames: SlateGame[] = slateResolutionResult.effectiveGames;
 
   const tiebreakerSnapshot = useMemo(() => resolveWeeklyTiebreakerSnapshot(
     tiebreakerResponse,
@@ -385,25 +386,6 @@ export const RadarPage: React.FC = () => {
     liveScores,
   ), [tiebreakerResponse, members, games, liveScores]);
   const tiebreakers: TiebreakerData | undefined = tiebreakerSnapshot.data;
-
-  const isSlateVerified = Boolean(
-    slateResolution &&
-    (
-      (slateResolution.status === 'VALID_CONFIG' && scoredSlateGames && scoredSlateGames.length > 0) ||
-      (slateResolution.status === 'VERIFIED_NO_CUSTOM_CONFIG')
-    )
-  );
-
-  const effectiveRadarGames: SlateGame[] = useMemo(() => {
-    if (!isSlateVerified) return [];
-    if (slateResolution?.status === 'VALID_CONFIG' && scoredSlateGames) {
-      return scoredSlateGames;
-    }
-    if (slateResolution?.status === 'VERIFIED_NO_CUSTOM_CONFIG') {
-      return games;
-    }
-    return [];
-  }, [isSlateVerified, slateResolution, scoredSlateGames, games]);
 
   const isFinalPosted = !isSimulationActive && picksLoaded && isSlateVerified && effectiveRadarGames.length > 0 && isWeeklyScoredSlateFinal(
     effectiveRadarGames, liveScores, tiebreakerSnapshot,

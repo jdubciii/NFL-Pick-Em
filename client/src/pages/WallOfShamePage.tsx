@@ -21,7 +21,7 @@ import { scopedExpressFetch } from '../lib/apiClient';
 import { getCurrentNFLWeek } from '../services/nflCalendarService';
 import { evaluateSlateLockSummary } from '../services/lockEnforcementService';
 import { resolveAuthoritativeSlate } from '../services/authoritativeSlateClientService';
-import { isWeeklyScoredSlateFinal, selectAcceptedScoredSlateGames } from '../services/weeklyStandingsFinalityService';
+import { isWeeklyScoredSlateFinal, selectAcceptedScoredSlateGames, resolveEffectiveScoredSlateGames } from '../services/weeklyStandingsFinalityService';
 import { fetchScopedSlateProjection } from '../services/scopedSlateService';
 
 export interface WallOfShamePageProps {
@@ -1053,20 +1053,13 @@ export function WallOfShamePage({
         weekNumber: targetWeek,
         projection: slateResolution,
       };
-      const scoredSlateGames = (!slateResolution || slateResolution.status === 'LOADING' || slateResolution.status === 'UNAVAILABLE')
-        ? null
-        : selectAcceptedScoredSlateGames(gamesList, acceptedEventIds, slateScope);
+      const slateResolutionResult = resolveEffectiveScoredSlateGames(gamesList, acceptedEventIds, slateScope, slateResolution);
+      const isScopeVerified = slateResolutionResult.isVerified;
+      const scoredSlateGames = slateResolutionResult.isVerified ? slateResolutionResult.effectiveGames : null;
 
       // Guard all pending/loading/unavailable/malformed states before any score, phase, consequence or finality calculation!
-      const isScopeVerified = Boolean(
-        slateResolution &&
-        (
-          (slateResolution.status === 'VALID_CONFIG' && scoredSlateGames && scoredSlateGames.length > 0) ||
-          (slateResolution.status === 'VERIFIED_NO_CUSTOM_CONFIG')
-        )
-      );
-
-      if (!isScopeVerified) {
+      // Require a nonempty, complete scoredSlateGames result for BOTH verified statuses and use that selected set exclusively.
+      if (!isScopeVerified || !scoredSlateGames || scoredSlateGames.length === 0) {
         setSnapshot((prev) => ({
           ...prev,
           userId: user?.id,
@@ -1075,7 +1068,7 @@ export function WallOfShamePage({
           seasonType: targetSeasonType,
           week: targetWeek,
           ladderData: [],
-          status: slateResolution?.status === 'LOADING' ? 'LOADING' : 'ERROR',
+          status: slateResolutionResult.status === 'LOADING' ? 'LOADING' : 'ERROR',
           scoreStatus: 'STATUS_UNAVAILABLE',
           syncTimestamp: new Date().toISOString(),
           isLiveTelemetry: false,
@@ -1085,7 +1078,7 @@ export function WallOfShamePage({
         return;
       }
 
-      const effectiveScoringGames = scoredSlateGames || gamesList;
+      const effectiveScoringGames = scoredSlateGames;
 
       const standings = calculateProvisionalStandings(
         mappedMembers,

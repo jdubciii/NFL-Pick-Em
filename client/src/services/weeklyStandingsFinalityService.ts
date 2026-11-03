@@ -5,6 +5,7 @@ import {
   resolveScopedPoolSlateConfig,
   isTargetAffectedSlateScope,
   type ScopedPoolSlateKey,
+  type ScopedPoolSlateResolutionResult,
 } from './poolScoredSlateConfig';
 
 export type { ScopedPoolSlateKey };
@@ -88,6 +89,50 @@ export function selectAcceptedScoredSlateGames(
 
   const selected = targetEventIds.map((id) => byEventId.get(String(id)));
   return selected.every((game): game is SlateGame => Boolean(game)) ? selected : null;
+}
+
+export interface ScopedSlateGameResolution {
+  isVerified: boolean;
+  effectiveGames: SlateGame[];
+  status: 'VERIFIED' | 'LOADING' | 'UNAVAILABLE' | 'ERROR';
+}
+
+/**
+ * Resolves the effective scored slate games for consumer views (Radar, Wall of Shame, Standings).
+ *
+ * Governed strictly by HAG58-SLATE-2026-11-03-01 & QA Directives:
+ * - Requires a nonempty, complete scoredSlateGames result for BOTH verified statuses (VALID_CONFIG and VERIFIED_NO_CUSTOM_CONFIG).
+ * - Uses that selected set exclusively; NEVER falls back to raw or unselected games.
+ * - If accepted manifest/game mapping cannot be established (missing accepted games, duplicate IDs, etc.),
+ *   shows unavailable and suppresses scoring/finality.
+ */
+export function resolveEffectiveScoredSlateGames(
+  games: readonly SlateGame[],
+  acceptedEventIds: readonly string[] | null | undefined,
+  slateScope: ScopedPoolSlateKey,
+  slateResolution?: ScopedPoolSlateResolutionResult | { status: string; [key: string]: any } | null,
+): ScopedSlateGameResolution {
+  const resolution = slateResolution !== undefined
+    ? slateResolution
+    : (slateScope.projection ?? resolveScopedPoolSlateConfig(slateScope));
+
+  if (!resolution || resolution.status === 'LOADING') {
+    return { isVerified: false, effectiveGames: [], status: 'LOADING' };
+  }
+  if (resolution.status === 'UNAVAILABLE') {
+    return { isVerified: false, effectiveGames: [], status: 'UNAVAILABLE' };
+  }
+  if (resolution.status !== 'VALID_CONFIG' && resolution.status !== 'VERIFIED_NO_CUSTOM_CONFIG') {
+    return { isVerified: false, effectiveGames: [], status: 'ERROR' };
+  }
+
+  // Both VALID_CONFIG and VERIFIED_NO_CUSTOM_CONFIG require a complete, nonempty scored slate
+  const scoredSlateGames = selectAcceptedScoredSlateGames(games, acceptedEventIds, slateScope);
+  if (!scoredSlateGames || scoredSlateGames.length === 0) {
+    return { isVerified: false, effectiveGames: [], status: 'UNAVAILABLE' };
+  }
+
+  return { isVerified: true, effectiveGames: scoredSlateGames, status: 'VERIFIED' };
 }
 
 function validScore(value: unknown): value is number {

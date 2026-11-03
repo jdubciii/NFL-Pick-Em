@@ -28,7 +28,7 @@ import {
 } from '../client/src/owner/OwnerAdminApp';
 import * as authoritativeSlateService from '../src/services/authoritativeSlateService';
 import { getGamesForWeek } from '../src/routes/poolTiebreakerRoutes';
-import { selectAcceptedScoredSlateGames, isWeeklyScoredSlateFinal } from '../client/src/services/weeklyStandingsFinalityService';
+import { selectAcceptedScoredSlateGames, isWeeklyScoredSlateFinal, resolveEffectiveScoredSlateGames } from '../client/src/services/weeklyStandingsFinalityService';
 import { getScopedPoolSlateConfig, resolveScopedPoolSlateConfig } from '../client/src/services/poolScoredSlateConfig';
 import { fetchScopedSlateProjection, invalidateScopedSlateCache } from '../client/src/services/scopedSlateService';
 import { executeSerializedPickMutation } from '../src/routes/picks';
@@ -2979,8 +2979,8 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       ];
       const tiebreakerSnapshot = { verified: true, offered: false };
 
-      // Helper reproducing the strict page-level verification predicate:
-      const evaluateRadarPageState = (resolution: any) => {
+      // Direct production helper resolveEffectiveScoredSlateGames used by RadarPage and WallOfShamePage:
+      const evaluateRadarPageState = (resolution: any, gamesToUse: SlateGame[] = clientGames) => {
         const slateScope = {
           poolId: POOL_ID,
           season: 2026,
@@ -2988,21 +2988,10 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
           weekNumber: 9,
           projection: resolution,
         };
-        const scoredSlateGames = (!resolution || resolution.status === 'LOADING' || resolution.status === 'UNAVAILABLE')
-          ? null
-          : selectAcceptedScoredSlateGames(clientGames, manifestEventIds, slateScope);
-
-        const isSlateVerified = Boolean(
-          resolution &&
-          (
-            (resolution.status === 'VALID_CONFIG' && scoredSlateGames && scoredSlateGames.length > 0) ||
-            (resolution.status === 'VERIFIED_NO_CUSTOM_CONFIG')
-          )
-        );
-
-        const effectiveRadarGames = !isSlateVerified
-          ? []
-          : (resolution.status === 'VALID_CONFIG' && scoredSlateGames ? scoredSlateGames : clientGames);
+        const slateResolutionResult = resolveEffectiveScoredSlateGames(gamesToUse, manifestEventIds, slateScope, resolution);
+        const isSlateVerified = slateResolutionResult.isVerified;
+        const scoredSlateGames = slateResolutionResult.isVerified ? slateResolutionResult.effectiveGames : null;
+        const effectiveRadarGames = slateResolutionResult.effectiveGames;
 
         const provisionalResult = (!isSlateVerified || effectiveRadarGames.length === 0)
           ? []
@@ -3025,8 +3014,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         };
       };
 
-      // Helper reproducing the strict WallOfShamePage snapshot state:
-      const evaluateWallOfShamePageState = (resolution: any) => {
+      const evaluateWallOfShamePageState = (resolution: any, gamesToUse: SlateGame[] = clientGames) => {
         const slateScope = {
           poolId: POOL_ID,
           season: 2026,
@@ -3034,31 +3022,23 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
           weekNumber: 9,
           projection: resolution,
         };
-        const scoredSlateGames = (!resolution || resolution.status === 'LOADING' || resolution.status === 'UNAVAILABLE')
-          ? null
-          : selectAcceptedScoredSlateGames(clientGames, manifestEventIds, slateScope);
+        const slateResolutionResult = resolveEffectiveScoredSlateGames(gamesToUse, manifestEventIds, slateScope, resolution);
+        const isScopeVerified = slateResolutionResult.isVerified;
+        const scoredSlateGames = slateResolutionResult.isVerified ? slateResolutionResult.effectiveGames : null;
 
-        const isScopeVerified = Boolean(
-          resolution &&
-          (
-            (resolution.status === 'VALID_CONFIG' && scoredSlateGames && scoredSlateGames.length > 0) ||
-            (resolution.status === 'VERIFIED_NO_CUSTOM_CONFIG')
-          )
-        );
-
-        if (!isScopeVerified) {
+        if (!isScopeVerified || !scoredSlateGames || scoredSlateGames.length === 0) {
           return {
-            status: resolution?.status === 'LOADING' ? 'LOADING' : 'ERROR',
+            status: slateResolutionResult.status === 'LOADING' ? 'LOADING' : 'ERROR',
             scoreStatus: 'STATUS_UNAVAILABLE',
             ladderData: [],
             isFinalPosted: false,
           };
         }
 
-        const effectiveScoringGames = scoredSlateGames || clientGames;
+        const effectiveScoringGames = scoredSlateGames;
         const standings = calculateProvisionalStandings(members, effectiveScoringGames, liveScores, [], undefined);
         const isFinalPosted = isWeeklyScoredSlateFinal(
-          effectiveScoringGames, liveScores, tiebreakerSnapshot, Boolean(scoredSlateGames), false
+          effectiveScoringGames, liveScores, tiebreakerSnapshot, true, false
         );
         return {
           status: 'READY',
@@ -3110,29 +3090,58 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(shameMalformed.scoreStatus).toBe('STATUS_UNAVAILABLE');
       expect(shameMalformed.ladderData).toHaveLength(0);
 
-      // Case 4: VERIFIED_NO_CUSTOM_CONFIG (verified default full manifest)
+      // Case 4: QA Regression - VERIFIED_NO_CUSTOM_CONFIG with null selection caused by missing accepted games
+      // Manifest has 3 games ('401873040', '401873041', '401873042'), but database/games array is missing '401873042'
+      const incompleteGames = clientGames.slice(0, 2);
       const verifiedDefaultRes = { status: 'VERIFIED_NO_CUSTOM_CONFIG', defaultPolicy: 'FULL_MANIFEST' };
-      const radarDefault = evaluateRadarPageState(verifiedDefaultRes);
+
+      // Pure helper assertion:
+      const pureMissingResult = resolveEffectiveScoredSlateGames(
+        incompleteGames,
+        manifestEventIds,
+        { poolId: POOL_ID, season: 2026, seasonType: 2, weekNumber: 9, projection: verifiedDefaultRes },
+        verifiedDefaultRes
+      );
+      expect(pureMissingResult.isVerified).toBe(false);
+      expect(pureMissingResult.effectiveGames).toEqual([]);
+      expect(pureMissingResult.status).toBe('UNAVAILABLE');
+
+      // RadarPage assertion:
+      const radarMissingGame = evaluateRadarPageState(verifiedDefaultRes, incompleteGames);
+      expect(radarMissingGame.isSlateVerified).toBe(false);
+      expect(radarMissingGame.effectiveRadarGames).toHaveLength(0);
+      expect(radarMissingGame.provisionalResult).toHaveLength(0);
+      expect(radarMissingGame.sundaySlatePhase).toBe('AWAITING GAME UPDATES');
+      expect(radarMissingGame.isFinalPosted).toBe(false);
+
+      // WallOfShamePage assertion:
+      const shameMissingGame = evaluateWallOfShamePageState(verifiedDefaultRes, incompleteGames);
+      expect(shameMissingGame.status).toBe('ERROR');
+      expect(shameMissingGame.scoreStatus).toBe('STATUS_UNAVAILABLE');
+      expect(shameMissingGame.ladderData).toHaveLength(0);
+
+      // Case 5: VERIFIED_NO_CUSTOM_CONFIG with ALL accepted games present (verified default full manifest)
+      const radarDefault = evaluateRadarPageState(verifiedDefaultRes, clientGames);
       expect(radarDefault.isSlateVerified).toBe(true);
       expect(radarDefault.effectiveRadarGames).toHaveLength(3);
       expect(radarDefault.provisionalResult).toHaveLength(2);
       // Because game 3 is SCHEDULED, finality is false for full manifest
       expect(radarDefault.isFinalPosted).toBe(false);
 
-      const shameDefault = evaluateWallOfShamePageState(verifiedDefaultRes);
+      const shameDefault = evaluateWallOfShamePageState(verifiedDefaultRes, clientGames);
       expect(shameDefault.status).toBe('READY');
       expect(shameDefault.ladderData).toHaveLength(2);
 
-      // Case 5: VALID_CONFIG with verified custom slate (2 final games)
+      // Case 6: VALID_CONFIG with verified custom slate (2 final games)
       const validCustomRes = { status: 'VALID_CONFIG', eventIds: ['401873040', '401873041'] };
-      const radarCustom = evaluateRadarPageState(validCustomRes);
+      const radarCustom = evaluateRadarPageState(validCustomRes, clientGames);
       expect(radarCustom.isSlateVerified).toBe(true);
       expect(radarCustom.effectiveRadarGames).toHaveLength(2);
       expect(radarCustom.provisionalResult).toHaveLength(2);
       // Both custom slate games are final -> finality evaluates to true!
       expect(radarCustom.isFinalPosted).toBe(true);
 
-      const shameCustom = evaluateWallOfShamePageState(validCustomRes);
+      const shameCustom = evaluateWallOfShamePageState(validCustomRes, clientGames);
       expect(shameCustom.status).toBe('READY');
       expect(shameCustom.ladderData).toHaveLength(2);
       expect(shameCustom.isFinalPosted).toBe(true);
