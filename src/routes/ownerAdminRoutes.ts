@@ -840,10 +840,10 @@ export async function executeFutureSlateMutationInternal(
   }
 
   // Historical Scope Protection & Legacy Unverified History Guard (HAG58-SLATE-2026-11-03-01 § Freeze evidence and scope limits)
-  // Restrict enablement to authoritatively future, not-yet-started scopes in the current supported season (2026 Regular Season).
-  // For legacy scopes whose past participation could have been deleted or history cannot be established, deny as HISTORICAL_SCOPE_UNVERIFIED.
-  if (season < 2026 || seasonType !== 2 || (season === 2026 && seasonType === 2 && weekNumber <= 8)) {
-    const err: any = new Error(`HISTORICAL_SCOPE_UNVERIFIED: Scope (Season ${season}, Type ${seasonType}, Week ${weekNumber}) is a legacy or completed scope whose historical participation cannot be authoritatively verified. Slate mutation denied.`);
+  // Restrict enablement strictly to authoritatively established current pool season (exact 2026 Regular Season, Weeks 9-18).
+  // Deny unknown future/legacy season scope as HISTORICAL_SCOPE_UNVERIFIED.
+  if (season !== 2026 || seasonType !== 2 || weekNumber <= 8 || weekNumber > 18) {
+    const err: any = new Error(`HISTORICAL_SCOPE_UNVERIFIED: Scope (Season ${season}, Type ${seasonType}, Week ${weekNumber}) is outside the authoritatively established current pool season scope (2026 Regular Season, Weeks 9-18). Unknown future or legacy scopes cannot be authoritatively verified. Slate mutation denied.`);
     err.statusCode = 422;
     err.code = 'HISTORICAL_SCOPE_UNVERIFIED';
     throw err;
@@ -899,10 +899,24 @@ export async function executeFutureSlateMutationInternal(
       await tx.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1));`, weeklyLockKey);
     } else if (typeof tx.$executeRawUnsafe === 'function') {
       await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1));`, weeklyLockKey);
+    } else {
+      const err: any = new Error('TRANSACTION_LOCK_UNAVAILABLE: Database advisory lock capability is unavailable for weekly manifest advisory lock.');
+      err.statusCode = 500;
+      err.code = 'TRANSACTION_LOCK_UNAVAILABLE';
+      throw err;
     }
 
     // 2b. Mandatory row-level lock on pool and in-tx authority/membership re-verification
     const { freshPool } = await acquireLockedPoolAndVerifyAuthority(tx, poolId, actorId, true);
+
+    // Verify scope against authoritatively established pool season if configured
+    const poolSeason = (freshPool.settings as any)?.seasonYear ?? (freshPool.settings as any)?.season;
+    if (poolSeason !== undefined && Number(poolSeason) !== season) {
+      const err: any = new Error(`HISTORICAL_SCOPE_UNVERIFIED: Scope season ${season} does not match authoritatively established pool season ${poolSeason}. Slate mutation denied.`);
+      err.statusCode = 422;
+      err.code = 'HISTORICAL_SCOPE_UNVERIFIED';
+      throw err;
+    }
 
     // 2c. Revision check
     const currentRevision = computePoolSettingsRevision(freshPool);

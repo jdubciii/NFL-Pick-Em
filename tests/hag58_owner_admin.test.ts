@@ -373,7 +373,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         return 1;
       }),
       $transaction: vi.fn(async (cb: (tx: any) => any) => {
-        // Real FIFO transaction serialization on the database state
+        // Simulated FIFO transaction mutex around the mocked $transaction for testing race mechanics
         const prevTx = txQueue;
         let releaseTx: () => void;
         txQueue = new Promise<void>((resolve) => {
@@ -871,7 +871,22 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         code: 'HISTORICAL_SCOPE_UNVERIFIED',
       });
 
-      // 3. Preseason (seasonType 1)
+      // 3. Unknown Future Season 2027+ (outside authoritatively established pool season)
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2027,
+          seasonType: 2,
+          weekNumber: 10,
+          eventIds: ['401873023'],
+          expectedRevision: 'any-rev',
+          reason: 'Attempted future season edit',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'HISTORICAL_SCOPE_UNVERIFIED',
+      });
+
+      // 4. Preseason (seasonType 1)
       await expect(
         executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
           season: 2026,
@@ -884,6 +899,66 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       ).rejects.toMatchObject({
         statusCode: 422,
         code: 'HISTORICAL_SCOPE_UNVERIFIED',
+      });
+
+      // 5. Out of bounds week (week 19 for regular season)
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 19,
+          eventIds: ['401873023'],
+          expectedRevision: 'any-rev',
+          reason: 'Attempted out of bounds week edit',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'HISTORICAL_SCOPE_UNVERIFIED',
+      });
+    });
+
+    it('executeFutureSlateMutationInternal fails closed with HTTP 500 TRANSACTION_LOCK_UNAVAILABLE if raw query capability is missing', async () => {
+      const mockPrismaNoRaw = {
+        ...mockPrisma,
+        $transaction: vi.fn(async (cb: (tx: any) => any) => {
+          const brokenTx = {
+            pool: mockPrisma.pool,
+          };
+          return await cb(brokenTx);
+        }),
+      };
+
+      const week9Events = [
+        { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: new Date(Date.now() + 86400000).toISOString(), isKickoffConfirmed: true },
+      ];
+      const week9Fingerprint = authoritativeSlateService.computeManifestFingerprint(2026, 2, 9, week9Events);
+      vi.spyOn(authoritativeSlateService, 'fetchAuthoritativeESPNScoreboard').mockResolvedValue({
+        status: 'VERIFIED',
+        provider: 'ESPN',
+        league: 'NFL',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        observationTime: new Date().toISOString(),
+        adapterVersion: '1.0',
+        eventCount: 1,
+        events: week9Events,
+        manifestFingerprint: week9Fingerprint,
+        reasons: [],
+      });
+
+      await expect(
+        executeFutureSlateMutationInternal(mockPrismaNoRaw as any, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040'],
+          expectedRevision: 'any-rev',
+          reason: 'Missing raw query capability test',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 500,
+        code: 'TRANSACTION_LOCK_UNAVAILABLE',
       });
     });
 
@@ -2077,7 +2152,9 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       mockPrisma.$queryRawUnsafe = origQuery;
     });
 
-    it('Finding 3 Proof: strict transactional lock-order concurrency serialization on public.pools row and real pick vs slate PUT races', async () => {
+    it('Finding 3 Proof: strict transactional lock-order concurrency serialization on public.pools row and simulated pick vs slate PUT races', async () => {
+      // NOTE: Real multi-connection PostgreSQL transaction isolation and row/advisory lock serialization require an active PostgreSQL instance,
+      // which is unavailable in this local test environment (no local postgres service or container). These tests exercise simulated race concurrency against a JavaScript FIFO transaction queue.
       const futureDate = new Date(Date.now() + 86400000).toISOString();
       const week10Events = [
         { externalGameId: '401873060', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: futureDate, isKickoffConfirmed: true },
@@ -2161,7 +2238,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(lockSequence).toEqual(['weekly_manifest_advisory_lock', 'pool_row_lock']);
       mockPrisma.$queryRawUnsafe = origQuery;
 
-      // Part 2: Real Concurrency Race A: First Pick wins the race against concurrent Slate PUT.
+      // Part 2: Simulated Concurrency Race A: First Pick wins the race against concurrent Slate PUT.
       // Launch both transactions concurrently. Pick transaction acquires lock first,
       // writes the pick and irreversible freeze to pool settings, and commits.
       // Slate PUT, serialized behind the pick, acquires the lock, observes the committed freeze,
@@ -2213,7 +2290,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         code: 'SLATE_FROZEN',
       });
 
-      // Part 3: Real Concurrency Race B: Slate PUT wins the race against concurrent Pick.
+      // Part 3: Simulated Concurrency Race B: Slate PUT wins the race against concurrent Pick.
       // Week 11 scope where Slate PUT runs first and removes a game from the custom slate.
       // Pick for the removed game, running concurrently, acquires lock after Slate PUT commits,
       // discovers the game is no longer in the configured slate, and rejects with HTTP 422 GAME_NOT_IN_SLATE!
