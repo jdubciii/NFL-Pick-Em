@@ -38,10 +38,15 @@ export function selectAcceptedScoredSlateGames(
   }
 
   const isAffectedScope = isTargetAffectedSlateScope(scope);
-  if (scope?.projection?.status === 'UNAVAILABLE') {
-    // Section 58: Failed settings reads suppress authoritative scores/finality; never default to all NFL games.
-    return null;
+
+  // Section 58 & Finding 2: Unverified or failed reads suppress authoritative scores/finality; never default to all NFL games.
+  // When projection is passed (or null while loading), unverified or failed states fail closed to null.
+  if (scope && 'projection' in scope) {
+    if (!scope.projection || scope.projection.status === 'LOADING' || scope.projection.status === 'UNAVAILABLE') {
+      return null;
+    }
   }
+
   const scopedConfig = getScopedPoolSlateConfig(scope);
   let targetEventIds: readonly string[];
 

@@ -324,7 +324,7 @@ export async function fetchAuthoritativeESPNScoreboard(
   scope: ESPNProviderScope,
   fetchFn: typeof fetch = fetch
 ): Promise<VerifiedSlateObservation> {
-  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=${scope.seasonType}&week=${scope.weekNumber}`;
+  const url = `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${scope.seasonYear}&seasontype=${scope.seasonType}&week=${scope.weekNumber}`;
 
   let response: Response;
   try {

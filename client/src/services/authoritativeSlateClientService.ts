@@ -3,6 +3,7 @@
  * Governs manifest primacy, pool authority, exact unique coverage, full metadata, and bounded cache.
  */
 import { getJackWeek8FavoriteLine, getJackWeek8HomeSpread } from './liveScoreService';
+import { fetchScopedSlateProjection, ScopedSlateResolution } from './scopedSlateService';
 
 export interface AuthoritativeManifestRecord {
   season: number;
@@ -30,6 +31,7 @@ export interface ResolveAuthoritativeSlateParams {
   seasonType: number;
   weekNumber: number;
   liveScores?: any[];
+  projection?: ScopedSlateResolution;
 }
 
 function escapeRegex(s: string): string {
@@ -437,8 +439,40 @@ export async function resolveAuthoritativeSlate(
     };
   });
 
+  // 6. Scoped Slate Projection Integration (HAG58-SLATE-2026-11-03-01)
+  // Check scoped slate projection; failed reads fail closed; custom slates filter games
+  let scopedResolution = params.projection;
+  if (!scopedResolution) {
+    try {
+      scopedResolution = await fetchScopedSlateProjection({
+        poolId: activePoolId,
+        season: seasonYear,
+        seasonType,
+        weekNumber,
+      });
+    } catch {
+      scopedResolution = { status: 'UNAVAILABLE', error: 'PROJECTION_FETCH_FAILED' };
+    }
+  }
+
+  if (scopedResolution.status === 'UNAVAILABLE') {
+    return {
+      games: [],
+      manifest,
+      lastUpdatedIso: null,
+      error: `SCOPED_SLATE_UNAVAILABLE: ${scopedResolution.error || 'Custom slate unavailable'}`,
+      source: 'FAILED_CLOSED',
+    };
+  }
+
+  let effectiveGames = playableGames;
+  if (scopedResolution.status === 'VALID_CONFIG') {
+    const allowedSet = new Set(scopedResolution.eventIds.map(String));
+    effectiveGames = playableGames.filter((g: any) => allowedSet.has(String(g.external_game_id || g.externalGameId || g.id)));
+  }
+
   // Sort chronologically by kickoff
-  const sortedGames = [...playableGames].sort(
+  const sortedGames = [...effectiveGames].sort(
     (a, b) => new Date(a.kickoffTime).getTime() - new Date(b.kickoffTime).getTime()
   );
 

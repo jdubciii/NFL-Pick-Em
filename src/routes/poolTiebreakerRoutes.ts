@@ -10,6 +10,7 @@ import {
   GameSlateItem,
 } from '../services/weeklyDesignationService';
 import * as authoritativeSlateService from '../services/authoritativeSlateService';
+import { computePoolSettingsRevision } from './ownerAdminRoutes';
 
 export const poolTiebreakerRouter = Router();
 
@@ -147,7 +148,15 @@ export async function getGamesForWeek(
       select: { settings: true },
     });
     const customSlate = poolRecord?.settings?.owner_admin_v1?.slates?.[season]?.[seasonType]?.[weekNumber];
-    if (customSlate && Array.isArray(customSlate.eventIds) && customSlate.eventIds.length > 0) {
+    if (customSlate !== undefined && customSlate !== null) {
+      if (
+        !Array.isArray(customSlate.eventIds) ||
+        customSlate.eventIds.length === 0 ||
+        customSlate.eventIds.length > 32 ||
+        new Set(customSlate.eventIds.map(String)).size !== customSlate.eventIds.length
+      ) {
+        return []; // Fail closed on malformed/empty/duplicate custom slate
+      }
       const manifest = await authoritativeSlateService.getAcceptedSlateManifest(dbClient, season, seasonType, weekNumber);
       if (!manifest || !Array.isArray(manifest.eventIds) || manifest.eventIds.length === 0) {
         return []; // Fail closed if manifest unavailable
@@ -402,6 +411,7 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
   const poolId = (req.params.pool_id || req.params.poolId || req.body.pool_id || req.body.poolId) as string;
   const weekNumber = Number(req.body.week || req.body.week_number || req.body.weekNumber);
   const season = Number(req.body.season || 2026);
+  const seasonType = Number(req.body.seasonType ?? req.query.seasonType ?? 2);
   const rawPrediction = req.body.prediction;
   const isClear = req.body.clear === true || rawPrediction === null;
 
@@ -588,9 +598,11 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
 
         const currentFreezes = updatedSettings?.owner_admin_v1?.freezes || {};
         const seasonFreezes = currentFreezes[season] || {};
-        const typeFreezes = seasonFreezes[2] || {};
+        const typeFreezes = seasonFreezes[seasonType] || {};
         if (!typeFreezes[weekNumber]) {
           const nowIso = new Date().toISOString();
+          const configuredSlate = updatedSettings?.owner_admin_v1?.slates?.[season]?.[seasonType]?.[weekNumber];
+          const currentRev = computePoolSettingsRevision(pool);
           updatedSettings = {
             ...updatedSettings,
             owner_admin_v1: {
@@ -599,13 +611,16 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
                 ...currentFreezes,
                 [season]: {
                   ...seasonFreezes,
-                  [2]: {
+                  [seasonType]: {
                     ...typeFreezes,
                     [weekNumber]: {
                       frozenAt: nowIso,
                       reason: 'FIRST_PREDICTION_SUBMITTED',
                       actorId: userId,
                       designatedEventId: designation.eventId,
+                      effectiveSlateEventIds: configuredSlate?.eventIds || null,
+                      effectiveFingerprint: configuredSlate?.fingerprint || null,
+                      revision: configuredSlate?.revision || currentRev,
                       version: 1,
                     },
                   },
@@ -660,6 +675,7 @@ export async function handlePostTiebreakerOverride(req: Request, res: Response):
   const poolId = (req.params.pool_id || req.params.poolId || req.body.pool_id || req.body.poolId) as string;
   const weekNumber = Number(req.body.week || req.body.week_number || req.body.weekNumber);
   const season = Number(req.body.season || 2026);
+  const seasonType = Number(req.body.seasonType ?? req.query.seasonType ?? 2);
   const targetGameId = req.body.target_game_id || req.body.targetGameId;
 
   const bodyPoolId = req.body.pool_id || req.body.poolId;

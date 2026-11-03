@@ -3,6 +3,7 @@ import prisma from '../db/client';
 import { requireAuth, getPrismaClient } from '../middleware/auth';
 import { PoolSettings } from '../types/pool';
 import { normalizeTeamCode } from '../services/authoritativeSlateService';
+import { computePoolSettingsRevision } from './ownerAdminRoutes';
 
 export const picksRouter = Router({ mergeParams: true });
 
@@ -295,6 +296,8 @@ export async function executeSerializedPickMutation(
     userId: string;
     gameId: string;
     week?: number;
+    season?: number;
+    seasonType?: number;
     selectedTeamId: string | null;
     externalGameId?: string | null;
     lockOffsetMinutes?: number;
@@ -305,6 +308,24 @@ export async function executeSerializedPickMutation(
   }
 ): Promise<SavedPickRecord> {
   const { poolId, userId, gameId, selectedTeamId, externalGameId } = params;
+
+  // 1a. Shared Pool Gate: Database executor must possess required row lock and pool query capabilities.
+  // Missing transaction/lock capability fails closed, never falls back.
+  if (!executor || typeof executor.$queryRawUnsafe !== 'function') {
+    const lockErr = new Error('SHARED_POOL_GATE_UNAVAILABLE: Database executor lacks required row lock or pool query capability. Zero writes performed.');
+    (lockErr as any).code = 'SHARED_POOL_GATE_UNAVAILABLE';
+    (lockErr as any).statusCode = 500;
+    (lockErr as any).status = 500;
+    throw lockErr;
+  }
+
+  if (!executor.pool || typeof executor.pool.findUnique !== 'function') {
+    const lockErr = new Error('UNVERIFIED_KICKOFF: Authoritative pool settings query unavailable under lock. Zero writes.');
+    (lockErr as any).code = 'UNVERIFIED_KICKOFF';
+    (lockErr as any).statusCode = 403;
+    (lockErr as any).status = 403;
+    throw lockErr;
+  }
 
   if (params.week != null) {
     const w = Number(params.week);
@@ -441,75 +462,96 @@ export async function executeSerializedPickMutation(
   const actorId = params.submittedById || userId;
 
   // 1b. Shared Pool Gate: Lock pool row with FOR UPDATE before authoritative reads or writes (HAG58-SLATE-2026-11-03-01)
-  let lockedPoolRecord: any = null;
-  if (executor?.pool && typeof executor.pool.findUnique === 'function') {
-    if (typeof executor.$queryRawUnsafe === 'function') {
-      await executor.$queryRawUnsafe(
-        `SELECT id, status FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
-        poolId
-      );
+  await executor.$queryRawUnsafe(
+    `SELECT id, status FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
+    poolId
+  );
+
+  const lockedPoolRecord = await executor.pool.findUnique({
+    where: { id: poolId },
+    select: { id: true, name: true, status: true, settings: true },
+  });
+
+  if (!lockedPoolRecord) {
+    const lockErr = new Error('UNVERIFIED_KICKOFF: Pool not found under advisory lock. Zero writes.');
+    (lockErr as any).code = 'UNVERIFIED_KICKOFF';
+    (lockErr as any).statusCode = 403;
+    (lockErr as any).status = 403;
+    throw lockErr;
+  }
+
+  if (lockedPoolRecord.status && lockedPoolRecord.status !== 'ACTIVE') {
+    const lockErr = new Error('POOL_INACTIVE: Cannot make picks in an inactive pool.');
+    (lockErr as any).code = 'POOL_INACTIVE';
+    (lockErr as any).statusCode = 403;
+    (lockErr as any).status = 403;
+    throw lockErr;
+  }
+
+  // Derive authoritative season & seasonType dynamically
+  const effectiveSeason = params.season != null
+    ? Number(params.season)
+    : (preLockGame?.season != null ? Number(preLockGame.season) : 2026);
+  const effectiveSeasonType = params.seasonType != null
+    ? Number(params.seasonType)
+    : (preLockGame?.seasonType != null ? Number(preLockGame.seasonType) : 2);
+
+  // Authoritative custom slate check under pool row lock:
+  const poolSettings = (lockedPoolRecord.settings as any) || {};
+  const configuredSlate = poolSettings?.owner_admin_v1?.slates?.[effectiveSeason]?.[effectiveSeasonType]?.[effectiveWeek];
+
+  if (configuredSlate !== undefined && configuredSlate !== null) {
+    // Malformed/empty custom slate fails closed: does NOT bypass the gate!
+    if (
+      !Array.isArray(configuredSlate.eventIds) ||
+      configuredSlate.eventIds.length === 0 ||
+      configuredSlate.eventIds.length > 32 ||
+      new Set(configuredSlate.eventIds.map(String)).size !== configuredSlate.eventIds.length
+    ) {
+      const slateErr = new Error(`MALFORMED_SLATE_CONFIG: Custom slate configuration for season ${effectiveSeason} week ${effectiveWeek} is malformed or invalid. Zero writes.`);
+      (slateErr as any).code = 'MALFORMED_SLATE_CONFIG';
+      (slateErr as any).statusCode = 422;
+      (slateErr as any).status = 422;
+      throw slateErr;
     }
 
-    lockedPoolRecord = await executor.pool.findUnique({
-      where: { id: poolId },
-      select: { id: true, status: true, settings: true },
-    });
-
-    if (!lockedPoolRecord) {
-      const lockErr = new Error('UNVERIFIED_KICKOFF: Pool not found under advisory lock. Zero writes.');
-      (lockErr as any).code = 'UNVERIFIED_KICKOFF';
-      (lockErr as any).statusCode = 403;
-      (lockErr as any).status = 403;
-      throw lockErr;
+    const allowedSet = new Set(configuredSlate.eventIds.map(String));
+    const gameExtId = preLockGame?.externalGameId || params.externalGameId;
+    const isAllowed = allowedSet.has(String(canonicalGameId)) || (gameExtId && allowedSet.has(String(gameExtId)));
+    if (!isAllowed) {
+      const slateErr = new Error(`GAME_NOT_IN_SLATE: Matchup ${canonicalGameId} is not part of the active pool slate for week ${effectiveWeek}. Zero writes.`);
+      (slateErr as any).code = 'GAME_NOT_IN_SLATE';
+      (slateErr as any).statusCode = 422;
+      (slateErr as any).status = 422;
+      throw slateErr;
     }
+  }
 
-    if (lockedPoolRecord.status !== 'ACTIVE') {
-      const lockErr = new Error('POOL_INACTIVE: Cannot make picks in an inactive pool.');
-      (lockErr as any).code = 'POOL_INACTIVE';
-      (lockErr as any).statusCode = 403;
-      (lockErr as any).status = 403;
-      throw lockErr;
-    }
-
-    // Authoritative custom slate check under pool row lock:
-    // If pool has an explicit custom slate configured, the picked game MUST be in that custom slate!
-    const poolSettings = (lockedPoolRecord.settings as any) || {};
-    const configuredSlate = poolSettings?.owner_admin_v1?.slates?.[2026]?.[2]?.[effectiveWeek];
-    if (configuredSlate && Array.isArray(configuredSlate.eventIds) && configuredSlate.eventIds.length > 0) {
-      const allowedSet = new Set(configuredSlate.eventIds.map(String));
-      const gameExtId = preLockGame?.externalGameId || params.externalGameId;
-      const isAllowed = allowedSet.has(String(canonicalGameId)) || (gameExtId && allowedSet.has(String(gameExtId)));
-      if (!isAllowed) {
-        const slateErr = new Error(`GAME_NOT_IN_SLATE: Matchup ${canonicalGameId} is not part of the active pool slate for week ${effectiveWeek}. Zero writes.`);
-        (slateErr as any).code = 'GAME_NOT_IN_SLATE';
-        (slateErr as any).statusCode = 422;
-        (slateErr as any).status = 422;
-        throw slateErr;
-      }
-    }
-
-    // Irreversible participation freeze record in settings:
-    // On the first successful persisted pick row (including null selection), record freeze evidence
+  // Helper: Persist irreversible participation freeze evidence in settings upon successful pick write
+  const recordIrreversibleFreezeIfNeeded = async () => {
     const currentFreezes = poolSettings?.owner_admin_v1?.freezes || {};
-    const seasonFreezes = currentFreezes[2026] || {};
-    const typeFreezes = seasonFreezes[2] || {};
+    const seasonFreezes = currentFreezes[effectiveSeason] || {};
+    const typeFreezes = seasonFreezes[effectiveSeasonType] || {};
     if (!typeFreezes[effectiveWeek]) {
       const nowIso = new Date().toISOString();
+      const currentRev = computePoolSettingsRevision(lockedPoolRecord);
       const updatedSettings = {
         ...poolSettings,
         owner_admin_v1: {
           ...(poolSettings.owner_admin_v1 || {}),
           freezes: {
             ...currentFreezes,
-            [2026]: {
+            [effectiveSeason]: {
               ...seasonFreezes,
-              [2]: {
+              [effectiveSeasonType]: {
                 ...typeFreezes,
                 [effectiveWeek]: {
                   frozenAt: nowIso,
-                  reason: 'FIRST_PICK_SUBMITTED',
-                  actorId: actorId,
+                  reason: 'FIRST_PICK_SUBMISSION',
+                  actorId,
                   effectiveSlateEventIds: configuredSlate?.eventIds || null,
+                  effectiveFingerprint: configuredSlate?.fingerprint || null,
+                  revision: configuredSlate?.revision || currentRev,
                   version: 1,
                 },
               },
@@ -517,13 +559,15 @@ export async function executeSerializedPickMutation(
           },
         },
       };
-      await executor.pool.update({
-        where: { id: poolId },
-        data: { settings: updatedSettings },
-      });
-      lockedPoolRecord.settings = updatedSettings;
+      if (typeof executor.pool?.update === 'function') {
+        await executor.pool.update({
+          where: { id: poolId },
+          data: { settings: updatedSettings },
+        });
+      }
+      poolSettings.owner_admin_v1 = updatedSettings.owner_admin_v1;
     }
-  }
+  };
 
   // 2. Acquire transaction advisory lock on canonical game key (BOTH UUID and alias contenders serialize here)
   await executor.$queryRawUnsafe(
@@ -830,6 +874,9 @@ export async function executeSerializedPickMutation(
       createdAt: r.created_at || r.createdAt,
     };
 
+    // Atomically record irreversible participation freeze evidence in settings upon successful persisted pick
+    await recordIrreversibleFreezeIfNeeded();
+
     let auditLogRecordId: string | null = null;
     if (params.onBeforeCommit) {
       auditLogRecordId = await params.onBeforeCommit(executor, savedRecord, existing);
@@ -910,6 +957,9 @@ export async function executeSerializedPickMutation(
     submittedById: String(r.submitted_by || r.submittedById || actorId),
     createdAt: r.created_at || r.createdAt,
   };
+
+  // Atomically record irreversible participation freeze evidence in settings upon successful persisted pick
+  await recordIrreversibleFreezeIfNeeded();
 
   let auditLogRecordId: string | null = null;
   if (params.onBeforeCommit) {

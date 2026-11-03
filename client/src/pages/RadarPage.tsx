@@ -96,11 +96,11 @@ export const RadarPage: React.FC = () => {
   const [picksLoaded, setPicksLoaded] = useState(false);
   const [tiebreakerResponse, setTiebreakerResponse] = useState<unknown>(null);
   const [acceptedEventIds, setAcceptedEventIds] = useState<string[] | null>(null);
-  const [slateResolution, setSlateResolution] = useState<ScopedSlateResolution | null>(null);
+  const [slateResolution, setSlateResolution] = useState<ScopedSlateResolution>({ status: 'LOADING' });
 
   // Clear slate resolution state on pool or week switch
   useEffect(() => {
-    setSlateResolution(null);
+    setSlateResolution({ status: 'LOADING' });
   }, [activePoolId, activeWeek]);
 
   // Track live scores with fallback to retain last-good telemetry
@@ -215,13 +215,15 @@ export const RadarPage: React.FC = () => {
 
         // Fetch ACTIVE-member-guarded scoped slate projection (HAG58-SLATE-2026-11-03-01)
         if (activePoolId && activeWeek) {
+          const reqPoolId = activePoolId;
+          const reqWeek = activeWeek;
           const resolution = await fetchScopedSlateProjection({
-            poolId: activePoolId,
+            poolId: reqPoolId,
             season: 2026,
             seasonType: 2,
-            weekNumber: activeWeek,
+            weekNumber: reqWeek,
           });
-          if (isMounted) {
+          if (isMounted && activePoolId === reqPoolId && activeWeek === reqWeek) {
             setSlateResolution(resolution);
           }
         }
@@ -370,7 +372,7 @@ export const RadarPage: React.FC = () => {
   }), [activePoolId, activeWeek, slateResolution]);
 
   const scoredSlateGames = useMemo(() => {
-    if (slateResolution?.status === 'UNAVAILABLE') {
+    if (!slateResolution || slateResolution.status === 'LOADING' || slateResolution.status === 'UNAVAILABLE') {
       return null;
     }
     return selectAcceptedScoredSlateGames(games, acceptedEventIds, slateScope);
@@ -384,7 +386,7 @@ export const RadarPage: React.FC = () => {
   ), [tiebreakerResponse, members, games, liveScores]);
   const tiebreakers: TiebreakerData | undefined = tiebreakerSnapshot.data;
 
-  const isFinalPosted = !isSimulationActive && picksLoaded && slateResolution?.status !== 'UNAVAILABLE' && isWeeklyScoredSlateFinal(
+  const isFinalPosted = !isSimulationActive && picksLoaded && slateResolution?.status !== 'LOADING' && slateResolution?.status !== 'UNAVAILABLE' && isWeeklyScoredSlateFinal(
     scoredSlateGames || [], liveScores, tiebreakerSnapshot,
     Boolean(scoredSlateGames), activeWeek === 8,
   );

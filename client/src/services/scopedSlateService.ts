@@ -29,6 +29,10 @@ export interface ScopedSlateProjectionScope {
 
 export type ScopedSlateResolution =
   | {
+      status: 'LOADING';
+      scope?: ScopedSlateProjectionScope;
+    }
+  | {
       status: 'VALID_CONFIG';
       scope: ScopedSlateProjectionScope;
       eventIds: readonly string[];
@@ -49,11 +53,11 @@ export type ScopedSlateResolution =
       error?: string;
     };
 
-// In-memory projection cache keyed by poolId:season:seasonType:weekNumber
+// In-memory projection cache keyed by poolId:season:seasonType:weekNumber:revision
 const projectionCache = new Map<string, { resolution: ScopedSlateResolution; cachedAt: number }>();
 
-export function getScopedSlateCacheKey(scope: ScopedSlateProjectionScope): string {
-  return `${scope.poolId}:${scope.season}:${scope.seasonType}:${scope.weekNumber}`;
+export function getScopedSlateCacheKey(scope: ScopedSlateProjectionScope, revision?: string): string {
+  return `${scope.poolId}:${scope.season}:${scope.seasonType}:${scope.weekNumber}:${revision || 'latest'}`;
 }
 
 export function invalidateScopedSlateCache(poolId?: string): void {
@@ -137,20 +141,31 @@ export async function fetchScopedSlateProjection(
     }
 
     if (data.status === 'VALID_CONFIG') {
-      if (!Array.isArray(data.eventIds) || data.eventIds.length === 0) {
+      if (!Array.isArray(data.eventIds) || data.eventIds.length === 0 || data.eventIds.length > 32) {
         return { status: 'UNAVAILABLE', scope, error: 'MALFORMED_EVENT_IDS' };
+      }
+      const eventIdRegex = /^[a-zA-Z0-9_-]{1,64}$/;
+      const validatedIds: string[] = [];
+      const seen = new Set<string>();
+      for (const id of data.eventIds) {
+        if (typeof id !== 'string' || !eventIdRegex.test(id) || seen.has(id)) {
+          return { status: 'UNAVAILABLE', scope, error: 'MALFORMED_EVENT_IDS' };
+        }
+        seen.add(id);
+        validatedIds.push(id);
       }
       const resolution: ScopedSlateResolution = {
         status: 'VALID_CONFIG',
         scope,
-        eventIds: Object.freeze(data.eventIds.map(String)),
+        eventIds: Object.freeze(validatedIds),
         version: data.version ?? 1,
-        revision: data.revision,
+        revision: typeof data.revision === 'string' ? data.revision : undefined,
         isFrozen: Boolean(data.isFrozen),
         frozenAt: data.frozenAt || null,
         description: data.description,
       };
-      projectionCache.set(cacheKey, { resolution, cachedAt: Date.now() });
+      const cacheKeyWithRev = getScopedSlateCacheKey(scope, resolution.revision);
+      projectionCache.set(cacheKeyWithRev, { resolution, cachedAt: Date.now() });
       return resolution;
     }
 
@@ -160,7 +175,8 @@ export async function fetchScopedSlateProjection(
         scope,
         defaultPolicy: 'FULL_MANIFEST',
       };
-      projectionCache.set(cacheKey, { resolution, cachedAt: Date.now() });
+      const cacheKeyWithRev = getScopedSlateCacheKey(scope, 'no-custom');
+      projectionCache.set(cacheKeyWithRev, { resolution, cachedAt: Date.now() });
       return resolution;
     }
 

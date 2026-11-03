@@ -174,6 +174,39 @@ export async function previewWeeklyWrapUpForPool(
     games = allGames.filter((g: any) => eventSet.has(g.externalGameId) || eventSet.has(g.id));
   }
 
+  // 3b. Scoped Pool Slate Gate: Check unshadowable HAG-52 historical scope or configured custom slate
+  let customSlateEventIds: string[] | null = null;
+  if (
+    poolId === '9b893bef-3b5a-4ffa-951d-8ba27f9c9782' &&
+    season === 2026 &&
+    seasonType === 2 &&
+    weekNumber === 8
+  ) {
+    customSlateEventIds = [
+      '401873023', '401873024', '401873025', '401873026', '401873027',
+      '401873028', '401873029', '401873030', '401873031',
+    ];
+  } else {
+    const customSlate = settings?.owner_admin_v1?.slates?.[season]?.[seasonType]?.[weekNumber];
+    if (customSlate !== undefined && customSlate !== null) {
+      if (
+        !Array.isArray(customSlate.eventIds) ||
+        customSlate.eventIds.length === 0 ||
+        customSlate.eventIds.length > 32 ||
+        new Set(customSlate.eventIds.map(String)).size !== customSlate.eventIds.length
+      ) {
+        reasonsIfNotReady.push('MALFORMED_SLATE_CONFIG: Custom pool slate is malformed or invalid.');
+      } else {
+        customSlateEventIds = customSlate.eventIds.map(String);
+      }
+    }
+  }
+
+  if (customSlateEventIds !== null) {
+    const customSet = new Set(customSlateEventIds);
+    games = games.filter((g: any) => customSet.has(String(g.externalGameId || g.id)));
+  }
+
   const excludedWindows = settings.excludedGameWindows ?? settings.excluded_game_windows;
   const nonExcludedGames = games.filter(
     (g: any) => !isGameInExcludedWindow(g.kickoffTime, excludedWindows)

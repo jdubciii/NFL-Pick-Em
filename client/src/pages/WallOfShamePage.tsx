@@ -1061,10 +1061,10 @@ export function WallOfShamePage({
         weekNumber: targetWeek,
         projection: slateResolution,
       };
-      const scoredSlateGames = slateResolution?.status === 'UNAVAILABLE'
+      const scoredSlateGames = (!slateResolution || slateResolution.status === 'LOADING' || slateResolution.status === 'UNAVAILABLE')
         ? null
         : selectAcceptedScoredSlateGames(gamesList, acceptedEventIds, slateScope);
-      const isFinalPosted = scoredSlateGames && slateResolution?.status !== 'UNAVAILABLE'
+      const isFinalPosted = scoredSlateGames && slateResolution?.status !== 'LOADING' && slateResolution?.status !== 'UNAVAILABLE'
         ? isWeeklyScoredSlateFinal(
             scoredSlateGames,
             liveScores,
