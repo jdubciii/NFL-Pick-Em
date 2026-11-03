@@ -11,6 +11,7 @@ import { WallOfShamePage } from './pages/WallOfShamePage';
 import { ProfilePage } from './pages/ProfilePage';
 import { PicksPage } from './pages/PicksPage';
 import { getCurrentNFLWeek } from './services/nflCalendarService';
+import { usePresentationFlags } from './services/presentationFlagsService';
 
 export function resolveNavigationVisibility(session: any, membershipStatus: string | null): boolean {
   return Boolean(session && membershipStatus === 'ACTIVE');
@@ -27,9 +28,13 @@ export const App: React.FC = () => {
   const [isLoungeOpen, setIsLoungeOpen] = useState(false);
   const [loungeContextCard, setLoungeContextCard] = useState<CanonicalContextCardAttachment | null>(null);
   const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+  const { flags: presentationFlags } = usePresentationFlags(activePoolId, session?.access_token);
 
   useEffect(() => {
     const handleOpenLounge = (e: Event) => {
+      if (!presentationFlags.f_league_press_box) {
+        return;
+      }
       const custom = e as CustomEvent<{ contextCard?: CanonicalContextCardAttachment }>;
       if (custom.detail?.contextCard) {
         setLoungeContextCard(custom.detail.contextCard);
@@ -38,7 +43,7 @@ export const App: React.FC = () => {
     };
     window.addEventListener('open-pool-lounge', handleOpenLounge);
     return () => window.removeEventListener('open-pool-lounge', handleOpenLounge);
-  }, []);
+  }, [presentationFlags.f_league_press_box]);
 
   useEffect(() => {
     async function checkMembership() {
@@ -90,7 +95,21 @@ export const App: React.FC = () => {
         <Routes>
           <Route path="/login" element={!session ? <Login /> : <Navigate to="/" replace />} />
           <Route path="/" element={<ProtectedRoute><PicksPage /></ProtectedRoute>} />
-          <Route path="/radar" element={<ProtectedRoute><RadarPage /></ProtectedRoute>} />
+          <Route
+            path="/radar"
+            element={
+              <ProtectedRoute>
+                {presentationFlags.f_sweat_radar ? (
+                  <RadarPage />
+                ) : (
+                  <div className="min-h-[50vh] flex flex-col items-center justify-center p-6 text-center text-slate-400 font-mono text-xs">
+                    <p className="text-sm font-bold text-slate-300 mb-2">RADAR PRESENTATION DISABLED</p>
+                    <p>Radar presentation is currently disabled by league owner administration.</p>
+                  </div>
+                )}
+              </ProtectedRoute>
+            }
+          />
           <Route path="/matrix" element={<ProtectedRoute><MatrixPage /></ProtectedRoute>} />
           <Route path="/shame" element={<ProtectedRoute><WallOfShamePage /></ProtectedRoute>} />
           <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
@@ -98,7 +117,7 @@ export const App: React.FC = () => {
         </Routes>
       </main>
       {isAdmitted && <BottomNavigation />}
-      {session && (
+      {session && presentationFlags.f_league_press_box && (
         <PoolLoungeDrawer
           isOpen={isLoungeOpen}
           onClose={() => setIsLoungeOpen(false)}

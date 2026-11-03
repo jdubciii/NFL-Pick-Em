@@ -16,6 +16,7 @@ declare global {
       user?: AuthUserPayload;
       pool?: any;
       membership?: any;
+      isCommissioner?: boolean;
     }
   }
 }
@@ -397,5 +398,103 @@ export async function requirePoolMember(req: Request, res: Response, next: NextF
   } catch (error) {
     console.error('Error in requirePoolMember:', error);
     res.status(500).json({ error: 'Failed to authorize pool membership.' });
+  }
+}
+
+/**
+ * Middleware to verify that the authenticated user is the designated League Owner (Jack).
+ * Bound strictly by Architect Rulings HAG57-OWNER-2026-11-03-01 and -02:
+ * - Server configuration OWNER_AUTH_USER_ID must be exactly one valid UUID matching verified user.id.
+ * - Missing/malformed config fails closed with HTTP 503 OWNER_UNCONFIGURED.
+ * - Non-owner fails closed with HTTP 403 FORBIDDEN.
+ * - No email/name matching, first-user selection, ADMIN bypass, or commissioner bypass.
+ */
+export function requireOwner(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json({ error: 'Authentication required. Missing user identity.', code: 'UNAUTHORIZED' });
+    return;
+  }
+
+  const configuredOwnerId = process.env.OWNER_AUTH_USER_ID?.trim();
+  if (!configuredOwnerId || !UUID_REGEX.test(configuredOwnerId)) {
+    res.status(503).json({
+      error: 'Owner authorization is unconfigured on the server.',
+      code: 'OWNER_UNCONFIGURED',
+    });
+    return;
+  }
+
+  if (req.user.id !== configuredOwnerId) {
+    res.status(403).json({
+      error: 'Forbidden. Owner privileges required.',
+      code: 'FORBIDDEN',
+    });
+    return;
+  }
+
+  next();
+}
+
+/**
+ * Middleware to verify owner access to a specific pool.
+ * Enforces:
+ * - Valid pool UUID format in req.params (400)
+ * - Pool existence (404)
+ * - Pool status is ACTIVE (403 POOL_INACTIVE)
+ * - Active membership of the owner in the pool (403 ACTIVE_MEMBERSHIP_REQUIRED)
+ * - Checks commissioner status (isCommissioner attached to req)
+ * - Sets Cache-Control: no-store
+ */
+export async function requirePoolOwnerAccess(req: Request, res: Response, next: NextFunction): Promise<void> {
+  res.setHeader('Cache-Control', 'no-store');
+
+  if (!req.user) {
+    res.status(401).json({ error: 'Authentication required.', code: 'UNAUTHORIZED' });
+    return;
+  }
+
+  const poolId = req.params.pool_id || req.params.poolId;
+  if (!poolId || !UUID_REGEX.test(String(poolId))) {
+    res.status(400).json({ error: 'Invalid pool ID format. Must be a valid UUID.', code: 'INVALID_POOL_ID' });
+    return;
+  }
+
+  try {
+    const db = getPrismaClient();
+    const pool = await db.pool.findUnique({
+      where: { id: String(poolId) },
+    });
+
+    if (!pool) {
+      res.status(404).json({ error: 'Pool not found.', code: 'POOL_NOT_FOUND' });
+      return;
+    }
+
+    if (pool.status !== 'ACTIVE') {
+      res.status(403).json({ error: 'Pool is not active.', code: 'POOL_INACTIVE' });
+      return;
+    }
+
+    const membership = await db.poolMembership.findUnique({
+      where: {
+        poolId_userId: {
+          poolId: String(poolId),
+          userId: req.user.id,
+        },
+      },
+    });
+
+    if (!membership || membership.status !== 'ACTIVE') {
+      res.status(403).json({ error: 'Forbidden. Active pool membership required.', code: 'ACTIVE_MEMBERSHIP_REQUIRED' });
+      return;
+    }
+
+    req.pool = pool;
+    req.membership = membership;
+    req.isCommissioner = pool.adminId === req.user.id;
+    next();
+  } catch (error) {
+    console.error('Error in requirePoolOwnerAccess:', error);
+    res.status(503).json({ error: 'Database service temporarily unavailable.', code: 'DATABASE_UNAVAILABLE' });
   }
 }

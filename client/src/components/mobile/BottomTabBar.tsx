@@ -20,13 +20,16 @@ export interface BottomTabBarProps {
   currentPath: string;
   onNavigate: (path: string) => void;
   pendingCount?: number;
+  showRadar?: boolean;
 }
 
-export const BottomTabBar: React.FC<BottomTabBarProps> = ({ currentPath, onNavigate, pendingCount = 0 }) => {
+export const BottomTabBar: React.FC<BottomTabBarProps> = ({ currentPath, onNavigate, pendingCount = 0, showRadar = true }) => {
   const handleTabClick = (path: string) => {
     triggerHaptic('selection');
     onNavigate(path);
   };
+
+  const navItems = showRadar ? NAV_ITEMS : NAV_ITEMS.filter((item) => item.id !== 'radar');
 
   return (
     <nav 
@@ -34,7 +37,7 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({ currentPath, onNavig
       className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-950/95 backdrop-blur-md border-t border-slate-800 px-2 py-1 shadow-2xl safe-area-bottom"
     >
       <div className="flex items-center justify-around h-14">
-        {NAV_ITEMS.map((item) => {
+        {navItems.map((item) => {
           const isPicks = item.id === 'picks';
           const isActive = 
             (isPicks && (currentPath === '/' || currentPath.startsWith('/picks'))) ||

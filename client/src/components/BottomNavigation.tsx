@@ -3,13 +3,15 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { BottomTabBar } from './mobile/BottomTabBar';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { usePresentationFlags } from '../services/presentationFlagsService';
 
 export const BottomNavigation: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const [pendingCount, setPendingCount] = useState<number>(0);
   const activePoolId = '9b893bef-3b5a-4ffa-951d-8ba27f9c9782';
+  const { flags } = usePresentationFlags(activePoolId, session?.access_token);
 
   const isCommissioner = Boolean(
     user?.role === 'ADMIN'
@@ -63,6 +65,7 @@ export const BottomNavigation: React.FC = () => {
       currentPath={location.pathname} 
       onNavigate={(path) => navigate(path)} 
       pendingCount={pendingCount}
+      showRadar={flags.f_sweat_radar}
     />
   );
 };

@@ -21,6 +21,7 @@ import { webhooksRouter } from './routes/webhooks';
 import { shotCamRouter } from './routes/shotCam';
 import streamRouter from './routes/streamRoutes';
 import { poolSocialRouter } from './routes/poolSocialRoutes';
+import { ownerAdminRouter } from './routes/ownerAdminRoutes';
 import {
   poolTiebreakerRouter,
   getGamesForWeek,
@@ -80,6 +81,7 @@ app.use('/api/pools', opsRouter);
 app.use('/api/pools', poolSocialRouter);
 app.use('/api/pools', poolTiebreakerRouter);
 app.use('/api/pools', poolAdminRouter);
+app.use('/api/pools', ownerAdminRouter);
 app.use('/api/pools/:pool_id/shot-cam', shotCamRouter);
 app.use('/api/shot-cam', shotCamRouter);
 app.use('/api/pools/:pool_id/shame', shotCamRouter);
