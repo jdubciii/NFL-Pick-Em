@@ -100,8 +100,20 @@ export function getCallerSupabaseClient(req: Request): any | null {
 export interface GetGamesOptions {
   supabaseClient?: any;
   authToken?: string;
+  seasonType?: number;
 }
 
+/**
+ * Resolves canonical games for a pool and week:
+ * 1. Invokes caller-bound Supabase RPC (get_pool_canonical_games) with caller auth identity.
+ *    If custom pool slate is configured, RPC results are filtered by the custom slate.
+ * 2. Reads authoritative weekly slate manifest (authoritative_slate_manifests) and
+ *    filters games strictly by manifest.eventIds (or custom slate if configured).
+ *    If pool settings lookup fails when poolId is provided, fails closed (never silently falls back).
+ * 3. Checks schema-compatible season/week columns on public.games if present (Proposal A).
+ * 4. Zero synthetic pattern inference and ZERO all-games fallback.
+ * 5. Returns [] when no authoritative records exist, safely failing closed.
+ */
 export async function getGamesForWeek(
   weekNumber: number,
   season: number = 2026,
@@ -109,9 +121,34 @@ export async function getGamesForWeek(
   dbClient: any = prisma,
   options?: GetGamesOptions
 ): Promise<any[]> {
+  const seasonType = options?.seasonType ?? 2;
   let supabaseClient = options?.supabaseClient;
   if (!supabaseClient && options?.authToken) {
     supabaseClient = createCallerBoundSupabaseClient(options.authToken);
+  }
+
+  // Scored-slate resolver integration: resolve custom pool slate if poolId is provided
+  let customSlateEventIds: string[] | null = null;
+  if (poolId && typeof dbClient.pool?.findUnique === 'function') {
+    // Finding 4: If pool settings lookup fails, FAIL CLOSED — do NOT silently fall back to full manifest!
+    const poolRecord = await dbClient.pool.findUnique({
+      where: { id: poolId },
+      select: { settings: true },
+    });
+    const customSlate = poolRecord?.settings?.owner_admin_v1?.slates?.[season]?.[seasonType]?.[weekNumber];
+    if (customSlate && Array.isArray(customSlate.eventIds) && customSlate.eventIds.length > 0) {
+      const manifest = await authoritativeSlateService.getAcceptedSlateManifest(dbClient, season, seasonType, weekNumber);
+      if (!manifest || !Array.isArray(manifest.eventIds) || manifest.eventIds.length === 0) {
+        return []; // Fail closed if manifest unavailable
+      }
+      const manifestEventSet = new Set(manifest.eventIds.map(String));
+      const allInManifest = customSlate.eventIds.every((eid: any) => manifestEventSet.has(String(eid)));
+      if (allInManifest) {
+        customSlateEventIds = customSlate.eventIds.map(String);
+      } else {
+        return []; // Fail closed if custom slate references unmanifested games
+      }
+    }
   }
 
   // Source 1: Caller-bound Supabase RPC (Finding 6 / Finding 1: requires auth.uid() caller identity)
@@ -124,7 +161,7 @@ export async function getGamesForWeek(
         p_week: weekNumber,
       });
       if (!error && Array.isArray(data) && data.length > 0) {
-        return data.map((g: any) => ({
+        let rpcGames = data.map((g: any) => ({
           id: g.id,
           externalGameId: String(g.externalGameId || g.external_game_id || g.id),
           homeTeamId: g.homeTeamId || g.home_team_id,
@@ -134,6 +171,12 @@ export async function getGamesForWeek(
           homeScore: g.homeScore !== undefined ? g.homeScore : g.home_score,
           awayScore: g.awayScore !== undefined ? g.awayScore : g.away_score,
         }));
+        // Finding 4: Apply custom slate filtering to RPC data before returning
+        if (customSlateEventIds !== null) {
+          const customSet = new Set(customSlateEventIds);
+          rpcGames = rpcGames.filter((g: any) => customSet.has(String(g.externalGameId || g.id)));
+        }
+        return rpcGames;
       }
     } catch {
       // Caller-bound RPC not available or failed; fallback to next approved source
@@ -143,31 +186,10 @@ export async function getGamesForWeek(
   // Source 2: Authoritative weekly slate manifest (P41-AUTHORITATIVE-SLATE-ARCHITECTURE)
   // Scored-slate resolver integration: Scoped to pool custom slate when configured
   try {
-    const manifest = await authoritativeSlateService.getAcceptedSlateManifest(dbClient, season, 2, weekNumber);
+    const manifest = await authoritativeSlateService.getAcceptedSlateManifest(dbClient, season, seasonType, weekNumber);
     if (manifest && Array.isArray(manifest.eventIds) && manifest.eventIds.length > 0) {
       if (typeof dbClient.game?.findMany === 'function') {
-        let targetEventIds: string[] = manifest.eventIds;
-
-        if (poolId && typeof dbClient.pool?.findUnique === 'function') {
-          try {
-            const poolRecord = await dbClient.pool.findUnique({
-              where: { id: poolId },
-              select: { settings: true },
-            });
-            const customSlate = poolRecord?.settings?.owner_admin_v1?.slates?.[season]?.[2]?.[weekNumber];
-            if (customSlate && Array.isArray(customSlate.eventIds) && customSlate.eventIds.length > 0) {
-              const manifestEventSet = new Set(manifest.eventIds.map(String));
-              const allInManifest = customSlate.eventIds.every((eid: any) => manifestEventSet.has(String(eid)));
-              if (allInManifest) {
-                targetEventIds = customSlate.eventIds.map(String);
-              } else {
-                return []; // Fail closed if custom slate references unmanifested games
-              }
-            }
-          } catch {
-            // Keep manifest event IDs if pool settings lookup fails
-          }
-        }
+        const targetEventIds: string[] = customSlateEventIds !== null ? customSlateEventIds : manifest.eventIds.map(String);
 
         const games = await dbClient.game.findMany({
           where: {
@@ -180,7 +202,10 @@ export async function getGamesForWeek(
         }
       }
     }
-  } catch {
+  } catch (err: any) {
+    if (customSlateEventIds !== null) {
+      throw err; // Fail closed if custom slate was configured but manifest query failed
+    }
     // Manifest table not yet populated or inaccessible
   }
 
@@ -197,6 +222,10 @@ export async function getGamesForWeek(
         weekNumber
       );
       if (Array.isArray(colGames) && colGames.length > 0) {
+        if (customSlateEventIds !== null) {
+          const customSet = new Set(customSlateEventIds);
+          return colGames.filter((g: any) => customSet.has(String(g.externalGameId || g.id)));
+        }
         return colGames;
       }
     } catch {
