@@ -2,6 +2,7 @@ import type { LiveGame } from './liveScoreService';
 import { isFinalStatus, type SlateGame, type TiebreakerData } from './sweatProjectionService';
 import {
   getScopedPoolSlateConfig,
+  resolveScopedPoolSlateConfig,
   isTargetAffectedSlateScope,
   type ScopedPoolSlateKey,
 } from './poolScoredSlateConfig';
@@ -37,25 +38,23 @@ export function selectAcceptedScoredSlateGames(
     byEventId.set(id, game);
   }
 
-  const isAffectedScope = isTargetAffectedSlateScope(scope);
-
   // Section 58 & Finding 2: Unverified or failed reads suppress authoritative scores/finality; never default to all NFL games.
-  // When projection is passed (or null while loading), unverified or failed states fail closed to null.
-  if (scope && 'projection' in scope) {
-    if (!scope.projection || scope.projection.status === 'LOADING' || scope.projection.status === 'UNAVAILABLE') {
-      return null;
-    }
-  }
+  // Resolve scoped slate configuration via distinct 3-state resolver
+  const slateResolution = resolveScopedPoolSlateConfig(scope);
 
-  const scopedConfig = getScopedPoolSlateConfig(scope);
   let targetEventIds: readonly string[];
 
-  if (scopedConfig) {
+  if (slateResolution.status === 'VALID_CONFIG') {
+    const scopedConfig = slateResolution.entry;
+    if (!scopedConfig) return null;
+
     if (
-      scopedConfig.poolId !== scope?.poolId ||
-      scopedConfig.season !== scope?.season ||
-      scopedConfig.seasonType !== scope?.seasonType ||
-      scopedConfig.weekNumber !== scope?.weekNumber
+      scope && (
+        scopedConfig.poolId !== scope.poolId ||
+        scopedConfig.season !== scope.season ||
+        scopedConfig.seasonType !== scope.seasonType ||
+        scopedConfig.weekNumber !== scope.weekNumber
+      )
     ) {
       return null;
     }
@@ -76,13 +75,13 @@ export function selectAcceptedScoredSlateGames(
     }
 
     targetEventIds = scoredEventIds;
-  } else if (isAffectedScope) {
-    // For the affected pool/week, absent or malformed config fails closed to null/Provisional
-    // regardless of whether all 14 manifest games are final.
-    return null;
-  } else {
-    // Preserves existing behavior outside target scope
+  } else if (slateResolution.status === 'VERIFIED_NO_CUSTOM_CONFIG') {
+    // Verified default policy: all manifest games
     targetEventIds = eventIds;
+  } else {
+    // UNAVAILABLE, MALFORMED, or UNVERIFIED: Strictly fail closed to null!
+    // Never fall back to all manifest games!
+    return null;
   }
 
   const selected = targetEventIds.map((id) => byEventId.get(String(id)));

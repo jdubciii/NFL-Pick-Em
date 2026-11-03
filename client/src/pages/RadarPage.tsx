@@ -391,20 +391,32 @@ export const RadarPage: React.FC = () => {
     Boolean(scoredSlateGames), activeWeek === 8,
   );
 
+  const effectiveRadarGames = useMemo(() => {
+    if (scoredSlateGames) return scoredSlateGames;
+    if (slateResolution?.status === 'VERIFIED_NO_CUSTOM_CONFIG') return games;
+    return [];
+  }, [scoredSlateGames, games, slateResolution]);
+
   // Compute Sunday Sweat standings from the same scored slate and tiebreaker inputs.
   const provisionalResult: ProvisionalStandingsResult = useMemo(() => {
+    if (slateResolution?.status === 'UNAVAILABLE' || (slateResolution?.status === 'VALID_CONFIG' && !scoredSlateGames)) {
+      const empty: any = [];
+      empty.swingGame = null;
+      return empty;
+    }
+    const scoringGames = scoredSlateGames || games;
     return calculateProvisionalStandings(
       members,
-      games,
+      scoringGames,
       liveScores,
       effectivePicks,
       tiebreakers
     );
-  }, [members, games, liveScores, effectivePicks, tiebreakers]);
+  }, [members, scoredSlateGames, games, liveScores, effectivePicks, tiebreakers, slateResolution]);
 
   const sundaySlatePhase = useMemo(
-    () => deriveSundaySlatePhase(games, liveScores, { now: phaseNow, isStale }),
-    [games, liveScores, phaseNow, isStale]
+    () => deriveSundaySlatePhase(effectiveRadarGames.length > 0 ? effectiveRadarGames : games, liveScores, { now: phaseNow, isStale }),
+    [effectiveRadarGames, games, liveScores, phaseNow, isStale]
   );
 
   // Find user's standing
@@ -425,12 +437,13 @@ export const RadarPage: React.FC = () => {
   // Find live matchup details for the swing game
   const swingLiveMatch = useMemo(() => {
     if (!activeSwingGame) return null;
-    const matchingGame = games.find((g) => g.id === activeSwingGame.gameId || (g as any)?.externalGameId === activeSwingGame.gameId);
+    const matchPool = effectiveRadarGames.length > 0 ? effectiveRadarGames : games;
+    const matchingGame = matchPool.find((g) => g.id === activeSwingGame.gameId || (g as any)?.externalGameId === activeSwingGame.gameId);
     return liveScores.find((l) =>
       l.id === activeSwingGame.gameId ||
       (matchingGame && (l.id === matchingGame.id || l.id === (matchingGame as any)?.externalGameId))
     );
-  }, [activeSwingGame, liveScores, games]);
+  }, [activeSwingGame, liveScores, effectiveRadarGames, games]);
 
   // Determine active rival for head-to-head calculations
   const activeRival = useMemo(() => {
@@ -459,7 +472,8 @@ export const RadarPage: React.FC = () => {
       ? userStanding.totalProvisionalPoints - activeRivalStanding.totalProvisionalPoints
       : 0;
 
-    const queueGames = games.map((g) => {
+    const matchPool = effectiveRadarGames.length > 0 ? effectiveRadarGames : games;
+    const queueGames = matchPool.map((g) => {
       const vPick = effectivePicks.find((p) => (p.gameId === g.id || p.gameId === (g as any)?.externalGameId) && p.userId === currentUserId)?.selectedTeam || '';
       const rPick = activeRival
         ? effectivePicks.find((p) => (p.gameId === g.id || p.gameId === (g as any)?.externalGameId) && p.userId === activeRival.id)?.selectedTeam
@@ -482,7 +496,7 @@ export const RadarPage: React.FC = () => {
       rivalDisplayName: activeRival?.name || 'your rival',
       currentViewerGap,
     });
-  }, [games, effectivePicks, currentUserId, activeRival, liveScores, userStanding, provisionalResult]);
+  }, [effectiveRadarGames, games, effectivePicks, currentUserId, activeRival, liveScores, userStanding, provisionalResult]);
 
   // Pass 3 & 4: Bounded Late-Game Escape Scenario with simulation exclusion & member count gating
   const escapeScenario: LateGameEscapeScenario | null = useMemo(() => {
@@ -490,7 +504,8 @@ export const RadarPage: React.FC = () => {
     const leader = provisionalResult[0];
     const targetSafePoints = leader ? leader.totalProvisionalPoints : userStanding.totalProvisionalPoints;
 
-    const disagreementGames = games
+    const matchPool = effectiveRadarGames.length > 0 ? effectiveRadarGames : games;
+    const disagreementGames = matchPool
       .filter((g) => {
         const vPick = effectivePicks.find((p) => (p.gameId === g.id || p.gameId === (g as any)?.externalGameId) && p.userId === currentUserId)?.selectedTeam;
         const rPick = activeRival
@@ -519,7 +534,7 @@ export const RadarPage: React.FC = () => {
       activeMemberCount: members.length,
       isSimulation: isSimulationActive,
     });
-  }, [userStanding, provisionalResult, games, effectivePicks, currentUserId, activeRival, liveScores, members.length, isSimulationActive]);
+  }, [userStanding, provisionalResult, effectiveRadarGames, games, effectivePicks, currentUserId, activeRival, liveScores, members.length, isSimulationActive]);
 
   // Session Sweat Receipts: observe projection transitions
   useEffect(() => {

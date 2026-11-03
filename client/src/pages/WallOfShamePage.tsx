@@ -1044,14 +1044,6 @@ export function WallOfShamePage({
         return { id: m.user_id, name: displayName };
       });
 
-      const standings = calculateProvisionalStandings(
-        mappedMembers,
-        gamesList,
-        liveScores,
-        resolvedPicks,
-        tiebreakerData
-      );
-
       // The scored league slate is the accepted matrix/manifest, not every NFL game
       // in the calendar week. The existing wrapup path above stays authoritative.
       const slateScope = {
@@ -1064,7 +1056,38 @@ export function WallOfShamePage({
       const scoredSlateGames = (!slateResolution || slateResolution.status === 'LOADING' || slateResolution.status === 'UNAVAILABLE')
         ? null
         : selectAcceptedScoredSlateGames(gamesList, acceptedEventIds, slateScope);
-      const isFinalPosted = scoredSlateGames && slateResolution?.status !== 'LOADING' && slateResolution?.status !== 'UNAVAILABLE'
+
+      // Failed or unverified settings reads suppress authoritative scores/standings; never default to all NFL games!
+      if (slateResolution?.status === 'UNAVAILABLE' || (slateResolution?.status === 'VALID_CONFIG' && !scoredSlateGames)) {
+        setSnapshot((prev) => ({
+          ...prev,
+          userId: user?.id,
+          poolId: targetPoolId,
+          season: targetSeason,
+          seasonType: targetSeasonType,
+          week: targetWeek,
+          ladderData: [],
+          status: 'ERROR',
+          scoreStatus: 'STATUS_UNAVAILABLE',
+          syncTimestamp: new Date().toISOString(),
+          isLiveTelemetry: false,
+          staleWarning: true,
+          scoringRuleDisplay: 'Provisional ATS',
+        }));
+        return;
+      }
+
+      const effectiveScoringGames = scoredSlateGames || gamesList;
+
+      const standings = calculateProvisionalStandings(
+        mappedMembers,
+        effectiveScoringGames,
+        liveScores,
+        resolvedPicks,
+        tiebreakerData
+      );
+
+      const isFinalPosted = scoredSlateGames && slateResolution?.status !== 'LOADING'
         ? isWeeklyScoredSlateFinal(
             scoredSlateGames,
             liveScores,

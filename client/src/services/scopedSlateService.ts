@@ -110,6 +110,16 @@ export async function fetchScopedSlateProjection(
     };
   }
 
+  // 1b. Historical weeks (weeks <= 8) outside HAG-52 cannot be modified by dynamic owner slates;
+  // verified absence of custom slate applies established default policy (FULL_MANIFEST)
+  if (scope.weekNumber != null && scope.weekNumber <= 8) {
+    return {
+      status: 'VERIFIED_NO_CUSTOM_CONFIG',
+      scope,
+      defaultPolicy: 'FULL_MANIFEST',
+    };
+  }
+
   // 2. Cache lookup
   const cacheKey = getScopedSlateCacheKey(scope);
   const cached = projectionCache.get(cacheKey);

@@ -909,9 +909,17 @@ export async function executeFutureSlateMutationInternal(
     // 2b. Mandatory row-level lock on pool and in-tx authority/membership re-verification
     const { freshPool } = await acquireLockedPoolAndVerifyAuthority(tx, poolId, actorId, true);
 
-    // Verify scope against authoritatively established pool season if configured
+    // Verify scope against authoritatively established pool season (HAG58-SLATE-2026-11-03-01)
+    // If pool settings lack an explicit authoritatively established season (seasonYear or season),
+    // deny missing pool-season authority with HTTP 422 HISTORICAL_SCOPE_UNVERIFIED.
     const poolSeason = (freshPool.settings as any)?.seasonYear ?? (freshPool.settings as any)?.season;
-    if (poolSeason !== undefined && Number(poolSeason) !== season) {
+    if (poolSeason === undefined || poolSeason === null) {
+      const err: any = new Error('HISTORICAL_SCOPE_UNVERIFIED: Pool lacks an authoritatively established current season (seasonYear/season) in settings. Scope authority cannot be established. Slate mutation denied.');
+      err.statusCode = 422;
+      err.code = 'HISTORICAL_SCOPE_UNVERIFIED';
+      throw err;
+    }
+    if (Number(poolSeason) !== season) {
       const err: any = new Error(`HISTORICAL_SCOPE_UNVERIFIED: Scope season ${season} does not match authoritatively established pool season ${poolSeason}. Slate mutation denied.`);
       err.statusCode = 422;
       err.code = 'HISTORICAL_SCOPE_UNVERIFIED';

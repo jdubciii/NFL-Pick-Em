@@ -131,24 +131,48 @@ export function clearTestScopedSlatesOverride(): void {
   testScopedSlatesOverride = null;
 }
 
-/**
- * Resolves the explicit scoped pool slate configuration for a given scope.
- * Validates that entry fields strictly match the requested scope and its key.
- * Checks:
- * 1. Test override
- * 2. Unshadowable checked-in repository (Week 8 9-game confirmed slate)
- * 3. Scoped projection in scope (from fetchScopedSlateProjection)
- * 4. Injected poolSettings in scope (legacy / test fallback)
- * Returns null if no explicit configuration entry exists or if integrity validation fails.
- */
-export function getScopedPoolSlateConfig(scope?: ScopedPoolSlateKey | null): ScopedPoolSlateEntry | null {
-  if (!scope) return null;
-  const key = formatScopeKey(scope);
-  if (!key) return null;
+export type ScopedPoolSlateStatus = 'VALID_CONFIG' | 'VERIFIED_NO_CUSTOM_CONFIG' | 'UNAVAILABLE';
 
+export interface ScopedPoolSlateResolutionResult {
+  status: ScopedPoolSlateStatus;
+  entry?: ScopedPoolSlateEntry;
+  defaultPolicy?: 'FULL_MANIFEST';
+  reason?: string;
+  revision?: string;
+}
+
+/**
+ * Resolves the explicit scoped pool slate configuration with distinct results:
+ * - VALID_CONFIG: Explicit verified custom slate configuration entry exists and is valid
+ * - VERIFIED_NO_CUSTOM_CONFIG: Scope is verified to have NO custom slate; established default policy applies (FULL_MANIFEST)
+ * - UNAVAILABLE: Scope cannot be verified, or configuration is malformed/corrupted. Fails closed!
+ *
+ * Governed strictly by HAG58-SLATE-2026-11-03-01:
+ * Failed settings reads suppress authoritative scores/finality and show unavailable;
+ * NEVER default to all NFL games on malformed or absent unverified reads!
+ */
+export function resolveScopedPoolSlateConfig(scope?: ScopedPoolSlateKey | null): ScopedPoolSlateResolutionResult {
+  if (!scope) {
+    return {
+      status: 'VERIFIED_NO_CUSTOM_CONFIG',
+      defaultPolicy: 'FULL_MANIFEST',
+    };
+  }
+
+  const key = formatScopeKey(scope);
+  if (!key) {
+    return {
+      status: 'UNAVAILABLE',
+      reason: 'INVALID_SCOPE_KEY',
+    };
+  }
+
+  // 1. Injected synthetic test override
   if (testScopedSlatesOverride && key in testScopedSlatesOverride) {
     const entry = testScopedSlatesOverride[key];
-    if (!entry) return null;
+    if (!entry) {
+      return { status: 'UNAVAILABLE', reason: 'TEST_OVERRIDE_NULL' };
+    }
     if (
       entry.poolId !== scope.poolId ||
       entry.season !== scope.season ||
@@ -156,12 +180,12 @@ export function getScopedPoolSlateConfig(scope?: ScopedPoolSlateKey | null): Sco
       entry.weekNumber !== scope.weekNumber ||
       formatScopeKey(entry) !== key
     ) {
-      return null;
+      return { status: 'UNAVAILABLE', reason: 'TEST_OVERRIDE_MISMATCH' };
     }
-    return entry;
+    return { status: 'VALID_CONFIG', entry };
   }
 
-  // 1. Unshadowable checked-in repository (Week 8 HAG-52) ALWAYS outranks dynamic or settings! (Section 42 & 54)
+  // 2. Unshadowable checked-in repository (Week 8 HAG-52) ALWAYS outranks dynamic or settings! (Section 42 & 54)
   if (isTargetAffectedSlateScope(scope)) {
     const entry = CHECKED_IN_SCOPED_SLATES[key] || null;
     if (entry) {
@@ -172,52 +196,129 @@ export function getScopedPoolSlateConfig(scope?: ScopedPoolSlateKey | null): Sco
         entry.weekNumber !== scope.weekNumber ||
         formatScopeKey(entry) !== key
       ) {
-        return null;
+        return { status: 'UNAVAILABLE', reason: 'CHECKED_IN_SCOPE_MISMATCH' };
       }
-      return entry;
+      return { status: 'VALID_CONFIG', entry };
     }
+    return { status: 'UNAVAILABLE', reason: 'CHECKED_IN_SCOPE_MISSING' };
   }
 
-  // 2. Direct projection in scope (from fetchScopedSlateProjection, Section 52 & 54)
-  if (scope.projection) {
+  // 3. Direct projection in scope (from fetchScopedSlateProjection, Section 52 & 54)
+  if (scope.projection !== undefined) {
+    if (!scope.projection) {
+      return { status: 'UNAVAILABLE', reason: 'PROJECTION_NULL' };
+    }
+    if (scope.projection.status === 'LOADING') {
+      return { status: 'UNAVAILABLE', reason: 'PROJECTION_LOADING' };
+    }
+    if (scope.projection.status === 'UNAVAILABLE') {
+      return { status: 'UNAVAILABLE', reason: scope.projection.error || 'PROJECTION_UNAVAILABLE' };
+    }
+    if (scope.projection.status === 'VERIFIED_NO_CUSTOM_CONFIG') {
+      return { status: 'VERIFIED_NO_CUSTOM_CONFIG', defaultPolicy: 'FULL_MANIFEST' };
+    }
     if (scope.projection.status === 'VALID_CONFIG') {
       const p = scope.projection;
+      if (!Array.isArray(p.eventIds) || p.eventIds.length === 0 || p.eventIds.length > 32) {
+        return { status: 'UNAVAILABLE', reason: 'PROJECTION_MALFORMED_EVENT_COUNT' };
+      }
+      const eventIdRegex = /^[a-zA-Z0-9_-]{1,64}$/;
+      const seen = new Set<string>();
+      for (const eid of p.eventIds) {
+        const sEid = String(eid);
+        if (!eventIdRegex.test(sEid) || seen.has(sEid)) {
+          return { status: 'UNAVAILABLE', reason: 'PROJECTION_MALFORMED_EVENT_ID' };
+        }
+        seen.add(sEid);
+      }
       return {
-        poolId: scope.poolId!,
-        season: scope.season!,
-        seasonType: scope.seasonType!,
-        weekNumber: scope.weekNumber!,
-        version: p.version ?? 1,
-        scoredEventIds: Object.freeze(p.eventIds.map(String)),
-        description: `Scoped pool slate for ${scope.season} W${scope.weekNumber}`,
+        status: 'VALID_CONFIG',
+        entry: {
+          poolId: scope.poolId!,
+          season: scope.season!,
+          seasonType: scope.seasonType!,
+          weekNumber: scope.weekNumber!,
+          version: p.version ?? 1,
+          scoredEventIds: Object.freeze(p.eventIds.map(String)),
+          description: p.description || `Scoped pool slate for ${scope.season} W${scope.weekNumber}`,
+        },
+        revision: p.revision,
       };
     }
-    // If VERIFIED_NO_CUSTOM_CONFIG or UNAVAILABLE, return null
-    return null;
+    return { status: 'UNAVAILABLE', reason: 'UNKNOWN_PROJECTION_STATUS' };
   }
 
-  // 3. Fallback: poolSettings in scope (legacy / tests)
-  const configuredSlates = scope.poolSettings?.owner_admin_v1?.slates;
-  const customSlate =
-    scope.season != null && scope.seasonType != null && scope.weekNumber != null
-      ? configuredSlates?.[scope.season]?.[scope.seasonType]?.[scope.weekNumber]
-      : null;
-
-  if (customSlate && Array.isArray(customSlate.eventIds) && customSlate.eventIds.length > 0) {
-    const distinct = new Set(customSlate.eventIds.map(String));
-    if (distinct.size === customSlate.eventIds.length && customSlate.eventIds.length <= 32) {
-      const entry: ScopedPoolSlateEntry = {
-        poolId: scope.poolId!,
-        season: scope.season!,
-        seasonType: scope.seasonType!,
-        weekNumber: scope.weekNumber!,
-        version: customSlate.version ?? 1,
-        scoredEventIds: Object.freeze(customSlate.eventIds.map(String)),
-        description: `Configured pool slate for ${scope.season} W${scope.weekNumber}`,
-      };
-      return entry;
+  // 4. Injected poolSettings in scope (legacy / tests fallback)
+  if (scope.poolSettings !== undefined) {
+    if (!scope.poolSettings || typeof scope.poolSettings !== 'object') {
+      return { status: 'UNAVAILABLE', reason: 'MALFORMED_POOL_SETTINGS' };
     }
+    const configuredSlates = scope.poolSettings?.owner_admin_v1?.slates;
+    const customSlate =
+      scope.season != null && scope.seasonType != null && scope.weekNumber != null
+        ? configuredSlates?.[scope.season]?.[scope.seasonType]?.[scope.weekNumber]
+        : undefined;
+
+    if (customSlate !== undefined && customSlate !== null) {
+      if (!Array.isArray(customSlate.eventIds) || customSlate.eventIds.length === 0 || customSlate.eventIds.length > 32) {
+        return { status: 'UNAVAILABLE', reason: 'MALFORMED_CUSTOM_SLATE_COUNT' };
+      }
+      const eventIdRegex = /^[a-zA-Z0-9_-]{1,64}$/;
+      const distinct = new Set<string>();
+      for (const eid of customSlate.eventIds) {
+        const sEid = String(eid);
+        if (!eventIdRegex.test(sEid) || distinct.has(sEid)) {
+          return { status: 'UNAVAILABLE', reason: 'MALFORMED_CUSTOM_SLATE_EVENT_ID' };
+        }
+        distinct.add(sEid);
+      }
+      return {
+        status: 'VALID_CONFIG',
+        entry: {
+          poolId: scope.poolId!,
+          season: scope.season!,
+          seasonType: scope.seasonType!,
+          weekNumber: scope.weekNumber!,
+          version: customSlate.version ?? 1,
+          scoredEventIds: Object.freeze(customSlate.eventIds.map(String)),
+          description: `Configured pool slate for ${scope.season} W${scope.weekNumber}`,
+        },
+      };
+    }
+
+    // Explicitly absent custom slate in poolSettings -> verified default policy
+    return {
+      status: 'VERIFIED_NO_CUSTOM_CONFIG',
+      defaultPolicy: 'FULL_MANIFEST',
+    };
   }
 
+  // Neither projection nor settings provided in scope:
+  // For historical weeks (weeks <= 8) outside the HAG-52 target scope, dynamic custom slates
+  // were not supported; established default policy (full manifest) applies.
+  // For future-slate eligible weeks (weeks 9-18), missing evidence cannot be assumed absent;
+  // unverified scope strictly fails closed to UNAVAILABLE per HAG58-SLATE-2026-11-03-01.
+  if (scope.weekNumber != null && scope.weekNumber <= 8 && !isTargetAffectedSlateScope(scope)) {
+    return {
+      status: 'VERIFIED_NO_CUSTOM_CONFIG',
+      defaultPolicy: 'FULL_MANIFEST',
+    };
+  }
+
+  return {
+    status: 'UNAVAILABLE',
+    reason: 'UNVERIFIED_SCOPE_EVIDENCE_MISSING',
+  };
+}
+
+/**
+ * Resolves the explicit scoped pool slate configuration entry for a given scope.
+ * Delegates to resolveScopedPoolSlateConfig and returns ScopedPoolSlateEntry if VALID_CONFIG, else null.
+ */
+export function getScopedPoolSlateConfig(scope?: ScopedPoolSlateKey | null): ScopedPoolSlateEntry | null {
+  const res = resolveScopedPoolSlateConfig(scope);
+  if (res.status === 'VALID_CONFIG' && res.entry) {
+    return res.entry;
+  }
   return null;
 }

@@ -29,7 +29,7 @@ import {
 import * as authoritativeSlateService from '../src/services/authoritativeSlateService';
 import { getGamesForWeek } from '../src/routes/poolTiebreakerRoutes';
 import { selectAcceptedScoredSlateGames, isWeeklyScoredSlateFinal } from '../client/src/services/weeklyStandingsFinalityService';
-import { getScopedPoolSlateConfig } from '../client/src/services/poolScoredSlateConfig';
+import { getScopedPoolSlateConfig, resolveScopedPoolSlateConfig } from '../client/src/services/poolScoredSlateConfig';
 import { fetchScopedSlateProjection, invalidateScopedSlateCache } from '../client/src/services/scopedSlateService';
 import { executeSerializedPickMutation } from '../src/routes/picks';
 import { applyOverride } from '../src/services/overrideService';
@@ -210,7 +210,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
     const basePool = {
       id: POOL_ID,
       name: 'Main Championship Pool',
-      settings: { lock_offset: 0 },
+      settings: { seasonYear: 2026, lock_offset: 0 },
       status: 'ACTIVE',
       adminId: JACK_UUID,
     };
@@ -915,6 +915,41 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         statusCode: 422,
         code: 'HISTORICAL_SCOPE_UNVERIFIED',
       });
+
+      // 6. Missing pool-season authority in pool settings (seasonYear/season missing)
+      const origPool = committedDbState.pools[POOL_ID];
+      committedDbState.pools[POOL_ID] = {
+        ...origPool,
+        settings: { lock_offset: 0 },
+      };
+      const revWithoutSeason = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 10,
+          eventIds: ['401873023'],
+          expectedRevision: revWithoutSeason,
+          reason: 'Attempted edit on pool without established season',
+        }, {
+          status: 'VERIFIED',
+          provider: 'ESPN',
+          league: 'NFL',
+          seasonYear: 2026,
+          seasonType: 2,
+          weekNumber: 10,
+          observationTime: new Date().toISOString(),
+          adapterVersion: '1.0',
+          eventCount: 1,
+          events: [{ externalGameId: '401873023', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: new Date(Date.now() + 86400000).toISOString(), isKickoffConfirmed: true }],
+          manifestFingerprint: 'any-fp',
+          reasons: [],
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'HISTORICAL_SCOPE_UNVERIFIED',
+      });
+      committedDbState.pools[POOL_ID] = origPool;
     });
 
     it('executeFutureSlateMutationInternal fails closed with HTTP 500 TRANSACTION_LOCK_UNAVAILABLE if raw query capability is missing', async () => {
@@ -1937,6 +1972,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       const futureGameKickoff = new Date(Date.now() + 86400000).toISOString();
 
       committedDbState.pools[POOL_ID].settings = {
+        seasonYear: 2026,
         lock_offset: 10, // 10 minute lock offset
         owner_admin_v1: {
           slates: {
@@ -2007,7 +2043,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       });
 
       // Restore base pool settings
-      committedDbState.pools[POOL_ID].settings = { lock_offset: 0 };
+      committedDbState.pools[POOL_ID].settings = { seasonYear: 2026, lock_offset: 0 };
     });
 
     it('Finding 3 Proof: settled penalty ledger records or settled pick results deny with HTTP 409 SLATE_FROZEN', async () => {
@@ -2555,6 +2591,72 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(scoredGames!.map((g) => g.externalGameId)).toEqual(selectedSubset);
     });
 
+    it('resolveScopedPoolSlateConfig returns distinct results and selectAcceptedScoredSlateGames fails closed on malformed config', () => {
+      const manifestEventIds = ['401873040', '401873041', '401873042'];
+      const clientGames: SlateGame[] = manifestEventIds.map((eid) => ({
+        id: `g-${eid}`,
+        externalGameId: eid,
+        homeTeam: 'KC',
+        awayTeam: 'LV',
+        kickoffTime: new Date(Date.now() + 86400000).toISOString(),
+        status: 'SCHEDULED',
+      }));
+
+      // 1. Malformed custom slate in settings (duplicate event IDs)
+      const malformedScope = {
+        poolId: POOL_ID,
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        poolSettings: {
+          owner_admin_v1: {
+            slates: {
+              2026: {
+                2: {
+                  9: {
+                    eventIds: ['401873040', '401873040'], // DUPLICATE
+                  },
+                },
+              },
+            },
+          },
+        },
+      };
+
+      const malformedResolution = resolveScopedPoolSlateConfig(malformedScope);
+      expect(malformedResolution.status).toBe('UNAVAILABLE');
+      // FAILS CLOSED to null, never defaults to all NFL games!
+      expect(selectAcceptedScoredSlateGames(clientGames, manifestEventIds, malformedScope)).toBeNull();
+
+      // 2. Verified absent custom slate (empty settings -> VERIFIED_NO_CUSTOM_CONFIG)
+      const absentScope = {
+        poolId: POOL_ID,
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        poolSettings: {},
+      };
+      const absentResolution = resolveScopedPoolSlateConfig(absentScope);
+      expect(absentResolution.status).toBe('VERIFIED_NO_CUSTOM_CONFIG');
+      expect(absentResolution.defaultPolicy).toBe('FULL_MANIFEST');
+      // Uses verified default policy (all 3 manifest games)
+      const unscopedGames = selectAcceptedScoredSlateGames(clientGames, manifestEventIds, absentScope);
+      expect(unscopedGames).not.toBeNull();
+      expect(unscopedGames).toHaveLength(3);
+
+      // 3. Unverified scope (missing projection and settings)
+      const unverifiedScope = {
+        poolId: POOL_ID,
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+      };
+      const unverifiedResolution = resolveScopedPoolSlateConfig(unverifiedScope);
+      expect(unverifiedResolution.status).toBe('UNAVAILABLE');
+      // FAILS CLOSED to null!
+      expect(selectAcceptedScoredSlateGames(clientGames, manifestEventIds, unverifiedScope)).toBeNull();
+    });
+
     it('getGamesForWeek fails closed when pool settings read fails (Finding 4)', async () => {
       mockPrisma.pool.findUnique.mockRejectedValueOnce(new Error('DATABASE_CONNECTION_LOST'));
 
@@ -2788,14 +2890,14 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       );
       expect(isFinalWithCustomSlate).toBe(true);
 
-      // C: Counter-factual proof: Without the custom slate scoping (default full manifest),
+      // C: Counter-factual proof: With verified absence of custom slate (default full manifest),
       // the unfinished game '401873042' holds finality open (returns false)
       const unscopedGames = selectAcceptedScoredSlateGames(clientGames, allManifestEventIds, {
         poolId: POOL_ID,
         season: 2026,
         seasonType: 2,
         weekNumber: 9,
-        // poolSettings omitted -> defaults to allManifestEventIds
+        poolSettings: {}, // verified absence of custom slate -> defaultPolicy: 'FULL_MANIFEST'
       });
       expect(unscopedGames).toHaveLength(3);
       const isFinalWithoutCustomSlate = isWeeklyScoredSlateFinal(
