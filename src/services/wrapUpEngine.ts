@@ -46,6 +46,7 @@ export interface PoolWrapUpResult {
     | 'STALE_PREVIEW_REVISION'
     | 'AUTHORITATIVE_SLATE_UNAVAILABLE'
     | 'MALFORMED_SLATE_CONFIG'
+    | 'SHARED_POOL_GATE_UNAVAILABLE'
     | 'SETTLEMENT_DISABLED'
     | 'PENALTY_POSTING_DISABLED'
     | string;
@@ -149,7 +150,18 @@ export async function resolvePoolScopedGamesForWrapUp(
     if (customSlate !== undefined && customSlate !== null) {
       const validIdRegex = /^[0-9a-zA-Z_-]{1,64}$/;
       const isArray = Array.isArray(customSlate.eventIds);
-      const eventIds = isArray ? customSlate.eventIds.map((id: any) => String(id).trim()) : [];
+      // Reject non-string event IDs before any coercion (god ruling: reject, not coerce)
+      const hasNonString = isArray && customSlate.eventIds.some((id: any) => typeof id !== 'string');
+      if (hasNonString) {
+        return {
+          games: [],
+          manifest,
+          customSlateEventIds: null,
+          error: 'MALFORMED_SLATE_CONFIG',
+          reasonsIfNotReady: ['MALFORMED_SLATE_CONFIG: Custom slate eventIds must all be strings; non-string values rejected.'],
+        };
+      }
+      const eventIds: string[] = isArray ? customSlate.eventIds.map((id: string) => id.trim()) : [];
       const allValid =
         isArray &&
         eventIds.length > 0 &&
@@ -239,14 +251,14 @@ export async function resolvePoolScopedGamesForWrapUp(
     };
   }
 
-  // 4. Legacy fallback when no manifest exists (e.g. synthetic test mocks)
-  const taggedGames = allGames.filter((g: any) => g.week === weekNumber && (g.season === season || g.season === null));
-  const fallbackGames = taggedGames.length > 0 ? taggedGames : allGames;
-
+  // 4. No manifest and no custom slate: fail closed — absent accepted manifest cannot
+  //    establish authoritative game identity for settlement (HAG58-SLATE-2026-11-03-01).
   return {
-    games: fallbackGames,
+    games: [],
     manifest: null,
     customSlateEventIds: null,
+    error: 'AUTHORITATIVE_SLATE_UNAVAILABLE',
+    reasonsIfNotReady: ['AUTHORITATIVE_SLATE_UNAVAILABLE: No accepted slate manifest exists for this week.'],
   };
 }
 
@@ -516,30 +528,48 @@ export async function executeWeeklyWrapUpForPool(
     }
 
     // -------------------------------------------------------------------------
-    // Step 0: Lock Order & Concurrency Gate (Ruling § Lock order & HAG58-SLATE-2026-11-03-01)
-    // 0a: Weekly manifest transaction advisory lock FIRST
-    // 0b: Shared Pool Gate: Lock pool row with FOR UPDATE before authoritative reads or writes
+    // Step 0: Lock Order & Concurrency Gate (HAG58-SLATE-2026-11-03-01)
+    // Both locks are REQUIRED. Missing capability or any error → fail closed with
+    // SHARED_POOL_GATE_UNAVAILABLE; zero settlement writes may occur.
+    // 0a: Weekly manifest advisory lock FIRST
+    // 0b: Shared Pool Gate: FOR UPDATE; must return exactly one ACTIVE pool row
     // -------------------------------------------------------------------------
     const weeklyLockKey = `weekly_slate_${season}_${seasonType}_${weekNumber}`;
-    try {
-      if (typeof tx.$queryRawUnsafe === 'function') {
-        await tx.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1));`, weeklyLockKey);
-      } else if (typeof tx.$executeRawUnsafe === 'function') {
-        await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1));`, weeklyLockKey);
-      }
-    } catch {
-      // In restricted test environments, proceed to pool row gate
+    if (typeof tx.$queryRawUnsafe !== 'function') {
+      return {
+        applied: false,
+        reason: 'SHARED_POOL_GATE_UNAVAILABLE',
+        poolId,
+        season,
+        weekNumber,
+      };
     }
 
-    try {
-      if (typeof tx.$queryRawUnsafe === 'function') {
-        await tx.$queryRawUnsafe(
-          `SELECT id, status FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
-          poolId
-        );
-      }
-    } catch {
-      // In restricted test environments, proceed
+    // 0a: Advisory lock — must succeed; any error propagates (rolls back transaction)
+    await tx.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1));`, weeklyLockKey);
+
+    // 0b: Pool row lock — must return exactly one ACTIVE row
+    const lockedPoolRows: any[] = await tx.$queryRawUnsafe(
+      `SELECT id, status FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
+      poolId
+    );
+    if (!lockedPoolRows || lockedPoolRows.length === 0) {
+      return {
+        applied: false,
+        reason: 'SHARED_POOL_GATE_UNAVAILABLE',
+        poolId,
+        season,
+        weekNumber,
+      };
+    }
+    if (lockedPoolRows[0].status !== 'ACTIVE') {
+      return {
+        applied: false,
+        reason: 'SHARED_POOL_GATE_UNAVAILABLE',
+        poolId,
+        season,
+        weekNumber,
+      };
     }
 
     // Check preview revision freshness if provided (Fail-Closed: Decision #55)
@@ -737,35 +767,9 @@ export async function executeWeeklyWrapUpForPool(
       };
     }
 
-    let games = resolvedSlate.games;
+    const games = resolvedSlate.games;
     const manifest = resolvedSlate.manifest;
 
-    // Fallback when no manifest and no custom slate: explicit requested-week picks & tagged games
-    if (!manifest && resolvedSlate.customSlateEventIds === null) {
-      const allGames = await tx.game.findMany();
-      const taggedGames = allGames.filter((g: any) => g.week === weekNumber && (g.season === season || g.season === null));
-      const poolPickGameIds: any[] = ((await tx.$queryRawUnsafe(
-        `SELECT DISTINCT game_id FROM public.picks WHERE pool_id = $1::uuid AND week = $2::int;`,
-        poolId,
-        weekNumber
-      ).catch(() => [])) as any[]) || [];
-      const pickGameSet = new Set(poolPickGameIds.map((p: any) => p.game_id).filter(Boolean));
-      const pickedGames = allGames.filter((g: any) =>
-        (pickGameSet.has(g.id) || pickGameSet.has(g.externalGameId)) &&
-        (g.week == null || g.week === weekNumber) &&
-        (g.season == null || g.season === season));
-      const resolvedIds = new Set(pickedGames.flatMap((g: any) => [g.id, g.externalGameId]));
-      if ([...pickGameSet].some((id) => !resolvedIds.has(id)) ||
-          (taggedGames.length === 0 && pickedGames.length === 0)) {
-        if (resolvedSlate.games.length === 0) {
-          await cleanupIncompleteClaim();
-          return { applied: false, reason: 'AUTHORITATIVE_SLATE_UNAVAILABLE', poolId, season, weekNumber };
-        }
-        games = resolvedSlate.games;
-      } else {
-        games = [...new Map([...taggedGames, ...pickedGames].map((g: any) => [g.id, g])).values()];
-      }
-    }
     const nonExcludedGames = games.filter(
       (game: any) => !isGameInExcludedWindow(game.kickoffTime, excludedWindows)
     );

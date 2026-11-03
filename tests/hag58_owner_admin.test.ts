@@ -3678,6 +3678,12 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         }),
         $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string, ...params: any[]) => {
           executedSqlQueries.push(sql);
+          if (sql.includes('pg_advisory_xact_lock')) {
+            return [{ pg_advisory_xact_lock: null }];
+          }
+          if (sql.includes('FOR UPDATE')) {
+            return [{ id: POOL_ID, status: 'ACTIVE' }];
+          }
           if (sql.includes('to_regclass')) {
             return [{ to_regclass: 'public.weekly_wrapups' }];
           }
@@ -3809,6 +3815,201 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       });
       expect(execMalformed.applied).toBe(false);
       expect(execMalformed.reason).toBe('MALFORMED_SLATE_CONFIG');
+    });
+
+    // -------------------------------------------------------------------------
+    // HAG58-SLATE-2026-11-03-01: Settlement lock fail-closed proofs
+    // -------------------------------------------------------------------------
+
+    it('proves executeWeeklyWrapUpForPool fails closed with SHARED_POOL_GATE_UNAVAILABLE when $queryRawUnsafe is absent', async () => {
+      // Arrange: mock db where $queryRawUnsafe is undefined — missing capability
+      const mockDbNoQuery: any = {
+        $transaction: async (cb: any) => cb(mockDbNoQuery),
+        $queryRaw: vi.fn().mockResolvedValue([]),
+        // $queryRawUnsafe intentionally absent
+        pool: { findUnique: vi.fn().mockResolvedValue(null) },
+        acceptedSlateManifest: { findFirst: vi.fn().mockResolvedValue(null) },
+        game: { findMany: vi.fn().mockResolvedValue([]) },
+        weeklySubmission: { findMany: vi.fn().mockResolvedValue([]) },
+        outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        inboxMessage: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      };
+
+      const result = await executeWeeklyWrapUpForPool('pool-lock-test', 7, {
+        season: 2026,
+        seasonType: 2,
+        prismaClient: mockDbNoQuery,
+      });
+
+      expect(result.applied).toBe(false);
+      expect(result.reason).toBe('SHARED_POOL_GATE_UNAVAILABLE');
+      // pool.findUnique is only called in Step 2 (after Step 0 gate); must NOT be called if gate fails
+      expect(mockDbNoQuery.pool.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('proves executeWeeklyWrapUpForPool fails closed with SHARED_POOL_GATE_UNAVAILABLE when advisory lock throws', async () => {
+      // Arrange: $queryRawUnsafe present but throws on pg_advisory_xact_lock
+      const mockDbLockThrows: any = {
+        $transaction: async (cb: any) => cb(mockDbLockThrows),
+        $queryRaw: vi.fn().mockResolvedValue([]),
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('pg_advisory_xact_lock')) {
+            throw new Error('simulated advisory lock failure');
+          }
+          return [];
+        }),
+        pool: { findUnique: vi.fn().mockResolvedValue(null) },
+        acceptedSlateManifest: { findFirst: vi.fn().mockResolvedValue(null) },
+        game: { findMany: vi.fn().mockResolvedValue([]) },
+        weeklySubmission: { findMany: vi.fn().mockResolvedValue([]) },
+        outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        inboxMessage: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      };
+
+      // Advisory lock throws → transaction propagates the error (rollback, zero writes)
+      await expect(
+        executeWeeklyWrapUpForPool('pool-lock-test', 7, {
+          season: 2026,
+          seasonType: 2,
+          prismaClient: mockDbLockThrows,
+        })
+      ).rejects.toThrow('simulated advisory lock failure');
+
+      // No settlement writes: pool.findUnique (Step 2) must never be called
+      expect(mockDbLockThrows.pool.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('proves executeWeeklyWrapUpForPool fails closed with SHARED_POOL_GATE_UNAVAILABLE when pool FOR UPDATE returns empty rows', async () => {
+      // Arrange: advisory lock succeeds, pool FOR UPDATE returns []
+      const mockDbEmptyPool: any = {
+        $transaction: async (cb: any) => cb(mockDbEmptyPool),
+        $queryRaw: vi.fn().mockResolvedValue([]),
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('pg_advisory_xact_lock')) {
+            return [{ pg_advisory_xact_lock: null }];
+          }
+          if (sql.includes('FOR UPDATE')) {
+            return []; // Pool not found — deny
+          }
+          return [];
+        }),
+        pool: { findUnique: vi.fn().mockResolvedValue(null) },
+        acceptedSlateManifest: { findFirst: vi.fn().mockResolvedValue(null) },
+        game: { findMany: vi.fn().mockResolvedValue([]) },
+        weeklySubmission: { findMany: vi.fn().mockResolvedValue([]) },
+        outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        inboxMessage: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      };
+
+      const result = await executeWeeklyWrapUpForPool('pool-lock-test', 7, {
+        season: 2026,
+        seasonType: 2,
+        prismaClient: mockDbEmptyPool,
+      });
+
+      expect(result.applied).toBe(false);
+      expect(result.reason).toBe('SHARED_POOL_GATE_UNAVAILABLE');
+      // No settlement writes: pool.findUnique (Step 2) must never be called
+      expect(mockDbEmptyPool.pool.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('proves executeWeeklyWrapUpForPool fails closed with SHARED_POOL_GATE_UNAVAILABLE when pool FOR UPDATE returns non-ACTIVE row', async () => {
+      // Arrange: pool row exists but status is not ACTIVE (e.g. ARCHIVED)
+      const mockDbInactivePool: any = {
+        $transaction: async (cb: any) => cb(mockDbInactivePool),
+        $queryRaw: vi.fn().mockResolvedValue([]),
+        $queryRawUnsafe: vi.fn().mockImplementation(async (sql: string) => {
+          if (sql.includes('pg_advisory_xact_lock')) {
+            return [{ pg_advisory_xact_lock: null }];
+          }
+          if (sql.includes('FOR UPDATE')) {
+            return [{ id: 'pool-lock-test', status: 'ARCHIVED' }]; // Non-ACTIVE
+          }
+          return [];
+        }),
+        pool: { findUnique: vi.fn().mockResolvedValue(null) },
+        acceptedSlateManifest: { findFirst: vi.fn().mockResolvedValue(null) },
+        game: { findMany: vi.fn().mockResolvedValue([]) },
+        weeklySubmission: { findMany: vi.fn().mockResolvedValue([]) },
+        outboxEvent: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        inboxMessage: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      };
+
+      const result = await executeWeeklyWrapUpForPool('pool-lock-test', 7, {
+        season: 2026,
+        seasonType: 2,
+        prismaClient: mockDbInactivePool,
+      });
+
+      expect(result.applied).toBe(false);
+      expect(result.reason).toBe('SHARED_POOL_GATE_UNAVAILABLE');
+      expect(mockDbInactivePool.pool.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('proves resolvePoolScopedGamesForWrapUp fails closed with AUTHORITATIVE_SLATE_UNAVAILABLE when no manifest exists', async () => {
+      // Arrange: no acceptedSlateManifest in db
+      const mockDbNoManifest: any = {
+        acceptedSlateManifest: {
+          findFirst: vi.fn().mockResolvedValue(null),
+        },
+        game: { findMany: vi.fn().mockResolvedValue([]) },
+      };
+
+      const result = await resolvePoolScopedGamesForWrapUp(
+        mockDbNoManifest,
+        'some-pool-id',
+        2026,
+        2,
+        9,
+        {} // no custom slate configured
+      );
+
+      expect(result.error).toBe('AUTHORITATIVE_SLATE_UNAVAILABLE');
+      expect(result.games).toHaveLength(0);
+      expect(result.reasonsIfNotReady?.some((r) => r.includes('AUTHORITATIVE_SLATE_UNAVAILABLE'))).toBe(true);
+    });
+
+    it('proves resolvePoolScopedGamesForWrapUp rejects non-string event IDs with MALFORMED_SLATE_CONFIG', async () => {
+      // Arrange: settings with numeric eventIds (numbers, not strings)
+      const mockDbNonString: any = {
+        acceptedSlateManifest: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: 'm-1',
+            season: 2026,
+            seasonType: 2,
+            weekNumber: 9,
+            revision: 1,
+            eventIds: ['401873040', '401873041'],
+            observationTime: new Date().toISOString(),
+          }),
+        },
+        game: { findMany: vi.fn().mockResolvedValue([]) },
+      };
+
+      const settingsWithNumericIds = {
+        owner_admin_v1: {
+          slates: {
+            2026: {
+              2: {
+                9: { eventIds: [401873040, 401873041] }, // numbers, not strings
+              },
+            },
+          },
+        },
+      };
+
+      const result = await resolvePoolScopedGamesForWrapUp(
+        mockDbNonString,
+        'some-pool-id',
+        2026,
+        2,
+        9,
+        settingsWithNumericIds
+      );
+
+      expect(result.error).toBe('MALFORMED_SLATE_CONFIG');
+      expect(result.games).toHaveLength(0);
+      expect(result.reasonsIfNotReady?.some((r) => r.includes('MALFORMED_SLATE_CONFIG'))).toBe(true);
     });
   });
 
