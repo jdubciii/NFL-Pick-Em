@@ -141,14 +141,37 @@ export async function getGamesForWeek(
   }
 
   // Source 2: Authoritative weekly slate manifest (P41-AUTHORITATIVE-SLATE-ARCHITECTURE)
-  // Finding 5: Manifest resolves strictly via exact event IDs; unfiltered findFirst() removed!
+  // Scored-slate resolver integration: Scoped to pool custom slate when configured
   try {
     const manifest = await authoritativeSlateService.getAcceptedSlateManifest(dbClient, season, 2, weekNumber);
     if (manifest && Array.isArray(manifest.eventIds) && manifest.eventIds.length > 0) {
       if (typeof dbClient.game?.findMany === 'function') {
+        let targetEventIds: string[] = manifest.eventIds;
+
+        if (poolId && typeof dbClient.pool?.findUnique === 'function') {
+          try {
+            const poolRecord = await dbClient.pool.findUnique({
+              where: { id: poolId },
+              select: { settings: true },
+            });
+            const customSlate = poolRecord?.settings?.owner_admin_v1?.slates?.[season]?.[2]?.[weekNumber];
+            if (customSlate && Array.isArray(customSlate.eventIds) && customSlate.eventIds.length > 0) {
+              const manifestEventSet = new Set(manifest.eventIds.map(String));
+              const allInManifest = customSlate.eventIds.every((eid: any) => manifestEventSet.has(String(eid)));
+              if (allInManifest) {
+                targetEventIds = customSlate.eventIds.map(String);
+              } else {
+                return []; // Fail closed if custom slate references unmanifested games
+              }
+            }
+          } catch {
+            // Keep manifest event IDs if pool settings lookup fails
+          }
+        }
+
         const games = await dbClient.game.findMany({
           where: {
-            externalGameId: { in: manifest.eventIds },
+            externalGameId: { in: targetEventIds },
           },
           orderBy: { kickoffTime: 'asc' },
         });

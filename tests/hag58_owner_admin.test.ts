@@ -25,6 +25,10 @@ import {
   updateMatchTeamWithPickSync,
   computeSimulationStandings,
 } from '../client/src/owner/OwnerAdminApp';
+import * as authoritativeSlateService from '../src/services/authoritativeSlateService';
+import { getGamesForWeek } from '../src/routes/poolTiebreakerRoutes';
+import { selectAcceptedScoredSlateGames } from '../client/src/services/weeklyStandingsFinalityService';
+import { getScopedPoolSlateConfig } from '../client/src/services/poolScoredSlateConfig';
 
 describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () => {
   const JACK_UUID = 'e3242a19-1131-4fc5-9886-7730f10ef69b';
@@ -144,6 +148,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
           status: 'ACTIVE',
         })),
       },
+      _gameStore: [] as any[],
       weeklySubmission: {
         count: vi.fn(async ({ where }: any) => {
           return committedDbState.weeklySubmissions.filter((s: any) =>
@@ -154,10 +159,22 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         }),
       },
       pick: {
-        count: vi.fn(async () => committedDbState.picks.length),
+        count: vi.fn(async (args?: any) => {
+          if (args?.where?.game?.externalGameId?.in) {
+            const inSet = new Set(args.where.game.externalGameId.in);
+            return committedDbState.picks.filter((p: any) => inSet.has(p.gameId) || inSet.has(p.externalGameId)).length;
+          }
+          return committedDbState.picks.length;
+        }),
       },
       game: {
-        findMany: vi.fn().mockResolvedValue([]),
+        findMany: vi.fn(async (args?: any) => {
+          if (args?.where?.externalGameId?.in) {
+            const inSet = new Set(args.where.externalGameId.in);
+            return (mockPrisma._gameStore || []).filter((g: any) => inSet.has(g.externalGameId));
+          }
+          return mockPrisma._gameStore || [];
+        }),
       },
       auditLog: {
         create: vi.fn(async ({ data }: any) => {
@@ -166,7 +183,12 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
           return entry;
         }),
       },
-      $queryRawUnsafe: vi.fn().mockResolvedValue([{ id: POOL_ID }]),
+      $queryRawUnsafe: vi.fn(async (query: string, ...args: any[]) => {
+        if (query.includes('FROM public.picks')) {
+          return [{ count: committedDbState.picks.length }];
+        }
+        return [{ id: POOL_ID }];
+      }),
       $transaction: vi.fn(async (cb: (tx: any) => any) => {
         // Create transactional sandbox clone
         const txState = {
@@ -195,6 +217,9 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
             findFirst: vi.fn(async ({ where }: any) => {
               return mockPrisma.poolMembership.findFirst({ where });
             }),
+            findUnique: vi.fn(async ({ where }: any) => {
+              return mockPrisma.poolMembership.findUnique({ where });
+            }),
           },
           auditLog: {
             create: vi.fn(async ({ data }: any) => {
@@ -209,7 +234,10 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
             }),
           },
           pick: {
-            count: vi.fn(async () => mockPrisma.pick.count()),
+            count: vi.fn(async (args?: any) => mockPrisma.pick.count(args)),
+          },
+          game: {
+            findMany: vi.fn(async (args?: any) => mockPrisma.game.findMany(args)),
           },
         };
 
@@ -533,7 +561,39 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(mockPrisma.pool.update).not.toHaveBeenCalled();
     });
 
-    it('enforces disabled PUT /slate endpoint: returns HTTP 501 SLATE_MUTATION_DISABLED', async () => {
+    it('PUT /slate rejects historical or current week: 422 HISTORICAL_SLATE_PROTECTED', async () => {
+      mockPrisma.pool.findUnique.mockImplementation(async ({ where }: any) => {
+        return committedDbState.pools[where.id] ? { ...committedDbState.pools[where.id] } : null;
+      });
+      const currentRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 8, // Current/historical week
+          eventIds: ['401873023', '401873024'],
+          expectedRevision: currentRev,
+          reason: 'Cannot modify historical Week 8',
+        }),
+      });
+      const data: any = await res.json();
+
+      expect(res.status).toBe(422);
+      expect(data.code).toBe('HISTORICAL_SLATE_PROTECTED');
+      expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+    });
+
+    it('PUT /slate rejects stale expectedRevision: 409 STALE_REVISION', async () => {
+      mockPrisma.pool.findUnique.mockImplementation(async ({ where }: any) => {
+        return committedDbState.pools[where.id] ? { ...committedDbState.pools[where.id] } : null;
+      });
+
       const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
         method: 'PUT',
         headers: {
@@ -545,15 +605,405 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
           seasonType: 2,
           weekNumber: 9,
           eventIds: ['401873040', '401873041'],
-          expectedRevision: 'any-revision',
-          reason: 'Custom slate proposal',
+          expectedRevision: 'stale-wrong-revision-hash',
+          reason: 'Update future slate',
         }),
       });
       const data: any = await res.json();
 
-      expect(res.status).toBe(501);
-      expect(data.code).toBe('SLATE_MUTATION_DISABLED');
+      expect(res.status).toBe(409);
+      expect(data.code).toBe('STALE_REVISION');
       expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+    });
+
+    it('PUT /slate rejects missing accepted manifest: 422 UNACCEPTED_MANIFEST', async () => {
+      mockPrisma.pool.findUnique.mockImplementation(async ({ where }: any) => {
+        return committedDbState.pools[where.id] ? { ...committedDbState.pools[where.id] } : null;
+      });
+      const currentRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValueOnce(null);
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040', '401873041'],
+          expectedRevision: currentRev,
+          reason: 'Attempt unaccepted manifest',
+        }),
+      });
+      const data: any = await res.json();
+
+      expect(res.status).toBe(422);
+      expect(data.code).toBe('UNACCEPTED_MANIFEST');
+      expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+    });
+
+    it('PUT /slate rejects event IDs outside accepted manifest: 422 INVALID_SLATE_SELECTION', async () => {
+      mockPrisma.pool.findUnique.mockImplementation(async ({ where }: any) => {
+        return committedDbState.pools[where.id] ? { ...committedDbState.pools[where.id] } : null;
+      });
+      const currentRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValueOnce({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: ['401873040', '401873041', '401873042'],
+        acceptedAt: '2026-11-03T12:00:00Z',
+        acceptedBy: 'commish',
+        manifestFingerprint: 'manifest-fp-w9',
+        observationTime: '2026-11-03T12:00:00Z',
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040', '999999999-unmanifested'],
+          expectedRevision: currentRev,
+          reason: 'Include rogue game',
+        }),
+      });
+      const data: any = await res.json();
+
+      expect(res.status).toBe(422);
+      expect(data.code).toBe('INVALID_SLATE_SELECTION');
+      expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+    });
+
+    it('PUT /slate rejects if earliest effective kickoff has passed: 422 KICKOFF_PASSED', async () => {
+      mockPrisma.pool.findUnique.mockImplementation(async ({ where }: any) => {
+        return committedDbState.pools[where.id] ? { ...committedDbState.pools[where.id] } : null;
+      });
+      const currentRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValueOnce({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: ['401873040', '401873041'],
+        acceptedAt: '2026-11-03T12:00:00Z',
+        acceptedBy: 'commish',
+        manifestFingerprint: 'manifest-fp-w9',
+        observationTime: '2026-11-03T12:00:00Z',
+      });
+
+      // Matchup already passed kickoff
+      mockPrisma._gameStore = [
+        {
+          id: 'g-past',
+          externalGameId: '401873040',
+          kickoffTime: new Date(Date.now() - 3600000), // 1 hour ago
+          status: 'SCHEDULED',
+        },
+        {
+          id: 'g-future',
+          externalGameId: '401873041',
+          kickoffTime: new Date(Date.now() + 86400000),
+          status: 'SCHEDULED',
+        },
+      ];
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040', '401873041'],
+          expectedRevision: currentRev,
+          reason: 'Past kickoff attempt',
+        }),
+      });
+      const data: any = await res.json();
+
+      expect(res.status).toBe(422);
+      expect(data.code).toBe('KICKOFF_PASSED');
+      expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+    });
+
+    it('PUT /slate rejects if weeklySubmission or prediction rows exist: 409 SLATE_FROZEN', async () => {
+      mockPrisma.pool.findUnique.mockImplementation(async ({ where }: any) => {
+        return committedDbState.pools[where.id] ? { ...committedDbState.pools[where.id] } : null;
+      });
+      const currentRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValueOnce({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: ['401873040', '401873041'],
+        acceptedAt: '2026-11-03T12:00:00Z',
+        acceptedBy: 'commish',
+        manifestFingerprint: 'manifest-fp-w9',
+        observationTime: '2026-11-03T12:00:00Z',
+      });
+
+      // Add a submission row for week 9
+      committedDbState.weeklySubmissions.push({
+        id: 'sub-w9',
+        poolId: POOL_ID,
+        weekNumber: 9,
+        userId: JACK_UUID,
+        tieBreakerPrediction: 45,
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040', '401873041'],
+          expectedRevision: currentRev,
+          reason: 'Frozen week attempt',
+        }),
+      });
+      const data: any = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(data.code).toBe('SLATE_FROZEN');
+      expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+    });
+
+    it('PUT /slate rejects if member pick rows exist (including null picks): 409 SLATE_FROZEN', async () => {
+      mockPrisma.pool.findUnique.mockImplementation(async ({ where }: any) => {
+        return committedDbState.pools[where.id] ? { ...committedDbState.pools[where.id] } : null;
+      });
+      const currentRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValueOnce({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: ['401873040', '401873041'],
+        acceptedAt: '2026-11-03T12:00:00Z',
+        acceptedBy: 'commish',
+        manifestFingerprint: 'manifest-fp-w9',
+        observationTime: '2026-11-03T12:00:00Z',
+      });
+
+      // Add a pick row for week 9 with null selected_team_id
+      committedDbState.picks.push({
+        id: 'pick-null-team',
+        poolId: POOL_ID,
+        week: 9,
+        gameId: '401873040',
+        externalGameId: '401873040',
+        userId: JACK_UUID,
+        selectedTeamId: null, // Null pick still freezes slate mutation
+      });
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040', '401873041'],
+          expectedRevision: currentRev,
+          reason: 'Frozen by null pick attempt',
+        }),
+      });
+      const data: any = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(data.code).toBe('SLATE_FROZEN');
+      expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+    });
+
+    it('PUT /slate successfully persists valid future slate with mandatory row lock, AuditLog, and new revision', async () => {
+      mockPrisma.pool.findUnique.mockImplementation(async ({ where }: any) => {
+        return committedDbState.pools[where.id] ? { ...committedDbState.pools[where.id] } : null;
+      });
+      const currentRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+
+      const manifestEventIds = [
+        '401873040', '401873041', '401873042', '401873043',
+        '401873044', '401873045', '401873046', '401873047',
+        '401873048', '401873049', '401873050', '401873051',
+        '401873052', '401873053',
+      ];
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValueOnce({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: manifestEventIds,
+        acceptedAt: '2026-11-03T12:00:00Z',
+        acceptedBy: 'commish',
+        manifestFingerprint: 'manifest-fp-w9',
+        observationTime: '2026-11-03T12:00:00Z',
+      });
+
+      // Selected subset of 3 future games
+      const selectedSubset = ['401873040', '401873041', '401873042'];
+      mockPrisma._gameStore = selectedSubset.map((eid, idx) => ({
+        id: `g-${eid}`,
+        externalGameId: eid,
+        homeTeamId: 'KC',
+        awayTeamId: 'LV',
+        kickoffTime: new Date(Date.now() + 86400000 * (idx + 1)), // Future kickoffs
+        status: 'SCHEDULED',
+      }));
+
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/slate`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jackAuthToken}`,
+        },
+        body: JSON.stringify({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: selectedSubset,
+          expectedRevision: currentRev,
+          reason: 'Commissioner approved 3-game custom slate for Week 9',
+        }),
+      });
+      const data: any = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(data.slate.weekNumber).toBe(9);
+      expect(data.slate.eventIds).toEqual(selectedSubset);
+      expect(typeof data.revision).toBe('string');
+      expect(data.revision).not.toBe(currentRev);
+
+      // Verify database commitment under row lock
+      const committedPool = committedDbState.pools[POOL_ID];
+      const committedSlate = committedPool.settings?.owner_admin_v1?.slates?.[2026]?.[2]?.[9];
+      expect(committedSlate).toBeDefined();
+      expect(committedSlate.eventIds).toEqual(selectedSubset);
+      expect(committedSlate.version).toBe(1);
+
+      // Verify mandatory AuditLog entry
+      const audit = committedDbState.auditLogs.find((a) => a.action === 'OWNER_ADMIN_UPDATE_SLATE');
+      expect(audit).toBeDefined();
+      expect(audit.actorId).toBe(JACK_UUID);
+      expect(audit.targetEntityId).toBe(POOL_ID);
+      expect(audit.newValue.eventIds).toEqual(selectedSubset);
+
+      // Verify in-transaction row lock was acquired
+      expect(mockPrisma.$queryRawUnsafe).toHaveBeenCalledWith(
+        'SELECT id, name, settings, status, admin_id FROM public.pools WHERE id = $1::uuid FOR UPDATE;',
+        POOL_ID
+      );
+    });
+
+    it('wires custom pool slate into server getGamesForWeek and client selectAcceptedScoredSlateGames', async () => {
+      mockPrisma.pool.findUnique.mockImplementation(async ({ where }: any) => {
+        return committedDbState.pools[where.id] ? { ...committedDbState.pools[where.id] } : null;
+      });
+
+      // 1. Server Resolver Verification:
+      // Configure pool settings with custom 3-game slate for Week 9
+      const selectedSubset = ['401873040', '401873041', '401873042'];
+      const manifestEventIds = [
+        ...selectedSubset,
+        '401873043', '401873044', '401873045',
+      ];
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: manifestEventIds,
+        acceptedAt: '2026-11-03T12:00:00Z',
+        acceptedBy: 'commish',
+        manifestFingerprint: 'manifest-fp-w9',
+        observationTime: '2026-11-03T12:00:00Z',
+      });
+
+      committedDbState.pools[POOL_ID].settings = {
+        owner_admin_v1: {
+          slates: {
+            2026: {
+              2: {
+                9: {
+                  eventIds: selectedSubset,
+                  version: 1,
+                  updatedAt: new Date().toISOString(),
+                },
+              },
+            },
+          },
+        },
+      };
+
+      mockPrisma._gameStore = manifestEventIds.map((eid) => ({
+        id: `g-${eid}`,
+        externalGameId: eid,
+        homeTeamId: 'KC',
+        awayTeamId: 'LV',
+        kickoffTime: new Date(Date.now() + 86400000),
+        status: 'SCHEDULED',
+      }));
+
+      // getGamesForWeek with poolId returns exactly the 3 scoped games
+      const serverGames = await getGamesForWeek(9, 2026, POOL_ID, mockPrisma);
+      expect(serverGames).toHaveLength(3);
+      expect(serverGames.map((g) => g.externalGameId)).toEqual(selectedSubset);
+
+      // 2. Client Resolver Verification:
+      const scope = {
+        poolId: POOL_ID,
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        poolSettings: committedDbState.pools[POOL_ID].settings,
+      };
+
+      const scopedConfig = getScopedPoolSlateConfig(scope);
+      expect(scopedConfig).not.toBeNull();
+      expect(scopedConfig!.scoredEventIds).toEqual(selectedSubset);
+
+      const clientGames: SlateGame[] = manifestEventIds.map((eid) => ({
+        id: `g-${eid}`,
+        externalGameId: eid,
+        homeTeam: 'KC',
+        awayTeam: 'LV',
+        kickoffTime: new Date(Date.now() + 86400000).toISOString(),
+        status: 'SCHEDULED',
+      }));
+
+      // selectAcceptedScoredSlateGames scopes down to exactly the 3 custom games
+      const scoredGames = selectAcceptedScoredSlateGames(clientGames, manifestEventIds, scope);
+      expect(scoredGames).not.toBeNull();
+      expect(scoredGames).toHaveLength(3);
+      expect(scoredGames!.map((g) => g.externalGameId)).toEqual(selectedSubset);
     });
   });
 

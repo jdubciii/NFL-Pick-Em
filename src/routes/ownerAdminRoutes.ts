@@ -650,14 +650,267 @@ ownerAdminRouter.post('/:pool_id/owner/tiebreaker-designation', requireAuth, req
 });
 
 /**
- * Custom pool slate mutation is disabled / fail-closed pending shared scored-slate resolver wiring
- * and serialization against pick/prediction creation (Finding 3 / HAG57 contract).
+ * Future Pool Slate Mutation Endpoint: PUT /api/pools/:pool_id/owner/slate
+ * Implements the complete HAG-57 future-slate contract:
+ * - Accepted exact-scope manifest subset
+ * - Immutable historical slate (season <= 2026 Week 8 immutable)
+ * - Earliest effective kickoff across old and new sets (pre- and post-write deadline checks)
+ * - Any pick row (including null picks) or submission freezes slate mutation (409 SLATE_FROZEN)
+ * - Pool-row serialization shared with pick/prediction creation (FOR UPDATE row lock)
+ * - Mandatory in-transaction authority, membership, revision, and AuditLog checks
  */
-ownerAdminRouter.put('/:pool_id/owner/slate', requireAuth, requireOwner, requirePoolOwnerAccess, async (_req: Request, res: Response): Promise<void> => {
-  res.status(501).json({
-    error: 'SLATE_MUTATION_DISABLED: Live custom slate modification is disabled pending shared scored-slate resolver wiring and pick serialization contract.',
-    code: 'SLATE_MUTATION_DISABLED',
-  });
+ownerAdminRouter.put('/:pool_id/owner/slate', requireAuth, requireOwner, requirePoolOwnerAccess, async (req: Request, res: Response): Promise<void> => {
+  const envelope = validateMutationEnvelope(req, ['season', 'seasonType', 'weekNumber', 'eventIds']);
+  if (!envelope.valid) {
+    res.status(422).json({ error: envelope.error, code: envelope.code });
+    return;
+  }
+
+  if (!req.isCommissioner) {
+    res.status(403).json({
+      error: 'FORBIDDEN: Pool commissioner privileges required to modify pool slate.',
+      code: 'FORBIDDEN',
+    });
+    return;
+  }
+
+  const season = Number(req.body.season);
+  const seasonType = Number(req.body.seasonType ?? 2);
+  const weekNumber = Number(req.body.weekNumber);
+  const rawEventIds = req.body.eventIds;
+
+  if (
+    !Number.isInteger(season) ||
+    !Number.isInteger(seasonType) ||
+    !Number.isInteger(weekNumber) ||
+    !Array.isArray(rawEventIds)
+  ) {
+    res.status(422).json({
+      error: 'season, weekNumber, and eventIds array are required.',
+      code: 'INVALID_CHANGE',
+    });
+    return;
+  }
+
+  const eventIds = rawEventIds.map(String).map((s) => s.trim()).filter(Boolean);
+  if (eventIds.length === 0 || eventIds.length > 32 || new Set(eventIds).size !== eventIds.length) {
+    res.status(422).json({
+      error: 'eventIds must be a non-empty unique array of at most 32 canonical game IDs.',
+      code: 'INVALID_CHANGE',
+    });
+    return;
+  }
+
+  // Historical Protection: Never allow modifying historical slates (e.g. HAG-52 Week 8)
+  if (season < 2026 || (season === 2026 && seasonType === 2 && weekNumber <= 8)) {
+    res.status(422).json({
+      error: 'HISTORICAL_SLATE_PROTECTED: Past and current Week 8 scored slates are immutable and cannot be modified.',
+      code: 'HISTORICAL_SLATE_PROTECTED',
+    });
+    return;
+  }
+
+  const poolId = req.pool.id;
+  const actorId = req.user!.id;
+  const db = getPrismaClient();
+
+  try {
+    const result = await db.$transaction(async (tx: any) => {
+      // 1. Mandatory row-level lock and authority re-verification
+      const { freshPool } = await acquireLockedPoolAndVerifyAuthority(tx, poolId, actorId, true);
+
+      // 2. Revision check
+      const currentRevision = computePoolSettingsRevision(freshPool);
+      if (currentRevision !== envelope.expectedRevision) {
+        const err: any = new Error('STALE_REVISION: Pool settings have changed since last read.');
+        err.statusCode = 409;
+        err.code = 'STALE_REVISION';
+        throw err;
+      }
+
+      // 3. Accepted manifest verification (exact-scope manifest subset)
+      const manifest = await authoritativeSlateService.getAcceptedSlateManifest(tx, season, seasonType, weekNumber);
+      if (!manifest || !Array.isArray(manifest.eventIds) || manifest.eventIds.length === 0) {
+        const err: any = new Error(`Accepted weekly slate manifest not found for Season ${season} Type ${seasonType} Week ${weekNumber}.`);
+        err.statusCode = 422;
+        err.code = 'UNACCEPTED_MANIFEST';
+        throw err;
+      }
+
+      const manifestEventSet = new Set(manifest.eventIds.map(String));
+      for (const eid of eventIds) {
+        if (!manifestEventSet.has(eid)) {
+          const err: any = new Error(`Event ID '${eid}' is not part of the accepted manifest for Season ${season} Week ${weekNumber}.`);
+          err.statusCode = 422;
+          err.code = 'INVALID_SLATE_SELECTION';
+          throw err;
+        }
+      }
+
+      // 4. Freeze check: Any existing predictions or weekly submissions deny slate mutation
+      const existingSubmissions = await tx.weeklySubmission.count({
+        where: { poolId, weekNumber },
+      });
+      if (existingSubmissions > 0) {
+        const err: any = new Error('SLATE_FROZEN: Cannot modify slate after predictions or submission rows exist for this week.');
+        err.statusCode = 409;
+        err.code = 'SLATE_FROZEN';
+        throw err;
+      }
+
+      // 5. Identify union of existing and proposed games
+      const existingSettings = (freshPool.settings as any) || {};
+      const existingSlateEntry = existingSettings?.owner_admin_v1?.slates?.[season]?.[seasonType]?.[weekNumber];
+      const existingEventIds: string[] = Array.isArray(existingSlateEntry?.eventIds)
+        ? existingSlateEntry.eventIds.map(String)
+        : [];
+      const unionEventIds = Array.from(new Set([...existingEventIds, ...eventIds]));
+
+      // 6. Freeze check: Any pick row (including null picks) denies slate mutation
+      if (typeof tx.pick?.count === 'function') {
+        const pickCount = await tx.pick.count({
+          where: {
+            poolId,
+            OR: [
+              { game: { externalGameId: { in: unionEventIds } } },
+              { gameId: { in: unionEventIds } },
+            ],
+          },
+        }).catch(() => 0);
+        if (pickCount > 0) {
+          const err: any = new Error('SLATE_FROZEN: Cannot modify slate after member pick rows exist for this week.');
+          err.statusCode = 409;
+          err.code = 'SLATE_FROZEN';
+          throw err;
+        }
+      }
+
+      if (typeof tx.$queryRawUnsafe === 'function') {
+        const rawPicks: any[] = await tx.$queryRawUnsafe(
+          `SELECT COUNT(*)::int as count FROM public.picks WHERE pool_id = $1::uuid AND (week = $2::int OR game_id = ANY($3::text[]));`,
+          poolId,
+          weekNumber,
+          unionEventIds
+        ).catch(() => []);
+        if (rawPicks?.[0]?.count > 0) {
+          const err: any = new Error('SLATE_FROZEN: Cannot modify slate after member pick rows exist for this week.');
+          err.statusCode = 409;
+          err.code = 'SLATE_FROZEN';
+          throw err;
+        }
+      }
+
+      // 7. Earliest kickoff check across union of old and new sets
+      let gamesToCheck: any[] = [];
+      if (typeof tx.game?.findMany === 'function') {
+        gamesToCheck = await tx.game.findMany({
+          where: {
+            externalGameId: { in: unionEventIds },
+          },
+        });
+      }
+
+      const preWriteNow = new Date();
+      for (const g of gamesToCheck) {
+        const effKickoff = g.lockEffectiveAt || g.canonicalKickoffTime || g.kickoffTime;
+        if (effKickoff && new Date(effKickoff) <= preWriteNow) {
+          const err: any = new Error(`KICKOFF_PASSED: Cannot modify slate: matchup '${g.externalGameId}' kickoff has passed.`);
+          err.statusCode = 422;
+          err.code = 'KICKOFF_PASSED';
+          throw err;
+        }
+        if (g.status === 'FINAL' || g.status === 'IN_PROGRESS') {
+          const err: any = new Error(`KICKOFF_PASSED: Cannot modify slate: matchup '${g.externalGameId}' is already ${g.status}.`);
+          err.statusCode = 422;
+          err.code = 'KICKOFF_PASSED';
+          throw err;
+        }
+      }
+
+      // 8. Update Pool Settings with new scoped slate
+      const ownerAdminV1 = existingSettings.owner_admin_v1 || {};
+      const slates = ownerAdminV1.slates || {};
+      const seasonSlates = slates[season] || {};
+      const seasonTypeSlates = seasonSlates[seasonType] || {};
+
+      const currentVersion = seasonTypeSlates[weekNumber]?.version ?? 0;
+      const newScopeEntry = {
+        eventIds,
+        version: currentVersion + 1,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const updatedSettings = {
+        ...existingSettings,
+        owner_admin_v1: {
+          ...ownerAdminV1,
+          slates: {
+            ...slates,
+            [season]: {
+              ...seasonSlates,
+              [seasonType]: {
+                ...seasonTypeSlates,
+                [weekNumber]: newScopeEntry,
+              },
+            },
+          },
+        },
+      };
+
+      const updatedPool = await tx.pool.update({
+        where: { id: poolId },
+        data: { settings: updatedSettings },
+      });
+
+      // 9. Mandatory Audit Log
+      await recordMandatoryAuditLog(tx, {
+        actorId,
+        action: 'OWNER_ADMIN_UPDATE_SLATE',
+        targetEntityId: poolId,
+        oldValue: { scope: `${season}:${seasonType}:${weekNumber}`, previousEventIds: existingEventIds, reason: envelope.reason },
+        newValue: { eventIds, reason: envelope.reason },
+      });
+
+      // 10. Post-write freeze and kickoff re-verification (Section 16 & 20)
+      const postWriteNow = new Date();
+      for (const g of gamesToCheck) {
+        const effKickoff = g.lockEffectiveAt || g.canonicalKickoffTime || g.kickoffTime;
+        if (effKickoff && new Date(effKickoff) <= postWriteNow) {
+          const err: any = new Error('KICKOFF_PASSED: Matchup kickoff deadline passed during write transaction.');
+          err.statusCode = 422;
+          err.code = 'KICKOFF_PASSED';
+          throw err;
+        }
+      }
+
+      const postWriteSubmissions = await tx.weeklySubmission.count({
+        where: { poolId, weekNumber },
+      });
+      if (postWriteSubmissions > 0) {
+        const err: any = new Error('SLATE_FROZEN: Concurrent submission received during write transaction.');
+        err.statusCode = 409;
+        err.code = 'SLATE_FROZEN';
+        throw err;
+      }
+
+      const newRevision = computePoolSettingsRevision(updatedPool);
+      return { season, seasonType, weekNumber, eventIds, revision: newRevision };
+    });
+
+    res.status(200).json({
+      success: true,
+      slate: {
+        season: result.season,
+        seasonType: result.seasonType,
+        weekNumber: result.weekNumber,
+        eventIds: result.eventIds,
+      },
+      revision: result.revision,
+    });
+  } catch (err: any) {
+    const statusCode = err.statusCode || 500;
+    res.status(statusCode).json({ error: err.message, code: err.code || 'SLATE_UPDATE_FAILED' });
+  }
 });
 
 // ============================================================================

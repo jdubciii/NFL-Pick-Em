@@ -461,13 +461,46 @@ export const OwnerAdminApp: React.FC = () => {
     }
   };
 
-  // Handle future slate submission (Disabled per HAG-57 / HAG-59)
+  // Handle future slate submission
   const handleUpdateSlate = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSlateStatus({
-      success: false,
-      message: 'SLATE_MUTATION_DISABLED: Live custom slate modification is disabled pending shared scored-slate resolver wiring and pick serialization contract.',
-    });
+    if (!session?.access_token) return;
+    setSlateSubmitting(true);
+    setSlateStatus(null);
+    try {
+      const rawIds = slateEventIds.split(',').map((s) => s.trim()).filter(Boolean);
+      if (rawIds.length === 0) {
+        throw new Error('Please enter at least one canonical event ID.');
+      }
+      const res = await scopedExpressFetch(`/api/pools/${poolId}/owner/slate`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          season: slateSeason,
+          seasonType: 2,
+          weekNumber: slateWeek,
+          eventIds: rawIds,
+          reason: slateReason,
+          expectedRevision: overview?.currentRevision,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update pool slate.');
+      setSlateStatus({
+        success: true,
+        message: `Pool slate successfully updated for Season ${slateSeason} Week ${slateWeek} (${rawIds.length} games). Revision: ${data.revision.slice(0, 10)}...`,
+      });
+      setSlateReason('');
+      fetchOverview();
+      fetchGames();
+    } catch (err: any) {
+      setSlateStatus({ success: false, message: err.message });
+    } finally {
+      setSlateSubmitting(false);
+    }
   };
 
   // Simulation handlers (pure in-memory, zero persistence or transport writes)
@@ -920,13 +953,13 @@ export const OwnerAdminApp: React.FC = () => {
               )}
             </div>
 
-            {/* Future Slate Editor (Disabled pending shared scored-slate resolver wiring) */}
+            {/* Future Slate Editor */}
             <div className="bg-slate-900 border border-slate-800 p-5 rounded space-y-4">
               <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider">
                 Future Pool Slate Editor (PUT /api/pools/:pool_id/owner/slate)
               </h2>
-              <div className="bg-rose-950/40 border border-rose-800/80 p-3 rounded text-xs text-rose-300 font-mono">
-                🔒 <strong>Slate Modification Disabled (HAG-57 / HAG-59 Contract Guard):</strong> Live custom slate writing is disabled pending shared scored-slate resolver wiring and pick serialization contracts.
+              <div className="bg-sky-950/40 border border-sky-800/80 p-3 rounded text-xs text-sky-200 font-mono">
+                ℹ️ <strong>Future Slate Selection (HAG57 Contract):</strong> Configure custom game slates for future weeks. All selected events must be part of the accepted league manifest. Slate mutations freeze once any pick or prediction row is created.
               </div>
 
               {slateStatus && (
@@ -941,24 +974,26 @@ export const OwnerAdminApp: React.FC = () => {
                 </div>
               )}
 
-              <form onSubmit={handleUpdateSlate} className="space-y-3 max-w-xl opacity-60">
+              <form onSubmit={handleUpdateSlate} className="space-y-3 max-w-xl">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-mono text-slate-400 mb-1">Season</label>
                     <input
                       type="number"
                       value={slateSeason}
-                      disabled
-                      className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-400 font-mono"
+                      onChange={(e) => setSlateSeason(parseInt(e.target.value, 10) || 2026)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-rose-500"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-mono text-slate-400 mb-1">Week Number (Future)</label>
+                    <label className="block text-xs font-mono text-slate-400 mb-1">Week Number (Future &gt; 8)</label>
                     <input
                       type="number"
+                      min={9}
+                      max={18}
                       value={slateWeek}
-                      disabled
-                      className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-400 font-mono"
+                      onChange={(e) => setSlateWeek(parseInt(e.target.value, 10) || 9)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-rose-500"
                     />
                   </div>
                 </div>
@@ -968,10 +1003,10 @@ export const OwnerAdminApp: React.FC = () => {
                   </label>
                   <textarea
                     value={slateEventIds}
-                    disabled
-                    placeholder="Disabled"
-                    rows={2}
-                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs font-mono text-slate-400"
+                    onChange={(e) => setSlateEventIds(e.target.value)}
+                    placeholder="e.g. 401873040, 401873041, 401873042"
+                    rows={3}
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-rose-500"
                   />
                 </div>
                 <div>
@@ -979,17 +1014,17 @@ export const OwnerAdminApp: React.FC = () => {
                   <input
                     type="text"
                     value={slateReason}
-                    disabled
-                    placeholder="Disabled"
-                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-400 font-mono"
+                    onChange={(e) => setSlateReason(e.target.value)}
+                    placeholder="Enter audit reason for slate selection..."
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-rose-500"
                   />
                 </div>
                 <button
                   type="submit"
-                  disabled={true}
-                  className="px-4 py-2 bg-slate-800 text-slate-500 font-bold text-xs uppercase tracking-wider rounded cursor-not-allowed"
+                  disabled={slateSubmitting}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:bg-slate-800 disabled:text-slate-500 text-white font-bold text-xs uppercase tracking-wider rounded transition-colors"
                 >
-                  Slate Modification Disabled
+                  {slateSubmitting ? 'Updating Slate...' : 'Update Future Slate'}
                 </button>
               </form>
             </div>
