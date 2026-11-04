@@ -5,7 +5,7 @@ export interface ScoredMember {
   userId: string;
   score: number;
   tieBreakerPrediction: number | null;
-  tiebreakerDistance: number;
+  tiebreakerDistance: number | null;
 }
 
 export interface WeeklyWrapUpResult {
@@ -16,8 +16,8 @@ export interface WeeklyWrapUpResult {
   poolId?: string;
   weekNumber?: number;
   weekNo?: number;
-  topScorers?: Array<{ userId: string; score: number; tiebreakerDistance: number }>;
-  deadPlaceMembers?: Array<{ userId: string; score: number; tiebreakerDistance: number }>;
+  topScorers?: Array<{ userId: string; score: number; tiebreakerDistance?: number | null }>;
+  deadPlaceMembers?: Array<{ userId: string; score: number; tiebreakerDistance?: number | null }>;
   penaltyAssigned?: Prisma.Decimal | number;
   processedMembers?: number;
   targetGameId?: string | null;
@@ -69,6 +69,16 @@ export function resolveTiebreakerGame(games: any[], gameTargetSetting?: string):
  * 2. Mandatory pool row lock (SELECT ... FROM public.pools FOR UPDATE) and active status check.
  * 3. Unified pool-scoped canonical games resolver (resolvePoolScopedGamesForWrapUp).
  * 4. Atomic claim creation on public.weekly_wrapups with full rollback on cleanup failure.
+ *
+ * COMPATIBILITY CONTRACT & RETURN VALUE MAPPING:
+ * - tiebreakerDistance: Authoritatively derived from wrapUpEngine's ranked standings.
+ *   Represents the exact absolute distance between user prediction and target game score,
+ *   or `null` if no prediction was submitted or tiebreaker was not offered.
+ *   NEVER fabricated as 0 for missing or uncalculated predictions.
+ * - penaltyAssigned: Under Phase 41 / P41-TIEBREAKER-CONTRACT-2026-10-17-01, penalties follow
+ *   the ratified schedule (2.50 shots for Dead Place Monarchs, 0.00 if Safe Haven / entire field tied first).
+ *   Returns a Prisma.Decimal representing the assigned dead-place penalty when applied is true,
+ *   or undefined when applied is false.
  */
 export async function executeWeeklyWrapUp(
   poolId: string,
@@ -76,25 +86,44 @@ export async function executeWeeklyWrapUp(
   options: WrapUpOptions = {}
 ): Promise<WeeklyWrapUpResult> {
   const result: PoolWrapUpResult = await executeWeeklyWrapUpForPool(poolId, weekNumber, options);
+  const standingsMap = new Map((result.standings || []).map((s) => [s.userId, s]));
+
+  const mapMemberWithDistance = (m: any) => {
+    const standing = standingsMap.get(m.userId);
+    // Derive authoritative distance: standing.tiebreakerDistance if present, else m.tiebreakerDistance if returned on PoolWrapUpResult, else null.
+    // Strictly preserve null/undefined and actual nonzero values without fabricating 0.
+    const tiebreakerDistance = standing !== undefined
+      ? standing.tiebreakerDistance
+      : (m.tiebreakerDistance !== undefined ? m.tiebreakerDistance : null);
+    return {
+      userId: m.userId,
+      score: m.score,
+      tiebreakerDistance,
+    };
+  };
+
+  let penaltyAssigned: Prisma.Decimal | undefined = undefined;
+  if (result.applied) {
+    if (result.penaltyAssigned !== undefined) {
+      penaltyAssigned = result.penaltyAssigned instanceof Prisma.Decimal
+        ? result.penaltyAssigned
+        : new Prisma.Decimal(result.penaltyAssigned);
+    } else if (result.deadPlaceMembers && result.deadPlaceMembers.length > 0) {
+      penaltyAssigned = new Prisma.Decimal(result.deadPlaceMembers[0].shots);
+    } else {
+      penaltyAssigned = new Prisma.Decimal(0);
+    }
+  }
+
   return {
     applied: result.applied,
     reason: result.reason,
     poolId: result.poolId || poolId,
     weekNumber: result.weekNumber || weekNumber,
     weekNo: result.weekNumber || weekNumber,
-    topScorers: result.topScorers?.map((t: any) => ({
-      userId: t.userId,
-      score: t.score,
-      tiebreakerDistance: t.tiebreakerDistance ?? 0,
-    })),
-    deadPlaceMembers: result.deadPlaceMembers?.map((d: any) => ({
-      userId: d.userId,
-      score: d.score,
-      tiebreakerDistance: d.tiebreakerDistance ?? 0,
-    })),
-    penaltyAssigned: result.deadPlaceMembers?.[0]?.shots !== undefined
-      ? new Prisma.Decimal(result.deadPlaceMembers[0].shots)
-      : undefined,
+    topScorers: result.topScorers?.map(mapMemberWithDistance),
+    deadPlaceMembers: result.deadPlaceMembers?.map(mapMemberWithDistance),
+    penaltyAssigned,
     processedMembers: result.processedMembers,
     targetGameId: result.targetGameId ?? null,
     targetGameScore: result.targetGameScore ?? null,

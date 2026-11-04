@@ -56,8 +56,9 @@ export interface PoolWrapUpResult {
   pendingCount?: number;
   earliestPendingKickoff?: Date | string | null;
   standings?: RankedMemberResult[];
-  topScorers?: Array<{ userId: string; score: number; rank: number; shots: number }>;
-  deadPlaceMembers?: Array<{ userId: string; score: number; rank: number; shots: number }>;
+  topScorers?: Array<{ userId: string; score: number; rank: number; shots: number; tiebreakerDistance?: number | null }>;
+  deadPlaceMembers?: Array<{ userId: string; score: number; rank: number; shots: number; tiebreakerDistance?: number | null }>;
+  penaltyAssigned?: Prisma.Decimal | number;
   processedMembers?: number;
   notificationsEnqueued?: number;
   targetGameId?: string | null;
@@ -1096,13 +1097,18 @@ export async function executeWeeklyWrapUpForPool(
         score: t.score,
         rank: t.rank,
         shots: t.shots,
+        tiebreakerDistance: t.tiebreakerDistance,
       })),
       deadPlaceMembers: deadPlaceMembers.map((d) => ({
         userId: d.userId,
         score: d.score,
         rank: d.rank,
         shots: d.shots,
+        tiebreakerDistance: d.tiebreakerDistance,
       })),
+      penaltyAssigned: deadPlaceMembers.length > 0
+        ? new Prisma.Decimal(deadPlaceMembers[0].shots)
+        : new Prisma.Decimal(0),
       processedMembers: pool.memberships.length,
       notificationsEnqueued,
       targetGameId: designatedGameId,

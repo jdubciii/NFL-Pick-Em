@@ -37,7 +37,7 @@ import { deriveSundaySlatePhase } from '../client/src/services/radarSundaySlateP
 import { previewWeeklyWrapUpForPool, executeWeeklyWrapUpForPool, resolvePoolScopedGamesForWrapUp } from '../src/services/wrapUpEngine';
 import { sealSeason } from '../src/services/seasonSeal';
 import { executeWeeklyWrapUp } from '../src/services/weeklyWrapUp';
-import { GameStatus } from '@prisma/client';
+import { GameStatus, Prisma } from '@prisma/client';
 
 describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () => {
   const JACK_UUID = 'e3242a19-1131-4fc5-9886-7730f10ef69b';
@@ -4475,6 +4475,166 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(result.applied).toBe(false);
       expect(result.reason).toBe('SHARED_POOL_GATE_UNAVAILABLE');
       expect(mockDbNoQuery.pool.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('proves legacy weeklyWrapUp adapter accurately preserves authoritative nonzero tiebreaker distances, null predictions, and penaltyAssigned without fabricating zero', async () => {
+      const userWinner1 = '22222222-2222-2222-2222-222222222201';
+      const userWinner2 = '22222222-2222-2222-2222-222222222202';
+      const userDeadPlace = '22222222-2222-2222-2222-222222222210';
+      const intermediateUsers = Array.from({ length: 7 }, (_, i) => `22222222-2222-2222-2222-22222222220${i + 3}`);
+
+      // Manifest includes g1 and g2
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 7,
+        eventIds: ['401872999', '401873000'],
+        manifestFingerprint: 'manifest-fp-wrapup-adapter',
+        publishedAt: '2026-10-18T12:00:00Z',
+      } as any);
+
+      const games = [
+        {
+          id: 'g1',
+          externalGameId: '401872999',
+          homeTeamId: 'DET',
+          awayTeamId: 'CHI',
+          kickoffTime: new Date(Date.now() - 7200000),
+          status: GameStatus.FINAL,
+          homeScore: 28,
+          awayScore: 20,
+        },
+        {
+          id: 'g2',
+          externalGameId: '401873000',
+          homeTeamId: 'GB',
+          awayTeamId: 'MIN',
+          kickoffTime: new Date(Date.now() - 3600000),
+          status: GameStatus.FINAL,
+          homeScore: 24,
+          awayScore: 10, // Total score = 34
+        },
+      ];
+
+      const mockDb: any = {
+        $transaction: async (cb: any) => cb(mockDb),
+        $queryRaw: vi.fn().mockResolvedValue([{ to_regclass: 'public.weekly_wrapups' }]),
+        $queryRawUnsafe: vi.fn(async (sql: string) => {
+          if (sql.includes('SELECT to_regclass')) {
+            return [{ to_regclass: 'public.weekly_wrapups' }];
+          }
+          if (sql.includes('SELECT id, status FROM public.pools WHERE id = $1::uuid FOR UPDATE')) {
+            return [{ id: POOL_ID, status: 'ACTIVE' }];
+          }
+          if (sql.includes('SELECT pool_id, week_number FROM public.weekly_wrapups')) {
+            return [];
+          }
+          if (sql.includes('INSERT INTO public.weekly_wrapups')) {
+            return [{ pool_id: POOL_ID, week_number: 7 }];
+          }
+          if (sql.includes('SELECT p.user_id, p.game_id')) {
+            // Member 1 & 2 get 2 points (tied for 1st)
+            // Intermediate members get 1 point
+            // Dead place gets 0 points
+            return [
+              { user_id: userWinner1, game_id: '401872999', selected_team: 'DET', status: GameStatus.FINAL, home_score: 28, away_score: 20, home_team_id: 'DET', away_team_id: 'CHI' },
+              { user_id: userWinner1, game_id: '401873000', selected_team: 'GB', status: GameStatus.FINAL, home_score: 24, away_score: 10, home_team_id: 'GB', away_team_id: 'MIN' },
+              { user_id: userWinner2, game_id: '401872999', selected_team: 'DET', status: GameStatus.FINAL, home_score: 28, away_score: 20, home_team_id: 'DET', away_team_id: 'CHI' },
+              { user_id: userWinner2, game_id: '401873000', selected_team: 'GB', status: GameStatus.FINAL, home_score: 24, away_score: 10, home_team_id: 'GB', away_team_id: 'MIN' },
+              ...intermediateUsers.map((uid) => ({
+                user_id: uid,
+                game_id: '401872999',
+                selected_team: 'DET',
+                status: GameStatus.FINAL,
+                home_score: 28,
+                away_score: 20,
+                home_team_id: 'DET',
+                away_team_id: 'CHI',
+              })),
+              { user_id: userDeadPlace, game_id: '401872999', selected_team: 'CHI', status: GameStatus.FINAL, home_score: 28, away_score: 20, home_team_id: 'DET', away_team_id: 'CHI' },
+            ];
+          }
+          if (sql.includes('UPDATE public.weekly_wrapups')) {
+            return [];
+          }
+          return [];
+        }),
+        pool: {
+          findUnique: vi.fn().mockResolvedValue({
+            id: POOL_ID,
+            name: 'WrapUp Adapter Pool',
+            adminId: JACK_UUID,
+            status: 'ACTIVE',
+            memberships: [
+              { userId: userWinner1, status: 'ACTIVE' },
+              { userId: userWinner2, status: 'ACTIVE' },
+              ...intermediateUsers.map((uid) => ({ userId: uid, status: 'ACTIVE' })),
+              { userId: userDeadPlace, status: 'ACTIVE' },
+            ],
+            settings: { season: 2026 },
+          }),
+          update: vi.fn().mockResolvedValue({ id: POOL_ID }),
+        },
+        game: {
+          findMany: vi.fn().mockResolvedValue(games),
+        },
+        weeklySubmission: {
+          findMany: vi.fn().mockResolvedValue([
+            // Target game total is 34.
+            // Winner 1 predicted 42 -> distance |42 - 34| = 8 (NONZERO).
+            { userId: userWinner1, tieBreakerPrediction: 42 },
+            // Winner 2 predicted 42 -> distance |42 - 34| = 8 (NONZERO, shares rank 1).
+            { userId: userWinner2, tieBreakerPrediction: 42 },
+            // Dead place has NO prediction -> tieBreakerPrediction is null (MISSING).
+            { userId: userDeadPlace, tieBreakerPrediction: null },
+          ]),
+        },
+        penaltyLedger: {
+          create: vi.fn().mockResolvedValue({ id: 'pen-1' }),
+          aggregate: vi.fn().mockResolvedValue({ _sum: { delta: 1 } }),
+        },
+        poolMemberStat: {
+          upsert: vi.fn().mockResolvedValue({}),
+        },
+        outboxEvent: {
+          createMany: vi.fn().mockResolvedValue({ count: 1 }),
+        },
+        inboxMessage: {
+          createMany: vi.fn().mockResolvedValue({ count: 1 }),
+        },
+      };
+
+      const result = await executeWeeklyWrapUp(POOL_ID, 7, {
+        season: 2026,
+        seasonType: 2,
+        prismaClient: mockDb,
+      });
+
+      expect(result.applied).toBe(true);
+      expect(result.poolId).toBe(POOL_ID);
+      expect(result.weekNumber).toBe(7);
+      expect(result.targetGameScore).toBe(48);
+
+      // Verify topScorers preserves authoritative NONZERO tiebreakerDistance (|42 - 48| = 6), NOT fabricated 0
+      expect(result.topScorers).toBeDefined();
+      expect(result.topScorers).toHaveLength(2);
+      expect(result.topScorers![0].score).toBe(2);
+      expect(result.topScorers![0].tiebreakerDistance).toBe(6);
+      expect(result.topScorers![1].score).toBe(2);
+      expect(result.topScorers![1].tiebreakerDistance).toBe(6);
+
+      // Verify deadPlaceMembers preserves MISSING tiebreakerDistance (null), NOT fabricated 0
+      expect(result.deadPlaceMembers).toBeDefined();
+      expect(result.deadPlaceMembers).toHaveLength(1);
+      expect(result.deadPlaceMembers![0].userId).toBe(userDeadPlace);
+      expect(result.deadPlaceMembers![0].score).toBe(0);
+      expect(result.deadPlaceMembers![0].tiebreakerDistance).toBeNull();
+
+      // Verify penaltyAssigned matches official dead place penalty (2.50 shots) as Prisma.Decimal
+      expect(result.penaltyAssigned).toBeDefined();
+      expect(result.penaltyAssigned).toBeInstanceOf(Prisma.Decimal);
+      expect(result.penaltyAssigned?.toString()).toBe('2.5');
+      expect(result.penaltyAssigned?.toNumber()).toBe(2.5);
     });
 
     // -------------------------------------------------------------------------
