@@ -1065,11 +1065,47 @@ export async function executeFutureSlateMutationInternal(
       }
     }
 
-    // 2e. Union of prior effective slate and proposed slate
+    // 2e. Union of prior effective slate and proposed slate (HAG58-SLATE-2026-11-03-01)
     const existingSlateEntry = existingSettings?.owner_admin_v1?.slates?.[season]?.[seasonType]?.[weekNumber];
-    const priorEventIds: string[] = Array.isArray(existingSlateEntry?.eventIds) && existingSlateEntry.eventIds.length > 0
-      ? existingSlateEntry.eventIds.map(String)
-      : manifest.eventIds.map(String);
+    let priorEventIds: string[];
+    if (existingSlateEntry !== undefined && existingSlateEntry !== null) {
+      const isArray = Array.isArray(existingSlateEntry.eventIds);
+      const hasNonString = isArray && existingSlateEntry.eventIds.some((id: any) => typeof id !== 'string');
+      const validStoredIdRegex = /^[a-zA-Z0-9_-]{1,64}$/;
+
+      if (!isArray || hasNonString) {
+        const err: any = new Error('MALFORMED_SLATE_CONFIG: Prior configured slate contains malformed or non-string event IDs.');
+        err.statusCode = 422;
+        err.code = 'MALFORMED_SLATE_CONFIG';
+        throw err;
+      }
+
+      const storedEventIds: string[] = existingSlateEntry.eventIds.map((id: string) => id.trim());
+      if (
+        storedEventIds.length === 0 ||
+        storedEventIds.length > 32 ||
+        storedEventIds.some((id) => id.length === 0 || !validStoredIdRegex.test(id)) ||
+        new Set(storedEventIds).size !== storedEventIds.length
+      ) {
+        const err: any = new Error('MALFORMED_SLATE_CONFIG: Prior configured slate eventIds must be a non-empty unique array of at most 32 valid IDs.');
+        err.statusCode = 422;
+        err.code = 'MALFORMED_SLATE_CONFIG';
+        throw err;
+      }
+
+      const hasOutOfManifest = storedEventIds.some((id) => !manifestEventSet.has(id));
+      if (hasOutOfManifest) {
+        const err: any = new Error('MALFORMED_SLATE_CONFIG: Prior configured slate references events outside accepted manifest.');
+        err.statusCode = 422;
+        err.code = 'MALFORMED_SLATE_CONFIG';
+        throw err;
+      }
+
+      priorEventIds = storedEventIds;
+    } else {
+      // Verified-default full manifest: no prior custom slate configured
+      priorEventIds = manifest.eventIds.map(String);
+    }
     const unionEventIds = Array.from(new Set([...priorEventIds, ...eventIds]));
 
     // 2f. Finding (1) & Defect (1) Resolution: Type-safe Canonical Game query & Alias resolution without casting failure

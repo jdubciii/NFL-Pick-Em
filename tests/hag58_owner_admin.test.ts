@@ -1489,6 +1489,172 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       });
     });
 
+    it('executeFutureSlateMutationInternal rejects numeric event IDs in prior configured slate with HTTP 422 MALFORMED_SLATE_CONFIG and writes no settings or audit', async () => {
+      const origPool = committedDbState.pools[POOL_ID];
+      committedDbState.pools[POOL_ID] = {
+        ...origPool,
+        settings: {
+          season: 2026,
+          seasonType: 2,
+          current_week: 8,
+          owner_admin_v1: {
+            slates: {
+              2026: {
+                2: {
+                  9: {
+                    eventIds: [401873040], // Numeric ID in stored prior config!
+                    version: 1,
+                    updatedAt: new Date().toISOString(),
+                  },
+                },
+              },
+            },
+          },
+        },
+      };
+
+      const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+      const week9Events = [
+        { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: new Date(Date.now() + 86400000).toISOString(), isKickoffConfirmed: true },
+        { externalGameId: '401873041', homeTeamId: 'SF', awayTeamId: 'LAR', kickoffTime: new Date(Date.now() + 86400000).toISOString(), isKickoffConfirmed: true },
+      ];
+      const week9Fingerprint = authoritativeSlateService.computeManifestFingerprint(2026, 2, 9, week9Events);
+
+      vi.spyOn(authoritativeSlateService, 'fetchAuthoritativeESPNScoreboard').mockResolvedValue({
+        status: 'VERIFIED',
+        provider: 'ESPN',
+        league: 'NFL',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        observationTime: new Date().toISOString(),
+        adapterVersion: '1.0',
+        eventCount: 2,
+        events: week9Events,
+        manifestFingerprint: week9Fingerprint,
+        reasons: [],
+      });
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: ['401873040', '401873041'],
+        acceptedAt: new Date().toISOString(),
+        acceptedBy: JACK_UUID,
+        manifestFingerprint: week9Fingerprint,
+        observationTime: new Date().toISOString(),
+      });
+
+      mockPrisma.pool.update.mockClear();
+      mockPrisma.auditLog.create.mockClear();
+
+      try {
+        await expect(
+          executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+            season: 2026,
+            seasonType: 2,
+            weekNumber: 9,
+            eventIds: ['401873041'],
+            expectedRevision: poolRev,
+            reason: 'Attempted mutation with numeric stored slate',
+          })
+        ).rejects.toMatchObject({
+          statusCode: 422,
+          code: 'MALFORMED_SLATE_CONFIG',
+        });
+
+        expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+        expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+      } finally {
+        committedDbState.pools[POOL_ID] = origPool;
+      }
+    });
+
+    it('executeFutureSlateMutationInternal rejects empty eventIds array in prior configured slate with HTTP 422 MALFORMED_SLATE_CONFIG and writes no settings or audit', async () => {
+      const origPool = committedDbState.pools[POOL_ID];
+      committedDbState.pools[POOL_ID] = {
+        ...origPool,
+        settings: {
+          season: 2026,
+          seasonType: 2,
+          current_week: 8,
+          owner_admin_v1: {
+            slates: {
+              2026: {
+                2: {
+                  9: {
+                    eventIds: [], // Empty array in stored prior config!
+                    version: 1,
+                    updatedAt: new Date().toISOString(),
+                  },
+                },
+              },
+            },
+          },
+        },
+      };
+
+      const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+      const week9Events = [
+        { externalGameId: '401873040', homeTeamId: 'KC', awayTeamId: 'LV', kickoffTime: new Date(Date.now() + 86400000).toISOString(), isKickoffConfirmed: true },
+        { externalGameId: '401873041', homeTeamId: 'SF', awayTeamId: 'LAR', kickoffTime: new Date(Date.now() + 86400000).toISOString(), isKickoffConfirmed: true },
+      ];
+      const week9Fingerprint = authoritativeSlateService.computeManifestFingerprint(2026, 2, 9, week9Events);
+
+      vi.spyOn(authoritativeSlateService, 'fetchAuthoritativeESPNScoreboard').mockResolvedValue({
+        status: 'VERIFIED',
+        provider: 'ESPN',
+        league: 'NFL',
+        seasonYear: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        observationTime: new Date().toISOString(),
+        adapterVersion: '1.0',
+        eventCount: 2,
+        events: week9Events,
+        manifestFingerprint: week9Fingerprint,
+        reasons: [],
+      });
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: ['401873040', '401873041'],
+        acceptedAt: new Date().toISOString(),
+        acceptedBy: JACK_UUID,
+        manifestFingerprint: week9Fingerprint,
+        observationTime: new Date().toISOString(),
+      });
+
+      mockPrisma.pool.update.mockClear();
+      mockPrisma.auditLog.create.mockClear();
+
+      try {
+        await expect(
+          executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+            season: 2026,
+            seasonType: 2,
+            weekNumber: 9,
+            eventIds: ['401873041'],
+            expectedRevision: poolRev,
+            reason: 'Attempted mutation with empty stored slate',
+          })
+        ).rejects.toMatchObject({
+          statusCode: 422,
+          code: 'MALFORMED_SLATE_CONFIG',
+        });
+
+        expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+        expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+      } finally {
+        committedDbState.pools[POOL_ID] = origPool;
+      }
+    });
+
     it('executeFutureSlateMutationInternal rejects when participation freeze evidence is recorded with HTTP 409 SLATE_FROZEN', async () => {
       const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
       const week9Events = [
