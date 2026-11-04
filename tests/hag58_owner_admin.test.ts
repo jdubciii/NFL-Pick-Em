@@ -27,7 +27,7 @@ import {
   computeSimulationStandings,
 } from '../client/src/owner/OwnerAdminApp';
 import * as authoritativeSlateService from '../src/services/authoritativeSlateService';
-import { getGamesForWeek } from '../src/routes/poolTiebreakerRoutes';
+import { getGamesForWeek, resolveTransactionLocalCanonicalGames } from '../src/routes/poolTiebreakerRoutes';
 import { selectAcceptedScoredSlateGames, isWeeklyScoredSlateFinal, resolveEffectiveScoredSlateGames } from '../client/src/services/weeklyStandingsFinalityService';
 import { getScopedPoolSlateConfig, resolveScopedPoolSlateConfig } from '../client/src/services/poolScoredSlateConfig';
 import { fetchScopedSlateProjection, invalidateScopedSlateCache } from '../client/src/services/scopedSlateService';
@@ -4193,6 +4193,159 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       //     );
       //     await realPrisma.$disconnect();
       //   }
+    });
+
+    // -------------------------------------------------------------------------
+    // Transaction-local Tiebreaker Write Authority Proofs (HAG58-SLATE-2026-11-03-01)
+    // -------------------------------------------------------------------------
+    describe('Tiebreaker write decision transaction-local resolver & pool gate enforcement', () => {
+      it('resolveTransactionLocalCanonicalGames fails closed with AUTHORITATIVE_SLATE_UNAVAILABLE when manifest is missing', async () => {
+        vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValueOnce(null);
+        const mockTx: any = {
+          $queryRawUnsafe: vi.fn().mockResolvedValue([]),
+          game: { findMany: vi.fn().mockResolvedValue([]) },
+        };
+
+        await expect(
+          resolveTransactionLocalCanonicalGames(mockTx, 'test-pool-id', 2026, 2, 7, {})
+        ).rejects.toThrow('AUTHORITATIVE_SLATE_UNAVAILABLE');
+      });
+
+      it('resolveTransactionLocalCanonicalGames fails closed with MALFORMED_SLATE_CONFIG when custom slate has non-string IDs', async () => {
+        vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValueOnce({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 7,
+          revision: 1,
+          eventIds: ['401873001', '401873002'],
+          acceptedAt: '2026-10-24T12:00:00Z',
+          acceptedBy: 'commish',
+          manifestFingerprint: 'fp-7',
+          observationTime: '2026-10-24T12:00:00Z',
+        });
+        const mockTx: any = {
+          $queryRawUnsafe: vi.fn().mockResolvedValue([]),
+          game: { findMany: vi.fn().mockResolvedValue([]) },
+        };
+
+        const settingsWithNonString = {
+          owner_admin_v1: {
+            slates: {
+              2026: {
+                2: {
+                  7: { eventIds: [401873001, 401873002] }, // numbers, not strings
+                },
+              },
+            },
+          },
+        };
+
+        await expect(
+          resolveTransactionLocalCanonicalGames(mockTx, 'test-pool-id', 2026, 2, 7, settingsWithNonString)
+        ).rejects.toThrow('MALFORMED_SLATE_CONFIG');
+      });
+
+      it('resolveTransactionLocalCanonicalGames fails closed when custom slate references unmanifested games', async () => {
+        vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValueOnce({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 7,
+          revision: 1,
+          eventIds: ['401873001'],
+          acceptedAt: '2026-10-24T12:00:00Z',
+          acceptedBy: 'commish',
+          manifestFingerprint: 'fp-7',
+          observationTime: '2026-10-24T12:00:00Z',
+        });
+        const mockTx: any = {
+          $queryRawUnsafe: vi.fn().mockResolvedValue([]),
+          game: { findMany: vi.fn().mockResolvedValue([]) },
+        };
+
+        const settingsUnmanifested = {
+          owner_admin_v1: {
+            slates: {
+              2026: {
+                2: {
+                  7: { eventIds: ['401873001', 'unmanifested-999'] },
+                },
+              },
+            },
+          },
+        };
+
+        await expect(
+          resolveTransactionLocalCanonicalGames(mockTx, 'test-pool-id', 2026, 2, 7, settingsUnmanifested)
+        ).rejects.toThrow('MALFORMED_SLATE_CONFIG');
+      });
+
+      it('resolveTransactionLocalCanonicalGames fails closed when games in manifest are missing from database', async () => {
+        vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValueOnce({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 7,
+          revision: 1,
+          eventIds: ['401873001', '401873002'],
+          acceptedAt: '2026-10-24T12:00:00Z',
+          acceptedBy: 'commish',
+          manifestFingerprint: 'fp-7',
+          observationTime: '2026-10-24T12:00:00Z',
+        });
+        const mockTx: any = {
+          $queryRawUnsafe: vi.fn().mockResolvedValue([]),
+          game: {
+            // Only 1 game found in DB out of 2 in manifest
+            findMany: vi.fn().mockResolvedValue([
+              { id: 'g1', externalGameId: '401873001', kickoffTime: new Date().toISOString() },
+            ]),
+          },
+        };
+
+        await expect(
+          resolveTransactionLocalCanonicalGames(mockTx, 'test-pool-id', 2026, 2, 7, {})
+        ).rejects.toThrow('AUTHORITATIVE_SLATE_UNAVAILABLE');
+      });
+
+      it('resolveTransactionLocalCanonicalGames resolves canonical games sorted by kickoffTime when manifest and games exist', async () => {
+        const gameA = { id: 'g1', externalGameId: '401873001', kickoffTime: '2026-10-25T20:00:00.000Z', homeTeamId: 'KC', awayTeamId: 'LV' };
+        const gameB = { id: 'g2', externalGameId: '401873002', kickoffTime: '2026-10-25T17:00:00.000Z', homeTeamId: 'DET', awayTeamId: 'GB' };
+
+        vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValueOnce({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 7,
+          revision: 1,
+          eventIds: ['401873001', '401873002'],
+          acceptedAt: '2026-10-24T12:00:00Z',
+          acceptedBy: 'commish',
+          manifestFingerprint: 'fp-7',
+          observationTime: '2026-10-24T12:00:00Z',
+        });
+
+        const mockTx: any = {
+          $queryRawUnsafe: vi.fn().mockResolvedValue([]),
+          game: {
+            findMany: vi.fn().mockResolvedValue([gameA, gameB]),
+          },
+        };
+
+        const games = await resolveTransactionLocalCanonicalGames(mockTx, 'test-pool-id', 2026, 2, 7, {});
+        expect(games).toHaveLength(2);
+        // Sorted ascending by kickoffTime: gameB (17:00) before gameA (20:00)
+        expect(games[0].externalGameId).toBe('401873002');
+        expect(games[1].externalGameId).toBe('401873001');
+      });
+
+      it('getGamesForWeek safely returns [] when no manifest exists (Source 3 unmanifested fallback removed)', async () => {
+        vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValueOnce(null);
+        const mockDbNoManifest: any = {
+          $queryRawUnsafe: vi.fn().mockResolvedValue([]),
+          game: { findMany: vi.fn().mockResolvedValue([]) },
+        };
+
+        const games = await getGamesForWeek(7, 2026, 'test-pool-id', mockDbNoManifest);
+        expect(games).toEqual([]);
+      });
     });
   });
 

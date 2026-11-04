@@ -8,7 +8,7 @@ import {
   requirePoolMember,
   getPrismaClient,
 } from '../middleware/auth';
-import { getGamesForWeek } from './poolTiebreakerRoutes';
+import { getGamesForWeek, resolveTransactionLocalCanonicalGames } from './poolTiebreakerRoutes';
 import { getWeeklyDesignation, applyCommissionerOverride } from '../services/weeklyDesignationService';
 import * as authoritativeSlateService from '../services/authoritativeSlateService';
 import {
@@ -605,6 +605,7 @@ ownerAdminRouter.post('/:pool_id/owner/tiebreaker-designation', requireAuth, req
 
   const season = Number(req.body.season);
   const weekNumber = Number(req.body.weekNumber);
+  const seasonType = Number(req.body.seasonType ?? req.query.seasonType ?? 2);
   const targetGameId = String(req.body.targetGameId || '').trim();
 
   if (!Number.isInteger(season) || !Number.isInteger(weekNumber) || !targetGameId) {
@@ -657,8 +658,15 @@ ownerAdminRouter.post('/:pool_id/owner/tiebreaker-designation', requireAuth, req
         throw err;
       }
 
-      // 3. Authoritative games inspection
-      const games = await getGamesForWeek(weekNumber, season, poolId, tx);
+      // 3. Authoritative games inspection using transaction-local resolver
+      const games = await resolveTransactionLocalCanonicalGames(
+        tx,
+        poolId,
+        season,
+        seasonType,
+        weekNumber,
+        currentSettings
+      );
       const targetGame = games.find((g: any) => String(g.id) === targetGameId || String(g.externalGameId) === targetGameId);
       if (!targetGame) {
         const err: any = new Error(`Target game '${targetGameId}' was not found in accepted games for week ${weekNumber}.`);

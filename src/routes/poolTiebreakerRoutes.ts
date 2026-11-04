@@ -11,6 +11,7 @@ import {
 } from '../services/weeklyDesignationService';
 import * as authoritativeSlateService from '../services/authoritativeSlateService';
 import { computePoolSettingsRevision } from './ownerAdminRoutes';
+import { resolvePoolScopedGamesForWrapUp } from '../services/wrapUpEngine';
 
 export const poolTiebreakerRouter = Router();
 
@@ -229,34 +230,64 @@ export async function getGamesForWeek(
     // Manifest table not yet populated or inaccessible
   }
 
-  // Source 3: Schema-compatible column check (Proposal A: season and week on public.games)
-  if (typeof dbClient.$queryRawUnsafe === 'function') {
-    try {
-      const colGames: any[] = await dbClient.$queryRawUnsafe(
-        `SELECT id, external_game_id as "externalGameId", home_team_id as "homeTeamId", away_team_id as "awayTeamId",
-                kickoff_time as "kickoffTime", status, home_score as "homeScore", away_score as "awayScore"
-         FROM public.games
-         WHERE season = $1::int AND week = $2::int
-         ORDER BY kickoff_time ASC;`,
-        season,
-        weekNumber
-      );
-      if (Array.isArray(colGames) && colGames.length > 0) {
-        if (customSlateEventIds !== null) {
-          const customSet = new Set(customSlateEventIds);
-          return colGames.filter((g: any) => customSet.has(String(g.externalGameId || g.id)));
-        }
-        return colGames;
-      }
-    } catch {
-      // Columns may not exist in pre-migration environments
-    }
-  }
-
   // Strict Fail-Closed Policy:
   // If no approved authoritative source matched, return [] (ZERO games).
-  // Zero mock fallback, zero all-games fallback, zero synthetic ID heuristics.
+  // Zero unmanifested fallback, zero all-games fallback, zero synthetic ID heuristics.
   return [];
+}
+
+/**
+ * Transaction-local accepted-manifest/canonical-game resolver for write decisions
+ * (HAG58-SLATE-2026-11-03-01).
+ *
+ * Rules:
+ * 1. Strictly transaction-local: operates solely on transaction client `tx` under pool row lock.
+ *    NEVER calls caller-bound Supabase RPC (which runs outside PostgreSQL transaction and
+ *    cannot establish locked state per HAG58-SLATE-2026-11-03-01).
+ * 2. Exact scope: season, seasonType, weekNumber, poolId, and current pool settings.
+ * 3. Authoritative manifest required: reads accepted slate manifest from authoritative_slate_manifests via `tx`.
+ *    If manifest is missing or empty, FAILS CLOSED with AUTHORITATIVE_SLATE_UNAVAILABLE (denies missing authority).
+ * 4. Scoped Pool Slate Gate:
+ *    - Unshadowable HAG-52 historical scope (pool 9b893bef-..., season 2026, type 2, week 8).
+ *    - Or custom slate in currentSettings: validates 1..32 unique alphanumeric string IDs;
+ *      rejects non-string IDs with MALFORMED_SLATE_CONFIG; verifies every ID is in accepted manifest.
+ * 5. Canonical game presence: verifies all scoped games exist in database (`tx.game`).
+ * 6. ZERO unmanifested fallbacks: never falls back to public.games season/week column queries.
+ * 7. Returns canonical games sorted deterministically by kickoffTime asc.
+ */
+export async function resolveTransactionLocalCanonicalGames(
+  tx: any,
+  poolId: string,
+  season: number,
+  seasonType: number,
+  weekNumber: number,
+  currentSettings: any
+): Promise<any[]> {
+  const resolved = await resolvePoolScopedGamesForWrapUp(
+    tx,
+    poolId,
+    season,
+    seasonType,
+    weekNumber,
+    currentSettings
+  );
+
+  if (resolved.error) {
+    const message = resolved.reasonsIfNotReady?.[0] || resolved.error;
+    const err: any = new Error(`${resolved.error}: ${message}`);
+    err.code = resolved.error;
+    throw err;
+  }
+
+  if (!resolved.games || resolved.games.length === 0) {
+    const err: any = new Error('AUTHORITATIVE_SLATE_UNAVAILABLE: No authoritative games found for this slate.');
+    err.code = 'AUTHORITATIVE_SLATE_UNAVAILABLE';
+    throw err;
+  }
+
+  return [...resolved.games].sort(
+    (a: any, b: any) => new Date(a.kickoffTime).getTime() - new Date(b.kickoffTime).getTime()
+  );
 }
 
 /**
@@ -509,25 +540,49 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
 
     // Transactional save with mandatory row-level lock, fresh settings resolution, kickoff lock, and atomic freeze
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Mandatory row-level lock on pool record to serialize concurrent writes (fails closed on lock error)
-      await tx.$queryRawUnsafe(
-        `SELECT id FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
+      // -------------------------------------------------------------------------
+      // Step 0: Lock Order & Concurrency Gate (HAG58-SLATE-2026-11-03-01)
+      //
+      // Skipping weekly advisory lock:
+      // Prediction mutations are strictly pool-local writes (weekly_submissions / pool settings)
+      // that read already-persisted manifest authority under the pool row lock and do NOT mutate
+      // or refresh the weekly slate manifest (authoritative_slate_manifests). Per HAG58-SLATE-2026-11-03-01:
+      // "Skipping unneeded locks is valid; acquiring an earlier lock after a later one is not...
+      // A normal pick need not take the weekly advisory lock if it only reads already-existing
+      // manifest authority under the pool lock."
+      //
+      // Pool row lock (FOR UPDATE): required; must verify exactly one ACTIVE pool row.
+      // -------------------------------------------------------------------------
+      const lockedPoolRows: any[] = await tx.$queryRawUnsafe(
+        `SELECT id, status FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
         poolId
       );
+      if (!lockedPoolRows || lockedPoolRows.length !== 1 || lockedPoolRows[0].status !== 'ACTIVE') {
+        const err: any = new Error('SHARED_POOL_GATE_UNAVAILABLE: Pool row lock failed or pool not ACTIVE');
+        err.code = 'SHARED_POOL_GATE_UNAVAILABLE';
+        throw err;
+      }
 
       // 2. Fetch fresh pool state within locked boundary using transaction client
       const freshPool = await tx.pool.findUnique({ where: { id: poolId } });
-      if (!freshPool) {
-        throw new Error('NOT_FOUND: Pool not found');
+      if (!freshPool || freshPool.status !== 'ACTIVE') {
+        throw new Error('NOT_FOUND: Pool not found or not active');
       }
 
       const currentSettings = (freshPool.settings as any) || {};
 
-      // 3. Resolve authoritative designation INSIDE transaction boundary using fresh settings and transaction client
-      const games = await getGamesForWeek(weekNumber, season, poolId, tx, {
-        supabaseClient: callerClient,
-        authToken,
-      });
+      // 3. Resolve authoritative designation INSIDE transaction boundary using transaction-local resolver.
+      // Strictly transaction-local: operates solely on `tx` under pool row lock.
+      // NEVER calls caller-bound Supabase RPC (RPC inside Prisma callback cannot establish locked state).
+      // ZERO unmanifested fallbacks: requires accepted manifest and canonical games; denies missing authority.
+      const games = await resolveTransactionLocalCanonicalGames(
+        tx,
+        poolId,
+        season,
+        seasonType,
+        weekNumber,
+        currentSettings
+      );
       const designation = getWeeklyDesignation(currentSettings, season, weekNumber, games as any);
 
       if (!designation.game) {
@@ -654,6 +709,18 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
     });
   } catch (error: any) {
     console.error('Error saving tiebreaker prediction:', error);
+    if (error.code === 'SHARED_POOL_GATE_UNAVAILABLE' || error.message?.includes('SHARED_POOL_GATE_UNAVAILABLE')) {
+      res.status(500).json({ error: error.message || 'SHARED_POOL_GATE_UNAVAILABLE' });
+      return;
+    }
+    if (error.code === 'MALFORMED_SLATE_CONFIG' || error.message?.includes('MALFORMED_SLATE_CONFIG')) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+    if (error.code === 'AUTHORITATIVE_SLATE_UNAVAILABLE' || error.message?.includes('AUTHORITATIVE_SLATE_UNAVAILABLE')) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
     if (error.message?.includes('KICKOFF_PASSED')) {
       res.status(403).json({ error: 'KICKOFF_PASSED: Cannot modify tiebreaker prediction after kickoff.' });
       return;
@@ -730,16 +797,33 @@ export async function handlePostTiebreakerOverride(req: Request, res: Response):
     }
 
     const designation = await prisma.$transaction(async (tx) => {
-      // 1. Mandatory row-level lock on pool record to serialize concurrent writes (fails closed on lock error)
-      await tx.$queryRawUnsafe(
-        `SELECT id FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
+      // -------------------------------------------------------------------------
+      // Step 0: Lock Order & Concurrency Gate (HAG58-SLATE-2026-11-03-01)
+      //
+      // Skipping weekly advisory lock:
+      // Commissioner designation override is a strictly pool-local write (pool settings)
+      // that reads already-persisted manifest authority under the pool row lock and does NOT mutate
+      // or refresh the weekly slate manifest (authoritative_slate_manifests). Per HAG58-SLATE-2026-11-03-01:
+      // "Skipping unneeded locks is valid; acquiring an earlier lock after a later one is not...
+      // A normal pick need not take the weekly advisory lock if it only reads already-existing
+      // manifest authority under the pool lock."
+      //
+      // Pool row lock (FOR UPDATE): required; must verify exactly one ACTIVE pool row.
+      // -------------------------------------------------------------------------
+      const lockedPoolRows: any[] = await tx.$queryRawUnsafe(
+        `SELECT id, status FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
         poolId
       );
+      if (!lockedPoolRows || lockedPoolRows.length !== 1 || lockedPoolRows[0].status !== 'ACTIVE') {
+        const err: any = new Error('SHARED_POOL_GATE_UNAVAILABLE: Pool row lock failed or pool not ACTIVE');
+        err.code = 'SHARED_POOL_GATE_UNAVAILABLE';
+        throw err;
+      }
 
       // 2. Fetch fresh pool state within locked boundary using transaction client
       const freshPool = await tx.pool.findUnique({ where: { id: poolId } });
-      if (!freshPool) {
-        throw new Error('NOT_FOUND: Pool not found');
+      if (!freshPool || freshPool.status !== 'ACTIVE') {
+        throw new Error('NOT_FOUND: Pool not found or not active');
       }
 
       // 3. Concurrency check: verify no predictions have been submitted for this pool and week using transaction client
@@ -762,13 +846,18 @@ export async function handlePostTiebreakerOverride(req: Request, res: Response):
         throw new Error('DESIGNATION_FROZEN: Cannot change designated tiebreaker game after predictions have been received');
       }
 
-      // 5. Query authoritative games inside transaction boundary using transaction client
-      const callerClient = getCallerSupabaseClient(req);
-      const authToken = extractBearerToken(req);
-      const games = await getGamesForWeek(weekNumber, season, poolId, tx, {
-        supabaseClient: callerClient,
-        authToken,
-      });
+      // 5. Resolve authoritative games inside transaction boundary using transaction-local resolver.
+      // Strictly transaction-local: operates solely on `tx` under pool row lock.
+      // NEVER calls caller-bound Supabase RPC (RPC inside Prisma callback cannot establish locked state).
+      // ZERO unmanifested fallbacks: requires accepted manifest and canonical games; denies missing authority.
+      const games = await resolveTransactionLocalCanonicalGames(
+        tx,
+        poolId,
+        season,
+        seasonType,
+        weekNumber,
+        currentSettings
+      );
 
       // 6. Apply commissioner override
       const { updatedSettings, designation: newDesignation } = applyCommissionerOverride({
@@ -801,7 +890,15 @@ export async function handlePostTiebreakerOverride(req: Request, res: Response):
       res.status(403).json({ error: error.message });
       return;
     }
+    if (error.code === 'SHARED_POOL_GATE_UNAVAILABLE' || error.message?.includes('SHARED_POOL_GATE_UNAVAILABLE')) {
+      res.status(500).json({ error: error.message || 'SHARED_POOL_GATE_UNAVAILABLE' });
+      return;
+    }
     if (
+      error.code === 'MALFORMED_SLATE_CONFIG' ||
+      error.code === 'AUTHORITATIVE_SLATE_UNAVAILABLE' ||
+      error.message?.includes('MALFORMED_SLATE_CONFIG') ||
+      error.message?.includes('AUTHORITATIVE_SLATE_UNAVAILABLE') ||
       error.message?.startsWith('DESIGNATION_FROZEN') ||
       error.message?.startsWith('KICKOFF_PASSED') ||
       error.message?.startsWith('UNVERIFIED_KICKOFF') ||
