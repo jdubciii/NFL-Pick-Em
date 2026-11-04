@@ -1103,6 +1103,99 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       committedDbState.pools[POOL_ID] = origPool;
     });
 
+    it('executeFutureSlateMutationInternal rejects numeric event IDs with HTTP 422 INVALID_CHANGE without coercing to string and writes no settings or audit', async () => {
+      mockPrisma.pool.update.mockClear();
+      mockPrisma.auditLog.create.mockClear();
+
+      // Numeric event ID
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: [401873040], // Numeric ID
+          expectedRevision: 'any-rev',
+          reason: 'Attempted numeric event ID edit',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'INVALID_CHANGE',
+      });
+
+      // Mixed numeric and string
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040', 401873041], // Mixed array
+          expectedRevision: 'any-rev',
+          reason: 'Attempted mixed numeric event ID edit',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'INVALID_CHANGE',
+      });
+
+      // Assert no pool settings mutation and no audit record created
+      expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+      expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('executeFutureSlateMutationInternal rejects blank or mixed whitespace event IDs with HTTP 422 INVALID_CHANGE without dropping them and writes no settings or audit', async () => {
+      mockPrisma.pool.update.mockClear();
+      mockPrisma.auditLog.create.mockClear();
+
+      // Empty string
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: [''], // Blank entry
+          expectedRevision: 'any-rev',
+          reason: 'Attempted blank event ID edit',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'INVALID_CHANGE',
+      });
+
+      // Whitespace string
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['   '], // All whitespace
+          expectedRevision: 'any-rev',
+          reason: 'Attempted whitespace event ID edit',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'INVALID_CHANGE',
+      });
+
+      // Mixed valid and blank: must NOT drop the blank entry to normalize into valid selection!
+      await expect(
+        executeFutureSlateMutationInternal(mockPrisma, POOL_ID, JACK_UUID, {
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          eventIds: ['401873040', '   '], // Mixed valid and blank
+          expectedRevision: 'any-rev',
+          reason: 'Attempted mixed valid and blank event ID edit',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'INVALID_CHANGE',
+      });
+
+      // Assert no pool settings mutation and no audit record created
+      expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+      expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
     it('executeFutureSlateMutationInternal fails closed with HTTP 500 TRANSACTION_LOCK_UNAVAILABLE if raw query capability is missing', async () => {
       const mockPrismaNoRaw = {
         ...mockPrisma,

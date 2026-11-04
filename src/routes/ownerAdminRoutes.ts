@@ -860,22 +860,31 @@ export async function executeFutureSlateMutationInternal(
     throw err;
   }
 
-  const eventIds = rawEventIds.map(String).map((s) => s.trim()).filter(Boolean);
-  if (eventIds.length === 0 || eventIds.length > 32 || new Set(eventIds).size !== eventIds.length) {
-    const err: any = new Error('eventIds must be a non-empty unique array of at most 32 canonical game IDs.');
+  // Strict String Event ID Type Guard (HAG58-SLATE-2026-11-03-01: reject arbitrary stringification or normalization)
+  if (rawEventIds.some((id: any) => typeof id !== 'string')) {
+    const err: any = new Error('INVALID_CHANGE: Every event ID in eventIds must be a string; numeric or non-string values rejected.');
     err.statusCode = 422;
     err.code = 'INVALID_CHANGE';
     throw err;
   }
 
   const eventIdRegex = /^[a-zA-Z0-9_-]{1,64}$/;
-  for (const eid of eventIds) {
-    if (!eventIdRegex.test(eid)) {
-      const err: any = new Error(`Invalid event ID format '${eid}'. Must be alphanumeric identifier.`);
+  for (const eid of rawEventIds) {
+    const trimmed = eid.trim();
+    if (trimmed.length === 0 || !eventIdRegex.test(trimmed)) {
+      const err: any = new Error(`INVALID_CHANGE: Invalid event ID format '${eid}'. Must be a non-empty alphanumeric identifier.`);
       err.statusCode = 422;
       err.code = 'INVALID_CHANGE';
       throw err;
     }
+  }
+
+  const eventIds: string[] = rawEventIds.map((id: string) => id.trim());
+  if (eventIds.length === 0 || eventIds.length > 32 || new Set(eventIds).size !== eventIds.length) {
+    const err: any = new Error('INVALID_CHANGE: eventIds must be a non-empty unique array of at most 32 canonical game IDs.');
+    err.statusCode = 422;
+    err.code = 'INVALID_CHANGE';
+    throw err;
   }
 
   // Historical Scope Protection & Legacy Unverified History Guard (HAG58-SLATE-2026-11-03-01 § Freeze evidence and scope limits)
