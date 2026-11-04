@@ -135,6 +135,7 @@ export async function getGamesForWeek(
 
   // Scored-slate resolver integration: resolve custom pool slate if poolId is provided
   let customSlateEventIds: string[] | null = null;
+  let manifest: any = null;
   // Unshadowable HAG-52 historical scope check (Section 42 & 54): settings cannot shadow Week 8
   if (
     poolId === '9b893bef-3b5a-4ffa-951d-8ba27f9c9782' &&
@@ -154,22 +155,36 @@ export async function getGamesForWeek(
     });
     const customSlate = poolRecord?.settings?.owner_admin_v1?.slates?.[season]?.[seasonType]?.[weekNumber];
     if (customSlate !== undefined && customSlate !== null) {
-      if (
-        !Array.isArray(customSlate.eventIds) ||
-        customSlate.eventIds.length === 0 ||
-        customSlate.eventIds.length > 32 ||
-        new Set(customSlate.eventIds.map(String)).size !== customSlate.eventIds.length
-      ) {
+      const validIdRegex = /^[0-9a-zA-Z_-]{1,64}$/;
+      const isArray = Array.isArray(customSlate.eventIds);
+      // Reject non-string event IDs before any coercion (god ruling: reject, not coerce)
+      const hasNonString = isArray && customSlate.eventIds.some((id: any) => typeof id !== 'string');
+      if (hasNonString) {
+        return []; // Fail closed on non-string event IDs
+      }
+      const eventIds: string[] = isArray ? customSlate.eventIds.map((id: string) => id.trim()) : [];
+      const allValid =
+        isArray &&
+        eventIds.length > 0 &&
+        eventIds.length <= 32 &&
+        eventIds.every((id: string) => id.length > 0 && validIdRegex.test(id)) &&
+        new Set(eventIds).size === eventIds.length;
+
+      if (!allValid) {
         return []; // Fail closed on malformed/empty/duplicate custom slate
       }
-      const manifest = await authoritativeSlateService.getAcceptedSlateManifest(dbClient, season, seasonType, weekNumber);
+      try {
+        manifest = await authoritativeSlateService.getAcceptedSlateManifest(dbClient, season, seasonType, weekNumber);
+      } catch (err: any) {
+        throw err;
+      }
       if (!manifest || !Array.isArray(manifest.eventIds) || manifest.eventIds.length === 0) {
         return []; // Fail closed if manifest unavailable
       }
       const manifestEventSet = new Set(manifest.eventIds.map(String));
-      const allInManifest = customSlate.eventIds.every((eid: any) => manifestEventSet.has(String(eid)));
+      const allInManifest = eventIds.every((eid: string) => manifestEventSet.has(eid));
       if (allInManifest) {
-        customSlateEventIds = customSlate.eventIds.map(String);
+        customSlateEventIds = eventIds;
       } else {
         return []; // Fail closed if custom slate references unmanifested games
       }
@@ -177,14 +192,15 @@ export async function getGamesForWeek(
   }
 
   // Establish authoritative weekly slate manifest before checking RPC or database
-  let manifest: any = null;
-  try {
-    manifest = await authoritativeSlateService.getAcceptedSlateManifest(dbClient, season, seasonType, weekNumber);
-  } catch (err: any) {
-    if (customSlateEventIds !== null) {
-      throw err;
+  if (!manifest) {
+    try {
+      manifest = await authoritativeSlateService.getAcceptedSlateManifest(dbClient, season, seasonType, weekNumber);
+    } catch (err: any) {
+      if (customSlateEventIds !== null) {
+        throw err;
+      }
+      return [];
     }
-    return [];
   }
 
   if (!manifest || !Array.isArray(manifest.eventIds) || manifest.eventIds.length === 0) {

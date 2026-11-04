@@ -2953,6 +2953,63 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(games).toEqual([]);
     });
 
+    it('getGamesForWeek fails closed (returns []) and denies GET /owner/games when custom slate contains numeric event IDs without string coercion', async () => {
+      committedDbState.pools[POOL_ID].settings = {
+        owner_admin_v1: {
+          slates: {
+            2026: {
+              2: {
+                9: {
+                  eventIds: [401873040], // Numeric event ID
+                  version: 1,
+                  updatedAt: new Date().toISOString(),
+                },
+              },
+            },
+          },
+        },
+      };
+
+      mockPrisma.pool.findUnique.mockImplementation(async ({ where }: any) => {
+        return committedDbState.pools[where.id] ? { ...committedDbState.pools[where.id] } : null;
+      });
+
+      vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+        season: 2026,
+        seasonType: 2,
+        weekNumber: 9,
+        revision: 1,
+        eventIds: ['401873040', '401873041'],
+        acceptedAt: '2026-11-03T12:00:00Z',
+        acceptedBy: 'commish',
+        manifestFingerprint: 'manifest-fp-w9',
+        observationTime: '2026-11-03T12:00:00Z',
+      });
+
+      mockPrisma._gameStore = [
+        {
+          id: 'game-uuid-401873040',
+          externalGameId: '401873040',
+          homeTeamId: 'KC',
+          awayTeamId: 'LV',
+          status: GameStatus.FINAL,
+          kickoffTime: new Date(),
+        },
+      ];
+
+      // 1. Direct helper call: must strictly fail closed to [] without coercing 401873040 to '401873040'
+      const games = await getGamesForWeek(9, 2026, POOL_ID, mockPrisma);
+      expect(games).toEqual([]);
+
+      // 2. Route call (GET /owner/games): proves denial and unauthoritativeness at route level
+      const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/games?season=2026&week=9`, {
+        headers: { Authorization: `Bearer ${jackAuthToken}` },
+      });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.games).toEqual([]);
+    });
+
     it('proves member settings flow in RadarPage and WallOfShamePage respects custom pool slate and isolates finality without PUT /slate', () => {
       // 1. Synthetic Supabase pool_memberships response structure matching RadarPage and WallOfShamePage query:
       // select('user_id, role, users(id, email, display_name), pools(settings)')
