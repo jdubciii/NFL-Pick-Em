@@ -4535,8 +4535,42 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         });
 
         const origQuery = mockPrisma.$queryRawUnsafe;
+        const origTransaction = mockPrisma.$transaction;
+        const origPoolFindUnique = mockPrisma.pool.findUnique;
+
+        let preflightPoolSeenJack = false;
+        let transactionReached = false;
+        let poolLockReached = false;
+        let memberLockReached = false;
+        let lockedAuthorityCheckReached = false;
+
+        // Ensure preflight pool check sees Jack as commissioner
+        mockPrisma.pool.findUnique = vi.fn(async (args: any) => {
+          const res = await origPoolFindUnique(args);
+          if (res?.adminId === JACK_UUID) {
+            preflightPoolSeenJack = true;
+          }
+          return res;
+        });
+
+        // In-transaction: transfer occurs strictly after preflight / during transaction and row lock
+        mockPrisma.$transaction = vi.fn(async (callback: any) => {
+          transactionReached = true;
+          return origTransaction(async (tx: any) => {
+            const origTxFindUnique = tx.pool.findUnique;
+            tx.pool.findUnique = vi.fn(async (args: any) => {
+              lockedAuthorityCheckReached = true;
+              // Under locked transaction boundary, pool admin has transferred to NON_JACK_UUID
+              const p = await origTxFindUnique(args);
+              return p ? { ...p, adminId: NON_JACK_UUID } : null;
+            });
+            return callback(tx);
+          });
+        });
+
         mockPrisma.$queryRawUnsafe = vi.fn(async (q: string, ...args: any[]) => {
           if (q.includes('FROM public.pools') && q.includes('FOR UPDATE')) {
+            poolLockReached = true;
             // Concurrency race: pool admin was transferred to someone else under lock
             return [{
               id: POOL_ID,
@@ -4546,38 +4580,40 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
               settings: {},
             }];
           }
+          if (q.includes('FROM public.pool_memberships') && q.includes('FOR UPDATE')) {
+            memberLockReached = true;
+          }
           return origQuery(q, ...args);
         });
 
-        // Also mock pool.findUnique inside transaction
-        mockPrisma.pool.findUnique = vi.fn(async ({ where }: any) => {
-          return {
-            id: POOL_ID,
-            name: 'Main Pool',
-            status: 'ACTIVE',
-            adminId: NON_JACK_UUID, // Admin changed!
-            settings: {},
-          };
-        });
+        try {
+          const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker/override`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${jackAuthToken}`,
+            },
+            body: JSON.stringify({
+              season: 2026,
+              week: 7,
+              targetGameId: '401873099',
+            }),
+          });
 
-        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker/override`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${jackAuthToken}`,
-          },
-          body: JSON.stringify({
-            season: 2026,
-            week: 7,
-            targetGameId: '401873099',
-          }),
-        });
-
-        expect(res.status).toBe(403);
-        const data: any = await res.json();
-        expect(data.error).toContain('Only the pool commissioner may override');
-        expect(mockPrisma.pool.update).not.toHaveBeenCalled();
-        mockPrisma.$queryRawUnsafe = origQuery;
+          expect(res.status).toBe(403);
+          const data: any = await res.json();
+          expect(data.error).toContain('Only the pool commissioner may override');
+          expect(preflightPoolSeenJack).toBe(true);
+          expect(transactionReached).toBe(true);
+          expect(poolLockReached).toBe(true);
+          expect(memberLockReached).toBe(true);
+          expect(lockedAuthorityCheckReached).toBe(true);
+          expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+        } finally {
+          mockPrisma.$queryRawUnsafe = origQuery;
+          mockPrisma.$transaction = origTransaction;
+          mockPrisma.pool.findUnique = origPoolFindUnique;
+        }
       });
 
       it('POST /api/pools/:pool_id/owner/tiebreaker-designation fails closed with 403 when membership is revoked under row lock', async () => {
