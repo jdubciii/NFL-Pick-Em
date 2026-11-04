@@ -252,7 +252,11 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
             }));
           }
           if (include?.picks) {
-            res.picks = p.picks || committedDbState.picks.filter((pk: any) => pk.poolId === where.id);
+            const rawPicks = p.picks || committedDbState.picks.filter((pk: any) => pk.poolId === where.id);
+            res.picks = rawPicks.map((pk: any) => ({
+              ...pk,
+              game: pk.game || (mockPrisma._gameStore || []).find((g: any) => g.id === pk.gameId || g.externalGameId === pk.gameId),
+            }));
           }
           return res;
         }),
@@ -309,9 +313,26 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
           ) || null;
         }),
         findMany: vi.fn(async (args?: any) => {
+          if (args?.where && 'week' in args.where) {
+            throw new Error('Invalid prisma.pick.findMany invocation: Unknown argument `week` in where.week');
+          }
           let pks = committedDbState.picks;
           if (args?.where?.poolId) pks = pks.filter((p: any) => p.poolId === args.where.poolId);
-          if (args?.where?.week !== undefined) pks = pks.filter((p: any) => p.week === args.where.week);
+          if (args?.where?.gameId) {
+            if (typeof args.where.gameId === 'string') {
+              pks = pks.filter((p: any) => p.gameId === args.where.gameId);
+            } else if (args.where.gameId?.in) {
+              const inSet = new Set(args.where.gameId.in);
+              pks = pks.filter((p: any) => inSet.has(p.gameId));
+            }
+          }
+          if (args?.include) {
+            pks = pks.map((p: any) => ({
+              ...p,
+              game: p.game || (mockPrisma._gameStore || []).find((g: any) => g.id === p.gameId || g.externalGameId === p.gameId),
+              user: p.user || { id: p.userId, email: p.userId === JACK_UUID ? 'jack.w.cone@gmail.com' : `${p.userId}@example.com` },
+            }));
+          }
           return pks;
         }),
         upsert: vi.fn(async ({ where, update, create }: any) => {
@@ -5084,6 +5105,180 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         expect(res.status).toBe(422);
         const data = await res.json();
         expect(data.error).toBe('AUTHORITATIVE_SLATE_UNAVAILABLE');
+      });
+
+      it('GET /api/pools/:pool_id/leaderboard uses Prisma-compatible Pick shape without where.week and resolves UUID gameId mapping', async () => {
+        committedDbState.pools[POOL_ID].settings = {
+          season: 2026,
+          seasonType: 2,
+          current_week: 7,
+          owner_admin_v1: {
+            slates: {
+              2026: {
+                2: {
+                  7: {
+                    eventIds: ['401872999'], // ONLY Game 1 is in custom slate; Game 2 is EXCLUDED
+                  },
+                },
+              },
+            },
+          },
+        };
+
+        const GAME_1_UUID = '11111111-1111-4111-8111-111111111111';
+        const GAME_2_UUID = '22222222-2222-4222-8222-222222222222';
+
+        mockPrisma._gameStore = [
+          {
+            id: GAME_1_UUID,
+            externalGameId: '401872999',
+            homeTeamId: 'DET',
+            awayTeamId: 'CHI',
+            status: GameStatus.FINAL,
+            homeScore: 28,
+            awayScore: 20,
+          },
+          {
+            id: GAME_2_UUID,
+            externalGameId: '401873000',
+            homeTeamId: 'GB',
+            awayTeamId: 'MIN',
+            status: GameStatus.FINAL,
+            homeScore: 24,
+            awayScore: 10,
+          },
+        ];
+
+        // Production Prisma-compatible Pick shapes: NO `week` column! gameId is the canonical DB UUID!
+        committedDbState.picks = [
+          {
+            id: 'pick-uuid-jack-1',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: GAME_1_UUID, // UUID mapping
+            selectedTeamId: 'DET',
+            submittedById: JACK_UUID,
+            createdAt: new Date(),
+            result: { isCorrect: true, pointsAwarded: 1 },
+            game: mockPrisma._gameStore[0],
+            user: { id: JACK_UUID, email: 'jack.w.cone@gmail.com' },
+          },
+          {
+            id: 'pick-uuid-jack-2',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: GAME_2_UUID, // UUID mapping of EXCLUDED game
+            selectedTeamId: 'GB',
+            submittedById: JACK_UUID,
+            createdAt: new Date(),
+            result: { isCorrect: true, pointsAwarded: 1 },
+            game: mockPrisma._gameStore[1],
+            user: { id: JACK_UUID, email: 'jack.w.cone@gmail.com' },
+          },
+        ];
+
+        let observedPickWhere: any = null;
+        const origPickFindMany = mockPrisma.pick.findMany;
+        mockPrisma.pick.findMany = vi.fn(async (args: any) => {
+          observedPickWhere = args?.where;
+          // Fail if where.week is queried, enforcing production Prisma compatibility
+          if (args?.where && 'week' in args.where) {
+            throw new Error('PrismaClientValidationError: Unknown argument `week` in where.week');
+          }
+          return origPickFindMany(args);
+        });
+
+        try {
+          const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/leaderboard?week=7`, {
+            headers: { Authorization: `Bearer ${jackAuthToken}` },
+          });
+
+          expect(res.status).toBe(200);
+          const data = await res.json();
+          expect(data.pool_id).toBe(POOL_ID);
+
+          // Assert the query does NOT contain where.week
+          expect(observedPickWhere).toBeDefined();
+          expect(observedPickWhere.poolId).toBe(POOL_ID);
+          expect('week' in observedPickWhere).toBe(false);
+          expect(observedPickWhere.week).toBeUndefined();
+
+          // Assert UUID gameId mapping correctly matched Game 1 and excluded Game 2
+          const jackEntry = data.leaderboard.find((e: any) => e.user_id === JACK_UUID);
+          expect(jackEntry).toBeDefined();
+          expect(jackEntry.total_points).toBe(1);
+          expect(jackEntry.total_picks).toBe(1);
+          expect(jackEntry.correct_picks).toBe(1);
+        } finally {
+          mockPrisma.pick.findMany = origPickFindMany;
+        }
+      });
+
+      it('GET /api/pools/:pool_id/leaderboard/cumulative resolves production Prisma Pick shape using UUID gameId mapping without pick.week', async () => {
+        committedDbState.pools[POOL_ID].settings = {
+          season: 2026,
+          seasonType: 2,
+          owner_admin_v1: {
+            slates: {
+              2026: {
+                2: {
+                  7: {
+                    eventIds: ['401872999'], // Only Game 1 in custom slate
+                  },
+                },
+              },
+            },
+          },
+        };
+
+        const GAME_1_UUID = '33333333-3333-4333-8333-333333333333';
+        const GAME_2_UUID = '44444444-4444-4444-8444-444444444444';
+
+        mockPrisma._gameStore = [
+          {
+            id: GAME_1_UUID,
+            externalGameId: '401872999',
+            status: GameStatus.FINAL,
+          },
+          {
+            id: GAME_2_UUID,
+            externalGameId: '401873000',
+            status: GameStatus.FINAL,
+          },
+        ];
+
+        // Production Prisma-compatible Pick shape: gameId is UUID, NO week column!
+        committedDbState.pools[POOL_ID].picks = [
+          {
+            id: 'p-cum-jack-1',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: GAME_1_UUID,
+            result: { isCorrect: true, pointsAwarded: 1 },
+            game: mockPrisma._gameStore[0],
+          },
+          {
+            id: 'p-cum-jack-2',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: GAME_2_UUID, // EXCLUDED GAME
+            result: { isCorrect: true, pointsAwarded: 1 },
+            game: mockPrisma._gameStore[1],
+          },
+        ];
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/leaderboard/cumulative`, {
+          headers: { Authorization: `Bearer ${jackAuthToken}` },
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        const jackEntry = data.leaderboard.find((e: any) => e.user_id === JACK_UUID);
+        expect(jackEntry).toBeDefined();
+        // Excluded game is omitted; UUID mapping successfully resolved pick without pick.week
+        expect(jackEntry.total_picks).toBe(1);
+        expect(jackEntry.correct_picks).toBe(1);
+        expect(jackEntry.accuracy_percentage).toBe(100);
       });
     });
 

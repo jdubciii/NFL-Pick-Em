@@ -598,11 +598,10 @@ app.get('/api/pools/:pool_id/leaderboard', requireAuth, requirePoolMember, async
       }
     }
 
-    // 3. Query picks for pool and week
+    // 3. Query picks for pool using supported Prisma fields (Pick has no week column)
     const picks = await dbClient.pick.findMany({
       where: {
         poolId: pool.id,
-        week,
       },
       include: {
         user: {
@@ -635,8 +634,16 @@ app.get('/api/pools/:pool_id/leaderboard', requireAuth, requirePoolMember, async
 
     for (const pick of (picks || [])) {
       const pickGameId = String(pick.gameId);
-      // STRICT FILTER: Exclude picks on unmanifested / unselected games
-      if (!scopedGameIds.has(pickGameId)) {
+      const pickGameUuid = pick.game?.id ? String(pick.game.id) : null;
+      const pickGameExtId = pick.game?.externalGameId ? String(pick.game.externalGameId) : null;
+
+      // STRICT FILTER: Match against scoped games for the requested week
+      const isScoped =
+        scopedGameIds.has(pickGameId) ||
+        (pickGameUuid && scopedGameIds.has(pickGameUuid)) ||
+        (pickGameExtId && scopedGameIds.has(pickGameExtId));
+
+      if (!isScoped) {
         continue;
       }
 
@@ -838,19 +845,45 @@ app.get('/api/pools/:pool_id/leaderboard/cumulative', requireAuth, requirePoolMe
       }
     }
 
+    // Query games to map canonical game UUIDs (Game.id) to their manifest week
+    let allDbGames: any[] = [];
+    try {
+      if (typeof dbClient.game?.findMany === 'function') {
+        allDbGames = await dbClient.game.findMany({
+          select: { id: true, externalGameId: true },
+        });
+      }
+    } catch {
+      allDbGames = [];
+    }
+    for (const g of allDbGames) {
+      if (g.id && g.externalGameId) {
+        const extStr = String(g.externalGameId);
+        if (manifestGameToWeek.has(extStr)) {
+          manifestGameToWeek.set(String(g.id), manifestGameToWeek.get(extStr)!);
+        }
+      }
+    }
+
     // Determine week for each pick and collect all weeks with active picks
     const pickWeeks = new Set<number>();
     for (const pick of poolPicks) {
       let pw: number | undefined;
-      if (pick.week !== undefined && pick.week !== null && !isNaN(Number(pick.week)) && Number(pick.week) > 0) {
+
+      // 1. Resolve via joined pick.game.externalGameId or pick.game.id
+      if (pick.game?.externalGameId && manifestGameToWeek.has(String(pick.game.externalGameId))) {
+        pw = manifestGameToWeek.get(String(pick.game.externalGameId));
+      }
+      if (pw === undefined && pick.game?.id && manifestGameToWeek.has(String(pick.game.id))) {
+        pw = manifestGameToWeek.get(String(pick.game.id));
+      }
+      // 2. Resolve via pick.gameId (which may be UUID or externalGameId)
+      if (pw === undefined && pick.gameId && manifestGameToWeek.has(String(pick.gameId))) {
+        pw = manifestGameToWeek.get(String(pick.gameId));
+      }
+      // 3. Fallback only if mock or test payload explicitly provided week
+      if (pw === undefined && pick.week !== undefined && pick.week !== null && !isNaN(Number(pick.week)) && Number(pick.week) > 0) {
         pw = Number(pick.week);
-      } else {
-        const gid = String(pick.gameId || '');
-        if (manifestGameToWeek.has(gid)) {
-          pw = manifestGameToWeek.get(gid);
-        } else if (pick.game?.externalGameId && manifestGameToWeek.has(String(pick.game.externalGameId))) {
-          pw = manifestGameToWeek.get(String(pick.game.externalGameId));
-        }
       }
 
       if (pw === undefined) {
@@ -933,8 +966,16 @@ app.get('/api/pools/:pool_id/leaderboard/cumulative', requireAuth, requirePoolMe
         continue;
       }
 
-      const pickGameId = String(pick.gameId);
-      if (!validGameIdsForWeek.has(pickGameId)) {
+      const pickGameId = String(pick.gameId || '');
+      const pickGameUuid = pick.game?.id ? String(pick.game.id) : null;
+      const pickGameExtId = pick.game?.externalGameId ? String(pick.game.externalGameId) : null;
+
+      const isScoped =
+        validGameIdsForWeek.has(pickGameId) ||
+        (pickGameUuid && validGameIdsForWeek.has(pickGameUuid)) ||
+        (pickGameExtId && validGameIdsForWeek.has(pickGameExtId));
+
+      if (!isScoped) {
         // Pick was on an unselected or unmanifested game for this week
         continue;
       }
