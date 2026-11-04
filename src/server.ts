@@ -1485,10 +1485,11 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
         settings
       );
 
-      if (slateResult.error && slateResult.error !== 'AUTHORITATIVE_SLATE_UNAVAILABLE') {
+      // Require a successful strict resolver result: fail closed on any error or missing games
+      if (slateResult.error || !Array.isArray(slateResult.games) || slateResult.games.length === 0) {
         res.status(422).json({
-          error: slateResult.error,
-          reasons: slateResult.reasonsIfNotReady,
+          error: slateResult.error || 'AUTHORITATIVE_SLATE_UNAVAILABLE',
+          reasons: slateResult.reasonsIfNotReady || [`Authoritative slate unavailable for week ${weekNum}.`],
         });
         return;
       }
@@ -1502,6 +1503,7 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
       }
 
       const targetEventIds: string[] = (slateResult.customSlateEventIds !== null ? slateResult.customSlateEventIds : slateResult.manifest.eventIds).map((e: any) => String(e));
+      const targetEventIdSet = new Set(targetEventIds);
 
       // Query games using caller-bound RPC if available, or database
       const canonicalGames = await getGamesForWeek(weekNum, season, pool.id, dbClient, {
@@ -1510,24 +1512,37 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
         seasonType,
       });
 
-      const foundGameIds = new Set((canonicalGames || []).map((g: any) => String(g.externalGameId || g.id)));
+      // Select candidate games: prefer canonicalGames if nonempty, else fall back to strict resolver games
+      const candidateGames = (Array.isArray(canonicalGames) && canonicalGames.length > 0)
+        ? canonicalGames
+        : (slateResult.games || []);
+
+      // Select only the exact target event IDs and deduplicate before emitting rows/cells or tallying wins
+      const exactGames: any[] = [];
+      const seenExactEventIds = new Set<string>();
+      for (const g of candidateGames) {
+        const eid = String(g.externalGameId || g.id);
+        if (targetEventIdSet.has(eid) && !seenExactEventIds.has(eid)) {
+          seenExactEventIds.add(eid);
+          exactGames.push(g);
+        }
+      }
+
       const hasCompleteCoverage =
-        Array.isArray(canonicalGames) &&
-        canonicalGames.length > 0 &&
-        targetEventIds.length > 0 &&
-        targetEventIds.every((id: string) => foundGameIds.has(id));
+        exactGames.length === targetEventIds.length &&
+        targetEventIds.every((id: string) => seenExactEventIds.has(id));
 
       if (!hasCompleteCoverage) {
         res.status(422).json({
           error: 'AUTHORITATIVE_SLATE_UNAVAILABLE',
           reasons: [
-            `Incomplete canonical games coverage for week ${weekNum}: expected ${targetEventIds.length} games, resolved ${canonicalGames?.length ?? 0}.`,
+            `Incomplete canonical games coverage for week ${weekNum}: expected ${targetEventIds.length} games, resolved ${exactGames.length}.`,
           ],
         });
         return;
       }
 
-      games = canonicalGames.filter((g: any) => foundGameIds.has(String(g.externalGameId || g.id)));
+      games = exactGames;
     } else {
       // All-weeks Matrix: apply strict verified pool-scoped slates per week
       let manifestRows: any[] = [];

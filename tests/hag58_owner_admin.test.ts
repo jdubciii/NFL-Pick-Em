@@ -5398,7 +5398,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         expect(data.summary[JACK_UUID].weekly_wins).toBe(1);
       });
 
-      it('GET /api/pools/:pool_id/matrix fails closed with 422 AUTHORITATIVE_SLATE_UNAVAILABLE on partial RPC response', async () => {
+      it('GET /api/pools/:pool_id/matrix fails closed with 422 AUTHORITATIVE_SLATE_UNAVAILABLE when canonical DB game is missing even with a full RPC response', async () => {
         // Week 7 manifest requires 2 events
         vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
           season: 2026,
@@ -5407,8 +5407,8 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
           eventIds: ['401872999', '401873000'],
         } as any);
 
-        // RPC returns a PARTIAL response (only 1 game instead of 2)
-        const mockPartialSupabase = {
+        // Caller RPC returns a FULL response with BOTH games
+        const mockFullRpcSupabase = {
           rpc: vi.fn().mockResolvedValue({
             data: [
               {
@@ -5421,12 +5421,22 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
                 homeScore: null,
                 awayScore: null,
               },
+              {
+                id: 'g-rpc-2',
+                externalGameId: '401873000',
+                homeTeamId: 'GB',
+                awayTeamId: 'MIN',
+                kickoffTime: new Date().toISOString(),
+                status: 'SCHEDULED',
+                homeScore: null,
+                awayScore: null,
+              },
             ],
             error: null,
           }),
         };
 
-        // Database does NOT have the second game
+        // Database does NOT have the second game (only has 401872999)
         mockPrisma._gameStore = [
           {
             id: 'g-rpc-1',
@@ -5438,17 +5448,168 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
           },
         ];
 
-        setCallerBoundSupabaseClientForTesting(mockPartialSupabase as any);
+        setCallerBoundSupabaseClientForTesting(mockFullRpcSupabase as any);
 
         try {
           const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/matrix?week=7`, {
             headers: { Authorization: `Bearer ${jackAuthToken}` },
           });
 
+          // Must fail closed with 422 because DB is missing canonical game rows, despite full RPC response
           expect(res.status).toBe(422);
           const data = await res.json();
           expect(data.error).toBe('AUTHORITATIVE_SLATE_UNAVAILABLE');
-          expect(data.reasons?.[0]).toContain('Incomplete canonical games coverage');
+          expect(data.reasons?.[0]).toMatch(/Games in accepted manifest are missing from database|Missing canonical game rows|Incomplete canonical games coverage/);
+        } finally {
+          setCallerBoundSupabaseClientForTesting(null);
+        }
+      });
+
+      it('GET /api/pools/:pool_id/matrix?week=7 filters extra unmanifested RPC games and picks from rows, cells, and weekly_wins', async () => {
+        // Week 7 manifest has 2 accepted events
+        const acceptedEventIds = ['401872999', '401873000'];
+        const extraEventId = '401873999';
+
+        vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 7,
+          revision: 1,
+          eventIds: acceptedEventIds,
+          acceptedAt: '2026-10-31T12:00:00Z',
+          acceptedBy: JACK_UUID,
+          manifestFingerprint: 'fp-w7',
+          observationTime: '2026-10-31T12:00:00Z',
+        } as any);
+
+        committedDbState.pools[POOL_ID].settings = {
+          season: 2026,
+          seasonType: 2,
+          current_week: 7,
+        };
+
+        // Canonical DB store has the 2 accepted games
+        const game1Uuid = 'uuid-game-401872999';
+        const game2Uuid = 'uuid-game-401873000';
+        const extraGameUuid = 'uuid-game-401873999';
+
+        mockPrisma._gameStore = [
+          {
+            id: game1Uuid,
+            externalGameId: '401872999',
+            homeTeamId: 'DET',
+            awayTeamId: 'CHI',
+            kickoffTime: new Date(Date.now() - 7200000),
+            status: GameStatus.FINAL,
+            homeScore: 24,
+            awayScore: 17,
+          },
+          {
+            id: game2Uuid,
+            externalGameId: '401873000',
+            homeTeamId: 'GB',
+            awayTeamId: 'MIN',
+            kickoffTime: new Date(Date.now() - 3600000),
+            status: GameStatus.FINAL,
+            homeScore: 31,
+            awayScore: 20,
+          },
+        ];
+
+        // RPC returns 3 games: the 2 accepted events PLUS the extra finished game
+        const mockExtraRpcSupabase = {
+          rpc: vi.fn().mockResolvedValue({
+            data: [
+              {
+                id: game1Uuid,
+                externalGameId: '401872999',
+                homeTeamId: 'DET',
+                awayTeamId: 'CHI',
+                kickoffTime: new Date(Date.now() - 7200000).toISOString(),
+                status: 'FINAL',
+                homeScore: 24,
+                awayScore: 17,
+              },
+              {
+                id: game2Uuid,
+                externalGameId: '401873000',
+                homeTeamId: 'GB',
+                awayTeamId: 'MIN',
+                kickoffTime: new Date(Date.now() - 3600000).toISOString(),
+                status: 'FINAL',
+                homeScore: 31,
+                awayScore: 20,
+              },
+              {
+                id: extraGameUuid,
+                externalGameId: extraEventId,
+                homeTeamId: 'BUF',
+                awayTeamId: 'MIA',
+                kickoffTime: new Date(Date.now() - 1800000).toISOString(),
+                status: 'FINAL',
+                homeScore: 40,
+                awayScore: 14,
+              },
+            ],
+            error: null,
+          }),
+        };
+
+        // Jack has picks on all 3 games (all winning picks)
+        committedDbState.pools[POOL_ID].picks = [
+          {
+            id: 'pick-1',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: game1Uuid,
+            selectedTeamId: 'DET',
+            result: { isCorrect: true, pointsAwarded: 1 },
+            game: mockPrisma._gameStore[0],
+            user: { id: JACK_UUID, email: 'jack.w.cone@gmail.com' },
+          },
+          {
+            id: 'pick-2',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: game2Uuid,
+            selectedTeamId: 'GB',
+            result: { isCorrect: true, pointsAwarded: 1 },
+            game: mockPrisma._gameStore[1],
+            user: { id: JACK_UUID, email: 'jack.w.cone@gmail.com' },
+          },
+          {
+            id: 'pick-extra',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: extraGameUuid,
+            selectedTeamId: 'BUF',
+            result: { isCorrect: true, pointsAwarded: 1 },
+            game: { id: extraGameUuid, externalGameId: extraEventId },
+            user: { id: JACK_UUID, email: 'jack.w.cone@gmail.com' },
+          },
+        ];
+
+        setCallerBoundSupabaseClientForTesting(mockExtraRpcSupabase as any);
+
+        try {
+          const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/matrix?week=7`, {
+            headers: { Authorization: `Bearer ${jackAuthToken}` },
+          });
+
+          expect(res.status).toBe(200);
+          const data = await res.json();
+
+          // 1. Rows must strictly contain only the 2 accepted games, NOT the extra game
+          expect(data.rows).toHaveLength(2);
+          const rowExternalIds = data.rows.map((r: any) => String(r.external_game_id));
+          expect(rowExternalIds).not.toContain(extraEventId);
+          expect(rowExternalIds).toEqual(expect.arrayContaining(acceptedEventIds));
+
+          // 2. Cells must NOT contain the extra game
+          expect(data.cells[extraGameUuid]).toBeUndefined();
+
+          // 3. Weekly wins must strictly omit the correct pick on the extra game (2 wins instead of 3)
+          expect(data.summary[JACK_UUID].weekly_wins).toBe(2);
         } finally {
           setCallerBoundSupabaseClientForTesting(null);
         }

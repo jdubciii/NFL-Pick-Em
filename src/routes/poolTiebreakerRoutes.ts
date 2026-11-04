@@ -213,11 +213,18 @@ export async function getGamesForWeek(
           homeScore: g.homeScore !== undefined ? g.homeScore : g.home_score,
           awayScore: g.awayScore !== undefined ? g.awayScore : g.away_score,
         }));
-        // Finding 4: Apply custom slate filtering to RPC data before returning
-        if (customSlateEventIds !== null) {
-          const customSet = new Set(customSlateEventIds);
-          rpcGames = rpcGames.filter((g: any) => customSet.has(String(g.externalGameId || g.id)));
-        }
+        // Select only the exact target event IDs (for both custom slates and default manifests)
+        const targetEventIdSet = new Set(targetEventIds);
+        rpcGames = rpcGames.filter((g: any) => targetEventIdSet.has(String(g.externalGameId || g.id)));
+
+        // Deduplicate in case RPC returned duplicate records for the same event
+        const seenRpcEventIds = new Set<string>();
+        rpcGames = rpcGames.filter((g: any) => {
+          const eid = String(g.externalGameId || g.id);
+          if (seenRpcEventIds.has(eid)) return false;
+          seenRpcEventIds.add(eid);
+          return true;
+        });
 
         // Strictly verify complete canonical coverage of targetEventIds before accepting RPC games
         const rpcFoundIds = new Set(rpcGames.map((g: any) => String(g.externalGameId || g.id)));
@@ -225,7 +232,7 @@ export async function getGamesForWeek(
         if (hasFullCoverage) {
           return rpcGames;
         }
-        // Partial RPC response: reject partial set before returning
+        // Incomplete RPC response: reject partial set before returning
       }
     } catch {
       // Caller-bound RPC not available or failed; fallback to next approved source
