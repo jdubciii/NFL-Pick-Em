@@ -241,8 +241,20 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
 
     mockPrisma = {
       pool: {
-        findUnique: vi.fn(async ({ where }: any) => {
-          return committedDbState.pools[where.id] ? { ...committedDbState.pools[where.id] } : null;
+        findUnique: vi.fn(async ({ where, include }: any) => {
+          const p = committedDbState.pools[where.id];
+          if (!p) return null;
+          const res = { ...p };
+          if (include?.memberships) {
+            res.memberships = p.memberships || Object.values(committedDbState.memberships).filter((m: any) => m.poolId === where.id).map((m: any) => ({
+              ...m,
+              user: { id: m.userId, email: m.userId === JACK_UUID ? 'jack.w.cone@gmail.com' : `${m.userId}@example.com` },
+            }));
+          }
+          if (include?.picks) {
+            res.picks = p.picks || committedDbState.picks.filter((pk: any) => pk.poolId === where.id);
+          }
+          return res;
         }),
         update: vi.fn(async ({ where, data }: any) => {
           if (!committedDbState.pools[where.id]) throw new Error('Pool not found');
@@ -296,7 +308,12 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
             p.gameId === where?.poolId_userId_gameId?.gameId
           ) || null;
         }),
-        findMany: vi.fn(async () => committedDbState.picks),
+        findMany: vi.fn(async (args?: any) => {
+          let pks = committedDbState.picks;
+          if (args?.where?.poolId) pks = pks.filter((p: any) => p.poolId === args.where.poolId);
+          if (args?.where?.week !== undefined) pks = pks.filter((p: any) => p.week === args.where.week);
+          return pks;
+        }),
         upsert: vi.fn(async ({ where, update, create }: any) => {
           const idx = committedDbState.picks.findIndex((p: any) =>
             p.poolId === where?.poolId_userId_gameId?.poolId &&
@@ -395,6 +412,11 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
             status: m.status,
             role: m.role || 'MEMBER',
           }];
+        }
+        if (query.includes('FROM public.weekly_slate_manifests')) {
+          return [
+            { week_number: 7, event_ids: ['401872999', '401873000'] },
+          ];
         }
         return [{ id: POOL_ID }];
       }),
@@ -4635,6 +4657,260 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       expect(result.penaltyAssigned).toBeInstanceOf(Prisma.Decimal);
       expect(result.penaltyAssigned?.toString()).toBe('2.5');
       expect(result.penaltyAssigned?.toNumber()).toBe(2.5);
+    });
+
+    // -------------------------------------------------------------------------
+    // Server Leaderboard Scoped Slate & Fail-Closed Route Enforcement (HAG58-SLATE-2026-11-03-01)
+    // -------------------------------------------------------------------------
+    describe('Server Leaderboard Scoped Slate & Fail-Closed Route Enforcement', () => {
+      it('GET /api/pools/:pool_id/leaderboard strictly omits excluded finished games from points and pick totals', async () => {
+        // Pool with custom slate containing ONLY Game 1 ('401872999')
+        committedDbState.pools[POOL_ID].settings = {
+          season: 2026,
+          seasonType: 2,
+          current_week: 7,
+          owner_admin_v1: {
+            slates: {
+              2026: {
+                2: {
+                  7: {
+                    eventIds: ['401872999'], // ONLY Game 1 is in custom slate; Game 2 is EXCLUDED
+                  },
+                },
+              },
+            },
+          },
+        };
+
+        // Manifest includes both Game 1 and Game 2
+        vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 7,
+          eventIds: ['401872999', '401873000'],
+        } as any);
+
+        // Games in DB
+        mockPrisma._gameStore = [
+          {
+            id: 'g-leaderboard-1',
+            externalGameId: '401872999',
+            homeTeamId: 'DET',
+            awayTeamId: 'CHI',
+            kickoffTime: new Date(Date.now() - 7200000),
+            status: GameStatus.FINAL,
+            homeScore: 28,
+            awayScore: 20, // DET wins
+          },
+          {
+            id: 'g-leaderboard-2',
+            externalGameId: '401873000',
+            homeTeamId: 'GB',
+            awayTeamId: 'MIN',
+            kickoffTime: new Date(Date.now() - 3600000),
+            status: GameStatus.FINAL,
+            homeScore: 24,
+            awayScore: 10, // GB wins (EXCLUDED GAME!)
+          },
+        ];
+
+        // Second active member
+        committedDbState.memberships[`${POOL_ID}:${NON_JACK_UUID}`] = {
+          poolId: POOL_ID,
+          userId: NON_JACK_UUID,
+          status: 'ACTIVE',
+        };
+
+        // Picks:
+        // Jack picked DET on Game 1 (correct), and GB on Game 2 (correct, but Game 2 is excluded!)
+        // Non-Jack picked CHI on Game 1 (incorrect), and GB on Game 2 (correct, but Game 2 is excluded!)
+        committedDbState.picks = [
+          {
+            id: 'p-jack-1',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: '401872999',
+            selectedTeamId: 'DET',
+            week: 7,
+            user: { id: JACK_UUID, email: 'jack.w.cone@gmail.com' },
+          },
+          {
+            id: 'p-jack-2',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: '401873000', // EXCLUDED GAME
+            selectedTeamId: 'GB',
+            week: 7,
+            user: { id: JACK_UUID, email: 'jack.w.cone@gmail.com' },
+          },
+          {
+            id: 'p-nonjack-1',
+            poolId: POOL_ID,
+            userId: NON_JACK_UUID,
+            gameId: '401872999',
+            selectedTeamId: 'CHI',
+            week: 7,
+            user: { id: NON_JACK_UUID, email: `${NON_JACK_UUID}@example.com` },
+          },
+          {
+            id: 'p-nonjack-2',
+            poolId: POOL_ID,
+            userId: NON_JACK_UUID,
+            gameId: '401873000', // EXCLUDED GAME
+            selectedTeamId: 'GB',
+            week: 7,
+            user: { id: NON_JACK_UUID, email: `${NON_JACK_UUID}@example.com` },
+          },
+        ];
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/leaderboard?week=7`, {
+          headers: { Authorization: `Bearer ${jackAuthToken}` },
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.pool_id).toBe(POOL_ID);
+        expect(data.week).toBe(7);
+        expect(data.leaderboard).toBeDefined();
+
+        const jackEntry = data.leaderboard.find((e: any) => e.user_id === JACK_UUID);
+        const nonJackEntry = data.leaderboard.find((e: any) => e.user_id === NON_JACK_UUID);
+
+        expect(jackEntry).toBeDefined();
+        expect(nonJackEntry).toBeDefined();
+
+        // Jack: only Game 1 counts (1 total pick, 1 correct pick, 1.0 points). Game 2 is strictly omitted!
+        expect(jackEntry.total_picks).toBe(1);
+        expect(jackEntry.correct_picks).toBe(1);
+        expect(jackEntry.total_points).toBe(1);
+        expect(jackEntry.is_weekly_loser).toBe(false);
+
+        // Non-Jack: only Game 1 counts (1 total pick, 0 correct picks, 0.0 points). Game 2 is strictly omitted!
+        expect(nonJackEntry.total_picks).toBe(1);
+        expect(nonJackEntry.correct_picks).toBe(0);
+        expect(nonJackEntry.total_points).toBe(0);
+        expect(nonJackEntry.is_weekly_loser).toBe(true);
+      });
+
+      it('GET /api/pools/:pool_id/leaderboard fails closed with 500 when pool settings read fails', async () => {
+        const origPoolFindUnique = mockPrisma.pool.findUnique;
+        mockPrisma.pool.findUnique = vi.fn(async (args: any) => {
+          if (args?.include) {
+            throw new Error('DB read timeout reading pool settings');
+          }
+          return origPoolFindUnique(args);
+        });
+
+        try {
+          const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/leaderboard?week=7`, {
+            headers: { Authorization: `Bearer ${jackAuthToken}` },
+          });
+
+          expect(res.status).toBe(500);
+          const data = await res.json();
+          expect(data.error).toBe('SETTINGS_READ_FAILED');
+        } finally {
+          mockPrisma.pool.findUnique = origPoolFindUnique;
+        }
+      });
+
+      it('GET /api/pools/:pool_id/leaderboard fails closed with 422 AUTHORITATIVE_SLATE_UNAVAILABLE when manifest is absent', async () => {
+        vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValueOnce(null);
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/leaderboard?week=7`, {
+          headers: { Authorization: `Bearer ${jackAuthToken}` },
+        });
+
+        expect(res.status).toBe(422);
+        const data = await res.json();
+        expect(data.error).toBe('AUTHORITATIVE_SLATE_UNAVAILABLE');
+      });
+
+      it('GET /api/pools/:pool_id/leaderboard/cumulative strictly omits excluded games from cumulative accuracy and pick counts', async () => {
+        committedDbState.pools[POOL_ID].settings = {
+          season: 2026,
+          seasonType: 2,
+          owner_admin_v1: {
+            slates: {
+              2026: {
+                2: {
+                  7: {
+                    eventIds: ['401872999'], // Only Game 1 in custom slate
+                  },
+                },
+              },
+            },
+          },
+        };
+
+        mockPrisma._gameStore = [
+          {
+            id: 'g-leaderboard-1',
+            externalGameId: '401872999',
+            status: GameStatus.FINAL,
+          },
+          {
+            id: 'g-leaderboard-2',
+            externalGameId: '401873000',
+            status: GameStatus.FINAL,
+          },
+        ];
+
+        // Jack: 1 correct pick on Game 1 (scoped), 1 correct pick on Game 2 (excluded)
+        committedDbState.pools[POOL_ID].picks = [
+          {
+            id: 'p-jack-1',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: '401872999',
+            result: { isCorrect: true, pointsAwarded: 1 },
+          },
+          {
+            id: 'p-jack-2',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: '401873000', // EXCLUDED GAME
+            result: { isCorrect: true, pointsAwarded: 1 },
+          },
+        ];
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/leaderboard/cumulative`, {
+          headers: { Authorization: `Bearer ${jackAuthToken}` },
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.pool_id).toBe(POOL_ID);
+
+        const jackEntry = data.leaderboard.find((e: any) => e.user_id === JACK_UUID);
+        expect(jackEntry).toBeDefined();
+        // Excluded game is omitted: total_picks === 1, correct_picks === 1, accuracy_percentage === 100
+        expect(jackEntry.total_picks).toBe(1);
+        expect(jackEntry.correct_picks).toBe(1);
+        expect(jackEntry.accuracy_percentage).toBe(100);
+      });
+
+      it('GET /api/pools/:pool_id/leaderboard/cumulative fails closed with 500 when pool settings read fails', async () => {
+        const origPoolFindUnique = mockPrisma.pool.findUnique;
+        mockPrisma.pool.findUnique = vi.fn(async (args: any) => {
+          if (args?.include) {
+            throw new Error('Settings read connection failed');
+          }
+          return origPoolFindUnique(args);
+        });
+
+        try {
+          const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/leaderboard/cumulative`, {
+            headers: { Authorization: `Bearer ${jackAuthToken}` },
+          });
+
+          expect(res.status).toBe(500);
+          const data = await res.json();
+          expect(data.error).toBe('SETTINGS_READ_FAILED');
+        } finally {
+          mockPrisma.pool.findUnique = origPoolFindUnique;
+        }
+      });
     });
 
     // -------------------------------------------------------------------------

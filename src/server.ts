@@ -10,7 +10,9 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { Role, Status } from '@prisma/client';
 import prisma from './db/client';
-import { JWT_SECRET, UUID_REGEX, requireAuth, requireAdmin, requirePoolCommissioner, requirePoolMember } from './middleware/auth';
+import { JWT_SECRET, UUID_REGEX, requireAuth, requireAdmin, requirePoolCommissioner, requirePoolMember, getPrismaClient } from './middleware/auth';
+import { resolvePoolScopedGamesForWrapUp } from './services/wrapUpEngine';
+import { normalizeTeamCode } from './services/authoritativeSlateService';
 import { picksRouter } from './routes/picks';
 import { adminRouter, poolAdminRouter } from './routes/admin';
 import { meRouter } from './routes/me';
@@ -498,6 +500,7 @@ export interface LeaderboardUserEntry {
  * GET /api/pools/:pool_id/leaderboard
  * Protected endpoint that returns the pool leaderboard aggregated from PickResult records.
  * Sorts users descending by total points and tags the lowest scoring user(s) with is_weekly_loser: true.
+ * Scoped strictly to authoritative weekly slate games (HAG58-SLATE-2026-11-03-01).
  */
 app.get('/api/pools/:pool_id/leaderboard', requireAuth, requirePoolMember, async (req: Request, res: Response): Promise<void> => {
   const poolId = String(req.params.pool_id);
@@ -507,46 +510,117 @@ app.get('/api/pools/:pool_id/leaderboard', requireAuth, requirePoolMember, async
     return;
   }
 
+  const dbClient = getPrismaClient();
+
   try {
-    // 1. Fetch pool, memberships, and all picks with graded results
-    const pool = await prisma.pool.findUnique({
-      where: { id: poolId },
-      include: {
-        memberships: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                email: true,
+    // 1. Fetch pool, settings, and active memberships
+    let pool: any;
+    try {
+      pool = await dbClient.pool.findUnique({
+        where: { id: poolId },
+        include: {
+          memberships: {
+            where: { status: 'ACTIVE' },
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  email: true,
+                },
               },
             },
           },
         },
-        picks: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                email: true,
-              },
-            },
-            result: true,
-            game: true,
-          },
-        },
-      },
-    });
+      });
+    } catch (settingsErr: any) {
+      console.error('Settings read failure in leaderboard:', settingsErr);
+      res.status(500).json({
+        error: 'SETTINGS_READ_FAILED',
+        message: settingsErr.message || 'Failed to read pool settings from database.',
+      });
+      return;
+    }
 
     if (!pool) {
       res.status(404).json({ error: 'Pool not found.' });
       return;
     }
 
-    // 2. Aggregate points and stats by user
+    const settings = (pool.settings as PoolSettings) || {};
+    const season = Number(req.query.season) || Number(settings.season) || 2026;
+    const seasonType = Number(req.query.seasonType) || Number((settings as any).seasonType) || 2;
+    const requestedWeek = req.query.week || req.query.week_no || req.query.weekNumber;
+    const defaultWeek = Number(settings.week_number ?? (settings as any).current_week ?? 1);
+    const week = requestedWeek !== undefined && requestedWeek !== null && requestedWeek !== ''
+      ? parseInt(String(requestedWeek), 10) || defaultWeek
+      : defaultWeek;
+
+    // 2. Authoritative Pool-Scoped Slate Resolution (HAG58-SLATE-2026-11-03-01)
+    const slateResult = await resolvePoolScopedGamesForWrapUp(
+      dbClient,
+      pool.id,
+      season,
+      seasonType,
+      week,
+      settings
+    );
+
+    if (slateResult.error) {
+      res.status(422).json({
+        error: slateResult.error,
+        reasons: slateResult.reasonsIfNotReady || [slateResult.error],
+      });
+      return;
+    }
+
+    const scopedGames = slateResult.games || [];
+    if (scopedGames.length === 0) {
+      res.status(422).json({
+        error: 'AUTHORITATIVE_SLATE_UNAVAILABLE',
+        reasons: ['No authoritative games found for this slate.'],
+      });
+      return;
+    }
+
+    // Index scoped games by DB ID and externalGameId
+    const scopedGameIds = new Set<string>();
+    const gameById = new Map<string, any>();
+    for (const g of scopedGames) {
+      if (g.id) {
+        const idStr = String(g.id);
+        scopedGameIds.add(idStr);
+        gameById.set(idStr, g);
+      }
+      if (g.externalGameId) {
+        const extStr = String(g.externalGameId);
+        scopedGameIds.add(extStr);
+        gameById.set(extStr, g);
+      }
+    }
+
+    // 3. Query picks for pool and week
+    const picks = await dbClient.pick.findMany({
+      where: {
+        poolId: pool.id,
+        week,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+          },
+        },
+        result: true,
+        game: true,
+      },
+    });
+
+    // 4. Aggregate points and stats by user strictly from scoped games
     const userMap = new Map<string, LeaderboardUserEntry>();
 
-    // Initialize all pool members
-    for (const membership of pool.memberships) {
+    // Initialize all active pool members
+    for (const membership of (pool.memberships || [])) {
       if (!userMap.has(membership.user.id)) {
         userMap.set(membership.user.id, {
           user_id: membership.user.id,
@@ -559,8 +633,13 @@ app.get('/api/pools/:pool_id/leaderboard', requireAuth, requirePoolMember, async
       }
     }
 
-    // Include users with picks and accumulate dynamically evaluated points
-    for (const pick of pool.picks) {
+    for (const pick of (picks || [])) {
+      const pickGameId = String(pick.gameId);
+      // STRICT FILTER: Exclude picks on unmanifested / unselected games
+      if (!scopedGameIds.has(pickGameId)) {
+        continue;
+      }
+
       let entry = userMap.get(pick.userId);
       if (!entry) {
         entry = {
@@ -576,7 +655,7 @@ app.get('/api/pools/:pool_id/leaderboard', requireAuth, requirePoolMember, async
 
       entry.total_picks += 1;
 
-      const game = (pick as any).game;
+      const game = gameById.get(pickGameId) || (pick as any).game;
       const isGameFinished = game && (game.status === 'FINAL' || (game.homeScore !== null && game.awayScore !== null));
 
       let isCorrect = false;
@@ -588,7 +667,8 @@ app.get('/api/pools/:pool_id/leaderboard', requireAuth, requirePoolMember, async
           if (game.homeScore > game.awayScore) winner = game.homeTeamId;
           else if (game.awayScore > game.homeScore) winner = game.awayTeamId;
         }
-        isCorrect = Boolean(winner && pick.selectedTeamId && pick.selectedTeamId === winner);
+        const selected = pick.selectedTeam || pick.selectedTeamId;
+        isCorrect = Boolean(winner && selected && normalizeTeamCode(selected) === normalizeTeamCode(winner));
         pointsAwarded = isCorrect ? 1.0 : 0.0;
       } else if (pick.result) {
         isCorrect = pick.result.isCorrect;
@@ -603,7 +683,7 @@ app.get('/api/pools/:pool_id/leaderboard', requireAuth, requirePoolMember, async
 
     const leaderboard = Array.from(userMap.values());
 
-    // 3. Sort descending by total points, then by correct picks
+    // 5. Sort descending by total points, then by correct picks
     leaderboard.sort((a, b) => {
       if (b.total_points !== a.total_points) {
         return b.total_points - a.total_points;
@@ -611,7 +691,7 @@ app.get('/api/pools/:pool_id/leaderboard', requireAuth, requirePoolMember, async
       return b.correct_picks - a.correct_picks;
     });
 
-    // 4. Calculate absolute lowest score and set is_weekly_loser flag
+    // 6. Calculate absolute lowest score and set is_weekly_loser flag
     if (leaderboard.length > 0) {
       const minPoints = Math.min(...leaderboard.map((u) => u.total_points));
       for (const entry of leaderboard) {
@@ -624,11 +704,13 @@ app.get('/api/pools/:pool_id/leaderboard', requireAuth, requirePoolMember, async
     res.json({
       pool_id: pool.id,
       pool_name: pool.name,
+      season,
+      week,
       leaderboard,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Leaderboard calculation error:', error);
-    res.status(500).json({ error: 'Failed to generate leaderboard.' });
+    res.status(500).json({ error: 'Failed to generate leaderboard.', details: error.message });
   }
 });
 
@@ -651,6 +733,7 @@ export interface CumulativeLeaderboardEntry {
  * GET /api/pools/:pool_id/leaderboard/cumulative
  * Protected route returning joined PoolMembership and PoolMemberStat data,
  * including cumulative shot counts, 1st place finishes, dead place finishes, and pick accuracy.
+ * Scoped strictly to authoritatively verified weekly slate games across season (HAG58-SLATE-2026-11-03-01).
  * Supports sorting by 'shots', 'wins', 'dead_place', or 'accuracy'.
  */
 app.get('/api/pools/:pool_id/leaderboard/cumulative', requireAuth, requirePoolMember, async (req: Request, res: Response): Promise<void> => {
@@ -663,38 +746,130 @@ app.get('/api/pools/:pool_id/leaderboard/cumulative', requireAuth, requirePoolMe
     return;
   }
 
+  const dbClient = getPrismaClient();
+
   try {
-    const pool = await db.pool.findUnique({
-      where: { id: poolId },
-      include: {
-        memberships: {
-          where: { status: 'ACTIVE' },
-          include: {
-            user: {
-              select: {
-                id: true,
-                email: true,
+    let pool: any;
+    try {
+      pool = await dbClient.pool.findUnique({
+        where: { id: poolId },
+        include: {
+          memberships: {
+            where: { status: 'ACTIVE' },
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  email: true,
+                },
               },
+              stat: true,
             },
-            stat: true,
+          },
+          picks: {
+            include: {
+              result: true,
+              game: true,
+            },
           },
         },
-        picks: {
-          include: {
-            result: true,
-          },
-        },
-      },
-    });
+      });
+    } catch (settingsErr: any) {
+      console.error('Settings read failure in cumulative leaderboard:', settingsErr);
+      res.status(500).json({
+        error: 'SETTINGS_READ_FAILED',
+        message: settingsErr.message || 'Failed to read pool settings from database.',
+      });
+      return;
+    }
 
     if (!pool) {
       res.status(404).json({ error: 'Pool not found.' });
       return;
     }
 
-    // Map pick accuracy per user
+    const settings = (pool.settings as PoolSettings) || {};
+    const season = Number(req.query.season) || Number(settings.season) || 2026;
+    const seasonType = Number(req.query.seasonType) || Number((settings as any).seasonType) || 2;
+
+    // 2. Resolve all authoritative scoped event IDs across the season (HAG58-SLATE-2026-11-03-01)
+    let manifestRows: any[] = [];
+    try {
+      if (typeof dbClient.$queryRawUnsafe === 'function') {
+        manifestRows = await dbClient.$queryRawUnsafe(
+          `SELECT week_number, event_ids FROM public.weekly_slate_manifests WHERE season = $1::int AND season_type = $2::int;`,
+          season,
+          seasonType
+        );
+      }
+    } catch {
+      manifestRows = [];
+    }
+
+    if (!manifestRows || manifestRows.length === 0) {
+      res.status(422).json({
+        error: 'AUTHORITATIVE_SLATE_UNAVAILABLE',
+        reasons: ['No authoritative slate manifests found for season.'],
+      });
+      return;
+    }
+
+    const allScopedEventIds = new Set<string>();
+    for (const row of manifestRows) {
+      const wNum = Number(row.week_number);
+      const rawEventIds = Array.isArray(row.event_ids)
+        ? row.event_ids
+        : (typeof row.event_ids === 'string' ? JSON.parse(row.event_ids || '[]') : []);
+
+      let weekCustomEventIds: string[] | null = null;
+      if (
+        pool.id === '9b893bef-3b5a-4ffa-951d-8ba27f9c9782' &&
+        season === 2026 &&
+        seasonType === 2 &&
+        wNum === 8
+      ) {
+        weekCustomEventIds = [
+          '401873023', '401873024', '401873025', '401873026', '401873027',
+          '401873028', '401873029', '401873030', '401873031',
+        ];
+      } else {
+        const cs = settings?.owner_admin_v1?.slates?.[season]?.[seasonType]?.[wNum];
+        if (cs && Array.isArray(cs.eventIds) && cs.eventIds.length > 0 && cs.eventIds.length <= 32) {
+          const manifestEventSet = new Set(rawEventIds.map(String));
+          if (cs.eventIds.every((id: any) => typeof id === 'string' && manifestEventSet.has(id.trim()))) {
+            weekCustomEventIds = cs.eventIds.map((id: string) => id.trim());
+          }
+        }
+      }
+
+      const eventIdsToInclude = weekCustomEventIds !== null ? weekCustomEventIds : rawEventIds.map(String);
+      for (const eid of eventIdsToInclude) {
+        allScopedEventIds.add(String(eid));
+      }
+    }
+
+    let scopedGames: any[] = [];
+    if (allScopedEventIds.size > 0 && typeof dbClient.game?.findMany === 'function') {
+      scopedGames = await dbClient.game.findMany({
+        where: { externalGameId: { in: Array.from(allScopedEventIds) } },
+        select: { id: true, externalGameId: true },
+      });
+    }
+
+    const allScopedGameIds = new Set<string>();
+    for (const g of scopedGames) {
+      if (g.id) allScopedGameIds.add(String(g.id));
+      if (g.externalGameId) allScopedGameIds.add(String(g.externalGameId));
+    }
+
+    // 3. Map pick accuracy per user strictly from authoritatively scoped games
     const userPicksStats = new Map<string, { totalPicks: number; correctPicks: number }>();
     for (const pick of (pool.picks || [])) {
+      const pickGameId = String(pick.gameId);
+      // Strictly exclude picks on unmanifested / unselected games
+      if (!allScopedGameIds.has(pickGameId)) {
+        continue;
+      }
       const userStat = userPicksStats.get(pick.userId) || { totalPicks: 0, correctPicks: 0 };
       userStat.totalPicks += 1;
       if (pick.result?.isCorrect) {
@@ -753,9 +928,9 @@ app.get('/api/pools/:pool_id/leaderboard/cumulative', requireAuth, requirePoolMe
       total_pool_shots: totalPoolShots,
       leaderboard,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Cumulative leaderboard calculation error:', error);
-    res.status(500).json({ error: 'Failed to generate cumulative leaderboard.' });
+    res.status(500).json({ error: 'Failed to generate cumulative leaderboard.', details: error.message });
   }
 });
 
