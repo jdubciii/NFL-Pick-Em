@@ -360,6 +360,19 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
           return entry;
         }),
       },
+      acceptedSlateManifest: {
+        findFirst: vi.fn(async ({ where }: any) => {
+          const manifests = mockPrisma._manifestStore || [
+            {
+              season: 2026,
+              seasonType: 2,
+              weekNumber: 7,
+              eventIds: ['401872999', '401873000'],
+            },
+          ];
+          return manifests.find((m: any) => (!where?.weekNumber || (m.week_number ?? m.weekNumber) === where.weekNumber)) || null;
+        }),
+      },
       $queryRawUnsafe: vi.fn(async (query: string, ...args: any[]) => {
         if (query.includes('pg_advisory_xact_lock')) {
           return [{ pg_advisory_xact_lock: null }];
@@ -413,10 +426,29 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
             role: m.role || 'MEMBER',
           }];
         }
+        if (query.includes('to_regclass')) {
+          return [{ to_regclass: 'public.weekly_slate_manifests' }];
+        }
         if (query.includes('FROM public.weekly_slate_manifests')) {
-          return [
-            { week_number: 7, event_ids: ['401872999', '401873000'] },
+          const defaultManifests = [
+            {
+              season: 2026,
+              season_type: 2,
+              week_number: 7,
+              revision: 1,
+              event_ids: ['401872999', '401873000'],
+              accepted_at: new Date('2026-10-24T12:00:00Z'),
+              accepted_by: JACK_UUID,
+              manifest_fingerprint: 'fp-w7',
+              observation_time: new Date('2026-10-24T12:00:00Z'),
+            },
           ];
+          const manifests = mockPrisma._manifestStore || defaultManifests;
+          if (query.includes('week_number = $3::int') || query.includes('week_number =')) {
+            const requestedWeek = Number(args[2] ?? args[0]);
+            return manifests.filter((m: any) => m.week_number === requestedWeek || m.weekNumber === requestedWeek);
+          }
+          return manifests;
         }
         return [{ id: POOL_ID }];
       }),
@@ -4910,6 +4942,148 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         } finally {
           mockPrisma.pool.findUnique = origPoolFindUnique;
         }
+      });
+
+      it('GET /api/pools/:pool_id/leaderboard/cumulative fails closed with 422 MALFORMED_SLATE_CONFIG when custom slate has duplicate event IDs', async () => {
+        committedDbState.pools[POOL_ID].settings = {
+          season: 2026,
+          seasonType: 2,
+          owner_admin_v1: {
+            slates: {
+              2026: {
+                2: {
+                  7: {
+                    eventIds: ['401872999', '401872999'], // DUPLICATE IDs
+                  },
+                },
+              },
+            },
+          },
+        };
+
+        mockPrisma._gameStore = [
+          { id: 'g-leaderboard-1', externalGameId: '401872999', status: GameStatus.FINAL },
+          { id: 'g-leaderboard-2', externalGameId: '401873000', status: GameStatus.FINAL },
+        ];
+
+        committedDbState.pools[POOL_ID].picks = [
+          {
+            id: 'p-jack-1',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: '401872999',
+            result: { isCorrect: true, pointsAwarded: 1 },
+          },
+        ];
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/leaderboard/cumulative`, {
+          headers: { Authorization: `Bearer ${jackAuthToken}` },
+        });
+
+        expect(res.status).toBe(422);
+        const data = await res.json();
+        expect(data.error).toBe('MALFORMED_SLATE_CONFIG');
+      });
+
+      it('GET /api/pools/:pool_id/leaderboard/cumulative fails closed with 422 MALFORMED_SLATE_CONFIG when custom slate has out-of-manifest event IDs', async () => {
+        committedDbState.pools[POOL_ID].settings = {
+          season: 2026,
+          seasonType: 2,
+          owner_admin_v1: {
+            slates: {
+              2026: {
+                2: {
+                  7: {
+                    eventIds: ['401879999'], // OUT OF MANIFEST (manifest only has 401872999, 401873000)
+                  },
+                },
+              },
+            },
+          },
+        };
+
+        mockPrisma._gameStore = [
+          { id: 'g-leaderboard-1', externalGameId: '401872999', status: GameStatus.FINAL },
+          { id: 'g-leaderboard-2', externalGameId: '401873000', status: GameStatus.FINAL },
+        ];
+
+        committedDbState.pools[POOL_ID].picks = [
+          {
+            id: 'p-jack-1',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: '401872999',
+            result: { isCorrect: true, pointsAwarded: 1 },
+          },
+        ];
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/leaderboard/cumulative`, {
+          headers: { Authorization: `Bearer ${jackAuthToken}` },
+        });
+
+        expect(res.status).toBe(422);
+        const data = await res.json();
+        expect(data.error).toBe('MALFORMED_SLATE_CONFIG');
+      });
+
+      it('GET /api/pools/:pool_id/leaderboard/cumulative fails closed with 422 AUTHORITATIVE_SLATE_UNAVAILABLE when a week with picks lacks an accepted manifest', async () => {
+        committedDbState.pools[POOL_ID].settings = {
+          season: 2026,
+          seasonType: 2,
+        };
+
+        mockPrisma._gameStore = [
+          { id: 'g-leaderboard-1', externalGameId: '401872999', status: GameStatus.FINAL },
+        ];
+
+        // Active pick in Week 9, but manifests only exist for Week 7 (no manifest for Week 9)
+        committedDbState.pools[POOL_ID].picks = [
+          {
+            id: 'p-jack-w9',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: '401873999',
+            week: 9,
+            result: { isCorrect: true, pointsAwarded: 1 },
+          },
+        ];
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/leaderboard/cumulative`, {
+          headers: { Authorization: `Bearer ${jackAuthToken}` },
+        });
+
+        expect(res.status).toBe(422);
+        const data = await res.json();
+        expect(data.error).toBe('AUTHORITATIVE_SLATE_UNAVAILABLE');
+      });
+
+      it('GET /api/pools/:pool_id/leaderboard/cumulative fails closed with 422 AUTHORITATIVE_SLATE_UNAVAILABLE when canonical game row is missing from database', async () => {
+        committedDbState.pools[POOL_ID].settings = {
+          season: 2026,
+          seasonType: 2,
+        };
+
+        // Manifest has 401872999 and 401873000, but _gameStore is EMPTY (missing canonical games)
+        mockPrisma._gameStore = [];
+
+        committedDbState.pools[POOL_ID].picks = [
+          {
+            id: 'p-jack-1',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: '401872999',
+            week: 7,
+            result: { isCorrect: true, pointsAwarded: 1 },
+          },
+        ];
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/leaderboard/cumulative`, {
+          headers: { Authorization: `Bearer ${jackAuthToken}` },
+        });
+
+        expect(res.status).toBe(422);
+        const data = await res.json();
+        expect(data.error).toBe('AUTHORITATIVE_SLATE_UNAVAILABLE');
       });
     });
 

@@ -792,7 +792,14 @@ app.get('/api/pools/:pool_id/leaderboard/cumulative', requireAuth, requirePoolMe
     const season = Number(req.query.season) || Number(settings.season) || 2026;
     const seasonType = Number(req.query.seasonType) || Number((settings as any).seasonType) || 2;
 
-    // 2. Resolve all authoritative scoped event IDs across the season (HAG58-SLATE-2026-11-03-01)
+    // 2. Resolve authoritative pool-scoped games across all relevant weeks (HAG58-SLATE-2026-11-03-01)
+    const poolPicks: any[] = pool.picks || [];
+
+    const customSlatesForSeason = settings?.owner_admin_v1?.slates?.[season]?.[seasonType] || {};
+    const configuredWeeks = Object.keys(customSlatesForSeason)
+      .map(Number)
+      .filter((w: number) => !isNaN(w) && w > 0);
+
     let manifestRows: any[] = [];
     try {
       if (typeof dbClient.$queryRawUnsafe === 'function') {
@@ -806,7 +813,12 @@ app.get('/api/pools/:pool_id/leaderboard/cumulative', requireAuth, requirePoolMe
       manifestRows = [];
     }
 
-    if (!manifestRows || manifestRows.length === 0) {
+    const manifestWeeks = (manifestRows || [])
+      .map((r: any) => Number(r.week_number))
+      .filter((w: number) => !isNaN(w) && w > 0);
+
+    // If no manifests exist for the season, fail closed
+    if (manifestWeeks.length === 0) {
       res.status(422).json({
         error: 'AUTHORITATIVE_SLATE_UNAVAILABLE',
         reasons: ['No authoritative slate manifests found for season.'],
@@ -814,62 +826,119 @@ app.get('/api/pools/:pool_id/leaderboard/cumulative', requireAuth, requirePoolMe
       return;
     }
 
-    const allScopedEventIds = new Set<string>();
+    const manifestWeekSet = new Set(manifestWeeks);
+    const manifestGameToWeek = new Map<string, number>();
     for (const row of manifestRows) {
       const wNum = Number(row.week_number);
       const rawEventIds = Array.isArray(row.event_ids)
         ? row.event_ids
         : (typeof row.event_ids === 'string' ? JSON.parse(row.event_ids || '[]') : []);
+      for (const eid of rawEventIds) {
+        manifestGameToWeek.set(String(eid), wNum);
+      }
+    }
 
-      let weekCustomEventIds: string[] | null = null;
-      if (
-        pool.id === '9b893bef-3b5a-4ffa-951d-8ba27f9c9782' &&
-        season === 2026 &&
-        seasonType === 2 &&
-        wNum === 8
-      ) {
-        weekCustomEventIds = [
-          '401873023', '401873024', '401873025', '401873026', '401873027',
-          '401873028', '401873029', '401873030', '401873031',
-        ];
+    // Determine week for each pick and collect all weeks with active picks
+    const pickWeeks = new Set<number>();
+    for (const pick of poolPicks) {
+      let pw: number | undefined;
+      if (pick.week !== undefined && pick.week !== null && !isNaN(Number(pick.week)) && Number(pick.week) > 0) {
+        pw = Number(pick.week);
       } else {
-        const cs = settings?.owner_admin_v1?.slates?.[season]?.[seasonType]?.[wNum];
-        if (cs && Array.isArray(cs.eventIds) && cs.eventIds.length > 0 && cs.eventIds.length <= 32) {
-          const manifestEventSet = new Set(rawEventIds.map(String));
-          if (cs.eventIds.every((id: any) => typeof id === 'string' && manifestEventSet.has(id.trim()))) {
-            weekCustomEventIds = cs.eventIds.map((id: string) => id.trim());
-          }
+        const gid = String(pick.gameId || '');
+        if (manifestGameToWeek.has(gid)) {
+          pw = manifestGameToWeek.get(gid);
+        } else if (pick.game?.externalGameId && manifestGameToWeek.has(String(pick.game.externalGameId))) {
+          pw = manifestGameToWeek.get(String(pick.game.externalGameId));
         }
       }
 
-      const eventIdsToInclude = weekCustomEventIds !== null ? weekCustomEventIds : rawEventIds.map(String);
-      for (const eid of eventIdsToInclude) {
-        allScopedEventIds.add(String(eid));
+      if (pw === undefined) {
+        // Pick references a game outside accepted manifests for the season
+        res.status(422).json({
+          error: 'AUTHORITATIVE_SLATE_UNAVAILABLE',
+          reasons: [`AUTHORITATIVE_SLATE_UNAVAILABLE: Pick ${pick.id} references game outside authoritative season slates.`],
+        });
+        return;
+      }
+
+      pickWeeks.add(pw);
+      pick._resolvedWeek = pw;
+    }
+
+    // Every week with active picks MUST have an accepted manifest in the season
+    for (const pw of pickWeeks) {
+      if (!manifestWeekSet.has(pw)) {
+        res.status(422).json({
+          error: 'AUTHORITATIVE_SLATE_UNAVAILABLE',
+          reasons: [`AUTHORITATIVE_SLATE_UNAVAILABLE: Missing accepted manifest for week ${pw} with active picks.`],
+        });
+        return;
       }
     }
 
-    let scopedGames: any[] = [];
-    if (allScopedEventIds.size > 0 && typeof dbClient.game?.findMany === 'function') {
-      scopedGames = await dbClient.game.findMany({
-        where: { externalGameId: { in: Array.from(allScopedEventIds) } },
-        select: { id: true, externalGameId: true },
-      });
+    // Determine all relevant weeks to validate and resolve (manifest weeks, pick weeks, and configured weeks)
+    const relevantWeeks = Array.from(
+      new Set([...manifestWeeks, ...pickWeeks, ...configuredWeeks])
+    ).sort((a, b) => a - b);
+
+    // Map week number -> Set of valid canonical game IDs / aliases for that week
+    const weekScopedGameIds = new Map<number, Set<string>>();
+
+    for (const w of relevantWeeks) {
+      const slateResult = await resolvePoolScopedGamesForWrapUp(
+        dbClient,
+        pool.id,
+        season,
+        seasonType,
+        w,
+        settings
+      );
+
+      if (slateResult.error) {
+        res.status(422).json({
+          error: slateResult.error,
+          reasons: slateResult.reasonsIfNotReady || [slateResult.error],
+        });
+        return;
+      }
+
+      if (!slateResult.games || slateResult.games.length === 0) {
+        res.status(422).json({
+          error: 'AUTHORITATIVE_SLATE_UNAVAILABLE',
+          reasons: [`No authoritative games found for week ${w}.`],
+        });
+        return;
+      }
+
+      const gameIdsForWeek = new Set<string>();
+      for (const g of slateResult.games) {
+        if (g.id) gameIdsForWeek.add(String(g.id));
+        if (g.externalGameId) gameIdsForWeek.add(String(g.externalGameId));
+      }
+      weekScopedGameIds.set(w, gameIdsForWeek);
     }
 
-    const allScopedGameIds = new Set<string>();
-    for (const g of scopedGames) {
-      if (g.id) allScopedGameIds.add(String(g.id));
-      if (g.externalGameId) allScopedGameIds.add(String(g.externalGameId));
-    }
-
-    // 3. Map pick accuracy per user strictly from authoritatively scoped games
+    // 3. Map pick accuracy per user strictly scoped week-to-game
     const userPicksStats = new Map<string, { totalPicks: number; correctPicks: number }>();
-    for (const pick of (pool.picks || [])) {
-      const pickGameId = String(pick.gameId);
-      // Strictly exclude picks on unmanifested / unselected games
-      if (!allScopedGameIds.has(pickGameId)) {
+    for (const m of (pool.memberships || [])) {
+      userPicksStats.set(m.userId, { totalPicks: 0, correctPicks: 0 });
+    }
+
+    for (const pick of poolPicks) {
+      const pickWeek = pick._resolvedWeek;
+      const validGameIdsForWeek = weekScopedGameIds.get(pickWeek);
+      if (!validGameIdsForWeek) {
+        // Pick belongs to a week outside verified scope
         continue;
       }
+
+      const pickGameId = String(pick.gameId);
+      if (!validGameIdsForWeek.has(pickGameId)) {
+        // Pick was on an unselected or unmanifested game for this week
+        continue;
+      }
+
       const userStat = userPicksStats.get(pick.userId) || { totalPicks: 0, correctPicks: 0 };
       userStat.totalPicks += 1;
       if (pick.result?.isCorrect) {
