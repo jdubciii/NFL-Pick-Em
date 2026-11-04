@@ -61,15 +61,14 @@ export async function sealSeason(
     poolWhere.id = poolId;
   }
 
+  // Preflight pool discovery: strictly discovers candidate pool IDs/names.
+  // Full memberships, stats, and settings MUST be re-read inside $transaction
+  // under the acquired pool row lock to prevent stale snapshot capture (HAG58-SLATE-2026-11-03-01).
   const pools = await db.pool.findMany({
     where: poolWhere,
-    include: {
-      memberships: {
-        where: { status: 'ACTIVE' },
-        include: {
-          stat: true,
-        },
-      },
+    select: {
+      id: true,
+      name: true,
     },
   });
 
@@ -109,12 +108,22 @@ export async function sealSeason(
         throw err;
       }
 
+      // 2. Re-read fresh memberships and stats strictly under row lock inside transaction boundary
+      // Prevents concurrent revocations or stat changes during lock acquisition from being sealed incorrectly
+      const freshMemberships = await tx.poolMembership.findMany({
+        where: { poolId: pool.id, status: 'ACTIVE' },
+        include: {
+          stat: true,
+        },
+        orderBy: { userId: 'asc' },
+      });
+
       const memberSnapshots = [];
 
-      for (const membership of pool.memberships) {
+      for (const membership of freshMemberships) {
         const userId = membership.userId;
 
-        // Sum points awarded for this user in this pool
+        // Sum points awarded for this user in this pool using transaction client
         const pickResults = await tx.pick.findMany({
           where: { poolId: pool.id, userId },
           include: { result: true },
@@ -152,8 +161,8 @@ export async function sealSeason(
       });
 
       snapshots.push({
-        poolId: pool.id,
-        poolName: pool.name,
+        poolId: freshPool.id,
+        poolName: freshPool.name,
         sealedAt,
         members: memberSnapshots,
       });

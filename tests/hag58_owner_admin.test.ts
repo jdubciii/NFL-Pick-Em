@@ -36,6 +36,7 @@ import { applyOverride } from '../src/services/overrideService';
 import { deriveSundaySlatePhase } from '../client/src/services/radarSundaySlatePhase';
 import { previewWeeklyWrapUpForPool, executeWeeklyWrapUpForPool, resolvePoolScopedGamesForWrapUp } from '../src/services/wrapUpEngine';
 import { sealSeason } from '../src/services/seasonSeal';
+import { executeWeeklyWrapUp } from '../src/services/weeklyWrapUp';
 import { GameStatus } from '@prisma/client';
 
 describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () => {
@@ -4322,6 +4323,12 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
             settings: data.settings,
           })),
         },
+        poolMembership: {
+          findMany: vi.fn().mockResolvedValue([]),
+        },
+        pick: {
+          findMany: vi.fn().mockResolvedValue([]),
+        },
         auditLog: {
           create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
         },
@@ -4348,6 +4355,126 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
           },
         })
       );
+    });
+
+    it('proves sealSeason re-reads memberships and stats inside transaction under lock, capturing post-preflight changes', async () => {
+      const userActive = 'u-active-1';
+      const userRevoked = 'u-revoked-2';
+
+      let preflightRead = false;
+      let inTxMembersRead = false;
+
+      const mockDb: any = {
+        $transaction: async (cb: any) => cb(mockDb),
+        $queryRawUnsafe: vi.fn(async (q: string, ...args: any[]) => {
+          if (q.includes('FROM public.pools') && q.includes('FOR UPDATE')) {
+            return [{ id: POOL_ID, status: 'ACTIVE' }];
+          }
+          return [];
+        }),
+        pool: {
+          findMany: vi.fn(async () => {
+            preflightRead = true;
+            return [{ id: POOL_ID, name: 'Main Pool' }];
+          }),
+          findUnique: vi.fn(async ({ where }: any) => ({
+            id: where.id,
+            name: 'Main Pool',
+            status: 'ACTIVE',
+            settings: {},
+          })),
+          update: vi.fn(async ({ data }: any) => ({
+            id: POOL_ID,
+            settings: data.settings,
+          })),
+        },
+        poolMembership: {
+          findMany: vi.fn(async () => {
+            // Strictly called INSIDE transaction under pool lock!
+            inTxMembersRead = true;
+            // Simulated post-preflight mutation: userRevoked was revoked (status changed or removed),
+            // and userActive's stats updated to 3.00 shots
+            return [
+              {
+                userId: userActive,
+                status: 'ACTIVE',
+                stat: {
+                  totalShotsDrank: '3.00',
+                  firstPlaceFinishes: 1,
+                  deadPlaceFinishes: 0,
+                },
+              },
+            ];
+          }),
+        },
+        pick: {
+          findMany: vi.fn(async () => [
+            {
+              result: { pointsAwarded: 10.5 },
+            },
+          ]),
+        },
+        auditLog: {
+          create: vi.fn().mockResolvedValue({ id: 'audit-seal-1' }),
+        },
+      };
+
+      const result = await sealSeason(
+        { seasonYear: 2026, weekNumber: 18, poolId: POOL_ID, sealedBy: JACK_UUID },
+        mockDb
+      );
+
+      expect(preflightRead).toBe(true);
+      expect(inTxMembersRead).toBe(true);
+      expect(result.sealed).toBe(true);
+      expect(result.snapshots).toHaveLength(1);
+      const membersInSnapshot = result.snapshots[0].members;
+      // Proves revoked user was excluded by in-transaction query under lock
+      expect(membersInSnapshot).toHaveLength(1);
+      expect(membersInSnapshot[0].userId).toBe(userActive);
+      expect(membersInSnapshot[0].totalShotsDrank).toBe('3.00');
+      expect(membersInSnapshot[0].firstPlaceFinishes).toBe(1);
+      expect(membersInSnapshot[0].totalPoints).toBe('10.5');
+
+      // Verify audit log captured the fresh in-transaction members
+      expect(mockDb.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: 'SEASON_SEAL_SNAPSHOT',
+            newValue: expect.objectContaining({
+              snapshots: expect.arrayContaining([
+                expect.objectContaining({
+                  members: [
+                    expect.objectContaining({
+                      userId: userActive,
+                      totalShotsDrank: '3.00',
+                    }),
+                  ],
+                }),
+              ]),
+            }),
+          }),
+        })
+      );
+    });
+
+    it('proves legacy weeklyWrapUp delegates to executeWeeklyWrapUpForPool and enforces SHARED_POOL_GATE_UNAVAILABLE', async () => {
+      const mockDbNoQuery: any = {
+        // Missing $queryRawUnsafe
+        $transaction: async (cb: any) => cb(mockDbNoQuery),
+        $queryRaw: vi.fn().mockResolvedValue([]),
+        pool: { findUnique: vi.fn() },
+      };
+
+      const result = await executeWeeklyWrapUp(POOL_ID, 7, {
+        season: 2026,
+        seasonType: 2,
+        prismaClient: mockDbNoQuery,
+      });
+
+      expect(result.applied).toBe(false);
+      expect(result.reason).toBe('SHARED_POOL_GATE_UNAVAILABLE');
+      expect(mockDbNoQuery.pool.findUnique).not.toHaveBeenCalled();
     });
 
     // -------------------------------------------------------------------------
