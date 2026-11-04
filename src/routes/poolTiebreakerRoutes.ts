@@ -176,6 +176,23 @@ export async function getGamesForWeek(
     }
   }
 
+  // Establish authoritative weekly slate manifest before checking RPC or database
+  let manifest: any = null;
+  try {
+    manifest = await authoritativeSlateService.getAcceptedSlateManifest(dbClient, season, seasonType, weekNumber);
+  } catch (err: any) {
+    if (customSlateEventIds !== null) {
+      throw err;
+    }
+    return [];
+  }
+
+  if (!manifest || !Array.isArray(manifest.eventIds) || manifest.eventIds.length === 0) {
+    return []; // Fail closed: accepted slate manifest is required to establish authoritative game scope
+  }
+
+  const targetEventIds: string[] = customSlateEventIds !== null ? customSlateEventIds : manifest.eventIds.map(String);
+
   // Source 1: Caller-bound Supabase RPC (Finding 6 / Finding 1: requires auth.uid() caller identity)
   // Invoked strictly via caller-bound client; plain unauthenticated Prisma SQL lacks auth.uid() session context.
   if (poolId && supabaseClient && typeof supabaseClient.rpc === 'function') {
@@ -201,7 +218,14 @@ export async function getGamesForWeek(
           const customSet = new Set(customSlateEventIds);
           rpcGames = rpcGames.filter((g: any) => customSet.has(String(g.externalGameId || g.id)));
         }
-        return rpcGames;
+
+        // Strictly verify complete canonical coverage of targetEventIds before accepting RPC games
+        const rpcFoundIds = new Set(rpcGames.map((g: any) => String(g.externalGameId || g.id)));
+        const hasFullCoverage = targetEventIds.length > 0 && targetEventIds.every((id) => rpcFoundIds.has(id));
+        if (hasFullCoverage) {
+          return rpcGames;
+        }
+        // Partial RPC response: reject partial set before returning
       }
     } catch {
       // Caller-bound RPC not available or failed; fallback to next approved source
@@ -209,20 +233,19 @@ export async function getGamesForWeek(
   }
 
   // Source 2: Authoritative weekly slate manifest (P41-AUTHORITATIVE-SLATE-ARCHITECTURE)
-  // Scored-slate resolver integration: Scoped to pool custom slate when configured
+  // Scoped to pool custom slate when configured
   try {
-    const manifest = await authoritativeSlateService.getAcceptedSlateManifest(dbClient, season, seasonType, weekNumber);
-    if (manifest && Array.isArray(manifest.eventIds) && manifest.eventIds.length > 0) {
-      if (typeof dbClient.game?.findMany === 'function') {
-        const targetEventIds: string[] = customSlateEventIds !== null ? customSlateEventIds : manifest.eventIds.map(String);
-
-        const games = await dbClient.game.findMany({
-          where: {
-            externalGameId: { in: targetEventIds },
-          },
-          orderBy: { kickoffTime: 'asc' },
-        });
-        if (Array.isArray(games) && games.length > 0) {
+    if (typeof dbClient.game?.findMany === 'function') {
+      const games = await dbClient.game.findMany({
+        where: {
+          externalGameId: { in: targetEventIds },
+        },
+        orderBy: { kickoffTime: 'asc' },
+      });
+      if (Array.isArray(games)) {
+        const dbFoundIds = new Set(games.map((g: any) => String(g.externalGameId || g.id)));
+        const hasFullCoverage = targetEventIds.length > 0 && targetEventIds.every((id) => dbFoundIds.has(id));
+        if (hasFullCoverage) {
           return games;
         }
       }
@@ -235,7 +258,7 @@ export async function getGamesForWeek(
   }
 
   // Strict Fail-Closed Policy:
-  // If no approved authoritative source matched, return [] (ZERO games).
+  // If no approved authoritative source matched with complete canonical coverage, return [] (ZERO games).
   // Zero unmanifested fallback, zero all-games fallback, zero synthetic ID heuristics.
   return [];
 }

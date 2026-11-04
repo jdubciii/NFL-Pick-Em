@@ -27,7 +27,7 @@ import {
   computeSimulationStandings,
 } from '../client/src/owner/OwnerAdminApp';
 import * as authoritativeSlateService from '../src/services/authoritativeSlateService';
-import { getGamesForWeek, resolveTransactionLocalCanonicalGames } from '../src/routes/poolTiebreakerRoutes';
+import { getGamesForWeek, resolveTransactionLocalCanonicalGames, setCallerBoundSupabaseClientForTesting } from '../src/routes/poolTiebreakerRoutes';
 import { selectAcceptedScoredSlateGames, isWeeklyScoredSlateFinal, resolveEffectiveScoredSlateGames } from '../client/src/services/weeklyStandingsFinalityService';
 import { getScopedPoolSlateConfig, resolveScopedPoolSlateConfig } from '../client/src/services/poolScoredSlateConfig';
 import { fetchScopedSlateProjection, invalidateScopedSlateCache } from '../client/src/services/scopedSlateService';
@@ -296,6 +296,13 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
             (where.tieBreakerPrediction?.not === null ? s.tieBreakerPrediction != null : true)
           ).length;
         }),
+        findMany: vi.fn(async ({ where }: any) => {
+          return (committedDbState.weeklySubmissions || []).filter((s: any) => {
+            if (where?.poolId && s.poolId !== where.poolId) return false;
+            if (where?.weekNumber !== undefined && s.weekNumber !== where.weekNumber) return false;
+            return true;
+          });
+        }),
       },
       pick: {
         count: vi.fn(async (args?: any) => {
@@ -316,14 +323,19 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
           if (args?.where && 'week' in args.where) {
             throw new Error('Invalid prisma.pick.findMany invocation: Unknown argument `week` in where.week');
           }
-          let pks = committedDbState.picks;
+          let pks = (args?.where?.poolId && committedDbState.pools[args.where.poolId]?.picks) || committedDbState.picks;
           if (args?.where?.poolId) pks = pks.filter((p: any) => p.poolId === args.where.poolId);
           if (args?.where?.gameId) {
             if (typeof args.where.gameId === 'string') {
               pks = pks.filter((p: any) => p.gameId === args.where.gameId);
             } else if (args.where.gameId?.in) {
               const inSet = new Set(args.where.gameId.in);
-              pks = pks.filter((p: any) => inSet.has(p.gameId));
+              pks = pks.filter((p: any) =>
+                inSet.has(p.gameId) ||
+                (p.externalGameId && inSet.has(p.externalGameId)) ||
+                (p.game?.externalGameId && inSet.has(p.game.externalGameId)) ||
+                (p.game?.id && inSet.has(p.game.id))
+              );
             }
           }
           if (args?.include) {
@@ -5279,6 +5291,167 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         expect(jackEntry.total_picks).toBe(1);
         expect(jackEntry.correct_picks).toBe(1);
         expect(jackEntry.accuracy_percentage).toBe(100);
+      });
+
+      it('GET /api/pools/:pool_id/matrix?week_no=all strictly omits excluded finished games from matrix rows, cells, and weekly_wins', async () => {
+        // Main pool Week 8 has 9 confirmed scoped games: 401873023..401873031
+        // Manifest for Week 8 has 10 games: the 9 scoped games + 401873035 (excluded SNF game)
+        const scopedWeek8Ids = [
+          '401873023', '401873024', '401873025', '401873026', '401873027',
+          '401873028', '401873029', '401873030', '401873031',
+        ];
+        const excludedWeek8Id = '401873035';
+        const allWeek8Ids = [...scopedWeek8Ids, excludedWeek8Id];
+
+        committedDbState.pools[POOL_ID].settings = {
+          season: 2026,
+          seasonType: 2,
+          current_week: 8,
+        };
+
+        vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockImplementation(async (_db, _s, _st, w) => {
+          if (w === 8) {
+            return {
+              season: 2026,
+              seasonType: 2,
+              weekNumber: 8,
+              revision: 1,
+              eventIds: allWeek8Ids,
+              acceptedAt: '2026-10-31T12:00:00Z',
+              acceptedBy: JACK_UUID,
+              manifestFingerprint: 'fp-w8',
+              observationTime: '2026-10-31T12:00:00Z',
+            } as any;
+          }
+          return null;
+        });
+
+        mockPrisma._manifestStore = [
+          {
+            season: 2026,
+            season_type: 2,
+            week_number: 8,
+            revision: 1,
+            event_ids: allWeek8Ids,
+            accepted_at: new Date('2026-10-31T12:00:00Z'),
+            accepted_by: JACK_UUID,
+            manifest_fingerprint: 'fp-w8',
+            observation_time: new Date('2026-10-31T12:00:00Z'),
+          },
+        ];
+
+        // Seed 10 games in _gameStore (all FINAL)
+        mockPrisma._gameStore = allWeek8Ids.map((eid, idx) => ({
+          id: `game-uuid-${eid}`,
+          externalGameId: eid,
+          homeTeamId: `HOME_${idx}`,
+          awayTeamId: `AWAY_${idx}`,
+          kickoffTime: new Date(Date.now() - (idx + 1) * 3600000),
+          status: GameStatus.FINAL,
+          homeScore: 24,
+          awayScore: 17,
+        }));
+
+        // Jack has 2 picks:
+        // Pick 1: on scoped game 401873023 (isCorrect: true, 1 point)
+        // Pick 2: on excluded game 401873035 (isCorrect: true, 1 point)
+        committedDbState.pools[POOL_ID].picks = [
+          {
+            id: 'pick-scoped-1',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: `game-uuid-${scopedWeek8Ids[0]}`,
+            selectedTeamId: 'HOME_0',
+            result: { isCorrect: true, pointsAwarded: 1 },
+            game: mockPrisma._gameStore[0],
+            user: { id: JACK_UUID, email: 'jack.w.cone@gmail.com' },
+          },
+          {
+            id: 'pick-excluded-2',
+            poolId: POOL_ID,
+            userId: JACK_UUID,
+            gameId: `game-uuid-${excludedWeek8Id}`,
+            selectedTeamId: 'HOME_9',
+            result: { isCorrect: true, pointsAwarded: 1 },
+            game: mockPrisma._gameStore[9],
+            user: { id: JACK_UUID, email: 'jack.w.cone@gmail.com' },
+          },
+        ];
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/matrix?week_no=all`, {
+          headers: { Authorization: `Bearer ${jackAuthToken}` },
+        });
+
+        expect(res.status).toBe(200);
+        const data = await res.json();
+
+        // 1. Rows must strictly contain only the 9 scoped games, NOT the excluded game
+        expect(data.rows).toHaveLength(9);
+        const rowExternalIds = data.rows.map((r: any) => String(r.external_game_id));
+        expect(rowExternalIds).not.toContain(excludedWeek8Id);
+        expect(rowExternalIds).toEqual(expect.arrayContaining(scopedWeek8Ids));
+
+        // 2. Cells must NOT contain the excluded game
+        expect(data.cells[`game-uuid-${excludedWeek8Id}`]).toBeUndefined();
+
+        // 3. Weekly wins must strictly omit the correct pick on the excluded game (1 win instead of 2)
+        expect(data.summary[JACK_UUID].weekly_wins).toBe(1);
+      });
+
+      it('GET /api/pools/:pool_id/matrix fails closed with 422 AUTHORITATIVE_SLATE_UNAVAILABLE on partial RPC response', async () => {
+        // Week 7 manifest requires 2 events
+        vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 7,
+          eventIds: ['401872999', '401873000'],
+        } as any);
+
+        // RPC returns a PARTIAL response (only 1 game instead of 2)
+        const mockPartialSupabase = {
+          rpc: vi.fn().mockResolvedValue({
+            data: [
+              {
+                id: 'g-rpc-1',
+                externalGameId: '401872999',
+                homeTeamId: 'DET',
+                awayTeamId: 'CHI',
+                kickoffTime: new Date().toISOString(),
+                status: 'SCHEDULED',
+                homeScore: null,
+                awayScore: null,
+              },
+            ],
+            error: null,
+          }),
+        };
+
+        // Database does NOT have the second game
+        mockPrisma._gameStore = [
+          {
+            id: 'g-rpc-1',
+            externalGameId: '401872999',
+            homeTeamId: 'DET',
+            awayTeamId: 'CHI',
+            kickoffTime: new Date(),
+            status: 'SCHEDULED',
+          },
+        ];
+
+        setCallerBoundSupabaseClientForTesting(mockPartialSupabase as any);
+
+        try {
+          const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/matrix?week=7`, {
+            headers: { Authorization: `Bearer ${jackAuthToken}` },
+          });
+
+          expect(res.status).toBe(422);
+          const data = await res.json();
+          expect(data.error).toBe('AUTHORITATIVE_SLATE_UNAVAILABLE');
+          expect(data.reasons?.[0]).toContain('Incomplete canonical games coverage');
+        } finally {
+          setCallerBoundSupabaseClientForTesting(null);
+        }
       });
     });
 

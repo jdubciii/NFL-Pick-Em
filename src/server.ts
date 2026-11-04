@@ -12,6 +12,7 @@ import { Role, Status } from '@prisma/client';
 import prisma from './db/client';
 import { JWT_SECRET, UUID_REGEX, requireAuth, requireAdmin, requirePoolCommissioner, requirePoolMember, getPrismaClient } from './middleware/auth';
 import { resolvePoolScopedGamesForWrapUp } from './services/wrapUpEngine';
+import * as authoritativeSlateService from './services/authoritativeSlateService';
 import { normalizeTeamCode } from './services/authoritativeSlateService';
 import { picksRouter } from './routes/picks';
 import { adminRouter, poolAdminRouter } from './routes/admin';
@@ -1426,9 +1427,11 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
     return;
   }
 
+  const dbClient = getPrismaClient();
+
   try {
     // 1. Fetch pool, settings, active memberships, and user stats
-    const pool = await db.pool.findUnique({
+    const pool = await dbClient.pool.findUnique({
       where: { id: poolId },
       include: {
         memberships: {
@@ -1457,51 +1460,211 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
     }
 
     const settings = (pool.settings as PoolSettings) || {};
+    const season = Number(settings.season ?? 2026);
+    const seasonType = Number(settings.seasonType ?? (settings as any).season_type ?? 2);
     const defaultWeek = Number(settings.week_number ?? (settings as any).current_week ?? 5);
     const weekNum = requestedWeek !== undefined && requestedWeek !== null && requestedWeek !== ''
       ? (isAllWeeks ? 0 : parseInt(String(requestedWeek), 10) || defaultWeek)
       : defaultWeek;
     const pickingMode: PickingMode = settings.picking_mode ?? settings.pickingMode ?? 'STRAIGHT_UP';
-    // P41-POOL-VISIBILITY-2026-10-19-08: All saved picks/predictions are visible immediately to active pool members.
-    // Legacy hide settings are no longer honored as secrecy controls; compatibility metadata stays false.
     const hidePicksUntilKickoff = false;
 
     const callerClient = getCallerSupabaseClient(req);
     const authToken = extractBearerToken(req);
 
-    // 2. Fetch weekly games chronologically via authoritative canonical slate helper (Finding 10 / HAG-15 Item 2)
+    // 2. Resolve canonical pool-scoped games
     let games: any[] = [];
     if (!isAllWeeks && weekNum > 0) {
-      const canonicalGames = await getGamesForWeek(weekNum, 2026, pool.id, db, {
+      // Validate authoritative slate for weekNum using resolvePoolScopedGamesForWrapUp
+      const slateResult = await resolvePoolScopedGamesForWrapUp(
+        dbClient,
+        pool.id,
+        season,
+        seasonType,
+        weekNum,
+        settings
+      );
+
+      if (slateResult.error && slateResult.error !== 'AUTHORITATIVE_SLATE_UNAVAILABLE') {
+        res.status(422).json({
+          error: slateResult.error,
+          reasons: slateResult.reasonsIfNotReady,
+        });
+        return;
+      }
+
+      if (!slateResult.manifest || !slateResult.manifest.eventIds || slateResult.manifest.eventIds.length === 0) {
+        res.status(422).json({
+          error: 'AUTHORITATIVE_SLATE_UNAVAILABLE',
+          reasons: [`No accepted weekly slate manifest found for week ${weekNum}.`],
+        });
+        return;
+      }
+
+      const targetEventIds: string[] = (slateResult.customSlateEventIds !== null ? slateResult.customSlateEventIds : slateResult.manifest.eventIds).map((e: any) => String(e));
+
+      // Query games using caller-bound RPC if available, or database
+      const canonicalGames = await getGamesForWeek(weekNum, season, pool.id, dbClient, {
         supabaseClient: callerClient,
         authToken,
+        seasonType,
       });
-      if (Array.isArray(canonicalGames) && canonicalGames.length > 0) {
-        games = canonicalGames;
-      } else {
-        // Zero synthetic pattern inference and ZERO all-games fallback (HAG-15 Item 2)
-        games = [];
+
+      const foundGameIds = new Set((canonicalGames || []).map((g: any) => String(g.externalGameId || g.id)));
+      const hasCompleteCoverage =
+        Array.isArray(canonicalGames) &&
+        canonicalGames.length > 0 &&
+        targetEventIds.length > 0 &&
+        targetEventIds.every((id: string) => foundGameIds.has(id));
+
+      if (!hasCompleteCoverage) {
+        res.status(422).json({
+          error: 'AUTHORITATIVE_SLATE_UNAVAILABLE',
+          reasons: [
+            `Incomplete canonical games coverage for week ${weekNum}: expected ${targetEventIds.length} games, resolved ${canonicalGames?.length ?? 0}.`,
+          ],
+        });
+        return;
       }
+
+      games = canonicalGames.filter((g: any) => foundGameIds.has(String(g.externalGameId || g.id)));
     } else {
-      // For all weeks, strictly scope to season 2026 accepted manifests (never unscoped or historical baseline games)
+      // All-weeks Matrix: apply strict verified pool-scoped slates per week
+      let manifestRows: any[] = [];
       try {
-        const manifestRows: any[] = await db.$queryRawUnsafe(
-          `SELECT event_ids FROM public.weekly_slate_manifests WHERE season = 2026 AND season_type = 2;`
+        manifestRows = await dbClient.$queryRawUnsafe(
+          `SELECT week_number, event_ids FROM public.weekly_slate_manifests WHERE season = $1 AND season_type = $2;`,
+          season,
+          seasonType
         );
-        const allEventIds = manifestRows.flatMap((m: any) =>
-          Array.isArray(m.event_ids) ? m.event_ids : JSON.parse(m.event_ids || '[]')
-        );
-        if (allEventIds.length > 0) {
-          games = await db.game.findMany({
-            where: { externalGameId: { in: allEventIds } },
-            orderBy: { kickoffTime: 'asc' },
-          });
-        } else {
-          games = [];
+      } catch {
+        try {
+          manifestRows = await dbClient.$queryRawUnsafe(
+            `SELECT week_number, event_ids FROM public.weekly_slate_manifests WHERE season = ${season} AND season_type = ${seasonType};`
+          );
+        } catch {
+          manifestRows = [];
         }
-      } catch (_) {
-        games = [];
       }
+
+      if (!Array.isArray(manifestRows) || manifestRows.length === 0) {
+        res.status(422).json({
+          error: 'AUTHORITATIVE_SLATE_UNAVAILABLE',
+          reasons: ['No accepted weekly slate manifests found for this season.'],
+        });
+        return;
+      }
+
+      const manifestGameToWeek = new Map<string, number>();
+      const manifestWeeks = new Set<number>();
+      for (const m of manifestRows) {
+        const w = Number(m.week_number);
+        manifestWeeks.add(w);
+        const eids = Array.isArray(m.event_ids) ? m.event_ids : JSON.parse(m.event_ids || '[]');
+        for (const eid of eids) {
+          manifestGameToWeek.set(String(eid), w);
+        }
+      }
+
+      let allDbGames: any[] = [];
+      try {
+        if (typeof dbClient.game?.findMany === 'function') {
+          allDbGames = await dbClient.game.findMany({
+            select: { id: true, externalGameId: true },
+          });
+        }
+      } catch {
+        allDbGames = [];
+      }
+      for (const g of allDbGames) {
+        if (g.id && g.externalGameId) {
+          const extStr = String(g.externalGameId);
+          if (manifestGameToWeek.has(extStr)) {
+            manifestGameToWeek.set(String(g.id), manifestGameToWeek.get(extStr)!);
+          }
+        }
+      }
+
+      // Check pool picks: every pick in this pool must map to an authoritative week
+      const poolPicks = await dbClient.pick.findMany({
+        where: { poolId: pool.id },
+        include: {
+          result: true,
+          game: true,
+        },
+      });
+
+      for (const pick of poolPicks) {
+        let pw: number | undefined;
+        if (pick.game?.externalGameId && manifestGameToWeek.has(String(pick.game.externalGameId))) {
+          pw = manifestGameToWeek.get(String(pick.game.externalGameId));
+        }
+        if (pw === undefined && pick.game?.id && manifestGameToWeek.has(String(pick.game.id))) {
+          pw = manifestGameToWeek.get(String(pick.game.id));
+        }
+        if (pw === undefined && pick.gameId && manifestGameToWeek.has(String(pick.gameId))) {
+          pw = manifestGameToWeek.get(String(pick.gameId));
+        }
+        if (pw === undefined && pick.week !== undefined && pick.week !== null && !isNaN(Number(pick.week)) && Number(pick.week) > 0) {
+          pw = Number(pick.week);
+        }
+
+        if (pw === undefined) {
+          res.status(422).json({
+            error: 'AUTHORITATIVE_SLATE_UNAVAILABLE',
+            reasons: [`AUTHORITATIVE_SLATE_UNAVAILABLE: Pick ${pick.id} references game outside authoritative season slates.`],
+          });
+          return;
+        }
+
+        if (!manifestWeeks.has(pw)) {
+          res.status(422).json({
+            error: 'AUTHORITATIVE_SLATE_UNAVAILABLE',
+            reasons: [`AUTHORITATIVE_SLATE_UNAVAILABLE: Missing accepted manifest for week ${pw} with active picks.`],
+          });
+          return;
+        }
+      }
+
+      // Strictly resolve pool-scoped games per week via resolvePoolScopedGamesForWrapUp
+      const sortedWeeks = Array.from(manifestWeeks).sort((a, b) => a - b);
+      const allScopedGames: any[] = [];
+      const seenGameIds = new Set<string>();
+
+      for (const w of sortedWeeks) {
+        const slateResult = await resolvePoolScopedGamesForWrapUp(
+          dbClient,
+          pool.id,
+          season,
+          seasonType,
+          w,
+          settings
+        );
+
+        if (slateResult.error) {
+          res.status(422).json({
+            error: slateResult.error,
+            reasons: slateResult.reasonsIfNotReady,
+          });
+          return;
+        }
+
+        for (const g of slateResult.games) {
+          const gid = String(g.id || g.externalGameId);
+          if (!seenGameIds.has(gid)) {
+            seenGameIds.add(gid);
+            allScopedGames.push(g);
+          }
+        }
+      }
+
+      allScopedGames.sort((a: any, b: any) => {
+        const tA = new Date(a.kickoffTime).getTime() || 0;
+        const tB = new Date(b.kickoffTime).getTime() || 0;
+        return tA - tB;
+      });
+
+      games = allScopedGames;
     }
 
     // Collect all valid IDs for each game (both DB UUID and externalGameId)
@@ -1521,14 +1684,26 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
     }
 
     // 3. Fetch all picks for this pool and these games, including finalized results
-    const picks = await db.pick.findMany({
+    const picks = await dbClient.pick.findMany({
       where: {
         poolId: pool.id,
         gameId: { in: Array.from(allGameIds) },
       },
       include: {
         result: true,
+        game: true,
       },
+    });
+
+    const scopedPicks = (picks || []).filter((pick: any) => {
+      const pickGameId = String(pick.gameId || '');
+      const pickGameUuid = pick.game?.id ? String(pick.game.id) : null;
+      const pickGameExtId = pick.game?.externalGameId ? String(pick.game.externalGameId) : null;
+      return (
+        allGameIds.has(pickGameId) ||
+        (pickGameUuid && allGameIds.has(pickGameUuid)) ||
+        (pickGameExtId && allGameIds.has(pickGameExtId))
+      );
     });
 
     // 4. Fetch weekly submissions for tiebreaker predictions and finalization status for this week
@@ -1536,13 +1711,13 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
     if (!isAllWeeks) {
       weeklySubmissionsWhere.weekNumber = weekNum;
     }
-    const weeklySubmissions = await db.weeklySubmission.findMany({
+    const weeklySubmissions = await dbClient.weeklySubmission.findMany({
       where: weeklySubmissionsWhere,
     });
 
     const tiebreakerMap = new Map<string, number | null>();
     const finalizedMap = new Map<string, boolean>();
-    for (const sub of weeklySubmissions) {
+    for (const sub of (weeklySubmissions || [])) {
       if (sub.tieBreakerPrediction !== null && sub.tieBreakerPrediction !== undefined) {
         tiebreakerMap.set(sub.userId, Number(sub.tieBreakerPrediction));
       } else {
@@ -1573,11 +1748,16 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
 
     // 7. Build 2D cells map: game_id -> user_id -> MatrixPickCell
     const pickLookup = new Map<string, any>();
-    for (const pick of picks) {
+    for (const pick of scopedPicks) {
       const canonicalGameId = gameAliasToUuid.get(String(pick.gameId)) || String(pick.gameId);
-      // Index by canonical UUID and by stored gameId
       pickLookup.set(`${canonicalGameId}_${pick.userId}`, pick);
       pickLookup.set(`${pick.gameId}_${pick.userId}`, pick);
+      if (pick.game?.id) {
+        pickLookup.set(`${pick.game.id}_${pick.userId}`, pick);
+      }
+      if (pick.game?.externalGameId) {
+        pickLookup.set(`${pick.game.externalGameId}_${pick.userId}`, pick);
+      }
     }
 
     const cells: Record<string, Record<string, MatrixPickCell>> = {};
@@ -1610,10 +1790,8 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
     }
 
     // 8. Build summary: user_id -> MatrixMemberSummary
-    // Under P41-POOL-VISIBILITY-2026-10-19-08: All saved tiebreaker predictions are immediately visible
-    // to active members of the same pool. Null means no saved pick, not concealed pick.
     const weeklyWinsMap = new Map<string, number>();
-    for (const pick of picks) {
+    for (const pick of scopedPicks) {
       if (pick.result?.isCorrect) {
         weeklyWinsMap.set(pick.userId, (weeklyWinsMap.get(pick.userId) || 0) + 1);
       }
@@ -1646,7 +1824,6 @@ export async function handleGetPoolMatrix(req: Request, res: Response): Promise<
       cells,
       summary,
     };
-
     res.json(responsePayload);
   } catch (error) {
     console.error('Matrix calculation error:', error);
