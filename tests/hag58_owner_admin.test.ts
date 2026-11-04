@@ -370,6 +370,30 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
           }
           return [];
         }
+        if (query.includes('FROM public.pools')) {
+          const poolId = args[0] || POOL_ID;
+          const pool = committedDbState.pools[poolId] || { id: poolId, status: 'ACTIVE', adminId: JACK_UUID, name: 'Main Championship Pool', settings: {} };
+          return [{
+            id: pool.id,
+            name: pool.name,
+            status: pool.status,
+            admin_id: pool.adminId,
+            settings: pool.settings,
+          }];
+        }
+        if (query.includes('FROM public.pool_memberships')) {
+          const poolId = args[0] || POOL_ID;
+          const userId = args[1] || JACK_UUID;
+          const key = `${poolId}:${userId}`;
+          const m = committedDbState.memberships[key];
+          if (!m) return [];
+          return [{
+            pool_id: m.poolId,
+            user_id: m.userId,
+            status: m.status,
+            role: m.role || 'MEMBER',
+          }];
+        }
         return [{ id: POOL_ID }];
       }),
       $executeRawUnsafe: vi.fn(async (_query: string, ..._args: any[]) => {
@@ -429,6 +453,34 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
           weeklySubmission: {
             count: vi.fn(async ({ where }: any) => {
               return mockPrisma.weeklySubmission.count({ where });
+            }),
+            findUnique: vi.fn(async ({ where }: any) => {
+              return txState.weeklySubmissions.find((s: any) =>
+                s.poolId === where?.poolId_userId_weekNumber?.poolId &&
+                s.userId === where?.poolId_userId_weekNumber?.userId &&
+                s.weekNumber === where?.poolId_userId_weekNumber?.weekNumber
+              ) || null;
+            }),
+            findMany: vi.fn(async ({ where }: any) => {
+              return txState.weeklySubmissions.filter((s: any) =>
+                (!where?.poolId || s.poolId === where.poolId) &&
+                (!where?.weekNumber || s.weekNumber === where.weekNumber) &&
+                (where?.tieBreakerPrediction?.not === null ? s.tieBreakerPrediction != null : true)
+              );
+            }),
+            upsert: vi.fn(async ({ where, update, create }: any) => {
+              const idx = txState.weeklySubmissions.findIndex((s: any) =>
+                s.poolId === where?.poolId_userId_weekNumber?.poolId &&
+                s.userId === where?.poolId_userId_weekNumber?.userId &&
+                s.weekNumber === where?.poolId_userId_weekNumber?.weekNumber
+              );
+              if (idx >= 0) {
+                txState.weeklySubmissions[idx] = { ...txState.weeklySubmissions[idx], ...update };
+                return { ...txState.weeklySubmissions[idx] };
+              }
+              const item = { id: `ws-${Date.now()}`, ...create };
+              txState.weeklySubmissions.push(item);
+              return { ...item };
             }),
           },
           pick: {
@@ -2265,8 +2317,10 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       mockPrisma.$queryRawUnsafe = vi.fn(async (q: string, ...args: any[]) => {
         if (q.includes('pg_advisory_xact_lock')) {
           lockSequence.push('weekly_manifest_advisory_lock');
-        } else if (q.includes('FOR UPDATE')) {
+        } else if (q.includes('FROM public.pools') && q.includes('FOR UPDATE')) {
           lockSequence.push('pool_row_lock');
+        } else if (q.includes('FROM public.pool_memberships') && q.includes('FOR UPDATE')) {
+          lockSequence.push('member_row_lock');
         }
         return origQuery(q, ...args);
       });
@@ -2281,7 +2335,7 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
         reason: 'Verifying lock order',
       });
 
-      expect(lockSequence).toEqual(['weekly_manifest_advisory_lock', 'pool_row_lock']);
+      expect(lockSequence).toEqual(['weekly_manifest_advisory_lock', 'pool_row_lock', 'member_row_lock']);
       mockPrisma.$queryRawUnsafe = origQuery;
 
       // Part 2: Simulated Concurrency Race A: First Pick wins the race against concurrent Slate PUT.
@@ -4345,6 +4399,242 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
 
         const games = await getGamesForWeek(7, 2026, 'test-pool-id', mockDbNoManifest);
         expect(games).toEqual([]);
+      });
+
+      it('POST /api/pools/:pool_id/tiebreaker fails closed with 403 when membership is revoked after preflight', async () => {
+        const gameFuture = {
+          id: 'g-tb-future',
+          externalGameId: '401873099',
+          kickoffTime: new Date(Date.now() + 86400000).toISOString(),
+          canonicalKickoffTime: new Date(Date.now() + 86400000).toISOString(),
+          homeTeamId: 'DET',
+          awayTeamId: 'MIN',
+          status: 'SCHEDULED',
+          week: 7,
+        };
+        mockPrisma._gameStore = [gameFuture];
+        vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 7,
+          revision: 1,
+          eventIds: ['401873099'],
+          acceptedAt: '2026-10-24T12:00:00Z',
+          acceptedBy: 'commish',
+          manifestFingerprint: 'fp-7',
+          observationTime: '2026-10-24T12:00:00Z',
+        });
+
+        // Preflight passes (findUnique returns active pool and membership)
+        // Concurrency race: when the transaction executes the member row lock FOR UPDATE,
+        // membership is revoked/inactive in database state.
+        const origQuery = mockPrisma.$queryRawUnsafe;
+        mockPrisma.$queryRawUnsafe = vi.fn(async (q: string, ...args: any[]) => {
+          if (q.includes('FROM public.pool_memberships') && q.includes('FOR UPDATE')) {
+            // Simulate concurrent revocation: row is returned as INACTIVE
+            return [{ pool_id: POOL_ID, user_id: JACK_UUID, status: 'INACTIVE', role: 'MEMBER' }];
+          }
+          return origQuery(q, ...args);
+        });
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${jackAuthToken}`,
+          },
+          body: JSON.stringify({
+            season: 2026,
+            week: 7,
+            prediction: 45,
+          }),
+        });
+
+        expect(res.status).toBe(403);
+        const data: any = await res.json();
+        expect(data.error).toContain('Active pool membership required');
+        expect(committedDbState.weeklySubmissions).toHaveLength(0);
+        mockPrisma.$queryRawUnsafe = origQuery;
+      });
+
+      it('POST /api/pools/:pool_id/tiebreaker/override fails closed with 403 when membership is revoked after preflight', async () => {
+        const gameFuture = {
+          id: 'g-tb-future',
+          externalGameId: '401873099',
+          kickoffTime: new Date(Date.now() + 86400000).toISOString(),
+          canonicalKickoffTime: new Date(Date.now() + 86400000).toISOString(),
+          homeTeamId: 'KC',
+          awayTeamId: 'LV',
+          status: 'SCHEDULED',
+          week: 7,
+        };
+        mockPrisma._gameStore = [gameFuture];
+        vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 7,
+          revision: 1,
+          eventIds: ['401873099'],
+          acceptedAt: '2026-10-24T12:00:00Z',
+          acceptedBy: 'commish',
+          manifestFingerprint: 'fp-7',
+          observationTime: '2026-10-24T12:00:00Z',
+        });
+
+        const origQuery = mockPrisma.$queryRawUnsafe;
+        mockPrisma.$queryRawUnsafe = vi.fn(async (q: string, ...args: any[]) => {
+          if (q.includes('FROM public.pool_memberships') && q.includes('FOR UPDATE')) {
+            // Concurrency race: member row lock returns empty (membership revoked)
+            return [];
+          }
+          return origQuery(q, ...args);
+        });
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker/override`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${jackAuthToken}`,
+          },
+          body: JSON.stringify({
+            season: 2026,
+            week: 7,
+            targetGameId: '401873099',
+          }),
+        });
+
+        expect(res.status).toBe(403);
+        const data: any = await res.json();
+        expect(data.error).toContain('Commissioner must have an active pool membership');
+        expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+        mockPrisma.$queryRawUnsafe = origQuery;
+      });
+
+      it('POST /api/pools/:pool_id/tiebreaker/override fails closed with 403 when commissioner role is changed after preflight', async () => {
+        const gameFuture = {
+          id: 'g-tb-future',
+          externalGameId: '401873099',
+          kickoffTime: new Date(Date.now() + 86400000).toISOString(),
+          canonicalKickoffTime: new Date(Date.now() + 86400000).toISOString(),
+          homeTeamId: 'KC',
+          awayTeamId: 'LV',
+          status: 'SCHEDULED',
+          week: 7,
+        };
+        mockPrisma._gameStore = [gameFuture];
+        vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 7,
+          revision: 1,
+          eventIds: ['401873099'],
+          acceptedAt: '2026-10-24T12:00:00Z',
+          acceptedBy: 'commish',
+          manifestFingerprint: 'fp-7',
+          observationTime: '2026-10-24T12:00:00Z',
+        });
+
+        const origQuery = mockPrisma.$queryRawUnsafe;
+        mockPrisma.$queryRawUnsafe = vi.fn(async (q: string, ...args: any[]) => {
+          if (q.includes('FROM public.pools') && q.includes('FOR UPDATE')) {
+            // Concurrency race: pool admin was transferred to someone else under lock
+            return [{
+              id: POOL_ID,
+              name: 'Main Pool',
+              status: 'ACTIVE',
+              admin_id: NON_JACK_UUID,
+              settings: {},
+            }];
+          }
+          return origQuery(q, ...args);
+        });
+
+        // Also mock pool.findUnique inside transaction
+        mockPrisma.pool.findUnique = vi.fn(async ({ where }: any) => {
+          return {
+            id: POOL_ID,
+            name: 'Main Pool',
+            status: 'ACTIVE',
+            adminId: NON_JACK_UUID, // Admin changed!
+            settings: {},
+          };
+        });
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/tiebreaker/override`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${jackAuthToken}`,
+          },
+          body: JSON.stringify({
+            season: 2026,
+            week: 7,
+            targetGameId: '401873099',
+          }),
+        });
+
+        expect(res.status).toBe(403);
+        const data: any = await res.json();
+        expect(data.error).toContain('Only the pool commissioner may override');
+        expect(mockPrisma.pool.update).not.toHaveBeenCalled();
+        mockPrisma.$queryRawUnsafe = origQuery;
+      });
+
+      it('POST /api/pools/:pool_id/owner/tiebreaker-designation fails closed with 403 when membership is revoked under row lock', async () => {
+        const gameFuture = {
+          id: 'game-future-tb',
+          externalGameId: '401873099',
+          homeTeamId: 'DET',
+          awayTeamId: 'GB',
+          kickoffTime: new Date(Date.now() + 86400000).toISOString(),
+          seasonYear: 2026,
+          weekNumber: 9,
+        };
+        mockPrisma._gameStore = [gameFuture];
+        mockPrisma.game.findMany.mockResolvedValue([gameFuture]);
+        vi.spyOn(authoritativeSlateService, 'getAcceptedSlateManifest').mockResolvedValue({
+          season: 2026,
+          seasonType: 2,
+          weekNumber: 9,
+          revision: 1,
+          eventIds: ['401873099'],
+          acceptedAt: '2026-10-24T12:00:00Z',
+          acceptedBy: 'commish',
+          manifestFingerprint: 'fp-9',
+          observationTime: '2026-10-24T12:00:00Z',
+        });
+
+        const poolRev = computePoolSettingsRevision(committedDbState.pools[POOL_ID]);
+
+        const origQuery = mockPrisma.$queryRawUnsafe;
+        mockPrisma.$queryRawUnsafe = vi.fn(async (q: string, ...args: any[]) => {
+          if (q.includes('FROM public.pool_memberships') && q.includes('FOR UPDATE')) {
+            // Concurrency race: member row lock in acquireLockedPoolAndVerifyAuthority returns empty
+            return [];
+          }
+          return origQuery(q, ...args);
+        });
+
+        const res = await fetch(`${baseUrl}/api/pools/${POOL_ID}/owner/tiebreaker-designation`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${jackAuthToken}`,
+          },
+          body: JSON.stringify({
+            season: 2026,
+            weekNumber: 9,
+            targetGameId: '401873099',
+            expectedRevision: poolRev,
+            reason: 'Designating DET vs GB',
+          }),
+        });
+
+        expect(res.status).toBe(403);
+        const data: any = await res.json();
+        expect(data.code).toBe('ACTIVE_MEMBERSHIP_REQUIRED');
+        expect(committedDbState.auditLogs).toHaveLength(0);
+        mockPrisma.$queryRawUnsafe = origQuery;
       });
     });
   });

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import prisma from '../db/client';
-import { requireAuth, UUID_REGEX, FIXED_SUPABASE_URL, DEFAULT_SUPABASE_ANON_KEY } from '../middleware/auth';
+import { requireAuth, UUID_REGEX, FIXED_SUPABASE_URL, DEFAULT_SUPABASE_ANON_KEY, getPrismaClient } from '../middleware/auth';
 import {
   getWeeklyDesignation,
   applyCommissionerOverride,
@@ -12,6 +12,10 @@ import {
 import * as authoritativeSlateService from '../services/authoritativeSlateService';
 import { computePoolSettingsRevision } from './ownerAdminRoutes';
 import { resolvePoolScopedGamesForWrapUp } from '../services/wrapUpEngine';
+
+function getDb(): any {
+  return getPrismaClient();
+}
 
 export const poolTiebreakerRouter = Router();
 
@@ -120,7 +124,7 @@ export async function getGamesForWeek(
   weekNumber: number,
   season: number = 2026,
   poolId?: string,
-  dbClient: any = prisma,
+  dbClient: any = getDb(),
   options?: GetGamesOptions
 ): Promise<any[]> {
   const seasonType = options?.seasonType ?? 2;
@@ -316,8 +320,8 @@ export async function handleGetTiebreaker(req: Request, res: Response): Promise<
 
   try {
     const [pool, membership] = await Promise.all([
-      prisma.pool.findUnique({ where: { id: poolId } }),
-      prisma.poolMembership.findUnique({
+      getDb().pool.findUnique({ where: { id: poolId } }),
+      getDb().poolMembership.findUnique({
         where: { poolId_userId: { poolId, userId } },
       }),
     ]);
@@ -362,13 +366,13 @@ export async function handleGetTiebreaker(req: Request, res: Response): Promise<
     const authToken = extractBearerToken(req);
 
     // Fetch games via authoritative schema-compatible accessor
-    const games = await getGamesForWeek(weekNumber, season, poolId, prisma, {
+    const games = await getGamesForWeek(weekNumber, season, poolId, getDb(), {
       supabaseClient: callerClient,
       authToken,
     });
     const designation = getWeeklyDesignation(pool.settings, season, weekNumber, games as any);
 
-    const userSubmission = await prisma.weeklySubmission.findUnique({
+    const userSubmission = await getDb().weeklySubmission.findUnique({
       where: {
         poolId_userId_weekNumber: {
           poolId,
@@ -389,18 +393,18 @@ export async function handleGetTiebreaker(req: Request, res: Response): Promise<
 
     // P41-POOL-VISIBILITY-2026-10-19-08: Expose member prediction summary to all ACTIVE pool members.
     // Return real number or null, not omitted numeric values.
-    const activeMemberships = await prisma.poolMembership.findMany({
+    const activeMemberships = await getDb().poolMembership.findMany({
       where: { poolId, status: 'ACTIVE' },
       include: { user: { select: { id: true, email: true } } },
     });
 
-    const allSubmissions = await prisma.weeklySubmission.findMany({
+    const allSubmissions = await getDb().weeklySubmission.findMany({
       where: { poolId, weekNumber },
     });
-    const subMap = new Map(allSubmissions.map((s) => [s.userId, s]));
+    const subMap = new Map<string, any>(allSubmissions.map((s: any) => [s.userId, s]));
 
-    const readiness = activeMemberships.map((m) => {
-      const sub = subMap.get(m.userId);
+    const readiness = activeMemberships.map((m: any) => {
+      const sub: any = subMap.get(m.userId);
       const hasPrediction = sub?.tieBreakerPrediction !== null && sub?.tieBreakerPrediction !== undefined;
       return {
         userId: m.userId,
@@ -467,8 +471,8 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
 
   try {
     const [pool, membership] = await Promise.all([
-      prisma.pool.findUnique({ where: { id: poolId } }),
-      prisma.poolMembership.findUnique({
+      getDb().pool.findUnique({ where: { id: poolId } }),
+      getDb().poolMembership.findUnique({
         where: { poolId_userId: { poolId, userId } },
       }),
     ]);
@@ -497,7 +501,7 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
     const authToken = extractBearerToken(req);
 
     // Pre-flight check: query authoritative games and verify kickoff lock before transaction
-    const preGames = await getGamesForWeek(weekNumber, season, poolId, prisma, {
+    const preGames = await getGamesForWeek(weekNumber, season, poolId, getDb(), {
       supabaseClient: callerClient,
       authToken,
     });
@@ -539,7 +543,7 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
     }
 
     // Transactional save with mandatory row-level lock, fresh settings resolution, kickoff lock, and atomic freeze
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await getDb().$transaction(async (tx: any) => {
       // -------------------------------------------------------------------------
       // Step 0: Lock Order & Concurrency Gate (HAG58-SLATE-2026-11-03-01)
       //
@@ -551,7 +555,9 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
       // A normal pick need not take the weekly advisory lock if it only reads already-existing
       // manifest authority under the pool lock."
       //
-      // Pool row lock (FOR UPDATE): required; must verify exactly one ACTIVE pool row.
+      // 0a. Pool row lock (FOR UPDATE): required; must verify exactly one ACTIVE pool row.
+      // 0b. Member row lock (FOR UPDATE): required; serializes concurrent membership revocations
+      //     and verifies actor retains ACTIVE pool membership inside transaction boundary.
       // -------------------------------------------------------------------------
       const lockedPoolRows: any[] = await tx.$queryRawUnsafe(
         `SELECT id, status FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
@@ -561,6 +567,30 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
         const err: any = new Error('SHARED_POOL_GATE_UNAVAILABLE: Pool row lock failed or pool not ACTIVE');
         err.code = 'SHARED_POOL_GATE_UNAVAILABLE';
         throw err;
+      }
+
+      const lockedMemberRows: any[] = await tx.$queryRawUnsafe(
+        `SELECT pool_id, user_id, status FROM public.pool_memberships WHERE pool_id = $1::uuid AND user_id = $2::uuid FOR UPDATE;`,
+        poolId,
+        userId
+      );
+      if (!lockedMemberRows || lockedMemberRows.length !== 1 || lockedMemberRows[0].status !== 'ACTIVE') {
+        const err: any = new Error('FORBIDDEN: Active pool membership required.');
+        err.code = 'ACTIVE_MEMBERSHIP_REQUIRED';
+        err.statusCode = 403;
+        throw err;
+      }
+
+      if (typeof tx.poolMembership?.findUnique === 'function') {
+        const freshMembership = await tx.poolMembership.findUnique({
+          where: { poolId_userId: { poolId, userId } },
+        });
+        if (!freshMembership || freshMembership.status !== 'ACTIVE') {
+          const err: any = new Error('FORBIDDEN: Active pool membership required.');
+          err.code = 'ACTIVE_MEMBERSHIP_REQUIRED';
+          err.statusCode = 403;
+          throw err;
+        }
       }
 
       // 2. Fetch fresh pool state within locked boundary using transaction client
@@ -709,6 +739,14 @@ export async function handlePostTiebreaker(req: Request, res: Response): Promise
     });
   } catch (error: any) {
     console.error('Error saving tiebreaker prediction:', error);
+    if (
+      error.code === 'ACTIVE_MEMBERSHIP_REQUIRED' ||
+      error.message?.includes('ACTIVE_MEMBERSHIP_REQUIRED') ||
+      error.message?.includes('Active pool membership required')
+    ) {
+      res.status(403).json({ error: error.message || 'FORBIDDEN: Active pool membership required.' });
+      return;
+    }
     if (error.code === 'SHARED_POOL_GATE_UNAVAILABLE' || error.message?.includes('SHARED_POOL_GATE_UNAVAILABLE')) {
       res.status(500).json({ error: error.message || 'SHARED_POOL_GATE_UNAVAILABLE' });
       return;
@@ -765,8 +803,8 @@ export async function handlePostTiebreakerOverride(req: Request, res: Response):
 
   try {
     const [pool, membership] = await Promise.all([
-      prisma.pool.findUnique({ where: { id: poolId } }),
-      prisma.poolMembership.findUnique({
+      getDb().pool.findUnique({ where: { id: poolId } }),
+      getDb().poolMembership.findUnique({
         where: { poolId_userId: { poolId, userId } },
       }),
     ]);
@@ -796,7 +834,7 @@ export async function handlePostTiebreakerOverride(req: Request, res: Response):
       return;
     }
 
-    const designation = await prisma.$transaction(async (tx) => {
+    const designation = await getDb().$transaction(async (tx: any) => {
       // -------------------------------------------------------------------------
       // Step 0: Lock Order & Concurrency Gate (HAG58-SLATE-2026-11-03-01)
       //
@@ -808,7 +846,9 @@ export async function handlePostTiebreakerOverride(req: Request, res: Response):
       // A normal pick need not take the weekly advisory lock if it only reads already-existing
       // manifest authority under the pool lock."
       //
-      // Pool row lock (FOR UPDATE): required; must verify exactly one ACTIVE pool row.
+      // 0a. Pool row lock (FOR UPDATE): required; must verify exactly one ACTIVE pool row.
+      // 0b. Member row lock (FOR UPDATE): required; serializes concurrent membership revocations
+      //     and verifies commissioner retains ACTIVE pool membership inside transaction boundary.
       // -------------------------------------------------------------------------
       const lockedPoolRows: any[] = await tx.$queryRawUnsafe(
         `SELECT id, status FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
@@ -820,10 +860,42 @@ export async function handlePostTiebreakerOverride(req: Request, res: Response):
         throw err;
       }
 
+      const lockedMemberRows: any[] = await tx.$queryRawUnsafe(
+        `SELECT pool_id, user_id, status FROM public.pool_memberships WHERE pool_id = $1::uuid AND user_id = $2::uuid FOR UPDATE;`,
+        poolId,
+        userId
+      );
+      if (!lockedMemberRows || lockedMemberRows.length !== 1 || lockedMemberRows[0].status !== 'ACTIVE') {
+        const err: any = new Error('FORBIDDEN: Commissioner must have an active pool membership.');
+        err.code = 'ACTIVE_MEMBERSHIP_REQUIRED';
+        err.statusCode = 403;
+        throw err;
+      }
+
+      if (typeof tx.poolMembership?.findUnique === 'function') {
+        const freshMembership = await tx.poolMembership.findUnique({
+          where: { poolId_userId: { poolId, userId } },
+        });
+        if (!freshMembership || freshMembership.status !== 'ACTIVE') {
+          const err: any = new Error('FORBIDDEN: Commissioner must have an active pool membership.');
+          err.code = 'ACTIVE_MEMBERSHIP_REQUIRED';
+          err.statusCode = 403;
+          throw err;
+        }
+      }
+
       // 2. Fetch fresh pool state within locked boundary using transaction client
       const freshPool = await tx.pool.findUnique({ where: { id: poolId } });
       if (!freshPool || freshPool.status !== 'ACTIVE') {
         throw new Error('NOT_FOUND: Pool not found or not active');
+      }
+
+      // Re-verify commissioner authority inside transaction boundary under row locks
+      if (freshPool.adminId !== userId) {
+        const err: any = new Error('FORBIDDEN: Only the pool commissioner may override the designated tiebreaker game.');
+        err.code = 'COMMISSIONER_REQUIRED';
+        err.statusCode = 403;
+        throw err;
       }
 
       // 3. Concurrency check: verify no predictions have been submitted for this pool and week using transaction client
@@ -868,7 +940,7 @@ export async function handlePostTiebreakerOverride(req: Request, res: Response):
         games: games as any,
         requestingUserId: userId,
         poolAdminId: freshPool.adminId,
-        isUserActiveMember: membership?.status === 'ACTIVE',
+        isUserActiveMember: lockedMemberRows[0].status === 'ACTIVE',
       });
 
       // 7. Persist updated settings within the same transaction
@@ -886,7 +958,11 @@ export async function handlePostTiebreakerOverride(req: Request, res: Response):
     });
   } catch (error: any) {
     console.error('Error applying commissioner override:', error);
-    if (error.message?.startsWith('FORBIDDEN')) {
+    if (
+      error.message?.startsWith('FORBIDDEN') ||
+      error.code === 'ACTIVE_MEMBERSHIP_REQUIRED' ||
+      error.code === 'COMMISSIONER_REQUIRED'
+    ) {
       res.status(403).json({ error: error.message });
       return;
     }

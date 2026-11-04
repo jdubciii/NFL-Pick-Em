@@ -349,6 +349,16 @@ ownerAdminRouter.get('/:pool_id/owner/flags', requireAuth, requireOwner, require
  * Mandatory row-level locking and in-transaction authority re-verification.
  * Fails closed if row lock, active pool, active membership, or commissioner status is unavailable.
  */
+/**
+ * Row-level locking and authority verification helper for pool mutations.
+ * Enforces in-transaction verification under lock:
+ * 1. Executes mandatory row-level lock (FOR UPDATE) on pool row (exactly one ACTIVE row)
+ * 2. Executes mandatory row-level lock (FOR UPDATE) on actor membership row (serializes revocations)
+ * 3. Verifies pool existence and active status
+ * 4. Verifies actor active pool membership
+ * 5. Verifies commissioner authority if required
+ * Fails closed if row lock is unavailable or any authority check fails.
+ */
 async function acquireLockedPoolAndVerifyAuthority(
   tx: any,
   poolId: string,
@@ -362,10 +372,29 @@ async function acquireLockedPoolAndVerifyAuthority(
     throw err;
   }
 
-  await tx.$queryRawUnsafe(
+  const lockedPoolRows: any[] = await tx.$queryRawUnsafe(
     'SELECT id, name, settings, status, admin_id FROM public.pools WHERE id = $1::uuid FOR UPDATE;',
     poolId
   );
+  if (!lockedPoolRows || lockedPoolRows.length !== 1 || lockedPoolRows[0].status !== 'ACTIVE') {
+    const err: any = new Error('Pool not found or inactive.');
+    err.statusCode = 404;
+    err.code = 'POOL_NOT_FOUND';
+    throw err;
+  }
+
+  // Row-lock actor membership to serialize concurrent membership revocations
+  const lockedMemberRows: any[] = await tx.$queryRawUnsafe(
+    'SELECT pool_id, user_id, status FROM public.pool_memberships WHERE pool_id = $1::uuid AND user_id = $2::uuid FOR UPDATE;',
+    poolId,
+    actorId
+  );
+  if (!lockedMemberRows || lockedMemberRows.length !== 1 || lockedMemberRows[0].status !== 'ACTIVE') {
+    const err: any = new Error('FORBIDDEN: Active pool membership required.');
+    err.statusCode = 403;
+    err.code = 'ACTIVE_MEMBERSHIP_REQUIRED';
+    throw err;
+  }
 
   const freshPool = await tx.pool.findUnique({
     where: { id: poolId },
