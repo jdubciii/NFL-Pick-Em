@@ -77,7 +77,38 @@ export async function sealSeason(
   const snapshots: PoolStandingsSnapshot[] = [];
 
   return await db.$transaction(async (tx) => {
-    for (const pool of pools) {
+    // Sort pools deterministically to enforce lock order across multi-pool transactions (Ruling § Lock order)
+    const sortedPools = [...pools].sort((a, b) => a.id.localeCompare(b.id));
+
+    for (const pool of sortedPools) {
+      // 1. Mandatory Pool Gate: lock pool row with FOR UPDATE before authoritative reads or writes (HAG58-SLATE-2026-11-03-01)
+      if (typeof (tx as any).$queryRawUnsafe !== 'function') {
+        const err: any = new Error('SHARED_POOL_GATE_UNAVAILABLE: Raw query capability unavailable for pool row lock.');
+        err.code = 'SHARED_POOL_GATE_UNAVAILABLE';
+        throw err;
+      }
+
+      const lockedPoolRows: any[] = await (tx as any).$queryRawUnsafe(
+        `SELECT id, status FROM public.pools WHERE id = $1::uuid FOR UPDATE;`,
+        pool.id
+      );
+      if (!lockedPoolRows || lockedPoolRows.length !== 1 || lockedPoolRows[0].status !== 'ACTIVE') {
+        const err: any = new Error(`SHARED_POOL_GATE_UNAVAILABLE: Pool ${pool.id} row lock failed or pool not ACTIVE`);
+        err.code = 'SHARED_POOL_GATE_UNAVAILABLE';
+        throw err;
+      }
+
+      // Re-read fresh pool state within transaction boundary under acquired row lock
+      const freshPool = await tx.pool.findUnique({
+        where: { id: pool.id },
+        select: { id: true, name: true, status: true, settings: true },
+      });
+      if (!freshPool || freshPool.status !== 'ACTIVE') {
+        const err: any = new Error(`SHARED_POOL_GATE_UNAVAILABLE: Pool ${pool.id} not found or not ACTIVE under lock.`);
+        err.code = 'SHARED_POOL_GATE_UNAVAILABLE';
+        throw err;
+      }
+
       const memberSnapshots = [];
 
       for (const membership of pool.memberships) {
@@ -106,8 +137,8 @@ export async function sealSeason(
         });
       }
 
-      // Mark pool settings as sealed
-      const existingSettings = (pool.settings as any) || {};
+      // Mark pool settings as sealed under lock using fresh settings
+      const existingSettings = (freshPool.settings as any) || {};
       await tx.pool.update({
         where: { id: pool.id },
         data: {

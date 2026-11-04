@@ -35,6 +35,7 @@ import { executeSerializedPickMutation } from '../src/routes/picks';
 import { applyOverride } from '../src/services/overrideService';
 import { deriveSundaySlatePhase } from '../client/src/services/radarSundaySlatePhase';
 import { previewWeeklyWrapUpForPool, executeWeeklyWrapUpForPool, resolvePoolScopedGamesForWrapUp } from '../src/services/wrapUpEngine';
+import { sealSeason } from '../src/services/seasonSeal';
 import { GameStatus } from '@prisma/client';
 
 describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () => {
@@ -4247,6 +4248,106 @@ describe('HAG-58: Directive 3 Owner Admin & Binding Rulings Verification', () =>
       //     );
       //     await realPrisma.$disconnect();
       //   }
+    });
+
+    // -------------------------------------------------------------------------
+    // HAG58-SLATE-2026-11-03-01 Section 18 & 26: Background Season Seal Gate Proofs
+    // -------------------------------------------------------------------------
+    it('proves sealSeason acquires pool row lock FOR UPDATE and fails closed with SHARED_POOL_GATE_UNAVAILABLE when capability is absent', async () => {
+      const mockDbNoQuery: any = {
+        $transaction: async (cb: any) => cb(mockDbNoQuery),
+        pool: {
+          findMany: vi.fn().mockResolvedValue([
+            { id: POOL_ID, name: 'Main Pool', status: 'ACTIVE', memberships: [] },
+          ]),
+          findUnique: vi.fn(),
+          update: vi.fn(),
+        },
+      };
+
+      await expect(
+        sealSeason({ seasonYear: 2026, weekNumber: 18, poolId: POOL_ID, sealedBy: JACK_UUID }, mockDbNoQuery)
+      ).rejects.toThrow('SHARED_POOL_GATE_UNAVAILABLE');
+
+      expect(mockDbNoQuery.pool.update).not.toHaveBeenCalled();
+    });
+
+    it('proves sealSeason acquires pool row lock FOR UPDATE and fails closed with SHARED_POOL_GATE_UNAVAILABLE when pool is inactive or missing', async () => {
+      const mockDbInactive: any = {
+        $transaction: async (cb: any) => cb(mockDbInactive),
+        $queryRawUnsafe: vi.fn().mockResolvedValue([{ id: POOL_ID, status: 'ARCHIVED' }]),
+        pool: {
+          findMany: vi.fn().mockResolvedValue([
+            { id: POOL_ID, name: 'Main Pool', status: 'ACTIVE', memberships: [] },
+          ]),
+          findUnique: vi.fn(),
+          update: vi.fn(),
+        },
+      };
+
+      await expect(
+        sealSeason({ seasonYear: 2026, weekNumber: 18, poolId: POOL_ID, sealedBy: JACK_UUID }, mockDbInactive)
+      ).rejects.toThrow('SHARED_POOL_GATE_UNAVAILABLE');
+
+      expect(mockDbInactive.pool.update).not.toHaveBeenCalled();
+    });
+
+    it('proves sealSeason sorts pools deterministically and merges fresh settings under pool row lock', async () => {
+      const poolA = '00000000-0000-0000-0000-000000000002';
+      const poolB = '00000000-0000-0000-0000-000000000001';
+      const lockOrder: string[] = [];
+
+      const mockDbSuccess: any = {
+        $transaction: async (cb: any) => cb(mockDbSuccess),
+        $queryRawUnsafe: vi.fn(async (q: string, ...args: any[]) => {
+          if (q.includes('FROM public.pools') && q.includes('FOR UPDATE')) {
+            lockOrder.push(args[0]);
+            return [{ id: args[0], status: 'ACTIVE' }];
+          }
+          return [];
+        }),
+        pool: {
+          findMany: vi.fn().mockResolvedValue([
+            { id: poolA, name: 'Pool A', status: 'ACTIVE', memberships: [] },
+            { id: poolB, name: 'Pool B', status: 'ACTIVE', memberships: [] },
+          ]),
+          findUnique: vi.fn(async ({ where }: any) => ({
+            id: where.id,
+            name: `Pool ${where.id}`,
+            status: 'ACTIVE',
+            settings: { existingKey: 'preserved' },
+          })),
+          update: vi.fn(async ({ where, data }: any) => ({
+            id: where.id,
+            settings: data.settings,
+          })),
+        },
+        auditLog: {
+          create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
+        },
+      };
+
+      const result = await sealSeason(
+        { seasonYear: 2026, weekNumber: 18, sealedBy: JACK_UUID },
+        mockDbSuccess
+      );
+
+      expect(result.sealed).toBe(true);
+      // Deterministic sort: poolB ('...0001') locked before poolA ('...0002')
+      expect(lockOrder).toEqual([poolB, poolA]);
+      expect(mockDbSuccess.pool.update).toHaveBeenCalledTimes(2);
+      expect(mockDbSuccess.pool.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: poolB },
+          data: {
+            settings: expect.objectContaining({
+              existingKey: 'preserved',
+              seasonSealed: true,
+              sealSeasonYear: 2026,
+            }),
+          },
+        })
+      );
     });
 
     // -------------------------------------------------------------------------
