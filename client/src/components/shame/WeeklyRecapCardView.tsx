@@ -18,6 +18,10 @@ import { getCurrentNFLWeek } from '../../services/nflCalendarService';
 
 interface WeeklyRecapCardViewProps {
   currentWeek?: number;
+  poolId?: string;
+  season?: number;
+  isOfficiallySettled?: boolean;
+  settlementRevision?: string | number | null;
   liveParticipants?: SettledParticipantSummary[];
   viewerUserId?: string;
   rivalUserId?: string;
@@ -48,6 +52,10 @@ export const DEMO_PARTICIPANTS: SettledParticipantSummary[] = [
 
 export const WeeklyRecapCardView: React.FC<WeeklyRecapCardViewProps> = ({
   currentWeek: propCurrentWeek,
+  poolId = '',
+  season = 2026,
+  isOfficiallySettled: liveIsOfficiallySettled = false,
+  settlementRevision = null,
   liveParticipants = [],
   viewerUserId = 'u1',
   rivalUserId = 'u2',
@@ -64,7 +72,7 @@ export const WeeklyRecapCardView: React.FC<WeeklyRecapCardViewProps> = ({
   const [reactions, setReactions] = useState<ReactionEntry[]>([]);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const isOfficiallySettled = useDemoFixture ? true : false;
+  const isOfficiallySettled = useDemoFixture || liveIsOfficiallySettled;
   const participants = useDemoFixture
     ? DEMO_PARTICIPANTS
     : liveParticipants.length > 0
@@ -74,10 +82,10 @@ export const WeeklyRecapCardView: React.FC<WeeklyRecapCardViewProps> = ({
   const recap: DeterministicRecapCardModel = buildDeterministicWeeklyRecap({
     format,
     poolName: 'MAIN LEAGUE',
-    season: 2026,
+    season,
     week: useDemoFixture ? 5 : currentWeek,
     isOfficiallySettled,
-    settlementRevision: useDemoFixture ? 1 : null,
+    settlementRevision: useDemoFixture ? 1 : settlementRevision,
     settledAtLabel: useDemoFixture ? 'Mon 11:42 PM' : null,
     participants,
     viewerUserId,
@@ -95,13 +103,14 @@ export const WeeklyRecapCardView: React.FC<WeeklyRecapCardViewProps> = ({
 
   // Canonical Reaction Target for Settled Recap
   const targetWeek = useDemoFixture ? 5 : currentWeek;
+  const reactionRevision = useDemoFixture ? 1 : typeof settlementRevision === 'number' ? settlementRevision : null;
   const recapTarget = {
-    poolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
-    season: 2026,
+    poolId,
+    season,
     week: targetWeek,
     targetKind: 'SETTLED_RECAP',
     entityId: `week-${targetWeek}-verdict`,
-    settlementRevision: useDemoFixture ? 1 : null,
+    settlementRevision: reactionRevision,
   };
   const targetValidation = validateCanonicalReactionTarget(recapTarget);
   const canonicalKey = targetValidation.canonicalKey || '';
@@ -112,7 +121,7 @@ export const WeeklyRecapCardView: React.FC<WeeklyRecapCardViewProps> = ({
       showToast('Reactions disabled: Demo fixture recaps cannot receive persistent reactions.');
       return;
     }
-    if (!isOfficiallySettled) {
+    if (!isOfficiallySettled || !targetValidation.isValid) {
       showToast('Reactions locked: Recap must be officially settled with a valid revision.');
       return;
     }
@@ -129,12 +138,12 @@ export const WeeklyRecapCardView: React.FC<WeeklyRecapCardViewProps> = ({
       reactionCode: code,
       authenticatedActorId: viewerUserId,
       authenticatedActorName: 'jack.w.cone',
-      authorizedPoolId: '9b893bef-3b5a-4ffa-951d-8ba27f9c9782',
+      authorizedPoolId: poolId,
     });
     if (result.ok) {
       setReactions(result.entries);
       try {
-        scopedExpressFetch('/api/pools/9b893bef-3b5a-4ffa-951d-8ba27f9c9782/reactions', {
+        scopedExpressFetch(`/api/pools/${poolId}/reactions`, {
           method: operation === 'REMOVE' ? 'DELETE' : 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -395,7 +404,7 @@ export const WeeklyRecapCardView: React.FC<WeeklyRecapCardViewProps> = ({
 
         {useDemoFixture && (
           <div className="px-3 py-1.5 rounded-lg bg-amber-950/40 border border-amber-500/40 text-amber-300 text-[10px]">
-            <span className="font-bold">DEMO FIXTURE:</span> Simulates a settled Week 5 slate for PNG export testing while live Week {currentWeek} is unsettled.
+            <span className="font-bold">DEMO FIXTURE:</span> Simulates a settled Week 5 slate for PNG export testing while viewing live Week {currentWeek}.
           </div>
         )}
       </div>

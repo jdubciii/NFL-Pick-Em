@@ -23,6 +23,7 @@ import { evaluateSlateLockSummary } from '../services/lockEnforcementService';
 import { resolveAuthoritativeSlate } from '../services/authoritativeSlateClientService';
 import { isWeeklyScoredSlateFinal, selectAcceptedScoredSlateGames, resolveEffectiveScoredSlateGames } from '../services/weeklyStandingsFinalityService';
 import { fetchScopedSlateProjection } from '../services/scopedSlateService';
+import { loadSettledSeasonHistory, fetchSettlementJson } from '../services/settledSeasonHistory';
 
 export interface WallOfShamePageProps {
   poolId?: string;
@@ -79,6 +80,21 @@ export function WallOfShamePage({
     observedAt: new Date().toISOString(),
     isStale: false,
   });
+  const [history, setHistory] = useState<{key: string; loading: boolean; error: string | null; rows: AuthoritativeWeeklyStandingRow[]}>({key: '', loading: true, error: null, rows: []});
+  const historyKey = `${user?.id}:${snapshot.poolId}:${snapshot.season}:${snapshot.seasonType}`;
+  useEffect(() => {
+    if (activeTab !== 'infamy') return;
+    let cancelled = false;
+    setHistory({key: historyKey, loading: true, error: null, rows: []});
+    if (!user?.id || !snapshot.poolId) {
+      setHistory({key: historyKey, loading: false, error: 'Active pool or member could not be verified.', rows: []});
+      return () => { cancelled = true; };
+    }
+    loadSettledSeasonHistory(supabase, path => fetchSettlementJson(scopedExpressFetch, path), snapshot.poolId, snapshot.season, snapshot.seasonType)
+      .then(rows => { if (!cancelled) setHistory({key: historyKey, loading: false, error: null, rows}); })
+      .catch(err => { if (!cancelled) setHistory({key: historyKey, loading: false, error: err.message, rows: []}); });
+    return () => { cancelled = true; };
+  }, [activeTab, historyKey]);
 
   const loadScopedData = useCallback(async (isRefresh: boolean = false, freshScores?: LiveGame[]) => {
     const currentGen = ++reqGenRef.current;
@@ -1284,14 +1300,20 @@ export function WallOfShamePage({
 
   const seasonStory = useMemo(() => {
     return deriveSeasonStoryViewModel({
-      isLoading: false,
+      isLoading: !inspectSettledFixture && (history.loading || history.key !== historyKey),
+      fetchError: inspectSettledFixture ? null : history.error,
       season: snapshot.season,
       poolId: snapshot.poolId,
       viewerUserId: currentUserId,
-      rawRecords: inspectSettledFixture ? demoRecords : [],
+      rawRecords: inspectSettledFixture ? demoRecords : history.rows,
       currentOutstandingShotDebt: 0,
     });
-  }, [snapshot.poolId, snapshot.season, currentUserId, inspectSettledFixture, demoRecords]);
+  }, [snapshot.poolId, snapshot.season, currentUserId, inspectSettledFixture, demoRecords, history, historyKey]);
+
+  const settledWeekRows = !isScopeMismatch && history.key === historyKey && !history.loading && !history.error
+    ? history.rows.filter(row => row.week === snapshot.week && row.poolId === snapshot.poolId && row.isOfficiallySettled)
+    : [];
+  const settledDisplayNames = new Map(snapshot.ladderData.map(row => [row.userId, row.userName || row.displayName]));
 
   // Unified phase label mapping per contract
   const headerPhase = useMemo(() => {
@@ -1441,7 +1463,7 @@ export function WallOfShamePage({
 
             {inspectSettledFixture && (
               <div className="mb-3 p-2 rounded-lg bg-amber-950/40 border border-amber-500/40 text-amber-300 text-[10px]">
-                <span className="font-bold">DEMO FIXTURE:</span> Simulating 1 settled week to verify personal/league story progression on hardware while live Week {currentWeekDisplay} is unsettled.
+                <span className="font-bold">DEMO FIXTURE:</span> Simulating 1 settled week to verify personal/league story progression on hardware while viewing live Week {currentWeekDisplay}.
               </div>
             )}
 
@@ -1499,14 +1521,18 @@ export function WallOfShamePage({
           {/* Weekly Recap Card Exporter Component */}
           <WeeklyRecapCardView
             currentWeek={currentWeekDisplay}
-            liveParticipants={snapshot.ladderData.map((l, idx) => ({
-              userId: l.userId || `u-${idx}`,
-              displayName: l.displayName || `Player ${idx + 1}`,
-              rank: l.rank || idx + 1,
-              points: 0,
-              totalGames: 14,
-              shotsIncurred: l.shotsOwed || 0,
-              tierName: l.tier || 'SAFE HAVEN',
+            poolId={snapshot.poolId}
+            season={snapshot.season}
+            isOfficiallySettled={settledWeekRows.length > 0}
+            settlementRevision={settledWeekRows[0]?.settlementRevision ?? null}
+            liveParticipants={settledWeekRows.map(row => ({
+              userId: row.userId,
+              displayName: settledDisplayNames.get(row.userId) || row.displayName,
+              rank: row.rank,
+              points: row.correctPicks,
+              totalGames: row.totalGames,
+              shotsIncurred: row.weeklyShotsIncurred,
+              tierName: row.tierName,
               tiebreakResolved: true,
             }))}
             viewerUserId={user?.id || 'viewer'}

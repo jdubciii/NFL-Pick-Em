@@ -317,6 +317,7 @@ function setupWallMocks(options: {
   poolData?: any;
   wrapup?: any;
   wrapupError?: any;
+  historyRows?: any[];
   matrixRows?: any[];
   matrixCells?: any;
   matrixColumns?: any[];
@@ -485,6 +486,8 @@ function setupWallMocks(options: {
             },
             error: null,
           });
+        } else if (table === 'weekly_wrapups') {
+          resolve({ data: options.historyRows ?? [], error: options.wrapupError ?? null });
         } else {
           resolve({ data: [], error: null });
         }
@@ -1319,6 +1322,37 @@ describe('P42 — Device Readiness & Scope Correction Contract (P42-DEVICE-READI
       await act(async () => {
         root.unmount();
       });
+    });
+
+    it('shows the settled Week 8 Story and recap in the actual Infamy tab', async () => {
+      const { mockDoc } = setupMockDom();
+      const container = mockDoc.createElement('div');
+      const root = createRoot(container as any);
+      const wrapup = {
+        pool_id: 'p-1', week_number: 8, completed_at: '2026-11-06T19:22:00Z',
+        summary: {
+          poolId: 'p-1', season: 2026, seasonType: 2, weekNumber: 8, totalGames: 9,
+          inputFingerprint: 'week-8-fingerprint',
+          standings: [
+            { userId: 'u1', rank: 1, score: 8, shots: 0, isSafeHaven: true, isDeadPlace: false },
+            { userId: 'u2', rank: 2, score: 4, shots: 2.5, isSafeHaven: false, isDeadPlace: true },
+          ],
+        },
+      };
+      setupWallMocks({ wrapup, historyRows: [wrapup] });
+      await act(async () => {
+        root.render(React.createElement(WallOfShamePage, { poolId: 'p-1', week: 8 }));
+      });
+      await act(async () => {
+        container.querySelectorAll('button').find((b: any) => b.textContent.includes('INFAMY'))!.click();
+      });
+      expect(container.textContent).toContain('1 Settled Week on Official Record');
+      expect(container.textContent).toContain('Week 8');
+      expect(container.textContent).toContain('8/9 Correct');
+      expect(container.textContent).toContain('THE WEEKLY VERDICT');
+      expect(container.textContent).not.toContain('No Settled Weeks on Record Yet');
+      expect(container.textContent).not.toContain('AWAITING OFFICIAL SETTLEMENT');
+      await act(async () => { root.unmount(); });
     });
   });
 
