@@ -63,6 +63,10 @@ export async function fetchSettlementJson(
 ): Promise<any> {
   const response = await fetcher(path, init);
   const body = await response.json();
-  if (!response.ok) throw new Error(body.error || `Settlement request failed (${response.status}).`);
+  if (!response.ok) {
+    const message = body.error || `Settlement request failed (${response.status}).`;
+    const details = typeof body.details === 'string' ? body.details.trim() : '';
+    throw new Error(details ? `${message}: ${details}` : message);
+  }
   return body;
 }

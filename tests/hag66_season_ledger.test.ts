@@ -40,3 +40,20 @@ it('rejects mismatched historical previews and duplicate settlement rows', async
  await expect(loadSettledSeasonHistory(db([record]),async()=>({preview:{poolId:'other',season:2026,seasonType:2,weekNumber:8,totalGames:9}}),'pool',2026,2)).rejects.toThrow('verified');
  await expect(loadSettledSeasonHistory(db([record,record]),async()=>({preview:{poolId:'pool',season:2026,seasonType:2,weekNumber:8,totalGames:9}}),'pool',2026,2)).rejects.toThrow('duplicate');
 });
+
+
+it('shows the backend preview details with its error message', async () => {
+ await expect(fetchSettlementJson(async()=>new Response(JSON.stringify({
+  error:'Failed to generate wrap-up preview', details:'Invalid time value',
+ }),{status:500}), '/preview')).rejects.toThrow('Failed to generate wrap-up preview: Invalid time value');
+});
+
+it('uses the status fallback when only details are returned', async () => {
+ await expect(fetchSettlementJson(async()=>new Response(JSON.stringify({details:'Read failed'}),{status:500}), '/preview')).rejects.toThrow('Settlement request failed (500).: Read failed');
+});
+
+it('ignores empty and non-string backend details', async () => {
+ for (const details of ['', '  ', null, {message:'unexpected'}]) {
+  await expect(fetchSettlementJson(async()=>new Response(JSON.stringify({error:'Forbidden',details}),{status:403}), '/preview')).rejects.toThrow(/^Forbidden$/);
+ }
+});
