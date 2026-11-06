@@ -279,7 +279,6 @@ export async function previewWeeklyWrapUpForPool(
     include: {
       memberships: {
         where: { status: 'ACTIVE' },
-        include: { user: true },
       },
     },
   });
@@ -719,8 +718,11 @@ export async function executeWeeklyWrapUpForPool(
           where: { status: 'ACTIVE' },
           include: {
             user: {
-              include: {
-                notificationPreference: true,
+              select: {
+                id: true,
+                notificationPreference: {
+                  select: { emailEnabled: true },
+                },
               },
             },
           },

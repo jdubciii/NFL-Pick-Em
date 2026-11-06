@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { loadSettledSeasonHistory } from '../client/src/services/settledSeasonHistory';
 import { deriveSeasonStoryViewModel } from '../client/src/services/seasonStoryService';
+import { previewWeeklyWrapUpForPool, executeWeeklyWrapUpForPool } from '../src/services/wrapUpEngine';
 const wins = [8,7,7,6,6,6,6,5,5,4];
 const shots = [0,1,1,1,1,1,2,2,2,2.5];
 const summary = { poolId: 'pool', season: 2026, seasonType: 2, weekNumber: 8,
@@ -56,4 +57,33 @@ it('ignores empty and non-string backend details', async () => {
  for (const details of ['', '  ', null, {message:'unexpected'}]) {
   await expect(fetchSettlementJson(async()=>new Response(JSON.stringify({error:'Forbidden',details}),{status:403}), '/preview')).rejects.toThrow(/^Forbidden$/);
  }
+});
+
+it('does not hydrate nullable password hashes when loading preview members', async () => {
+ const liveError = 'Invalid `prisma.pool.findUnique()` invocation: Error converting field "passwordHash" of expected non-nullable type "String", found incompatible value of "null".';
+ const mockDb: any = { pool: { findUnique: async (args: any) => {
+  if (args.include?.memberships?.include?.user === true) throw new Error(liveError);
+  return null;
+ } } };
+ await expect(previewWeeklyWrapUpForPool('pool', 8, {prismaClient:mockDb})).rejects.toThrow('Pool with ID pool not found.');
+});
+
+it('does not hydrate nullable password hashes when loading settlement recipients', async () => {
+ const liveError = 'Invalid `prisma.pool.findUnique()` invocation: Error converting field "passwordHash" of expected non-nullable type "String", found incompatible value of "null".';
+ const tx: any = {
+  $queryRaw: async () => [{to_regclass:'weekly_wrapups'}],
+  $queryRawUnsafe: async (sql: string) => {
+   if (sql.includes('FROM public.pools WHERE')) return [{status:'ACTIVE'}];
+   if (sql.includes('information_schema.columns')) return [{column_name:'season'}];
+   if (sql.includes('INSERT INTO public.weekly_wrapups')) return [{pool_id:'pool'}];
+   return [];
+  },
+  pool: {findUnique: async (args: any) => {
+   const user = args.include?.memberships?.include?.user;
+   if (!user?.select || Object.keys(user.select).some(key => !['id','notificationPreference'].includes(key))) throw new Error(liveError);
+   return null;
+  }},
+ };
+ const mockDb: any = {$transaction: async (callback: any) => callback(tx)};
+ await expect(executeWeeklyWrapUpForPool('pool',8,{prismaClient:mockDb})).rejects.toThrow('Pool with ID pool not found.');
 });
