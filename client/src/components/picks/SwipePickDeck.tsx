@@ -262,19 +262,9 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
           </div>
         </div>
 
-        {/* High-Visibility Ledger Bar with Prominent Isolated Touch Chevrons */}
-        <div className="flex items-center space-x-2 w-full pt-0.5">
-          <button
-            type="button"
-            disabled={currentIndex === 0}
-            onClick={() => setCurrentIndex(prev => Math.max(0, prev - 1))}
-            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 border border-slate-700 text-cyan-400 hover:text-white active:scale-90 transition-all shrink-0 text-sm font-black shadow-sm disabled:opacity-30 disabled:cursor-not-allowed"
-            title="Previous Matchup"
-          >
-            ◀
-          </button>
-
-          <div className="grid grid-flow-col auto-cols-fr gap-1 flex-1 h-3.5 bg-slate-950 p-0.5 rounded-xl border border-slate-800 items-center">
+        {/* Matchup ledger keeps direct access to every game. */}
+        <div className="w-full pt-0.5">
+          <div className="grid grid-flow-col auto-cols-fr gap-1 h-3.5 bg-slate-950 p-0.5 rounded-xl border border-slate-800 items-center">
             {matchups.map((m, idx) => {
               const isCurrent = idx === currentIndex;
               const isAwayPicked = m.selectedTeam === m.awayTeam;
@@ -301,16 +291,6 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
               );
             })}
           </div>
-
-          <button
-            type="button"
-            disabled={currentIndex >= totalGames - 1}
-            onClick={() => setCurrentIndex(prev => Math.min(totalGames - 1, prev + 1))}
-            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 border border-slate-700 text-cyan-400 hover:text-white active:scale-90 transition-all shrink-0 text-sm font-black shadow-sm disabled:opacity-30 disabled:cursor-not-allowed"
-            title="Next Matchup"
-          >
-            ▶
-          </button>
         </div>
       </div>
 
@@ -346,47 +326,58 @@ export const SwipePickDeck: React.FC<SwipePickDeckProps> = ({
         </AnimatePresence>
       </div>
 
-      {/* Quick Action Control Bar (Swipe & Tap Affordances) */}
+      {/* One action row: navigation never makes a pick; team buttons do. */}
       {activeCard && (
-        <div className="flex items-center justify-between gap-2 mt-3 px-1 font-mono text-xs select-none">
+        <div className="grid grid-cols-5 gap-1.5 w-full mt-3 font-mono text-xs select-none" role="group" aria-label="Matchup actions">
+          <button
+            type="button"
+            disabled={currentIndex === 0}
+            onClick={() => setCurrentIndex(prev => Math.max(0, prev - 1))}
+            className="min-h-12 rounded-xl bg-slate-900 border border-slate-700 text-cyan-200 font-bold hover:bg-slate-800 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            aria-label="Previous matchup"
+          >
+            <span className="block">◀</span>
+            <span className="block">Prev</span>
+          </button>
           <button
             type="button"
             disabled={checkKickoffLocked(activeCard) || isPicksProtected}
             onClick={() => handleCardExit('LEFT')}
-            className="flex-1 py-2 px-2.5 rounded-xl bg-slate-900 border border-cyan-500/40 hover:bg-cyan-950/60 active:scale-95 text-cyan-300 font-black text-xs transition flex items-center justify-center gap-1.5 shadow-md disabled:opacity-40"
-            title={`Pick ${normalizeTeamIdentity(activeCard.awayTeam)}`}
+            className="min-h-12 rounded-xl bg-cyan-950/70 border border-cyan-500/60 text-cyan-200 font-black hover:bg-cyan-900 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            aria-label={`Pick ${normalizeTeamIdentity(activeCard.awayTeam)}`}
           >
-            <span>◀</span>
-            <span className="truncate">{normalizeTeamIdentity(activeCard.awayTeam)}</span>
+            <span className="block">Pick</span>
+            <span className="block truncate">{normalizeTeamIdentity(activeCard.awayTeam)}</span>
           </button>
 
           <button
             type="button"
             onClick={() => setShowIntel(true)}
-            className="py-2 px-3 rounded-xl bg-slate-900 border border-slate-700 hover:bg-slate-800 active:scale-95 text-slate-300 font-bold text-xs transition flex items-center gap-1 shadow-md"
-            title="Matchup Intel (Down)"
+            className="min-h-12 rounded-xl bg-slate-900 border border-indigo-500/50 text-indigo-200 font-bold hover:bg-indigo-950/60 active:scale-95 transition"
+            aria-label="Matchup intel"
           >
-            <span>⚡ Intel</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleCardExit('UP')}
-            className="py-2 px-3 rounded-xl bg-slate-900 border border-slate-700 hover:bg-slate-800 active:scale-95 text-amber-400 font-bold text-xs transition flex items-center gap-1 shadow-md"
-            title="Skip Matchup (Up)"
-          >
-            <span>▲ Skip</span>
+            <span className="block">⚡</span>
+            <span className="block">Intel</span>
           </button>
 
           <button
             type="button"
             disabled={checkKickoffLocked(activeCard) || isPicksProtected}
             onClick={() => handleCardExit('RIGHT')}
-            className="flex-1 py-2 px-2.5 rounded-xl bg-slate-900 border border-cyan-500/40 hover:bg-cyan-950/60 active:scale-95 text-cyan-300 font-black text-xs transition flex items-center justify-center gap-1.5 shadow-md disabled:opacity-40"
-            title={`Pick ${normalizeTeamIdentity(activeCard.homeTeam)}`}
+            className="min-h-12 rounded-xl bg-indigo-950/70 border border-indigo-500/60 text-indigo-200 font-black hover:bg-indigo-900 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            aria-label={`Pick ${normalizeTeamIdentity(activeCard.homeTeam)}`}
           >
-            <span className="truncate">{normalizeTeamIdentity(activeCard.homeTeam)}</span>
-            <span>▶</span>
+            <span className="block">Pick</span>
+            <span className="block truncate">{normalizeTeamIdentity(activeCard.homeTeam)}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleCardExit('UP')}
+            className="min-h-12 rounded-xl bg-slate-900 border border-slate-700 text-amber-300 font-bold hover:bg-slate-800 active:scale-95 transition"
+            aria-label="Next matchup, skip without picking"
+          >
+            <span className="block">Next</span>
+            <span className="block">/ Skip</span>
           </button>
         </div>
       )}
@@ -803,28 +794,6 @@ const SwipeCardItem: React.FC<{
           )}
         </div>
       ) : null}
-
-      {/* Footer Controls */}
-      <div className="border-t border-slate-800 pt-2.5 space-y-2 text-center">
-        <div className="grid grid-cols-2 gap-2 text-xs font-bold">
-          <button
-            type="button"
-            onClick={() => onSwipe('UP')}
-            className="flex items-center justify-center space-x-1 py-1.5 px-2 rounded-xl bg-slate-800/90 border border-slate-700 text-amber-300 hover:bg-slate-700 active:scale-95"
-          >
-            <span>▲</span>
-            <span>{isCardLocked ? 'NEXT (UP)' : 'SKIP (UP)'}</span>
-          </button>
-          <button
-            type="button"
-            onClick={onOpenIntel}
-            className="flex items-center justify-center space-x-1 py-1.5 px-2 rounded-xl bg-slate-800/90 border border-slate-700 text-cyan-300 hover:bg-slate-700 active:scale-95"
-          >
-            <span>▼</span>
-            <span>INTEL (DOWN)</span>
-          </button>
-        </div>
-      </div>
     </motion.div>
   );
 };
