@@ -572,8 +572,13 @@ export async function executeWeeklyWrapUpForPool(
       };
     }
 
-    // 0a: Advisory lock — must succeed; any error propagates (rolls back transaction)
-    await tx.$queryRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1));`, weeklyLockKey);
+    // 0a: Advisory lock — must succeed; any error propagates (rolls back transaction).
+    // PostgreSQL returns void here, which Prisma cannot deserialize via $queryRawUnsafe.
+    if (typeof tx.$executeRawUnsafe === 'function') {
+      await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(hashtext($1));`, weeklyLockKey);
+    } else {
+      await tx.$queryRawUnsafe(`SELECT 1::int AS acquired FROM pg_advisory_xact_lock(hashtext($1));`, weeklyLockKey);
+    }
 
     // 0b: Pool row lock — must return exactly one ACTIVE row (length !== 1 denies)
     const lockedPoolRows: any[] = await tx.$queryRawUnsafe(

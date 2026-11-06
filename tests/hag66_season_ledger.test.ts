@@ -89,6 +89,47 @@ it('does not hydrate nullable password hashes when loading settlement recipients
  await expect(executeWeeklyWrapUpForPool('pool',8,{prismaClient:mockDb})).rejects.toThrow('Pool with ID pool not found.');
 });
 
+it('acquires the settlement advisory lock without deserializing PostgreSQL void', async () => {
+ const voidError = "Failed to deserialize column of type 'void'.";
+ const calls: string[] = [];
+ const tx: any = {
+  $executeRawUnsafe: async (sql: string) => {
+   calls.push(sql);
+   return 1;
+  },
+  $queryRawUnsafe: async (sql: string) => {
+   if (sql.includes('pg_advisory_xact_lock')) throw new Error(voidError);
+   if (sql.includes('FROM public.pools WHERE')) return [{id:'pool',status:'ACTIVE'}];
+   return [];
+  },
+ };
+ const mockDb: any = {$transaction: async (callback: any) => callback(tx)};
+ const result = await executeWeeklyWrapUpForPool('pool',8,{prismaClient:mockDb});
+ expect(result).toMatchObject({applied:false,reason:'CLAIM_STORE_UNAVAILABLE'});
+ expect(calls).toHaveLength(1);
+ expect(calls[0]).toContain('pg_advisory_xact_lock');
+});
+
+it('projects a supported scalar when a transaction mock only exposes queryRaw', async () => {
+ const lockQueries: string[] = [];
+ const tx: any = {
+  $queryRawUnsafe: async (sql: string) => {
+   if (sql.includes('pg_advisory_xact_lock')) {
+    lockQueries.push(sql);
+    if (sql.startsWith('SELECT pg_advisory_xact_lock')) throw new Error("Failed to deserialize column of type 'void'.");
+    return [{acquired:1}];
+   }
+   if (sql.includes('FROM public.pools WHERE')) return [{id:'pool',status:'ACTIVE'}];
+   return [];
+  },
+ };
+ const mockDb: any = {$transaction: async (callback: any) => callback(tx)};
+ const result = await executeWeeklyWrapUpForPool('pool',8,{prismaClient:mockDb});
+ expect(result).toMatchObject({applied:false,reason:'CLAIM_STORE_UNAVAILABLE'});
+ expect(lockQueries).toHaveLength(1);
+ expect(lockQueries[0]).toContain('SELECT 1::int AS acquired FROM pg_advisory_xact_lock');
+});
+
 it('matches Ladder scoring when TEN covers the approved Week 8 spread at CIN', async () => {
  const game = {id:'game-cin',externalGameId:'401873031',homeTeamId:'CIN',awayTeamId:'TEN',
   homeScore:43,awayScore:36,status:'FINAL',kickoffTime:new Date('2026-11-01T18:00:00Z')};
