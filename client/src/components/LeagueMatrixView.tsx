@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { scopedExpressFetch } from '../lib/apiClient';
 import { supabase } from '../lib/supabase';
-import { fetchLiveNFLScores } from '../services/liveScoreService';
+import { fetchLiveNFLScores, getJackWeek9SpreadLine } from '../services/liveScoreService';
 import { resolveAuthoritativeSlate } from '../services/authoritativeSlateClientService';
 import {
   Grid,
@@ -189,6 +189,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
         gameId: game.game_id,
         awayTeam: game.away_team_id,
         homeTeam: game.home_team_id,
+        spreadLine: getJackWeek9SpreadLine(Number(selectedWeek), game.away_team_id, game.home_team_id, new Date(game.kickoff_time).getUTCFullYear()),
         kickoffUtc: game.kickoff_time,
         status: (game.status as any) || 'SCHEDULED',
         liveTelemetry:
@@ -210,7 +211,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
         isLocked,
       };
     });
-  }, [matrixData]);
+  }, [matrixData, selectedWeek]);
 
   // Fetch available pools
   useEffect(() => {
@@ -342,7 +343,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
             status: ls?.status || g.status,
             home_score: ls?.homeTeam?.score != null ? parseInt(ls.homeTeam.score, 10) : g.homeScore ?? g.home_score,
             away_score: ls?.awayTeam?.score != null ? parseInt(ls.awayTeam.score, 10) : g.awayScore ?? g.away_score,
-            spread: 0,
+            spread: null,
           };
         });
 
@@ -872,6 +873,7 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
                   matrixData.rows.map((game, rowIdx) => {
                   const isFinal = game.status === 'FINAL';
                   const isInProgress = game.status === 'IN_PROGRESS';
+                  const spreadLine = getJackWeek9SpreadLine(Number(selectedWeek), game.away_team_id, game.home_team_id, new Date(game.kickoff_time).getUTCFullYear());
 
                   return (
                     <tr
@@ -901,6 +903,12 @@ export const LeagueMatrixView: React.FC<LeagueMatrixViewProps> = ({ hideHeader =
                               </span>
                             )}
                           </div>
+
+                          {spreadLine && (
+                            <span className="text-xs font-mono font-bold text-cyan-300 print:text-black">
+                              {spreadLine}
+                            </span>
+                          )}
 
                           {(isFinal || isInProgress) && (
                             <div className="flex items-center justify-between text-xs text-slate-400 font-mono print:text-gray-800">

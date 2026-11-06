@@ -27,6 +27,13 @@ const WEEK_8_HOME_SPREADS: Record<string, number> = {
   'ARI@DAL': -7.5,
 };
 
+// Jack's supplied Week 9 lines. The number is the home team's spread.
+const WEEK_9_HOME_SPREADS: Record<string, number> = {
+  'JAX@BAL': 10.5,
+  'NYJ@KC': -10.5,
+  'DET@MIA': 7.5,
+};
+
 function normalizeSpreadTeamCode(code: string): string {
   const value = String(code || '').trim().toUpperCase();
   return value === 'JAC' ? 'JAX' : value === 'WSH' ? 'WAS' : value;
@@ -35,6 +42,31 @@ function normalizeSpreadTeamCode(code: string): string {
 export function getJackWeek8HomeSpread(weekNumber: number, awayCode: string, homeCode: string, seasonYear: number): number | null {
   if (weekNumber !== 8 || seasonYear !== 2026) return null;
   return WEEK_8_HOME_SPREADS[`${normalizeSpreadTeamCode(awayCode)}@${normalizeSpreadTeamCode(homeCode)}`] ?? null;
+}
+
+export function getJackWeek9HomeSpread(weekNumber: number, awayCode: string, homeCode: string, seasonYear: number): number | null {
+  if (weekNumber !== 9 || seasonYear !== 2026) return null;
+  return WEEK_9_HOME_SPREADS[`${normalizeSpreadTeamCode(awayCode)}@${normalizeSpreadTeamCode(homeCode)}`] ?? null;
+}
+
+export function getJackWeek9SpreadLine(weekNumber: number, awayCode: string, homeCode: string, seasonYear: number): string | null {
+  const homeSpread = getJackWeek9HomeSpread(weekNumber, awayCode, homeCode, seasonYear);
+  if (homeSpread === null) return null;
+  const home = normalizeSpreadTeamCode(homeCode);
+  const away = normalizeSpreadTeamCode(awayCode);
+  return homeSpread > 0
+    ? `${home} +${homeSpread} / ${away} -${homeSpread}`
+    : `${away} +${-homeSpread} / ${home} ${homeSpread}`;
+}
+
+export function getJackApprovedHomeSpread(weekNumber: number, awayCode: string, homeCode: string, seasonYear: number): number | null {
+  return getJackWeek9HomeSpread(weekNumber, awayCode, homeCode, seasonYear)
+    ?? getJackWeek8HomeSpread(weekNumber, awayCode, homeCode, seasonYear);
+}
+
+export function getJackApprovedSpreadLine(weekNumber: number, awayCode: string, homeCode: string, seasonYear: number): string | null {
+  return getJackWeek9SpreadLine(weekNumber, awayCode, homeCode, seasonYear)
+    ?? getJackWeek8FavoriteLine(weekNumber, awayCode, homeCode, seasonYear);
 }
 
 export function getJackWeek8FavoriteLine(weekNumber: number, awayCode: string, homeCode: string, seasonYear: number): string | null {
@@ -90,8 +122,8 @@ export async function fetchLiveNFLScores(weekNumber: number = 5): Promise<LiveGa
         return total?.summary || null;
       };
       const seasonYear = Number(data.season?.year ?? event.season?.year ?? (event.date ? new Date(event.date).getUTCFullYear() : NaN));
-      const spread = getJackWeek8HomeSpread(weekNumber, awayCode, homeCode, seasonYear);
-      const favoriteLine = getJackWeek8FavoriteLine(weekNumber, awayCode, homeCode, seasonYear);
+      const spread = getJackApprovedHomeSpread(weekNumber, awayCode, homeCode, seasonYear);
+      const favoriteLine = getJackApprovedSpreadLine(weekNumber, awayCode, homeCode, seasonYear);
 
       const homeScore = home.score !== undefined && home.score !== null ? String(home.score) : undefined;
       const awayScore = away.score !== undefined && away.score !== null ? String(away.score) : undefined;

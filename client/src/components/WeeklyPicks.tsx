@@ -12,7 +12,7 @@ import { quickFillSafetyEngine, SlateGameItem } from '../services/QuickFillSafet
 import { formatGameKickoff } from '../utils/dateUtils';
 import { triggerHaptic } from '../utils/haptics';
 import { isKickoffLocked, evaluateCanonicalGameLock, evaluateSlateLockSummary } from '../services/lockEnforcementService';
-import { fetchLiveNFLScores, type LiveGame } from '../services/liveScoreService';
+import { fetchLiveNFLScores, getJackApprovedHomeSpread, getJackApprovedSpreadLine, type LiveGame } from '../services/liveScoreService';
 import { getCurrentNFLWeek } from '../services/nflCalendarService';
 import { resolveCanonicalGameKickoff, areTeamIdentitiesEquivalent, normalizeTeamIdentity } from '../services/dependableInfoService';
 import {
@@ -1430,8 +1430,8 @@ export const WeeklyPicks: React.FC = () => {
                 inRedZone: g.inRedZone,
                 startTime: ((g as any).isKickoffConfirmed === false || (g as any).is_kickoff_confirmed === false || new Date(g.kickoffTime).getTime() <= 0) ? 'TBD · Kickoff Unconfirmed' : formatKickoff(g.kickoffTime),
                 kickoffTime: g.kickoffTime,
-                spread: typeof g.spread === 'number' ? `${g.spread}` : (typeof g.spread === 'string' ? g.spread : undefined),
-                favoriteLine: (g as any).favoriteLine ?? undefined,
+                spread: getJackApprovedHomeSpread(selectedWeek, g.awayTeamId, g.homeTeamId, 2026)?.toString(),
+                favoriteLine: getJackApprovedSpreadLine(selectedWeek, g.awayTeamId, g.homeTeamId, 2026),
                 awayRecord: (g as any).awayRecord ?? undefined,
                 homeRecord: (g as any).homeRecord ?? undefined,
                 selectedTeam: g.userPick,
@@ -1457,8 +1457,8 @@ export const WeeklyPicks: React.FC = () => {
                 homeTeam: g.homeTeamId,
                 kickoffTime: ((g as any).isKickoffConfirmed === false || (g as any).is_kickoff_confirmed === false || new Date(g.kickoffTime).getTime() <= 0) ? 'TBD · Kickoff Unconfirmed' : formatKickoff(g.kickoffTime),
                 isLocked: ((g as any).isKickoffConfirmed === false || (g as any).is_kickoff_confirmed === false || new Date(g.kickoffTime).getTime() <= 0) || isGameLocked(g) || isGameKickoffLocked(g),
-                spread: typeof g.spread === 'number' ? `${g.spread}` : undefined,
-                favoriteLine: (g as any).favoriteLine ?? undefined,
+                spread: getJackApprovedHomeSpread(selectedWeek, g.awayTeamId, g.homeTeamId, 2026)?.toString(),
+                favoriteLine: getJackApprovedSpreadLine(selectedWeek, g.awayTeamId, g.homeTeamId, 2026),
                 awayRecord: (g as any).awayRecord ?? undefined,
                 homeRecord: (g as any).homeRecord ?? undefined,
                 gameStatus: (g.gameStatus === 'FINAL' || g.status === 'FINAL' ? 'FINAL' : g.gameStatus === 'LIVE' || g.status === 'IN_PROGRESS' || g.isLive ? 'LIVE' : 'SCHEDULED') as 'FINAL' | 'LIVE' | 'SCHEDULED',

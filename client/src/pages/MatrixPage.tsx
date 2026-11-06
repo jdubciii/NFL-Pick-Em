@@ -22,7 +22,7 @@ import {
 import { isKickoffLocked, evaluateSlateLockSummary, evaluateCanonicalGameLock } from '../services/lockEnforcementService';
 import { evaluatePickVisibility } from '../services/openSlatePolicyService';
 import { getCurrentNFLWeek } from '../services/nflCalendarService';
-import { fetchLiveNFLScores, LiveGame } from '../services/liveScoreService';
+import { fetchLiveNFLScores, getJackWeek9SpreadLine, LiveGame } from '../services/liveScoreService';
 import { resolveAuthoritativeSlate } from '../services/authoritativeSlateClientService';
 import { classifyPickDistributionBadge } from '../services/dependableInfoService';
 import {
@@ -763,9 +763,11 @@ export const MatrixPage: React.FC = () => {
                           <span className="text-sm font-bold text-white">
                             {game.awayTeam}{(() => { const lg = liveGames.find((g) => g.id === game.gameId); return lg?.awayTeam?.record ? ` ${lg.awayTeam.record}` : ''; })()} @ {game.homeTeam}{(() => { const lg = liveGames.find((g) => g.id === game.gameId); return lg?.homeTeam?.record ? ` ${lg.homeTeam.record}` : ''; })()}
                           </span>
-                          {(() => { const lg = liveGames.find((g) => g.id === game.gameId); return lg?.favoriteLine ? (
+                          {(() => { const line = selectedWeek === 9
+                            ? getJackWeek9SpreadLine(selectedWeek, game.awayTeam, game.homeTeam, 2026)
+                            : liveGames.find((g) => g.id === game.gameId)?.favoriteLine; return line ? (
                             <span className="text-xs px-1.5 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 font-mono font-bold">
-                              {lg.favoriteLine}
+                              {line}
                             </span>
                           ) : null; })()}
                         </div>

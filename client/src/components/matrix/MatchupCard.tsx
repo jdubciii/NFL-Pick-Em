@@ -6,6 +6,7 @@ export interface LiveMatchupProjection {
   gameId: string;
   awayTeam: string;
   homeTeam: string;
+  spreadLine?: string | null;
   kickoffUtc: string;
   status: 'SCHEDULED' | 'IN_PROGRESS' | 'HALFTIME' | 'FINAL';
   liveTelemetry: {
@@ -30,7 +31,7 @@ interface MatchupCardProps {
 }
 
 export const MatchupCard: React.FC<MatchupCardProps> = ({ projection, currentUserId }) => {
-  const { awayTeam, homeTeam, status, liveTelemetry, distribution, isLocked } = projection;
+  const { awayTeam, homeTeam, spreadLine, status, liveTelemetry, distribution, isLocked } = projection;
   const totalPicks = distribution.awayCohort.length + distribution.homeCohort.length;
   const awayPct = totalPicks > 0 ? Math.round((distribution.awayCohort.length / totalPicks) * 100) : 50;
   const homePct = 100 - awayPct;
@@ -60,6 +61,8 @@ export const MatchupCard: React.FC<MatchupCardProps> = ({ projection, currentUse
           )}
         </div>
       </div>
+
+      {spreadLine && <div className="text-xs font-mono font-bold text-cyan-300">{spreadLine}</div>}
 
       {/* Live Score Display */}
       {liveTelemetry && (

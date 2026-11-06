@@ -269,7 +269,7 @@ export const LiveGametrackStream: React.FC<LiveGametrackStreamProps> = ({
 
             {isEspnGame && espnGame.favoriteLine ? (
               <div className="text-xs text-slate-300 font-bold pt-1">
-                FAV: {espnGame.favoriteLine}
+                {weekNumber === 9 ? 'Line' : 'FAV'}: {espnGame.favoriteLine}
               </div>
             ) : null}
 
