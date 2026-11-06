@@ -5,7 +5,8 @@ import { scopedExpressFetch } from '../lib/apiClient';
 import { AccountSettingsModal } from '../components/profile/AccountSettingsModal';
 import { AppHeader } from '../components/common/AppHeader';
 import { Settings } from 'lucide-react';
-import { deriveSeasonStoryViewModel } from '../services/seasonStoryService';
+import { deriveSeasonStoryViewModel, AuthoritativeWeeklyStandingRow } from '../services/seasonStoryService';
+import { loadSettledSeasonHistory, fetchSettlementJson } from '../services/settledSeasonHistory';
 import {
   planDeadlineReminders,
   DeadlineGameWindowInput,
@@ -873,16 +874,73 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     }
   };
 
-  const personalStory = useMemo(() => {
-    return deriveSeasonStoryViewModel({
-      isLoading: false,
-      season: 2026,
-      poolId: selectedPoolId || '',
-      viewerUserId: user?.id || 'viewer',
-      rawRecords: [], // Live database has 0 settled weeks currently
-      currentOutstandingShotDebt: 0,
-    });
-  }, [selectedPoolId, user?.id]);
+  const [history, setHistory] = useState<{key: string; loading: boolean; error: string | null; rows: AuthoritativeWeeklyStandingRow[]}>({key: '', loading: true, error: null, rows: []});
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const [settlementPreview, setSettlementPreview] = useState<any>(null);
+  const [settlementBusy, setSettlementBusy] = useState(false);
+  const [settlementMessage, setSettlementMessage] = useState('');
+  const historySeason = activeScope?.season ?? propSeason ?? 2026;
+  const historyType = activeScope?.seasonType ?? propSeasonType ?? 2;
+  const historyKey = `${user?.id}:${selectedPoolId}:${historySeason}:${historyType}`;
+  useEffect(() => {
+    let cancelled = false;
+    setSettlementPreview(null);
+    setSettlementMessage('');
+    setHistory({key: historyKey, loading: true, error: null, rows: []});
+    if (!user?.id || !selectedPoolId) return () => { cancelled = true; };
+    loadSettledSeasonHistory(supabase, path => fetchSettlementJson(scopedExpressFetch, path), selectedPoolId, historySeason, historyType)
+      .then(rows => { if (!cancelled) setHistory({key: historyKey, loading: false, error: null, rows}); })
+      .catch(err => { if (!cancelled) setHistory({key: historyKey, loading: false, error: err.message, rows: []}); });
+    return () => { cancelled = true; };
+  }, [historyKey, historyRevision]);
+
+  const personalStory = deriveSeasonStoryViewModel({
+    isLoading: history.loading || history.key !== historyKey,
+    fetchError: history.error,
+    season: historySeason,
+    poolId: selectedPoolId || '',
+    viewerUserId: user?.id || '',
+    rawRecords: history.rows,
+    currentOutstandingShotDebt: null,
+  });
+
+  const previewWeek8 = async () => {
+    if (!selectedPoolId) return;
+    setSettlementBusy(true);
+    setSettlementMessage('');
+    try {
+      const result = await fetchSettlementJson(scopedExpressFetch, `/api/pools/${selectedPoolId}/wrap-up/preview?season=${historySeason}&seasonType=${historyType}&weekNumber=8`);
+      if (result.preview?.poolId !== selectedPoolId || result.preview?.season !== historySeason ||
+          result.preview?.seasonType !== historyType || result.preview?.weekNumber !== 8) {
+        throw new Error('Settlement preview scope does not match this pool and season.');
+      }
+      const {data: members, error} = await supabase.from('pool_memberships')
+        .select('user_id, users(display_name)').eq('pool_id', selectedPoolId).eq('status', 'ACTIVE');
+      if (error) throw new Error(error.message);
+      const names = new Map((members || []).map((m: any) => [m.user_id, m.users?.display_name]));
+      result.preview.projectedStandings = result.preview.projectedStandings.map((m: any) => ({...m, displayName: names.get(m.userId) || m.userId}));
+      setSettlementPreview(result.preview);
+      if (!result.preview.readyToSettle) setSettlementMessage(result.preview.reasonsIfNotReady.join(' '));
+    } catch (err: any) { setSettlementMessage(err.message); }
+    finally { setSettlementBusy(false); }
+  };
+  const settleWeek8 = async () => {
+    if (!selectedPoolId || !settlementPreview?.readyToSettle || settlementPreview.poolId !== selectedPoolId ||
+        settlementPreview.season !== historySeason || settlementPreview.seasonType !== historyType || settlementPreview.weekNumber !== 8) return;
+    setSettlementBusy(true);
+    try {
+      const result = await fetchSettlementJson(scopedExpressFetch, '/api/admin/ops/wrap-up', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({poolId: selectedPoolId, season: historySeason, seasonType: historyType,
+          weekNumber: 8, previewRevision: settlementPreview.acceptedRevision,
+          inputFingerprint: settlementPreview.inputFingerprint}),
+      });
+      const settled = result.engineResult?.results?.find((r: any) => r.poolId === selectedPoolId);
+      if (!settled?.applied && settled?.reason !== 'ALREADY_WRAPPED_UP') throw new Error(settled?.reason || 'Settlement did not complete.');
+      setHistoryRevision(n => n + 1);
+    } catch (err: any) { setSettlementMessage(err.message); }
+    finally { setSettlementBusy(false); }
+  };
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white pb-24">
@@ -1026,19 +1084,30 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
           <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Season Ledger</div>
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-              <div className="text-sm font-black text-white">0</div>
+              <div className="text-sm font-black text-white">{personalStory.totalCorrectPicks ?? '—'}</div>
               <div className="text-[10px] text-slate-500 font-bold uppercase">Pick Wins</div>
             </div>
             <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-              <div className="text-sm font-black text-white">0</div>
+              <div className="text-sm font-black text-white">{personalStory.totalGradedGames !== null && personalStory.totalCorrectPicks !== null ? personalStory.totalGradedGames - personalStory.totalCorrectPicks : '—'}</div>
               <div className="text-[10px] text-slate-500 font-bold uppercase">Pick Losses</div>
             </div>
             <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-              <div className="text-sm font-black text-amber-400">0 shots</div>
-              <div className="text-[10px] text-slate-500 font-bold uppercase">Shot Debt</div>
+              <div className="text-sm font-black text-amber-400">{personalStory.totalWeeklyChargesLabel}</div>
+              <div className="text-[10px] text-slate-500 font-bold uppercase">Shots Incurred</div>
             </div>
           </div>
         </div>
+
+        {isCommissioner && historySeason === 2026 && historyType === 2 && (
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 text-xs space-y-2">
+            <button disabled={settlementBusy} onClick={previewWeek8} className="min-h-12 px-3 border rounded">Preview Week 8 settlement</button>
+            {settlementPreview?.projectedStandings?.map((m: any) => (
+              <div key={m.userId}>{m.displayName || m.userId}: {m.score} wins, {m.shots} shots</div>
+            ))}
+            {settlementPreview?.readyToSettle && <button disabled={settlementBusy} onClick={settleWeek8} className="min-h-12 px-3 border rounded">Settle Week 8</button>}
+            {settlementMessage && <p role="status">{settlementMessage}</p>}
+          </div>
+        )}
 
         {/* Pass 4: Personal Season Story Summary Card */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 font-mono shadow-md">
@@ -1051,6 +1120,11 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
             </span>
           </div>
 
+          {personalStory.weeklyNodes.map(node => (
+            <div key={node.week} className="text-xs text-slate-200 mb-2">
+              Week {node.week} settled · {node.pickRecordLabel} · {node.weeklyChargeLabel}
+            </div>
+          ))}
           <div className="text-xs font-bold text-slate-200 mb-1">
             {personalStory.headline}
           </div>
@@ -1076,7 +1150,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                 Outstanding Season Shot Debt
               </div>
               <div className="text-sm font-black text-amber-400">
-                {personalStory.outstandingShotDebtLabel}
+                Unavailable
               </div>
               <div className="text-[9px] text-slate-500 mt-0.5">
                 Current unpaid charter balance
