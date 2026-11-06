@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { loadSettledSeasonHistory } from '../client/src/services/settledSeasonHistory';
 import { deriveSeasonStoryViewModel } from '../client/src/services/seasonStoryService';
-import { previewWeeklyWrapUpForPool, executeWeeklyWrapUpForPool } from '../src/services/wrapUpEngine';
+import { previewWeeklyWrapUpForPool, executeWeeklyWrapUpForPool, getApprovedHomeSpreadForWrapUp } from '../src/services/wrapUpEngine';
+import { getJackWeek8HomeSpread } from '../client/src/services/liveScoreService';
 const wins = [8,7,7,6,6,6,6,5,5,4];
 const shots = [0,1,1,1,1,1,2,2,2,2.5];
 const summary = { poolId: 'pool', season: 2026, seasonType: 2, weekNumber: 8,
@@ -86,4 +87,49 @@ it('does not hydrate nullable password hashes when loading settlement recipients
  };
  const mockDb: any = {$transaction: async (callback: any) => callback(tx)};
  await expect(executeWeeklyWrapUpForPool('pool',8,{prismaClient:mockDb})).rejects.toThrow('Pool with ID pool not found.');
+});
+
+it('matches Ladder scoring when TEN covers the approved Week 8 spread at CIN', async () => {
+ const game = {id:'game-cin',externalGameId:'401873031',homeTeamId:'CIN',awayTeamId:'TEN',
+  homeScore:43,awayScore:36,status:'FINAL',kickoffTime:new Date('2026-11-01T18:00:00Z')};
+ const picks = ['TEN','CIN'].map((team,i)=>({user_id:`member-${i}`,game_id:'401873031',
+  selected_team:team,selected_team_id:team,home_team_id:'CIN',away_team_id:'TEN',
+  home_score:43,away_score:36,status:'FINAL'}));
+ const mockDb:any = {
+  pool:{findUnique:async()=>({id:'pool',name:'Pool',adminId:'admin',settings:{season:2026},
+   memberships:[0,1].map(i=>({userId:`member-${i}`,user:{id:`member-${i}`,notificationPreference:{emailEnabled:false}}}))})},
+  acceptedSlateManifest:{findFirst:async()=>({season:2026,seasonType:2,weekNumber:8,revision:1,
+   eventIds:['401873031'],manifestFingerprint:'fixture',observationTime:'2026-11-01T21:00:00Z'})},
+  game:{findMany:async()=>[game]},
+  weeklySubmission:{findMany:async()=>[]},
+  penaltyLedger:{create:async()=>({}),aggregate:async()=>({_sum:{delta:0}})},
+  poolMemberStat:{upsert:async()=>({})},
+  outboxEvent:{createMany:async()=>({count:0})},
+  inboxMessage:{createMany:async()=>({count:0})},
+  $transaction:async(callback:any)=>callback(mockDb),
+  $queryRaw:async()=>[{to_regclass:'weekly_wrapups'}],
+  $queryRawUnsafe:async(sql:string)=>{
+   if (sql.includes('FROM public.pools WHERE')) return [{id:'pool',status:'ACTIVE'}];
+   if (sql.includes('information_schema.columns')) return [{column_name:'season'}];
+   if (sql.includes('INSERT INTO public.weekly_wrapups')) return [{pool_id:'pool'}];
+   if (sql.includes('FROM public.picks')) return picks;
+   return [];
+  },
+ };
+ const preview = await previewWeeklyWrapUpForPool('pool',8,{season:2026,seasonType:2,
+  tiebreakerOffered:false,prismaClient:mockDb});
+ expect(preview.projectedStandings.find(m=>m.userId==='member-0')?.score).toBe(1);
+ expect(preview.projectedStandings.find(m=>m.userId==='member-1')?.score).toBe(0);
+ const settlement = await executeWeeklyWrapUpForPool('pool',8,{season:2026,seasonType:2,
+  tiebreakerOffered:false,prismaClient:mockDb});
+ expect(settlement.applied).toBe(true);
+ expect(settlement.auditSnapshot.standings.find((m:any)=>m.userId==='member-0')?.score).toBe(1);
+ expect(settlement.auditSnapshot.standings.find((m:any)=>m.userId==='member-1')?.score).toBe(0);
+});
+
+it('keeps settlement spread lines aligned with Ladder', () => {
+ for (const [away,home] of [['TEN','CIN'],['IND','JAX'],['ARI','DAL'],['MIN','DET']]) {
+  expect(getApprovedHomeSpreadForWrapUp(8,away,home,2026)).toBe(getJackWeek8HomeSpread(8,away,home,2026));
+ }
+ expect(getApprovedHomeSpreadForWrapUp(9,'TEN','CIN',2026)).toBeNull();
 });

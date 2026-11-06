@@ -18,6 +18,39 @@ import {
   normalizeTeamCode,
 } from './authoritativeSlateService';
 import type { PoolSettings } from '../types/pool';
+import { evaluatePickATS } from './radarLiveConsequencesService';
+
+const WEEK_8_HOME_SPREADS: Record<string, number> = {
+  'TEN@CIN': -10.5,
+  'IND@JAX': -10.5,
+  'ARI@DAL': -7.5,
+};
+
+export function getApprovedHomeSpreadForWrapUp(weekNumber: number, awayTeam: string, homeTeam: string, season: number): number | null {
+  if (weekNumber !== 8 || season !== 2026) return null;
+  return WEEK_8_HOME_SPREADS[`${normalizeTeamCode(awayTeam)}@${normalizeTeamCode(homeTeam)}`] ?? null;
+}
+
+function scoreFinalWrapUpPick(pick: any, season: number, weekNumber: number): number {
+  if (pick.status !== GameStatus.FINAL) return 0;
+  const homeScore = Number(pick.home_score);
+  const awayScore = Number(pick.away_score);
+  if (pick.home_score == null || pick.away_score == null || !Number.isFinite(homeScore) || !Number.isFinite(awayScore)) return 0;
+  if (!pick.home_team_id || !pick.away_team_id || !(pick.selected_team || pick.selected_team_id)) return 0;
+  const homeTeam = normalizeTeamCode(String(pick.home_team_id || ''));
+  const awayTeam = normalizeTeamCode(String(pick.away_team_id || ''));
+  const selectedTeam = normalizeTeamCode(String(pick.selected_team || pick.selected_team_id || ''));
+  if (selectedTeam !== homeTeam && selectedTeam !== awayTeam) return 0;
+  const spread = getApprovedHomeSpreadForWrapUp(weekNumber, awayTeam, homeTeam, season);
+  if (spread !== null) {
+    return evaluatePickATS(
+      { userId: String(pick.user_id), userName: '', gameId: String(pick.game_id), selectedTeam },
+      { gameId: String(pick.game_id), homeTeam, awayTeam, homeScore, awayScore, spread, status: 'FINAL' }
+    ).points;
+  }
+  const winner = homeScore > awayScore ? homeTeam : awayScore > homeScore ? awayTeam : null;
+  return selectedTeam === winner ? 1 : 0;
+}
 
 export interface WrapUpOptions {
   weekNumber?: number;
@@ -404,14 +437,8 @@ export async function previewWeeklyWrapUpForPool(
 
   for (const pick of picks) {
     if (!scopedGameIds.has(String(pick.game_id))) continue;
-    if (pick.status === GameStatus.FINAL && pick.home_score !== null && pick.away_score !== null) {
-      const winner = pick.home_score > pick.away_score ? pick.home_team_id : (pick.away_score > pick.home_score ? pick.away_team_id : null);
-      const selected = pick.selected_team || pick.selected_team_id;
-      if (winner && selected && normalizeTeamCode(selected) === normalizeTeamCode(winner)) {
-        const cur = memberScoresMap.get(pick.user_id) || 0;
-        memberScoresMap.set(pick.user_id, cur + 1);
-      }
-    }
+    const points = scoreFinalWrapUpPick(pick, season, weekNumber);
+    if (points > 0) memberScoresMap.set(pick.user_id, (memberScoresMap.get(pick.user_id) || 0) + points);
   }
 
   // 5. Fetch predictions
@@ -875,14 +902,8 @@ export async function executeWeeklyWrapUpForPool(
 
     for (const pick of picks) {
       if (!scopedGameIds.has(String(pick.game_id))) continue;
-      if (pick.status === GameStatus.FINAL && pick.home_score !== null && pick.away_score !== null) {
-        const winner = pick.home_score > pick.away_score ? pick.home_team_id : (pick.away_score > pick.home_score ? pick.away_team_id : null);
-        const selected = pick.selected_team || pick.selected_team_id;
-        if (winner && selected && normalizeTeamCode(selected) === normalizeTeamCode(winner)) {
-          const cur = memberScoresMap.get(pick.user_id) || 0;
-          memberScoresMap.set(pick.user_id, cur + 1);
-        }
-      }
+      const points = scoreFinalWrapUpPick(pick, season, weekNumber);
+      if (points > 0) memberScoresMap.set(pick.user_id, (memberScoresMap.get(pick.user_id) || 0) + points);
     }
 
     // Load predictions from weekly_submissions
