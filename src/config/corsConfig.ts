@@ -109,7 +109,7 @@ export function createCorsOptions(): CorsOptionsDelegate {
     const options: CorsOptions = {
       origin: allowed ? true : false,
       credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: isProd
         ? ['Content-Type', 'Authorization']
         : ['Content-Type', 'Authorization', 'x-user-email', 'x-user-role', 'x-dev-user-email'],

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 import http from 'http';
+import cors from 'cors';
 import jwt from 'jsonwebtoken';
 import { app } from '../src/server';
 import { JWT_SECRET } from '../src/middleware/auth';
@@ -8,6 +9,7 @@ import {
   parseAllowedOrigins,
   isOriginAllowed,
   CONFIRMED_CAPACITOR_ORIGINS,
+  createCorsOptions,
 } from '../src/config/corsConfig';
 
 describe('Phase 41 Render Free Production CORS Hardening', () => {
@@ -62,6 +64,35 @@ describe('Phase 41 Render Free Production CORS Hardening', () => {
 
   describe('2. isOriginAllowed Evaluation Rules', () => {
     const allowedBrowser = new Set(['https://app.pickem.com', 'https://review.pickem.com']);
+
+    it('allows a PATCH OPTIONS preflight from the Owner page origin', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.CORS_ALLOWED_ORIGINS = 'https://jdubciii.github.io';
+      const headers = new Map<string, string>();
+      let ended = false;
+      const request = {
+        method: 'OPTIONS',
+        headers: {
+          origin: 'https://jdubciii.github.io',
+          'access-control-request-method': 'PATCH',
+        },
+      } as any;
+      const response = {
+        statusCode: 200,
+        setHeader: (name: string, value: string) => headers.set(name.toLowerCase(), value),
+        getHeader: (name: string) => headers.get(name.toLowerCase()),
+        end: () => { ended = true; },
+      } as any;
+
+      cors(createCorsOptions())(request, response, () => {
+        throw new Error('Preflight should be handled by CORS middleware');
+      });
+
+      expect(ended).toBe(true);
+      expect(response.statusCode).toBe(204);
+      expect(headers.get('access-control-allow-origin')).toBe('https://jdubciii.github.io');
+      expect(headers.get('access-control-allow-methods')?.split(/,\s*/)).toContain('PATCH');
+    });
 
     it('allows requests without an Origin header (non-browser or server-to-server)', () => {
       expect(isOriginAllowed(undefined, true, allowedBrowser)).toBe(true);
@@ -219,6 +250,24 @@ describe('Phase 41 Render Free Production CORS Hardening', () => {
       expect(res.headers.get('access-control-allow-origin')).toBe('https://portal.nflpickem.com');
       expect(res.headers.get('access-control-allow-methods')).toContain('GET');
       expect(res.headers.get('access-control-allow-credentials')).toBe('true');
+    });
+
+    it('allows Owner page PATCH preflight from the GitHub Pages origin', async () => {
+      process.env.NODE_ENV = 'production';
+      process.env.CORS_ALLOWED_ORIGINS = 'https://jdubciii.github.io';
+
+      const res = await fetch(`${baseUrl}/api/pools/9b893bef-3b5a-4ffa-951d-8ba27f9c9782/owner/flags`, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://jdubciii.github.io',
+          'Access-Control-Request-Method': 'PATCH',
+          'Access-Control-Request-Headers': 'Content-Type, Authorization',
+        },
+      });
+
+      expect(res.status).toBe(204);
+      expect(res.headers.get('access-control-allow-origin')).toBe('https://jdubciii.github.io');
+      expect(res.headers.get('access-control-allow-methods')?.split(/,\s*/)).toContain('PATCH');
     });
 
     it('emits no permissive CORS headers on preflight OPTIONS for disallowed origin', async () => {
