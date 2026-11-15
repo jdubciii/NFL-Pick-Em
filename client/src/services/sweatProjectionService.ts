@@ -1,4 +1,4 @@
-import { getJackWeek8HomeSpread, LiveGame } from './liveScoreService';
+import { getJackApprovedHomeSpread, LiveGame } from './liveScoreService';
 import { scoreLeaguePick } from './radarLiveConsequencesService';
 
 export interface UserStandingRef {
@@ -469,7 +469,7 @@ export function calculateProvisionalStandings(
         ? Number(gameDef.awayScore) : Number(live?.awayTeam?.score ?? gameDef?.awayScore);
       const homeCode = (live?.homeTeam?.code || gameDef?.homeTeam || '').toUpperCase();
       const awayCode = (live?.awayTeam?.code || gameDef?.awayTeam || '').toUpperCase();
-      const approvedSpread = getJackWeek8HomeSpread(
+      const approvedSpread = getJackApprovedHomeSpread(
         gameDef?.weekNumber ?? NaN, awayCode, homeCode,
         gameDef?.seasonYear ?? live?.seasonYear ?? NaN
       );

@@ -1,4 +1,4 @@
-import { getJackWeek8HomeSpread, LiveGame } from './liveScoreService';
+import { getJackApprovedHomeSpread, LiveGame } from './liveScoreService';
 import { SlateGame, UserPickItem, UserStandingRef, isFinalStatus } from './sweatProjectionService';
 import { scoreLeaguePick } from './radarLiveConsequencesService';
 
@@ -144,7 +144,7 @@ export function calculateRivalryShowdown(
 
     const homeCode = (live?.homeTeam?.code || game.homeTeam || '').toUpperCase();
     const awayCode = (live?.awayTeam?.code || game.awayTeam || '').toUpperCase();
-    const approvedSpread = getJackWeek8HomeSpread(
+    const approvedSpread = getJackApprovedHomeSpread(
       game.weekNumber ?? NaN, awayCode, homeCode,
       game.seasonYear ?? live?.seasonYear ?? NaN
     );
@@ -268,7 +268,7 @@ export function calculateRivalryShowdown(
       ifTeamAWinsGap,
       teamB: bg.rivalPick,
       ifTeamBWinsGap,
-      description: getJackWeek8HomeSpread(
+      description: getJackApprovedHomeSpread(
         bg.game.weekNumber ?? NaN, bg.game.awayTeam, bg.game.homeTeam,
         bg.game.seasonYear ?? bg.liveScore?.seasonYear ?? NaN
       ) !== null

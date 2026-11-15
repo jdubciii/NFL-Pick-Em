@@ -10,7 +10,7 @@ import {
   AuthoritativeWeeklyStandingRow,
 } from '../services/seasonStoryService';
 import { WeeklyRecapCardView } from '../components/shame/WeeklyRecapCardView';
-import { fetchLiveNFLScores, getJackWeek8HomeSpread, LiveGame } from '../services/liveScoreService';
+import { fetchLiveNFLScores, getJackApprovedHomeSpread, LiveGame } from '../services/liveScoreService';
 import {
   calculateProvisionalStandings,
   validateTelemetryCoverage,
@@ -337,7 +337,7 @@ export function WallOfShamePage({
               externalGameId: row.external_game_id ? String(row.external_game_id) : String(row.game_id),
               homeTeam: row.home_team_id,
               awayTeam: row.away_team_id,
-              spread: getJackWeek8HomeSpread(targetWeek, row.away_team_id, row.home_team_id, targetSeason) ?? (row.spread !== null && row.spread !== undefined ? Number(row.spread) : undefined),
+              spread: getJackApprovedHomeSpread(targetWeek, row.away_team_id, row.home_team_id, targetSeason) ?? (row.spread !== null && row.spread !== undefined ? Number(row.spread) : undefined),
               weekNumber: targetWeek,
               seasonYear: targetSeason,
               kickoffTime: row.kickoff_time,
@@ -407,7 +407,7 @@ export function WallOfShamePage({
           externalGameId: g.externalGameId ? String(g.externalGameId) : String(g.id),
           homeTeam: g.homeTeamId,
           awayTeam: g.awayTeamId,
-          spread: getJackWeek8HomeSpread(targetWeek, g.awayTeamId, g.homeTeamId, targetSeason) ?? (g.spread !== null && g.spread !== undefined ? Number(g.spread) : undefined),
+          spread: getJackApprovedHomeSpread(targetWeek, g.awayTeamId, g.homeTeamId, targetSeason) ?? (g.spread !== null && g.spread !== undefined ? Number(g.spread) : undefined),
           weekNumber: targetWeek,
           seasonYear: targetSeason,
           kickoffTime: g.kickoffTime,

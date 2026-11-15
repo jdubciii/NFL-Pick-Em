@@ -23,7 +23,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { formatGameKickoff } from '../utils/dateUtils';
-import { getJackWeek8HomeSpread } from '../services/liveScoreService';
+import { getJackApprovedHomeSpread } from '../services/liveScoreService';
 import { WhatIfSimulationWrapper } from '../components/mobile/WhatIfSimulationWrapper';
 import { LiveMatchupPulse } from '../components/animations/LiveMatchupPulse';
 
@@ -426,7 +426,7 @@ export const SweatRadarPage: React.FC = () => {
 
       // 4. Construct GameSimData array with local timezone formatting
       const games: GameSimData[] = rows.map((row: any) => {
-        const spreadNum = getJackWeek8HomeSpread(
+        const spreadNum = getJackApprovedHomeSpread(
           Number(row.week_number ?? row.week ?? matrixPayload?.week_no ?? 5),
           row.away_team_id,
           row.home_team_id,
