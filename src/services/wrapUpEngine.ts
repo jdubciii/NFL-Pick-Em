@@ -26,9 +26,16 @@ const WEEK_8_HOME_SPREADS: Record<string, number> = {
   'ARI@DAL': -7.5,
 };
 
+const WEEK_10_HOME_SPREADS: Record<string, number> = {
+  'JAX@TEN': 10.5,
+  'BUF@NYJ': 8.5,
+};
+
 export function getApprovedHomeSpreadForWrapUp(weekNumber: number, awayTeam: string, homeTeam: string, season: number): number | null {
-  if (weekNumber !== 8 || season !== 2026) return null;
-  return WEEK_8_HOME_SPREADS[`${normalizeTeamCode(awayTeam)}@${normalizeTeamCode(homeTeam)}`] ?? null;
+  if (season !== 2026) return null;
+  const spreads = weekNumber === 8 ? WEEK_8_HOME_SPREADS : weekNumber === 10 ? WEEK_10_HOME_SPREADS : null;
+  if (!spreads) return null;
+  return spreads[`${normalizeTeamCode(awayTeam)}@${normalizeTeamCode(homeTeam)}`] ?? null;
 }
 
 function scoreFinalWrapUpPick(pick: any, season: number, weekNumber: number): number {

@@ -34,6 +34,12 @@ const WEEK_9_HOME_SPREADS: Record<string, number> = {
   'DET@MIA': 7.5,
 };
 
+// Jack's supplied Week 10 lines. The number is the home team's spread.
+const WEEK_10_HOME_SPREADS: Record<string, number> = {
+  'JAX@TEN': 10.5,
+  'BUF@NYJ': 8.5,
+};
+
 function normalizeSpreadTeamCode(code: string): string {
   const value = String(code || '').trim().toUpperCase();
   return value === 'JAC' ? 'JAX' : value === 'WSH' ? 'WAS' : value;
@@ -59,13 +65,30 @@ export function getJackWeek9SpreadLine(weekNumber: number, awayCode: string, hom
     : `${away} +${-homeSpread} / ${home} ${homeSpread}`;
 }
 
+export function getJackWeek10HomeSpread(weekNumber: number, awayCode: string, homeCode: string, seasonYear: number): number | null {
+  if (weekNumber !== 10 || seasonYear !== 2026) return null;
+  return WEEK_10_HOME_SPREADS[`${normalizeSpreadTeamCode(awayCode)}@${normalizeSpreadTeamCode(homeCode)}`] ?? null;
+}
+
+export function getJackWeek10SpreadLine(weekNumber: number, awayCode: string, homeCode: string, seasonYear: number): string | null {
+  const homeSpread = getJackWeek10HomeSpread(weekNumber, awayCode, homeCode, seasonYear);
+  if (homeSpread === null) return null;
+  const home = normalizeSpreadTeamCode(homeCode);
+  const away = normalizeSpreadTeamCode(awayCode);
+  return homeSpread > 0
+    ? `${home} +${homeSpread} / ${away} -${homeSpread}`
+    : `${away} +${-homeSpread} / ${home} ${homeSpread}`;
+}
+
 export function getJackApprovedHomeSpread(weekNumber: number, awayCode: string, homeCode: string, seasonYear: number): number | null {
-  return getJackWeek9HomeSpread(weekNumber, awayCode, homeCode, seasonYear)
+  return getJackWeek10HomeSpread(weekNumber, awayCode, homeCode, seasonYear)
+    ?? getJackWeek9HomeSpread(weekNumber, awayCode, homeCode, seasonYear)
     ?? getJackWeek8HomeSpread(weekNumber, awayCode, homeCode, seasonYear);
 }
 
 export function getJackApprovedSpreadLine(weekNumber: number, awayCode: string, homeCode: string, seasonYear: number): string | null {
-  return getJackWeek9SpreadLine(weekNumber, awayCode, homeCode, seasonYear)
+  return getJackWeek10SpreadLine(weekNumber, awayCode, homeCode, seasonYear)
+    ?? getJackWeek9SpreadLine(weekNumber, awayCode, homeCode, seasonYear)
     ?? getJackWeek8FavoriteLine(weekNumber, awayCode, homeCode, seasonYear);
 }
 
