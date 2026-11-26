@@ -44,9 +44,23 @@ const WEEK_11_HOME_SPREADS: Record<string, number> = {
   'TEN@DAL': -8.5,
 };
 
+// Jack's supplied Week 12 lines. The number is the home team's spread.
+// Sheet (Nov 26, 2026): Eagles +8.5, Colts +6.5, Falcons +7.5, Ravens +6.5,
+// Titans +14.5, Saints +10.5. Packers vs Rams, Bears vs Lions, Chiefs vs Bills,
+// Broncos vs Steelers, and Jets vs Dolphins have no spread printed, so they
+// score straight-up.
+const WEEK_12_HOME_SPREADS: Record<string, number> = {
+  'PHI@DAL': -8.5,
+  'NYG@IND': -6.5,
+  'ATL@MIN': -7.5,
+  'BAL@HOU': -6.5,
+  'TEN@JAX': -14.5,
+  'NO@CIN': -10.5,
+};
+
 export function getApprovedHomeSpreadForWrapUp(weekNumber: number, awayTeam: string, homeTeam: string, season: number): number | null {
   if (season !== 2026) return null;
-  const spreads = weekNumber === 11 ? WEEK_11_HOME_SPREADS : weekNumber === 8 ? WEEK_8_HOME_SPREADS : weekNumber === 10 ? WEEK_10_HOME_SPREADS : null;
+  const spreads = weekNumber === 12 ? WEEK_12_HOME_SPREADS : weekNumber === 11 ? WEEK_11_HOME_SPREADS : weekNumber === 8 ? WEEK_8_HOME_SPREADS : weekNumber === 10 ? WEEK_10_HOME_SPREADS : null;
   if (!spreads) return null;
   return spreads[`${normalizeTeamCode(awayTeam)}@${normalizeTeamCode(homeTeam)}`] ?? null;
 }
